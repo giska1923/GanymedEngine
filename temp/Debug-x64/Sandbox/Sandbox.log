@@ -1,3 +1,0 @@
-﻿  Application.cpp
-d:\projects\c++\ganymedengine\sandbox\source\application.cpp(6): warning C4326: return type of 'main' should be 'int' instead of 'void'
-  Sandbox.vcxproj -> D:\Projects\C++\GanymedEngine\\bin\Debug-x64\Sandbox\Sandbox.exe
