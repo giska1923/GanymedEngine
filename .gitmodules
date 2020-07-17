@@ -1,0 +1,3 @@
+[submodule "GanymedEngine/extern/spdlog"]
+	path = GanymedEngine/extern/spdlog
+	url = https://github.com/gabime/spdlog
