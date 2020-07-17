@@ -4,6 +4,9 @@
     <Filter Include="GanymedE">
       <UniqueIdentifier>{CFE32836-BBB0-8341-E4C9-71E9D0F5B8CF}</UniqueIdentifier>
     </Filter>
+    <Filter Include="GanymedE\events">
+      <UniqueIdentifier>{F3644138-5FF0-AEFC-6801-32F1D40B0BFD}</UniqueIdentifier>
+    </Filter>
     <Filter Include="GanymedE\main">
       <UniqueIdentifier>{C38C9AB8-2F4D-16EF-F887-5F6C64075BCB}</UniqueIdentifier>
     </Filter>
@@ -15,6 +18,18 @@
     </ClInclude>
     <ClInclude Include="source\GanymedE\Log.h">
       <Filter>GanymedE</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\events\ApplicationEvent.h">
+      <Filter>GanymedE\events</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\events\Event.h">
+      <Filter>GanymedE\events</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\events\KeyEvent.h">
+      <Filter>GanymedE\events</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\events\MouseEvent.h">
+      <Filter>GanymedE\events</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\main\Application.h">
       <Filter>GanymedE\main</Filter>

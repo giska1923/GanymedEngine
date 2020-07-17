@@ -1,5 +1,6 @@
 #pragma once
-#include "../Core.h"
+#include "GanymedE/Core.h"
+#include "GanymedE/events/Event.h"
 
 namespace GanymedE {
 	class GE_API Application {
