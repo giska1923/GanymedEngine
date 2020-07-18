@@ -37,6 +37,9 @@
     <ClInclude Include="source\GanymedE\main\EntryPoint.h">
       <Filter>GanymedE\main</Filter>
     </ClInclude>
+    <ClInclude Include="source\gepch.h" />
+    <ClInclude Include="source\GanymedE\Window.h" />
+    <ClInclude Include="source\Platform\Windows\WindowsWindow.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\GanymedE\Log.cpp">
@@ -45,5 +48,7 @@
     <ClCompile Include="source\GanymedE\main\Application.cpp">
       <Filter>GanymedE\main</Filter>
     </ClCompile>
+    <ClCompile Include="source\gepch.cpp" />
+    <ClCompile Include="source\Platform\Windows\WindowsWindow.cpp" />
   </ItemGroup>
 </Project>

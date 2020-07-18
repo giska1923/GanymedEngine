@@ -10,6 +10,12 @@ workspace "GanymedEngine"
 
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
+-- Include directories relative to root folder (solution directory)
+IncludeDir = {}
+IncludeDir["GLFW"] = "GanymedEngine/extern/GLFW/include"
+
+include "GanymedEngine/extern/GLFW"
+
 project "GanymedEngine"
 	location "GanymedEngine"
 	kind "SharedLib"
@@ -17,6 +23,9 @@ project "GanymedEngine"
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("temp/" .. outputdir .. "/%{prj.name}")
+
+	pchheader "gepch.h"
+	pchsource "GanymedEngine/source/gepch.cpp"
 
 	files
 	{
@@ -27,9 +36,16 @@ project "GanymedEngine"
 	includedirs
 	{
 		"%{prj.name}/source",
-		"%{prj.name}/extern/spdlog/include"
+		"%{prj.name}/extern/spdlog/include",
+		"%{IncludeDir.GLFW}"
 	}
 
+	links
+	{
+		"GLFW",
+		"opengl32.lib"
+	}
+	
 	filter "system:windows"
 		cppdialect "C++17"
 		staticruntime "On"
