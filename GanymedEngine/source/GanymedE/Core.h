@@ -18,9 +18,12 @@
 #define GE_CORE_ASSERT(x, ...)
 #endif
 
-//basic maths...
+//basics...
 
 #define BIT(x) (1 << x)
+
+//to bind some function targeted with x and caller y (mainly this) as an std::function
+#define BIND_CALLBACK_FN(x,y) std::bind(&x, y, std::placeholders::_1)
 
 //defaults
 
