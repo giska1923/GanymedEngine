@@ -10,13 +10,28 @@
     <Filter Include="GanymedE\main">
       <UniqueIdentifier>{C38C9AB8-2F4D-16EF-F887-5F6C64075BCB}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Platform">
+      <UniqueIdentifier>{2AC788B4-1694-E3BF-3FAD-D1672BD9184E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Platform\Windows">
+      <UniqueIdentifier>{64FBD71A-50F4-F66C-7926-DCF1657ED678}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\GanymedE.h" />
     <ClInclude Include="source\GanymedE\Core.h">
       <Filter>GanymedE</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Layer.h">
+      <Filter>GanymedE</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\LayerStack.h">
+      <Filter>GanymedE</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\Log.h">
+      <Filter>GanymedE</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Window.h">
       <Filter>GanymedE</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h">
@@ -37,18 +52,27 @@
     <ClInclude Include="source\GanymedE\main\EntryPoint.h">
       <Filter>GanymedE\main</Filter>
     </ClInclude>
+    <ClInclude Include="source\Platform\Windows\WindowsWindow.h">
+      <Filter>Platform\Windows</Filter>
+    </ClInclude>
     <ClInclude Include="source\gepch.h" />
-    <ClInclude Include="source\GanymedE\Window.h" />
-    <ClInclude Include="source\Platform\Windows\WindowsWindow.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\GanymedE\Layer.cpp">
+      <Filter>GanymedE</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\LayerStack.cpp">
+      <Filter>GanymedE</Filter>
+    </ClCompile>
     <ClCompile Include="source\GanymedE\Log.cpp">
       <Filter>GanymedE</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\main\Application.cpp">
       <Filter>GanymedE\main</Filter>
     </ClCompile>
+    <ClCompile Include="source\Platform\Windows\WindowsWindow.cpp">
+      <Filter>Platform\Windows</Filter>
+    </ClCompile>
     <ClCompile Include="source\gepch.cpp" />
-    <ClCompile Include="source\Platform\Windows\WindowsWindow.cpp" />
   </ItemGroup>
 </Project>

@@ -35,6 +35,7 @@ namespace GanymedE {
 		virtual int GetCategoryFlags() const = 0;
 		virtual std::string ToString() const { return GetName(); }
 
+		const bool IsHandled() const { return m_Handled; }
 		inline bool IsInCategory(EventCategory category) {
 			return GetCategoryFlags() & category;
 		}
