@@ -13,8 +13,10 @@ outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 -- Include directories relative to root folder (solution directory)
 IncludeDir = {}
 IncludeDir["GLFW"] = "GanymedEngine/extern/GLFW/include"
+IncludeDir["Glad"] = "GanymedEngine/extern/Glad/include"
 
 include "GanymedEngine/extern/GLFW"
+include "GanymedEngine/extern/Glad"
 
 project "GanymedEngine"
 	location "GanymedEngine"
@@ -37,12 +39,14 @@ project "GanymedEngine"
 	{
 		"%{prj.name}/source",
 		"%{prj.name}/extern/spdlog/include",
+		"%{IncludeDir.Glad}",
 		"%{IncludeDir.GLFW}"
 	}
 
 	links
 	{
 		"GLFW",
+		"Glad",
 		"opengl32.lib"
 	}
 	
@@ -54,6 +58,7 @@ project "GanymedEngine"
 		defines
 		{
 			"GE_PLATFORM_WINDOWS",
+			"GLFW_INCLUDE_NONE",
 			"GE_BUILD_DLL"
 		}
 
