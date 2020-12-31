@@ -12,6 +12,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/main/Application.h"
 #include "GanymedE/Layer.h"
 #include "GanymedE/Log.h"
+#include "GanymedE/ImGui/ImGuiLayer.h"
 
 //-------------ENTRY POINT-----------------
 #include "GanymedE/main/EntryPoint.h"

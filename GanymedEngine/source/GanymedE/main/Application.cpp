@@ -5,7 +5,13 @@
 #include <glad/glad.h>
 
 namespace GanymedE {
+
+	Application* Application::s_instance = nullptr;
+
 	Application::Application() {
+		GE_CORE_ASSERT(!s_instance, "Application cannot have two instances!");
+		s_instance = this;
+
 		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create());
 		m_Window->SetEventCallback(BIND_CALLBACK_FN(Application::OnEvent, this));
 	}
@@ -16,10 +22,12 @@ namespace GanymedE {
 
 	void Application::PushLayer(Layer* layer) {
 		m_LayerStack.PushLayer(layer);
+		layer->OnAttach();
 	}
 
 	void Application::PushOverlay(Layer* overlay) {
 		m_LayerStack.PushOverlay(overlay);
+		overlay->OnAttach();
 	}
 
 	void Application::OnEvent(Event& e) {
