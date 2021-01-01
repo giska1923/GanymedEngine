@@ -148,9 +148,12 @@
     <ClInclude Include="source\GanymedE.h" />
     <ClInclude Include="source\GanymedE\Core.h" />
     <ClInclude Include="source\GanymedE\ImGui\ImGuiLayer.h" />
+    <ClInclude Include="source\GanymedE\Input.h" />
+    <ClInclude Include="source\GanymedE\KeyCodes.h" />
     <ClInclude Include="source\GanymedE\Layer.h" />
     <ClInclude Include="source\GanymedE\LayerStack.h" />
     <ClInclude Include="source\GanymedE\Log.h" />
+    <ClInclude Include="source\GanymedE\MouseButtonCodes.h" />
     <ClInclude Include="source\GanymedE\Window.h" />
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h" />
     <ClInclude Include="source\GanymedE\events\Event.h" />
@@ -159,6 +162,7 @@
     <ClInclude Include="source\GanymedE\main\Application.h" />
     <ClInclude Include="source\GanymedE\main\EntryPoint.h" />
     <ClInclude Include="source\Platform\OpenGL\ImGuiOpenGLRenderer.h" />
+    <ClInclude Include="source\Platform\Windows\WindowsInput.h" />
     <ClInclude Include="source\Platform\Windows\WindowsWindow.h" />
     <ClInclude Include="source\gepch.h" />
   </ItemGroup>
@@ -169,6 +173,7 @@
     <ClCompile Include="source\GanymedE\Log.cpp" />
     <ClCompile Include="source\GanymedE\main\Application.cpp" />
     <ClCompile Include="source\Platform\OpenGL\ImGuiOpenGLRenderer.cpp" />
+    <ClCompile Include="source\Platform\Windows\WindowsInput.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsWindow.cpp" />
     <ClCompile Include="source\gepch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
@@ -188,4 +193,4 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
-</Project>
+</Project> 

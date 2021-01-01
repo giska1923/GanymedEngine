@@ -4,6 +4,8 @@
 
 #include <glad/glad.h>
 
+#include "GanymedE/Input.h"
+
 namespace GanymedE {
 
 	Application* Application::s_instance = nullptr;
@@ -34,8 +36,6 @@ namespace GanymedE {
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowCloseEvent>(BIND_CALLBACK_FN(Application::OnWindowClose, this));
 
-		GE_CORE_TRACE("{0}", e);
-
 		for (auto it = m_LayerStack.end(); it != m_LayerStack.begin();) {
 			(*--it)->OnEvent(e);
 			if (e.IsHandled())
@@ -55,7 +55,7 @@ namespace GanymedE {
 
 			for (Layer* layer : m_LayerStack)
 				layer->OnUpdate();
-
+			
 			m_Window->OnUpdate();
 		}
 	}
