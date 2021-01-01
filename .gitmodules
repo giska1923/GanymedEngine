@@ -7,3 +7,6 @@
 [submodule "GanymedEngine/extern/imgui"]
 	path = GanymedEngine/extern/imgui
 	url = https://github.com/TheCherno/imgui
+[submodule "GanymedEngine/extern/glm"]
+	path = GanymedEngine/extern/glm
+	url = https://github.com/g-truc/glm

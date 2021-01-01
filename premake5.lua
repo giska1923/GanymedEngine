@@ -15,6 +15,7 @@ IncludeDir = {}
 IncludeDir["GLFW"] = "GanymedEngine/extern/GLFW/include"
 IncludeDir["Glad"] = "GanymedEngine/extern/Glad/include"
 IncludeDir["ImGui"] = "GanymedEngine/extern/imgui"
+IncludeDir["glm"] = "GanymedEngine/extern/glm"
 
 include "GanymedEngine/extern/GLFW"
 include "GanymedEngine/extern/Glad"
@@ -34,7 +35,9 @@ project "GanymedEngine"
 	files
 	{
 		"%{prj.name}/source/**.h",
-		"%{prj.name}/source/**.cpp"
+		"%{prj.name}/source/**.cpp",
+		"%{prj.name}/extern/glm/glm/**.hpp",
+		"%{prj.name}/extern/glm/glm/**.inl"
 	}
 
 	includedirs
@@ -43,7 +46,8 @@ project "GanymedEngine"
 		"%{prj.name}/extern/spdlog/include",
 		"%{IncludeDir.Glad}",
 		"%{IncludeDir.GLFW}",
-		"%{IncludeDir.ImGui}"
+		"%{IncludeDir.ImGui}",
+		"%{IncludeDir.glm}"
 	}
 
 	links
@@ -103,7 +107,8 @@ project "Sandbox"
 	includedirs
 	{
 		"GanymedEngine/extern/spdlog/include",
-		"GanymedEngine/source"
+		"GanymedEngine/source",
+		"%{IncludeDir.glm}"
 	}
 
 	links
