@@ -574,18 +574,17 @@
     <ClInclude Include="source\GanymedE\events\MouseEvent.h" />
     <ClInclude Include="source\GanymedE\main\Application.h" />
     <ClInclude Include="source\GanymedE\main\EntryPoint.h" />
-    <ClInclude Include="source\Platform\OpenGL\ImGuiOpenGLRenderer.h" />
     <ClInclude Include="source\Platform\Windows\WindowsInput.h" />
     <ClInclude Include="source\Platform\Windows\WindowsWindow.h" />
     <ClInclude Include="source\gepch.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\GanymedE\ImGui\ImGuiBuild.cpp" />
     <ClCompile Include="source\GanymedE\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="source\GanymedE\Layer.cpp" />
     <ClCompile Include="source\GanymedE\LayerStack.cpp" />
     <ClCompile Include="source\GanymedE\Log.cpp" />
     <ClCompile Include="source\GanymedE\main\Application.cpp" />
-    <ClCompile Include="source\Platform\OpenGL\ImGuiOpenGLRenderer.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsInput.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsWindow.cpp" />
     <ClCompile Include="source\gepch.cpp">

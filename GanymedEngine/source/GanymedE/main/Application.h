@@ -6,6 +6,8 @@
 #include "GanymedE/events/Event.h"
 #include "GanymedE/events/ApplicationEvent.h"
 
+#include "GanymedE/ImGui/ImGuiLayer.h"
+
 namespace GanymedE {
 	class WindowCloseEvent;
 
@@ -26,6 +28,7 @@ namespace GanymedE {
 	private:
 		bool OnWindowClose(WindowCloseEvent& e);
 		std::unique_ptr<GanymedE::Window> m_Window;
+		ImGuiLayer* m_ImGuiLayer;
 		bool m_Running = true;
 
 		LayerStack m_LayerStack;

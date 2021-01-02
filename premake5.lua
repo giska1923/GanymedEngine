@@ -108,6 +108,7 @@ project "Sandbox"
 	{
 		"GanymedEngine/extern/spdlog/include",
 		"GanymedEngine/source",
+		"GanymedEngine/extern/imgui",
 		"%{IncludeDir.glm}"
 	}
 
