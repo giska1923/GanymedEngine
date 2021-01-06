@@ -1,13 +1,13 @@
 #pragma once
 
-#ifdef GE_PLATFORM_WINDOWS
+#if defined(GE_PLATFORM_WINDOWS) && defined(GE_DYNAMIC_LINK)
 	#ifdef GE_BUILD_DLL
 		#define GE_API __declspec(dllexport)
 	#else
 		#define GE_API __declspec(dllimport)
 	#endif
 #else
-	#error GanymedEngine only supports Windows!
+	#define GE_API
 #endif
 
 #ifdef GE_DEBUG
