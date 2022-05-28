@@ -31,6 +31,9 @@
     <Filter Include="source\GanymedE\ImGui">
       <UniqueIdentifier>{99795279-05E6-0D74-CED9-A5D13A0530DC}</UniqueIdentifier>
     </Filter>
+    <Filter Include="source\GanymedE\Renderer">
+      <UniqueIdentifier>{B5A50353-A1CA-52D3-CA15-3863B69951F1}</UniqueIdentifier>
+    </Filter>
     <Filter Include="source\GanymedE\events">
       <UniqueIdentifier>{5352A5E5-3F4C-CE37-28B9-6448145234A4}</UniqueIdentifier>
     </Filter>
@@ -39,6 +42,9 @@
     </Filter>
     <Filter Include="source\Platform">
       <UniqueIdentifier>{8A00977C-F68B-0441-FF9C-87356BA76041}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="source\Platform\OpenGL">
+      <UniqueIdentifier>{7E6A90CA-6A64-B91C-53D1-4F2D3F6A1F89}</UniqueIdentifier>
     </Filter>
     <Filter Include="source\Platform\Windows">
       <UniqueIdentifier>{C494B974-30CC-010C-39D6-652FA58C2805}</UniqueIdentifier>
@@ -109,9 +115,6 @@
       <Filter>extern\glm\glm\detail</Filter>
     </ClInclude>
     <ClInclude Include="extern\glm\glm\detail\func_trigonometric.inl">
-      <Filter>extern\glm\glm\detail</Filter>
-    </ClInclude>
-    <ClInclude Include="extern\glm\glm\detail\func_trigonometric_simd.inl">
       <Filter>extern\glm\glm\detail</Filter>
     </ClInclude>
     <ClInclude Include="extern\glm\glm\detail\func_vector_relational.inl">
@@ -561,9 +564,6 @@
     <ClInclude Include="extern\glm\glm\ext\scalar_packing.hpp">
       <Filter>extern\glm\glm\ext</Filter>
     </ClInclude>
-    <ClInclude Include="extern\glm\glm\ext\scalar_packing.inl">
-      <Filter>extern\glm\glm\ext</Filter>
-    </ClInclude>
     <ClInclude Include="extern\glm\glm\ext\scalar_reciprocal.hpp">
       <Filter>extern\glm\glm\ext</Filter>
     </ClInclude>
@@ -696,9 +696,6 @@
     <ClInclude Include="extern\glm\glm\ext\vector_packing.hpp">
       <Filter>extern\glm\glm\ext</Filter>
     </ClInclude>
-    <ClInclude Include="extern\glm\glm\ext\vector_packing.inl">
-      <Filter>extern\glm\glm\ext</Filter>
-    </ClInclude>
     <ClInclude Include="extern\glm\glm\ext\vector_reciprocal.hpp">
       <Filter>extern\glm\glm\ext</Filter>
     </ClInclude>
@@ -817,9 +814,6 @@
       <Filter>extern\glm\glm\gtc</Filter>
     </ClInclude>
     <ClInclude Include="extern\glm\glm\gtc\quaternion.inl">
-      <Filter>extern\glm\glm\gtc</Filter>
-    </ClInclude>
-    <ClInclude Include="extern\glm\glm\gtc\quaternion_simd.inl">
       <Filter>extern\glm\glm\gtc</Filter>
     </ClInclude>
     <ClInclude Include="extern\glm\glm\gtc\random.hpp">
@@ -1311,6 +1305,9 @@
     <ClInclude Include="source\GanymedE\MouseButtonCodes.h">
       <Filter>source\GanymedE</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\Window.h">
       <Filter>source\GanymedE</Filter>
     </ClInclude>
@@ -1332,6 +1329,9 @@
     <ClInclude Include="source\GanymedE\main\EntryPoint.h">
       <Filter>source\GanymedE\main</Filter>
     </ClInclude>
+    <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClInclude>
     <ClInclude Include="source\Platform\Windows\WindowsInput.h">
       <Filter>source\Platform\Windows</Filter>
     </ClInclude>
@@ -1341,8 +1341,10 @@
     <ClInclude Include="source\gepch.h">
       <Filter>source</Filter>
     </ClInclude>
-    <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h" />
-    <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Shader.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
+    <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Renderer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\GanymedE\ImGui\ImGuiBuild.cpp">
@@ -1363,6 +1365,9 @@
     <ClCompile Include="source\GanymedE\main\Application.cpp">
       <Filter>source\GanymedE\main</Filter>
     </ClCompile>
+    <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClCompile>
     <ClCompile Include="source\Platform\Windows\WindowsInput.cpp">
       <Filter>source\Platform\Windows</Filter>
     </ClCompile>
@@ -1372,6 +1377,9 @@
     <ClCompile Include="source\gepch.cpp">
       <Filter>source</Filter>
     </ClCompile>
-    <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\Shader.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp" />
+    <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp" />
   </ItemGroup>
 </Project>

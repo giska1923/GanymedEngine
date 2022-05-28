@@ -162,7 +162,6 @@
     <ClInclude Include="extern\glm\glm\detail\func_packing.inl" />
     <ClInclude Include="extern\glm\glm\detail\func_packing_simd.inl" />
     <ClInclude Include="extern\glm\glm\detail\func_trigonometric.inl" />
-    <ClInclude Include="extern\glm\glm\detail\func_trigonometric_simd.inl" />
     <ClInclude Include="extern\glm\glm\detail\func_vector_relational.inl" />
     <ClInclude Include="extern\glm\glm\detail\func_vector_relational_simd.inl" />
     <ClInclude Include="extern\glm\glm\detail\qualifier.hpp" />
@@ -312,7 +311,6 @@
     <ClInclude Include="extern\glm\glm\ext\scalar_integer.hpp" />
     <ClInclude Include="extern\glm\glm\ext\scalar_integer.inl" />
     <ClInclude Include="extern\glm\glm\ext\scalar_packing.hpp" />
-    <ClInclude Include="extern\glm\glm\ext\scalar_packing.inl" />
     <ClInclude Include="extern\glm\glm\ext\scalar_reciprocal.hpp" />
     <ClInclude Include="extern\glm\glm\ext\scalar_reciprocal.inl" />
     <ClInclude Include="extern\glm\glm\ext\scalar_relational.hpp" />
@@ -357,7 +355,6 @@
     <ClInclude Include="extern\glm\glm\ext\vector_integer.hpp" />
     <ClInclude Include="extern\glm\glm\ext\vector_integer.inl" />
     <ClInclude Include="extern\glm\glm\ext\vector_packing.hpp" />
-    <ClInclude Include="extern\glm\glm\ext\vector_packing.inl" />
     <ClInclude Include="extern\glm\glm\ext\vector_reciprocal.hpp" />
     <ClInclude Include="extern\glm\glm\ext\vector_reciprocal.inl" />
     <ClInclude Include="extern\glm\glm\ext\vector_relational.hpp" />
@@ -398,7 +395,6 @@
     <ClInclude Include="extern\glm\glm\gtc\packing.inl" />
     <ClInclude Include="extern\glm\glm\gtc\quaternion.hpp" />
     <ClInclude Include="extern\glm\glm\gtc\quaternion.inl" />
-    <ClInclude Include="extern\glm\glm\gtc\quaternion_simd.inl" />
     <ClInclude Include="extern\glm\glm\gtc\random.hpp" />
     <ClInclude Include="extern\glm\glm\gtc\random.inl" />
     <ClInclude Include="extern\glm\glm\gtc\reciprocal.hpp" />
@@ -562,7 +558,10 @@
     <ClInclude Include="source\GanymedE\LayerStack.h" />
     <ClInclude Include="source\GanymedE\Log.h" />
     <ClInclude Include="source\GanymedE\MouseButtonCodes.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Renderer.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Shader.h" />
     <ClInclude Include="source\GanymedE\Window.h" />
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h" />
     <ClInclude Include="source\GanymedE\events\Event.h" />
@@ -570,6 +569,7 @@
     <ClInclude Include="source\GanymedE\events\MouseEvent.h" />
     <ClInclude Include="source\GanymedE\main\Application.h" />
     <ClInclude Include="source\GanymedE\main\EntryPoint.h" />
+    <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h" />
     <ClInclude Include="source\Platform\Windows\WindowsInput.h" />
     <ClInclude Include="source\Platform\Windows\WindowsWindow.h" />
@@ -582,6 +582,10 @@
     <ClCompile Include="source\GanymedE\LayerStack.cpp" />
     <ClCompile Include="source\GanymedE\Log.cpp" />
     <ClCompile Include="source\GanymedE\main\Application.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\Shader.cpp" />
+    <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsInput.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsWindow.cpp" />
