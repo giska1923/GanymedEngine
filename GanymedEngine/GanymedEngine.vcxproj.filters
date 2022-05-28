@@ -1345,6 +1345,8 @@
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="source\GanymedE\Renderer\Renderer.h" />
+    <ClInclude Include="source\GanymedE\Renderer\VertexArray.h" />
+    <ClInclude Include="source\Platform\OpenGL\OpenGLVertexArray.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\GanymedE\ImGui\ImGuiBuild.cpp">
@@ -1381,5 +1383,7 @@
     <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\VertexArray.cpp" />
+    <ClCompile Include="source\Platform\OpenGL\OpenGLVertexArray.cpp" />
   </ItemGroup>
 </Project>

@@ -562,6 +562,7 @@
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h" />
     <ClInclude Include="source\GanymedE\Renderer\Renderer.h" />
     <ClInclude Include="source\GanymedE\Renderer\Shader.h" />
+    <ClInclude Include="source\GanymedE\Renderer\VertexArray.h" />
     <ClInclude Include="source\GanymedE\Window.h" />
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h" />
     <ClInclude Include="source\GanymedE\events\Event.h" />
@@ -571,6 +572,7 @@
     <ClInclude Include="source\GanymedE\main\EntryPoint.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h" />
+    <ClInclude Include="source\Platform\OpenGL\OpenGLVertexArray.h" />
     <ClInclude Include="source\Platform\Windows\WindowsInput.h" />
     <ClInclude Include="source\Platform\Windows\WindowsWindow.h" />
     <ClInclude Include="source\gepch.h" />
@@ -585,8 +587,10 @@
     <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Shader.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\VertexArray.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp" />
+    <ClCompile Include="source\Platform\OpenGL\OpenGLVertexArray.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsInput.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsWindow.cpp" />
     <ClCompile Include="source\gepch.cpp">
