@@ -560,6 +560,7 @@
     <ClInclude Include="source\GanymedE\MouseButtonCodes.h" />
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h" />
+    <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h" />
     <ClInclude Include="source\GanymedE\Renderer\RenderCommand.h" />
     <ClInclude Include="source\GanymedE\Renderer\Renderer.h" />
     <ClInclude Include="source\GanymedE\Renderer\RendererAPI.h" />
@@ -588,6 +589,7 @@
     <ClCompile Include="source\GanymedE\Log.cpp" />
     <ClCompile Include="source\GanymedE\main\Application.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\OrthographicCamera.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\RendererAPI.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\RenderCommand.cpp" />

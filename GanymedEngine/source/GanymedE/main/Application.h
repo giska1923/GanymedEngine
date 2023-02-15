@@ -12,6 +12,8 @@
 #include "GanymedE/Renderer/Buffer.h"
 #include "GanymedE/Renderer/VertexArray.h"
 
+#include "GanymedE/Renderer/OrthographicCamera.h"
+
 namespace GanymedE {
 	class WindowCloseEvent;
 
@@ -42,6 +44,8 @@ namespace GanymedE {
 
 		std::shared_ptr<Shader> m_BlueShader;
 		std::shared_ptr<VertexArray> m_SquareVA;
+
+		OrthographicCamera m_Camera;
 	private:
 		static Application* s_instance;
 	};

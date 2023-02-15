@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <glm/glm.hpp>
 
 namespace GanymedE {
 	class Shader
@@ -11,6 +12,8 @@ namespace GanymedE {
 
 		void Bind();
 		void Unbind();
+
+		void UploadUniformMat4(const std::string& name, const glm::mat4& matrix);
 	private:
 		uint32_t m_RendererID;
 	};

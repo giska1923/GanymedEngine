@@ -1350,6 +1350,7 @@
     <ClInclude Include="source\GanymedE\Renderer\RendererAPI.h" />
     <ClInclude Include="source\GanymedE\Renderer\RenderCommand.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLRendererAPI.h" />
+    <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\GanymedE\ImGui\ImGuiBuild.cpp">
@@ -1391,5 +1392,6 @@
     <ClCompile Include="source\GanymedE\Renderer\RendererAPI.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\RenderCommand.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLRendererAPI.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\OrthographicCamera.cpp" />
   </ItemGroup>
 </Project>
