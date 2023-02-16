@@ -577,6 +577,7 @@
     <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLRendererAPI.h" />
+    <ClInclude Include="source\Platform\OpenGL\OpenGLShader.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLVertexArray.h" />
     <ClInclude Include="source\Platform\Windows\WindowsInput.h" />
     <ClInclude Include="source\Platform\Windows\WindowsWindow.h" />
@@ -599,6 +600,7 @@
     <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLRendererAPI.cpp" />
+    <ClCompile Include="source\Platform\OpenGL\OpenGLShader.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLVertexArray.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsInput.cpp" />
     <ClCompile Include="source\Platform\Windows\WindowsWindow.cpp" />
