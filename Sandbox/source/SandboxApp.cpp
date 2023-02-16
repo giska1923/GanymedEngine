@@ -20,7 +20,7 @@ public:
 			0.0f, 0.5f, 0.0f, 0.8f, 0.8f, 0.2f, 1.0f
 		};
 
-		std::shared_ptr<GanymedE::VertexBuffer> vertexBuffer;
+		GanymedE::Ref<GanymedE::VertexBuffer> vertexBuffer;
 		vertexBuffer.reset(GanymedE::VertexBuffer::Create(vertices, sizeof(vertices)));
 		GanymedE::BufferLayout layout = {
 			{ GanymedE::ShaderDataType::Float3, "a_Position" },
@@ -31,7 +31,7 @@ public:
 		m_VertexArray->AddVertexBuffer(vertexBuffer);
 
 		uint32_t indices[3] = { 0, 1, 2 };
-		std::shared_ptr<GanymedE::IndexBuffer> indexBuffer;
+		GanymedE::Ref<GanymedE::IndexBuffer> indexBuffer;
 		indexBuffer.reset(GanymedE::IndexBuffer::Create(indices, std::size(indices)));
 		m_VertexArray->SetIndexBuffer(indexBuffer);
 
@@ -44,7 +44,7 @@ public:
 			-0.5f,  0.5f, 0.0f
 		};
 
-		std::shared_ptr<GanymedE::VertexBuffer> squareVB;
+		GanymedE::Ref<GanymedE::VertexBuffer> squareVB;
 		squareVB.reset(GanymedE::VertexBuffer::Create(squareVertices, sizeof(squareVertices)));
 		squareVB->SetLayout({
 			{ GanymedE::ShaderDataType::Float3, "a_Position" }
@@ -52,7 +52,7 @@ public:
 		m_SquareVA->AddVertexBuffer(squareVB);
 
 		uint32_t squareIndices[6] = { 0, 1, 2, 2, 3, 0 };
-		std::shared_ptr<GanymedE::IndexBuffer> squareIB;
+		GanymedE::Ref<GanymedE::IndexBuffer> squareIB;
 		squareIB.reset(GanymedE::IndexBuffer::Create(squareIndices, std::size(squareIndices)));
 		m_SquareVA->SetIndexBuffer(squareIB);
 
@@ -198,11 +198,11 @@ public:
 	}
 
 private:
-	std::shared_ptr<GanymedE::Shader> m_Shader;
-	std::shared_ptr<GanymedE::VertexArray> m_VertexArray;
+	GanymedE::Ref<GanymedE::Shader> m_Shader;
+	GanymedE::Ref<GanymedE::VertexArray> m_VertexArray;
 
-	std::shared_ptr<GanymedE::Shader> m_FlatColorShader;
-	std::shared_ptr<GanymedE::VertexArray> m_SquareVA;
+	GanymedE::Ref<GanymedE::Shader> m_FlatColorShader;
+	GanymedE::Ref<GanymedE::VertexArray> m_SquareVA;
 
 	GanymedE::OrthographicCamera m_Camera;
 	glm::vec3 m_CameraPosition;

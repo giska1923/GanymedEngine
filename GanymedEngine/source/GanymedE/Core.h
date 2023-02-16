@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #if defined(GE_PLATFORM_WINDOWS) && defined(GE_DYNAMIC_LINK)
 	#ifdef GE_BUILD_DLL
 		#define GE_API __declspec(dllexport)
@@ -38,3 +40,13 @@
 	#define DEFAULT_WINDOW_HEIGHT 480
 	#define DEFAULT_WINDOW_WIDTH 640
 #endif
+
+namespace GanymedE {
+	
+	template<typename T>
+	using Scope = std::unique_ptr<T>;
+
+	template<typename T>
+	using Ref = std::shared_ptr<T>;
+
+}
