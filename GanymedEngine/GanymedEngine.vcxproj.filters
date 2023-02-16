@@ -1351,6 +1351,7 @@
     <ClInclude Include="source\GanymedE\Renderer\RenderCommand.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLRendererAPI.h" />
     <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h" />
+    <ClInclude Include="source\GanymedE\Core\Timestep.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\GanymedE\ImGui\ImGuiBuild.cpp">

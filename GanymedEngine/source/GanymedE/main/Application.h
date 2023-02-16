@@ -6,13 +6,9 @@
 #include "GanymedE/events/Event.h"
 #include "GanymedE/events/ApplicationEvent.h"
 
+#include "GanymedE/Core/Timestep.h"
+
 #include "GanymedE/ImGui/ImGuiLayer.h"
-
-#include "GanymedE/Renderer/Shader.h"
-#include "GanymedE/Renderer/Buffer.h"
-#include "GanymedE/Renderer/VertexArray.h"
-
-#include "GanymedE/Renderer/OrthographicCamera.h"
 
 namespace GanymedE {
 	class WindowCloseEvent;
@@ -33,19 +29,12 @@ namespace GanymedE {
 		inline Window& GetWindow() { return *m_Window; }
 	private:
 		bool OnWindowClose(WindowCloseEvent& e);
+	private:
 		std::unique_ptr<GanymedE::Window> m_Window;
 		ImGuiLayer* m_ImGuiLayer;
 		bool m_Running = true;
-
 		LayerStack m_LayerStack;
-
-		std::shared_ptr<Shader> m_Shader;
-		std::shared_ptr<VertexArray> m_VertexArray;
-
-		std::shared_ptr<Shader> m_BlueShader;
-		std::shared_ptr<VertexArray> m_SquareVA;
-
-		OrthographicCamera m_Camera;
+		float m_LastFrameTime = 0.f;
 	private:
 		static Application* s_instance;
 	};

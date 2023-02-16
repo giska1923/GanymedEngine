@@ -551,6 +551,7 @@
     <ClInclude Include="extern\glm\glm\vector_relational.hpp" />
     <ClInclude Include="source\GanymedE.h" />
     <ClInclude Include="source\GanymedE\Core.h" />
+    <ClInclude Include="source\GanymedE\Core\Timestep.h" />
     <ClInclude Include="source\GanymedE\ImGui\ImGuiLayer.h" />
     <ClInclude Include="source\GanymedE\Input.h" />
     <ClInclude Include="source\GanymedE\KeyCodes.h" />
