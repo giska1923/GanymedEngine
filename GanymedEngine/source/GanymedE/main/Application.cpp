@@ -20,6 +20,8 @@ namespace GanymedE {
 		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create());
 		m_Window->SetEventCallback(BIND_CALLBACK_FN(Application::OnEvent, this));
 
+		Renderer::Init();
+
 		m_ImGuiLayer = new ImGuiLayer();
 		PushOverlay(m_ImGuiLayer);
 	}
