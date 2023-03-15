@@ -22,11 +22,17 @@
     <Filter Include="extern\glm\glm\gtx">
       <UniqueIdentifier>{7B0026E3-67E4-E638-D044-E18BBC47D1BA}</UniqueIdentifier>
     </Filter>
+    <Filter Include="extern\stb_image">
+      <UniqueIdentifier>{D5E7C7D8-C1E0-E62A-EA12-CCAFD66AC636}</UniqueIdentifier>
+    </Filter>
     <Filter Include="source">
       <UniqueIdentifier>{76FF3A1C-62A1-65F2-4B5C-7946379DEC42}</UniqueIdentifier>
     </Filter>
     <Filter Include="source\GanymedE">
       <UniqueIdentifier>{2F1D37FE-9BA8-A4C2-A4B9-27B710C400C3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="source\GanymedE\Core">
+      <UniqueIdentifier>{E7D64C8F-D365-D658-7C84-EA5368F2E6FE}</UniqueIdentifier>
     </Filter>
     <Filter Include="source\GanymedE\ImGui">
       <UniqueIdentifier>{99795279-05E6-0D74-CED9-A5D13A0530DC}</UniqueIdentifier>
@@ -1278,11 +1284,17 @@
     <ClInclude Include="extern\glm\glm\vector_relational.hpp">
       <Filter>extern\glm\glm</Filter>
     </ClInclude>
+    <ClInclude Include="extern\stb_image\stb_image.h">
+      <Filter>extern\stb_image</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE.h">
       <Filter>source</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Core.h">
       <Filter>source\GanymedE</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\Timestep.h">
+      <Filter>source\GanymedE\Core</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\ImGui\ImGuiLayer.h">
       <Filter>source\GanymedE\ImGui</Filter>
@@ -1305,7 +1317,31 @@
     <ClInclude Include="source\GanymedE\MouseButtonCodes.h">
       <Filter>source\GanymedE</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\Buffer.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\RenderCommand.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\Renderer.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\RendererAPI.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\Shader.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\Texture.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\VertexArray.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Window.h">
@@ -1329,7 +1365,22 @@
     <ClInclude Include="source\GanymedE\main\EntryPoint.h">
       <Filter>source\GanymedE\main</Filter>
     </ClInclude>
+    <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClInclude>
     <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="source\Platform\OpenGL\OpenGLRendererAPI.h">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="source\Platform\OpenGL\OpenGLShader.h">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="source\Platform\OpenGL\OpenGLTexture.h">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="source\Platform\OpenGL\OpenGLVertexArray.h">
       <Filter>source\Platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="source\Platform\Windows\WindowsInput.h">
@@ -1341,20 +1392,11 @@
     <ClInclude Include="source\gepch.h">
       <Filter>source</Filter>
     </ClInclude>
-    <ClInclude Include="source\GanymedE\Renderer\Shader.h" />
-    <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
-    <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h" />
-    <ClInclude Include="source\GanymedE\Renderer\Renderer.h" />
-    <ClInclude Include="source\GanymedE\Renderer\VertexArray.h" />
-    <ClInclude Include="source\Platform\OpenGL\OpenGLVertexArray.h" />
-    <ClInclude Include="source\GanymedE\Renderer\RendererAPI.h" />
-    <ClInclude Include="source\GanymedE\Renderer\RenderCommand.h" />
-    <ClInclude Include="source\Platform\OpenGL\OpenGLRendererAPI.h" />
-    <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h" />
-    <ClInclude Include="source\GanymedE\Core\Timestep.h" />
-    <ClInclude Include="source\Platform\OpenGL\OpenGLShader.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="extern\stb_image\stb_image.cpp">
+      <Filter>extern\stb_image</Filter>
+    </ClCompile>
     <ClCompile Include="source\GanymedE\ImGui\ImGuiBuild.cpp">
       <Filter>source\GanymedE\ImGui</Filter>
     </ClCompile>
@@ -1370,10 +1412,49 @@
     <ClCompile Include="source\GanymedE\Log.cpp">
       <Filter>source\GanymedE</Filter>
     </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\OrthographicCamera.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\RenderCommand.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\RendererAPI.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\Shader.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\Texture.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\VertexArray.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="source\GanymedE\main\Application.cpp">
       <Filter>source\GanymedE\main</Filter>
     </ClCompile>
+    <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClCompile>
     <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="source\Platform\OpenGL\OpenGLRendererAPI.cpp">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="source\Platform\OpenGL\OpenGLShader.cpp">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="source\Platform\OpenGL\OpenGLTexture.cpp">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="source\Platform\OpenGL\OpenGLVertexArray.cpp">
       <Filter>source\Platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="source\Platform\Windows\WindowsInput.cpp">
@@ -1385,16 +1466,5 @@
     <ClCompile Include="source\gepch.cpp">
       <Filter>source</Filter>
     </ClCompile>
-    <ClCompile Include="source\GanymedE\Renderer\Shader.cpp" />
-    <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp" />
-    <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp" />
-    <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp" />
-    <ClCompile Include="source\GanymedE\Renderer\VertexArray.cpp" />
-    <ClCompile Include="source\Platform\OpenGL\OpenGLVertexArray.cpp" />
-    <ClCompile Include="source\GanymedE\Renderer\RendererAPI.cpp" />
-    <ClCompile Include="source\GanymedE\Renderer\RenderCommand.cpp" />
-    <ClCompile Include="source\Platform\OpenGL\OpenGLRendererAPI.cpp" />
-    <ClCompile Include="source\GanymedE\Renderer\OrthographicCamera.cpp" />
-    <ClCompile Include="source\Platform\OpenGL\OpenGLShader.cpp" />
   </ItemGroup>
 </Project>
