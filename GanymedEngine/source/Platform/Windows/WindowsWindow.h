@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GanymedE/Window.h"
+#include "GanymedE/Core/Window.h"
 #include "GanymedE/Renderer/GraphicsContext.h"
 
 #include <GLFW/glfw3.h>

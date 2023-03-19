@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GanymedE/Layer.h"
+#include "GanymedE/Core/Layer.h"
 
 #include "GanymedE/events/ApplicationEvent.h"
 #include "GanymedE/events/KeyEvent.h"

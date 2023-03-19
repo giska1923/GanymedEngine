@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GanymedE/Input.h"
+#include "GanymedE/Core/Input.h"
 
 namespace GanymedE {
 	class WindowsInput : public Input {

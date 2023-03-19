@@ -9,15 +9,15 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 */
 
 #include "GanymedE/main/Application.h"
-#include "GanymedE/Layer.h"
-#include "GanymedE/Log.h"
+#include "GanymedE/Core/Layer.h"
+#include "GanymedE/Core/Log.h"
 
 #include "GanymedE/Core/Timestep.h"
 
-#include "GanymedE/Input.h"
-#include "GanymedE/KeyCodes.h"
-#include "GanymedE/MouseButtonCodes.h"
-#include "GanymedE/OrthographicCameraController.h"
+#include "GanymedE/Core/Input.h"
+#include "GanymedE/Core/KeyCodes.h"
+#include "GanymedE/Core/MouseButtonCodes.h"
+#include "GanymedE/Renderer/OrthographicCameraController.h"
 
 #include "GanymedE/ImGui/ImGuiLayer.h"
 

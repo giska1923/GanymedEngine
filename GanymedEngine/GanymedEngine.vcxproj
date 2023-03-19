@@ -551,26 +551,26 @@
     <ClInclude Include="extern\glm\glm\vector_relational.hpp" />
     <ClInclude Include="extern\stb_image\stb_image.h" />
     <ClInclude Include="source\GanymedE.h" />
-    <ClInclude Include="source\GanymedE\Core.h" />
+    <ClInclude Include="source\GanymedE\Core\Core.h" />
+    <ClInclude Include="source\GanymedE\Core\Input.h" />
+    <ClInclude Include="source\GanymedE\Core\KeyCodes.h" />
+    <ClInclude Include="source\GanymedE\Core\Layer.h" />
+    <ClInclude Include="source\GanymedE\Core\LayerStack.h" />
+    <ClInclude Include="source\GanymedE\Core\Log.h" />
+    <ClInclude Include="source\GanymedE\Core\MouseButtonCodes.h" />
     <ClInclude Include="source\GanymedE\Core\Timestep.h" />
+    <ClInclude Include="source\GanymedE\Core\Window.h" />
     <ClInclude Include="source\GanymedE\ImGui\ImGuiLayer.h" />
-    <ClInclude Include="source\GanymedE\Input.h" />
-    <ClInclude Include="source\GanymedE\KeyCodes.h" />
-    <ClInclude Include="source\GanymedE\Layer.h" />
-    <ClInclude Include="source\GanymedE\LayerStack.h" />
-    <ClInclude Include="source\GanymedE\Log.h" />
-    <ClInclude Include="source\GanymedE\MouseButtonCodes.h" />
-    <ClInclude Include="source\GanymedE\OrthographicCameraController.h" />
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h" />
     <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h" />
+    <ClInclude Include="source\GanymedE\Renderer\OrthographicCameraController.h" />
     <ClInclude Include="source\GanymedE\Renderer\RenderCommand.h" />
     <ClInclude Include="source\GanymedE\Renderer\Renderer.h" />
     <ClInclude Include="source\GanymedE\Renderer\RendererAPI.h" />
     <ClInclude Include="source\GanymedE\Renderer\Shader.h" />
     <ClInclude Include="source\GanymedE\Renderer\Texture.h" />
     <ClInclude Include="source\GanymedE\Renderer\VertexArray.h" />
-    <ClInclude Include="source\GanymedE\Window.h" />
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h" />
     <ClInclude Include="source\GanymedE\events\Event.h" />
     <ClInclude Include="source\GanymedE\events\KeyEvent.h" />
@@ -589,14 +589,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp" />
+    <ClCompile Include="source\GanymedE\Core\Layer.cpp" />
+    <ClCompile Include="source\GanymedE\Core\LayerStack.cpp" />
+    <ClCompile Include="source\GanymedE\Core\Log.cpp" />
     <ClCompile Include="source\GanymedE\ImGui\ImGuiBuild.cpp" />
     <ClCompile Include="source\GanymedE\ImGui\ImGuiLayer.cpp" />
-    <ClCompile Include="source\GanymedE\Layer.cpp" />
-    <ClCompile Include="source\GanymedE\LayerStack.cpp" />
-    <ClCompile Include="source\GanymedE\Log.cpp" />
-    <ClCompile Include="source\GanymedE\OrthographicCameraController.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\OrthographicCamera.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\OrthographicCameraController.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\RenderCommand.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\RendererAPI.cpp" />
@@ -630,4 +630,4 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
-</Project> 
+</Project>

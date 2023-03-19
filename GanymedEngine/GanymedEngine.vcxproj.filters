@@ -1290,35 +1290,35 @@
     <ClInclude Include="source\GanymedE.h">
       <Filter>source</Filter>
     </ClInclude>
-    <ClInclude Include="source\GanymedE\Core.h">
-      <Filter>source\GanymedE</Filter>
+    <ClInclude Include="source\GanymedE\Core\Core.h">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\Input.h">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\KeyCodes.h">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\Layer.h">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\LayerStack.h">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\Log.h">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\MouseButtonCodes.h">
+      <Filter>source\GanymedE\Core</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Core\Timestep.h">
       <Filter>source\GanymedE\Core</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\Window.h">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\ImGui\ImGuiLayer.h">
       <Filter>source\GanymedE\ImGui</Filter>
-    </ClInclude>
-    <ClInclude Include="source\GanymedE\Input.h">
-      <Filter>source\GanymedE</Filter>
-    </ClInclude>
-    <ClInclude Include="source\GanymedE\KeyCodes.h">
-      <Filter>source\GanymedE</Filter>
-    </ClInclude>
-    <ClInclude Include="source\GanymedE\Layer.h">
-      <Filter>source\GanymedE</Filter>
-    </ClInclude>
-    <ClInclude Include="source\GanymedE\LayerStack.h">
-      <Filter>source\GanymedE</Filter>
-    </ClInclude>
-    <ClInclude Include="source\GanymedE\Log.h">
-      <Filter>source\GanymedE</Filter>
-    </ClInclude>
-    <ClInclude Include="source\GanymedE\MouseButtonCodes.h">
-      <Filter>source\GanymedE</Filter>
-    </ClInclude>
-    <ClInclude Include="source\GanymedE\OrthographicCameraController.h">
-      <Filter>source\GanymedE</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h">
       <Filter>source\GanymedE\Renderer</Filter>
@@ -1327,6 +1327,9 @@
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\OrthographicCameraController.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\RenderCommand.h">
@@ -1346,9 +1349,6 @@
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\VertexArray.h">
       <Filter>source\GanymedE\Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="source\GanymedE\Window.h">
-      <Filter>source\GanymedE</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h">
       <Filter>source\GanymedE\events</Filter>
@@ -1400,28 +1400,28 @@
     <ClCompile Include="extern\stb_image\stb_image.cpp">
       <Filter>extern\stb_image</Filter>
     </ClCompile>
+    <ClCompile Include="source\GanymedE\Core\Layer.cpp">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Core\LayerStack.cpp">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Core\Log.cpp">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClCompile>
     <ClCompile Include="source\GanymedE\ImGui\ImGuiBuild.cpp">
       <Filter>source\GanymedE\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\ImGui\ImGuiLayer.cpp">
       <Filter>source\GanymedE\ImGui</Filter>
     </ClCompile>
-    <ClCompile Include="source\GanymedE\Layer.cpp">
-      <Filter>source\GanymedE</Filter>
-    </ClCompile>
-    <ClCompile Include="source\GanymedE\LayerStack.cpp">
-      <Filter>source\GanymedE</Filter>
-    </ClCompile>
-    <ClCompile Include="source\GanymedE\Log.cpp">
-      <Filter>source\GanymedE</Filter>
-    </ClCompile>
-    <ClCompile Include="source\GanymedE\OrthographicCameraController.cpp">
-      <Filter>source\GanymedE</Filter>
-    </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\OrthographicCamera.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\OrthographicCameraController.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\RenderCommand.cpp">

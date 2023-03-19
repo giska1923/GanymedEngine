@@ -1,8 +1,8 @@
 #pragma once
-#include "GanymedE/Core.h"
+#include "GanymedE/Core/Core.h"
 
-#include "GanymedE/Window.h"
-#include "GanymedE/LayerStack.h"
+#include "GanymedE/Core/Window.h"
+#include "GanymedE/Core/LayerStack.h"
 #include "GanymedE/events/Event.h"
 #include "GanymedE/events/ApplicationEvent.h"
 

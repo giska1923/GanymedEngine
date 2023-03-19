@@ -4,7 +4,7 @@
 
 #include "GanymedE/Renderer/Renderer.h"
 
-#include "GanymedE/Input.h"
+#include "GanymedE/Core/Input.h"
 
 #include <glfw/glfw3.h>
 

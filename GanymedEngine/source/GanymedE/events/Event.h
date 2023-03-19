@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gepch.h"
-#include "GanymedE/Core.h"
+#include "GanymedE/Core/Core.h"
 
 namespace GanymedE {
 	enum class EventType {

@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "GanymedE/Core.h"
+#include "GanymedE/Core/Core.h"
 
 namespace GanymedE {
 	class Texture

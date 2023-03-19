@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "GanymedE/Log.h"
+#include "GanymedE/Core/Log.h"
 
 #ifdef GE_PLATFORM_WINDOWS
 	#include <Windows.h>
