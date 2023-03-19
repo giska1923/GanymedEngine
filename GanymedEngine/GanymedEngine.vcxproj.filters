@@ -1317,6 +1317,9 @@
     <ClInclude Include="source\GanymedE\MouseButtonCodes.h">
       <Filter>source\GanymedE</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\OrthographicCameraController.h">
+      <Filter>source\GanymedE</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
@@ -1410,6 +1413,9 @@
       <Filter>source\GanymedE</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Log.cpp">
+      <Filter>source\GanymedE</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\OrthographicCameraController.cpp">
       <Filter>source\GanymedE</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp">

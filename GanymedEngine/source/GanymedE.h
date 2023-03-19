@@ -17,6 +17,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Input.h"
 #include "GanymedE/KeyCodes.h"
 #include "GanymedE/MouseButtonCodes.h"
+#include "GanymedE/OrthographicCameraController.h"
 
 #include "GanymedE/ImGui/ImGuiLayer.h"
 

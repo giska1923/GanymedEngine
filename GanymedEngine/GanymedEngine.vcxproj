@@ -560,6 +560,7 @@
     <ClInclude Include="source\GanymedE\LayerStack.h" />
     <ClInclude Include="source\GanymedE\Log.h" />
     <ClInclude Include="source\GanymedE\MouseButtonCodes.h" />
+    <ClInclude Include="source\GanymedE\OrthographicCameraController.h" />
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h" />
     <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h" />
@@ -593,6 +594,7 @@
     <ClCompile Include="source\GanymedE\Layer.cpp" />
     <ClCompile Include="source\GanymedE\LayerStack.cpp" />
     <ClCompile Include="source\GanymedE\Log.cpp" />
+    <ClCompile Include="source\GanymedE\OrthographicCameraController.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\OrthographicCamera.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\RenderCommand.cpp" />
@@ -628,4 +630,4 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
-</Project>
+</Project> 
