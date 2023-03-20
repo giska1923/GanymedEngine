@@ -31,7 +31,7 @@ namespace GanymedE {
 		bool m_Rotation;
 
 		glm::vec3 m_CameraPosition = { 0.f,0.f,0.f };
-		float m_CameraRotation = 0.f;
+		float m_CameraRotation = 0.f; //In degrees, in the anti-clockwise direction
 		float m_CameraTranslationSpeed = 5.f, m_CameraRotationSpeed = 180.f;
 	};
 }

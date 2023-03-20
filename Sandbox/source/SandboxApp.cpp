@@ -10,7 +10,7 @@
 class ExampleLayer :public GanymedE::Layer {
 public:
 	ExampleLayer()
-		: Layer("Example"), m_CameraController(1280.f / 720.f)
+		: Layer("Example"), m_CameraController((float)DEFAULT_WINDOW_WIDTH / (float)DEFAULT_WINDOW_HEIGHT)
 	{
 		m_VertexArray.reset(GanymedE::VertexArray::Create());
 
