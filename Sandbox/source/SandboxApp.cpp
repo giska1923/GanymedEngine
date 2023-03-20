@@ -1,4 +1,7 @@
 #include <GanymedE.h>
+//-------------ENTRY POINT-----------------
+#include <GanymedE/main/EntryPoint.h>
+//-----------------------------------------
 
 #include "Platform/OpenGL/OpenGLShader.h"
 
@@ -7,12 +10,14 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "Sandbox2D.h"
+
 class ExampleLayer :public GanymedE::Layer {
 public:
 	ExampleLayer()
 		: Layer("Example"), m_CameraController((float)DEFAULT_WINDOW_WIDTH / (float)DEFAULT_WINDOW_HEIGHT)
 	{
-		m_VertexArray.reset(GanymedE::VertexArray::Create());
+		m_VertexArray = GanymedE::VertexArray::Create();
 
 		float vertices[3 * 7] = {
 			-0.5f, -0.5f, 0.0f, 0.8f, 0.2f, 0.8f, 1.0f,
@@ -21,7 +26,7 @@ public:
 		};
 
 		GanymedE::Ref<GanymedE::VertexBuffer> vertexBuffer;
-		vertexBuffer.reset(GanymedE::VertexBuffer::Create(vertices, sizeof(vertices)));
+		vertexBuffer = GanymedE::VertexBuffer::Create(vertices, sizeof(vertices));
 		GanymedE::BufferLayout layout = {
 			{ GanymedE::ShaderDataType::Float3, "a_Position" },
 			{ GanymedE::ShaderDataType::Float4, "a_Color" }
@@ -32,10 +37,10 @@ public:
 
 		uint32_t indices[3] = { 0, 1, 2 };
 		GanymedE::Ref<GanymedE::IndexBuffer> indexBuffer;
-		indexBuffer.reset(GanymedE::IndexBuffer::Create(indices, std::size(indices)));
+		indexBuffer = GanymedE::IndexBuffer::Create(indices, std::size(indices));
 		m_VertexArray->SetIndexBuffer(indexBuffer);
 
-		m_SquareVA.reset(GanymedE::VertexArray::Create());
+		m_SquareVA = GanymedE::VertexArray::Create();
 
 		float squareVertices[5 * 4] = {
 			-0.5f, -0.5f, 0.0f, 0.f, 0.f,
@@ -45,7 +50,7 @@ public:
 		};
 
 		GanymedE::Ref<GanymedE::VertexBuffer> squareVB;
-		squareVB.reset(GanymedE::VertexBuffer::Create(squareVertices, sizeof(squareVertices)));
+		squareVB = GanymedE::VertexBuffer::Create(squareVertices, sizeof(squareVertices));
 		squareVB->SetLayout({
 			{ GanymedE::ShaderDataType::Float3, "a_Position" },
 			{ GanymedE::ShaderDataType::Float2, "a_TexCoord" }
@@ -54,7 +59,7 @@ public:
 
 		uint32_t squareIndices[6] = { 0, 1, 2, 2, 3, 0 };
 		GanymedE::Ref<GanymedE::IndexBuffer> squareIB;
-		squareIB.reset(GanymedE::IndexBuffer::Create(squareIndices, std::size(squareIndices)));
+		squareIB = GanymedE::IndexBuffer::Create(squareIndices, std::size(squareIndices));
 		m_SquareVA->SetIndexBuffer(squareIB);
 
 		m_Shader = GanymedE::Shader::Create("assets/shaders/VertexPosColor.glsl");
@@ -135,7 +140,8 @@ private:
 class Sandbox : public GanymedE::Application {
 public:
 	Sandbox() {
-		PushLayer(new ExampleLayer());
+		// PushLayer(new ExampleLayer());
+		PushLayer(new Sandbox2D());
 	}
 	~Sandbox() {}
 
