@@ -14,6 +14,8 @@ namespace GanymedE {
 	
 	Application::Application()
 	{
+		GE_PROFILE_FUNCTION();
+
 		GE_CORE_ASSERT(!s_instance, "Application cannot have two instances!");
 		s_instance = this;
 
@@ -28,29 +30,38 @@ namespace GanymedE {
 
 	Application::~Application()
 	{
+		GE_PROFILE_FUNCTION();
 
+		Renderer::Shutdown();
 	}
 
 	void Application::PushLayer(Layer* layer)
 	{
+		GE_PROFILE_FUNCTION();
+
 		m_LayerStack.PushLayer(layer);
 		layer->OnAttach();
 	}
 
 	void Application::PushOverlay(Layer* overlay)
 	{
+		GE_PROFILE_FUNCTION();
+
 		m_LayerStack.PushOverlay(overlay);
 		overlay->OnAttach();
 	}
 
 	void Application::OnEvent(Event& e)
 	{
+		GE_PROFILE_FUNCTION();
+
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowCloseEvent>(BIND_CALLBACK_FN(Application::OnWindowClose, this));
 		dispatcher.Dispatch<WindowResizeEvent>(BIND_CALLBACK_FN(Application::OnWindowResize, this));
 
-		for (auto it = m_LayerStack.end(); it != m_LayerStack.begin();) {
-			(*--it)->OnEvent(e);
+		for (auto it = m_LayerStack.rbegin(); it != m_LayerStack.rend(); ++it)
+		{
+			(*it)->OnEvent(e);
 			if (e.IsHandled())
 				break;
 		}
@@ -64,6 +75,8 @@ namespace GanymedE {
 
 	bool Application::OnWindowResize(WindowResizeEvent& e)
 	{
+		GE_PROFILE_FUNCTION();
+
 		if (e.GetWidth() == 0 || e.GetHeight() == 0)
 		{
 			m_Minimized = true;
@@ -78,21 +91,31 @@ namespace GanymedE {
 
 	void Application::Run()
 	{
+		GE_PROFILE_FUNCTION();
+
 		while (m_Running)
 		{
+			GE_PROFILE_SCOPE("RunLoop");
+
 			float time = (float)glfwGetTime(); // Platform::GetTime()
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
 			if (!m_Minimized)
 			{
+				GE_PROFILE_SCOPE("LayerStack OnUpdate");
+
 				for (Layer* layer : m_LayerStack)
 					layer->OnUpdate(timestep);
 			}
 
 			m_ImGuiLayer->Begin();
-			for (Layer* layer : m_LayerStack)
-				layer->OnImGuiRender();
+			{
+				GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
+
+				for (Layer* layer : m_LayerStack)
+					layer->OnImGuiRender();
+			}
 			m_ImGuiLayer->End();
 
 			m_Window->OnUpdate();
