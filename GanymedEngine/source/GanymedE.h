@@ -23,6 +23,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 
 //-------------RENDERER--------------------
 #include "GanymedE/Renderer/Renderer.h"
+#include "GanymedE/Renderer/Renderer2D.h"
 #include "GanymedE/Renderer/RenderCommand.h"
 
 #include "GanymedE/Renderer/Buffer.h"

@@ -20,5 +20,7 @@ private:
 	GanymedE::Ref<GanymedE::VertexArray> m_SquareVA;
 	GanymedE::Ref<GanymedE::Shader> m_FlatColorShader;
 
+	GanymedE::Ref<GanymedE::Texture2D> m_CheckerboardTexture;
+
 	glm::vec4 m_SquareColor = { 0.2f, 0.3f, 0.8f, 1.f };
 };
