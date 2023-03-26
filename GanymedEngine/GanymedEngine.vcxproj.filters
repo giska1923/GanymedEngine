@@ -1396,6 +1396,7 @@
       <Filter>source</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\Renderer2D.h" />
+    <ClInclude Include="source\GanymedE\Debug\Instrumentor.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">

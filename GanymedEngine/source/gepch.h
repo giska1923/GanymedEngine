@@ -14,6 +14,8 @@
 
 #include "GanymedE/Core/Log.h"
 
+#include "GanymedE/Debug/Instrumentor.h"
+
 #ifdef GE_PLATFORM_WINDOWS
 	#include <Windows.h>
 #endif

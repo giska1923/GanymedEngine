@@ -560,6 +560,7 @@
     <ClInclude Include="source\GanymedE\Core\MouseButtonCodes.h" />
     <ClInclude Include="source\GanymedE\Core\Timestep.h" />
     <ClInclude Include="source\GanymedE\Core\Window.h" />
+    <ClInclude Include="source\GanymedE\Debug\Instrumentor.h" />
     <ClInclude Include="source\GanymedE\ImGui\ImGuiLayer.h" />
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h" />

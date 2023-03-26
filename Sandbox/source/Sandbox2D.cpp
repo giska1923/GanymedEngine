@@ -20,18 +20,29 @@ void Sandbox2D::OnDetach()
 
 void Sandbox2D::OnUpdate(GanymedE::Timestep ts)
 {
+	GE_PROFILE_FUNCTION();
+
 	// Update
-	m_CameraController.OnUpdate(ts);
+	{
+		GE_PROFILE_SCOPE("CameraController::OnUpdate");
+		m_CameraController.OnUpdate(ts);
+	}
 
 	// Render
-	GanymedE::RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
-	GanymedE::RenderCommand::Clear();
+	{
+		GE_PROFILE_SCOPE("Renderer Prep");
+		GanymedE::RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
+		GanymedE::RenderCommand::Clear();
+	}
 
-	GanymedE::Renderer2D::BeginScene(m_CameraController.GetCamera());
-	GanymedE::Renderer2D::DrawQuad({ -1.f, 0.f }, { 0.8f, 0.8f }, { 0.8f, 0.2f, 0.3f, 1.f });
-	GanymedE::Renderer2D::DrawQuad({ 0.5f, -0.5f }, { 0.5f, 0.75f }, { 0.2f, 0.3f, 0.8f, 1.f });
-	GanymedE::Renderer2D::DrawQuad({ 0.f, 0.f, -0.1f }, { 10.f, 10.f }, m_CheckerboardTexture);
-	GanymedE::Renderer2D::EndScene();
+	{
+		GE_PROFILE_SCOPE("Renderer Draw");
+		GanymedE::Renderer2D::BeginScene(m_CameraController.GetCamera());
+		GanymedE::Renderer2D::DrawQuad({ -1.f, 0.f }, { 0.8f, 0.8f }, { 0.8f, 0.2f, 0.3f, 1.f });
+		GanymedE::Renderer2D::DrawQuad({ 0.5f, -0.5f }, { 0.5f, 0.75f }, { 0.2f, 0.3f, 0.8f, 1.f });
+		GanymedE::Renderer2D::DrawQuad({ 0.f, 0.f, -0.1f }, { 10.f, 10.f }, m_CheckerboardTexture);
+		GanymedE::Renderer2D::EndScene();
+	}
 }
 
 void Sandbox2D::OnImGuiRender()
