@@ -78,7 +78,6 @@ project "GanymedEngine"
 
 		defines
 		{
-			"GE_PLATFORM_WINDOWS",
 			"GLFW_INCLUDE_NONE",
 			"GE_BUILD_DLL"
 		}
@@ -129,11 +128,6 @@ project "Sandbox"
 
 	filter "system:windows"
 		systemversion "latest"
-
-		defines
-		{
-			"GE_PLATFORM_WINDOWS"
-		}
 
 	filter "configurations:Debug"
 		defines "GE_DEBUG"

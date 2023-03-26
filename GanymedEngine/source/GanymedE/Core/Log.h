@@ -5,7 +5,8 @@
 #include "spdlog/fmt/ostr.h"
 
 namespace GanymedE {
-	class GE_API Log {
+	class GE_API Log
+	{
 	public:
 		static void Init();
 

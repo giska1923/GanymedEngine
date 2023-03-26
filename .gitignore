@@ -1,9 +1,12 @@
 # Binaries
-
 **/bin/
 !vendor/bin/premake/
 bin/
-temp/
+
+# GanymedE files
+*.log
+*.tlog
+*.json
 
 # Visual Studio files and folder
 .vs/
@@ -11,3 +14,12 @@ temp/
 **.vcxproj
 **.vcxproj.filters
 **.vcxproj.user
+
+*.exe
+*.idb
+*.idj
+*.ilk
+*.lib
+*.obj
+*.pch
+*.pdb

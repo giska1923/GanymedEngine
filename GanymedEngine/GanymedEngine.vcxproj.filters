@@ -34,6 +34,9 @@
     <Filter Include="source\GanymedE\Core">
       <UniqueIdentifier>{E7D64C8F-D365-D658-7C84-EA5368F2E6FE}</UniqueIdentifier>
     </Filter>
+    <Filter Include="source\GanymedE\Debug">
+      <UniqueIdentifier>{E50EF478-517B-AF73-1A6F-47D1869AD1DB}</UniqueIdentifier>
+    </Filter>
     <Filter Include="source\GanymedE\ImGui">
       <UniqueIdentifier>{99795279-05E6-0D74-CED9-A5D13A0530DC}</UniqueIdentifier>
     </Filter>
@@ -1317,6 +1320,9 @@
     <ClInclude Include="source\GanymedE\Core\Window.h">
       <Filter>source\GanymedE\Core</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Debug\Instrumentor.h">
+      <Filter>source\GanymedE\Debug</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\ImGui\ImGuiLayer.h">
       <Filter>source\GanymedE\ImGui</Filter>
     </ClInclude>
@@ -1336,6 +1342,9 @@
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\Renderer.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\Renderer2D.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\RendererAPI.h">
@@ -1395,8 +1404,6 @@
     <ClInclude Include="source\gepch.h">
       <Filter>source</Filter>
     </ClInclude>
-    <ClInclude Include="source\GanymedE\Renderer\Renderer2D.h" />
-    <ClInclude Include="source\GanymedE\Debug\Instrumentor.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">
@@ -1430,6 +1437,9 @@
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\Renderer.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\Renderer2D.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\RendererAPI.cpp">
@@ -1474,6 +1484,5 @@
     <ClCompile Include="source\gepch.cpp">
       <Filter>source</Filter>
     </ClCompile>
-    <ClCompile Include="source\GanymedE\Renderer\Renderer2D.cpp" />
   </ItemGroup>
 </Project>
