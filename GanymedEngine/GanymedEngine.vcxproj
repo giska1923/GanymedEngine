@@ -571,6 +571,7 @@
     <ClInclude Include="source\GanymedE\Renderer\Renderer2D.h" />
     <ClInclude Include="source\GanymedE\Renderer\RendererAPI.h" />
     <ClInclude Include="source\GanymedE\Renderer\Shader.h" />
+    <ClInclude Include="source\GanymedE\Renderer\SubTexture2D.h" />
     <ClInclude Include="source\GanymedE\Renderer\Texture.h" />
     <ClInclude Include="source\GanymedE\Renderer\VertexArray.h" />
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h" />
@@ -604,6 +605,7 @@
     <ClCompile Include="source\GanymedE\Renderer\Renderer2D.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\RendererAPI.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Shader.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\SubTexture2D.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\Texture.cpp" />
     <ClCompile Include="source\GanymedE\Renderer\VertexArray.cpp" />
     <ClCompile Include="source\GanymedE\main\Application.cpp" />

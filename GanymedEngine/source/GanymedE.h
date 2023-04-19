@@ -29,6 +29,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Renderer/Buffer.h"
 #include "GanymedE/Renderer/Shader.h"
 #include "GanymedE/Renderer/Texture.h"
+#include "GanymedE/Renderer/SubTexture2D.h"
 #include "GanymedE/Renderer/VertexArray.h"
 
 #include "GanymedE/Renderer/OrthographicCamera.h"

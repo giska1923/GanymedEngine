@@ -1404,6 +1404,7 @@
     <ClInclude Include="source\gepch.h">
       <Filter>source</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\SubTexture2D.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">
@@ -1484,5 +1485,6 @@
     <ClCompile Include="source\gepch.cpp">
       <Filter>source</Filter>
     </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\SubTexture2D.cpp" />
   </ItemGroup>
 </Project>
