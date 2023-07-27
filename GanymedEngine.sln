@@ -11,6 +11,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Glad", "GanymedEngine\exter
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ImGui", "GanymedEngine\extern\imgui\ImGui.vcxproj", "{C0FF640D-2C14-8DBE-F595-301E616989EF}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "GanymedEditor", "GanymedEditor\GanymedEditor.vcxproj", "{91BF57BC-FD7F-D3F2-C6BA-1C70323A18CF}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "GanymedEngine", "GanymedEngine\GanymedEngine.vcxproj", "{E06C0BBD-4C2D-87F3-1568-D07081E7CBCF}"
 EndProject
 Global
@@ -44,6 +46,12 @@ Global
 		{C0FF640D-2C14-8DBE-F595-301E616989EF}.Dist|x64.Build.0 = Dist|x64
 		{C0FF640D-2C14-8DBE-F595-301E616989EF}.Release|x64.ActiveCfg = Release|x64
 		{C0FF640D-2C14-8DBE-F595-301E616989EF}.Release|x64.Build.0 = Release|x64
+		{91BF57BC-FD7F-D3F2-C6BA-1C70323A18CF}.Debug|x64.ActiveCfg = Debug|x64
+		{91BF57BC-FD7F-D3F2-C6BA-1C70323A18CF}.Debug|x64.Build.0 = Debug|x64
+		{91BF57BC-FD7F-D3F2-C6BA-1C70323A18CF}.Dist|x64.ActiveCfg = Dist|x64
+		{91BF57BC-FD7F-D3F2-C6BA-1C70323A18CF}.Dist|x64.Build.0 = Dist|x64
+		{91BF57BC-FD7F-D3F2-C6BA-1C70323A18CF}.Release|x64.ActiveCfg = Release|x64
+		{91BF57BC-FD7F-D3F2-C6BA-1C70323A18CF}.Release|x64.Build.0 = Release|x64
 		{E06C0BBD-4C2D-87F3-1568-D07081E7CBCF}.Debug|x64.ActiveCfg = Debug|x64
 		{E06C0BBD-4C2D-87F3-1568-D07081E7CBCF}.Debug|x64.Build.0 = Debug|x64
 		{E06C0BBD-4C2D-87F3-1568-D07081E7CBCF}.Dist|x64.ActiveCfg = Dist|x64

@@ -12,14 +12,14 @@ namespace GanymedE {
 
 	Application* Application::s_instance = nullptr;
 	
-	Application::Application()
+	Application::Application(const std::string& name)
 	{
 		GE_PROFILE_FUNCTION();
 
 		GE_CORE_ASSERT(!s_instance, "Application cannot have two instances!");
 		s_instance = this;
 
-		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create());
+		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(WindowProps(name)));
 		m_Window->SetEventCallback(BIND_CALLBACK_FN(Application::OnEvent, this));
 
 		Renderer::Init();

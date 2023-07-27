@@ -1329,6 +1329,9 @@
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\Framebuffer.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
@@ -1351,6 +1354,9 @@
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\Shader.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\SubTexture2D.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\Texture.h">
@@ -1383,6 +1389,9 @@
     <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h">
       <Filter>source\Platform\OpenGL</Filter>
     </ClInclude>
+    <ClInclude Include="source\Platform\OpenGL\OpenGLFramebuffer.h">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClInclude>
     <ClInclude Include="source\Platform\OpenGL\OpenGLRendererAPI.h">
       <Filter>source\Platform\OpenGL</Filter>
     </ClInclude>
@@ -1404,9 +1413,6 @@
     <ClInclude Include="source\gepch.h">
       <Filter>source</Filter>
     </ClInclude>
-    <ClInclude Include="source\GanymedE\Renderer\SubTexture2D.h" />
-    <ClInclude Include="source\GanymedE\Renderer\Framebuffer.h" />
-    <ClInclude Include="source\Platform\OpenGL\OpenGLFramebuffer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">
@@ -1430,6 +1436,9 @@
     <ClCompile Include="source\GanymedE\Renderer\Buffer.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\Framebuffer.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\OrthographicCamera.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
@@ -1451,6 +1460,9 @@
     <ClCompile Include="source\GanymedE\Renderer\Shader.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="source\GanymedE\Renderer\SubTexture2D.cpp">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\Texture.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
@@ -1464,6 +1476,9 @@
       <Filter>source\Platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp">
+      <Filter>source\Platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="source\Platform\OpenGL\OpenGLFramebuffer.cpp">
       <Filter>source\Platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="source\Platform\OpenGL\OpenGLRendererAPI.cpp">
@@ -1487,8 +1502,5 @@
     <ClCompile Include="source\gepch.cpp">
       <Filter>source</Filter>
     </ClCompile>
-    <ClCompile Include="source\GanymedE\Renderer\SubTexture2D.cpp" />
-    <ClCompile Include="source\GanymedE\Renderer\Framebuffer.cpp" />
-    <ClCompile Include="source\Platform\OpenGL\OpenGLFramebuffer.cpp" />
   </ItemGroup>
 </Project>

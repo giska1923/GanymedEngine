@@ -143,3 +143,50 @@ project "Sandbox"
 		defines "GE_DIST"
 		runtime "Release"
 		optimize "on"
+
+project "GanymedEditor"
+	location "GanymedEditor"
+	kind "ConsoleApp"
+	language "C++"
+	cppdialect "C++17"
+	staticruntime "on"
+
+	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("temp/" .. outputdir .. "/%{prj.name}")
+
+	files
+	{
+		"%{prj.name}/source/**.h",
+		"%{prj.name}/source/**.cpp"
+	}
+
+	includedirs
+	{
+		"GanymedEngine/extern/spdlog/include",
+		"GanymedEngine/source",
+		"GanymedEngine/extern/imgui",
+		"%{IncludeDir.glm}"
+	}
+
+	links
+	{
+		"GanymedEngine"
+	}
+
+	filter "system:windows"
+		systemversion "latest"
+
+	filter "configurations:Debug"
+		defines "GE_DEBUG"
+		runtime "Debug"
+		symbols "on"
+
+	filter "configurations:Release"
+		defines "GE_RELEASE"
+		runtime "Release"
+		optimize "on"
+
+	filter "configurations:Dist"
+		defines "GE_DIST"
+		runtime "Release"
+		optimize "on"

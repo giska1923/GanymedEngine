@@ -19,7 +19,6 @@ private:
 
 	GanymedE::Ref<GanymedE::VertexArray> m_SquareVA;
 	GanymedE::Ref<GanymedE::Shader> m_FlatColorShader;
-	GanymedE::Ref<GanymedE::Framebuffer> m_Framebuffer;
 
 	GanymedE::Ref<GanymedE::Texture2D> m_CheckerboardTexture;
 	GanymedE::Ref<GanymedE::Texture2D> m_SpriteSheet;

@@ -15,7 +15,7 @@ namespace GanymedE {
 
 	class GE_API Application {
 	public:
-		Application();
+		Application(const std::string& name = "GanymedEngine");
 		virtual ~Application();
 
 		void Run();
