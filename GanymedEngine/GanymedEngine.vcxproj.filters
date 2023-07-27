@@ -1405,6 +1405,8 @@
       <Filter>source</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\SubTexture2D.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Framebuffer.h" />
+    <ClInclude Include="source\Platform\OpenGL\OpenGLFramebuffer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">
@@ -1486,5 +1488,7 @@
       <Filter>source</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Renderer\SubTexture2D.cpp" />
+    <ClCompile Include="source\GanymedE\Renderer\Framebuffer.cpp" />
+    <ClCompile Include="source\Platform\OpenGL\OpenGLFramebuffer.cpp" />
   </ItemGroup>
 </Project>

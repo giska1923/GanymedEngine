@@ -16,6 +16,11 @@ void Sandbox2D::OnAttach()
 	m_CheckerboardTexture = GanymedE::Texture2D::Create("assets/textures/Checkerboard.png");
 	m_SpriteSheet = GanymedE::Texture2D::Create("assets/game/textures/RPGpack.png");
 
+	GanymedE::FramebufferSpecification fbSpec;
+	fbSpec.Width = DEFAULT_WINDOW_WIDTH;
+	fbSpec.Height = DEFAULT_WINDOW_HEIGHT;
+	m_Framebuffer = GanymedE::Framebuffer::Create(fbSpec);
+
 	m_TextureStairs = GanymedE::SubTexture2D::CreateFromCoords(m_SpriteSheet, { 7, 6 }, { 128, 128 });
 	m_TextureTree = GanymedE::SubTexture2D::CreateFromCoords(m_SpriteSheet, { 2, 1 }, { 128, 128 }, {1, 2});
 }
@@ -36,6 +41,7 @@ void Sandbox2D::OnUpdate(GanymedE::Timestep ts)
 	GanymedE::Renderer2D::ResetStats();
 	{
 		GE_PROFILE_SCOPE("Renderer Prep");
+		m_Framebuffer->Bind();
 		GanymedE::RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
 		GanymedE::RenderCommand::Clear();
 	}
@@ -45,6 +51,7 @@ void Sandbox2D::OnUpdate(GanymedE::Timestep ts)
 		rotation += ts * 50.0f;
 
 		GE_PROFILE_SCOPE("Renderer Draw");
+
 		GanymedE::Renderer2D::BeginScene(m_CameraController.GetCamera());
 		GanymedE::Renderer2D::DrawRotatedQuad({ 1.0f, 0.0f }, { 0.8f, 0.8f }, -45.0f, { 0.8f, 0.2f, 0.3f, 1.0f });
 		GanymedE::Renderer2D::DrawQuad({ -1.0f, 0.0f }, { 0.8f, 0.8f }, { 0.8f, 0.2f, 0.3f, 1.0f });
@@ -63,18 +70,21 @@ void Sandbox2D::OnUpdate(GanymedE::Timestep ts)
 			}
 		}
 		GanymedE::Renderer2D::EndScene();
+		m_Framebuffer->Unbind();
 
+#if 0
 		GanymedE::Renderer2D::BeginScene(m_CameraController.GetCamera()); 
 		GanymedE::Renderer2D::DrawQuad({ 0.0f, 0.0f, 0.5f }, { 1.0f, 1.0f }, m_TextureStairs);
 		GanymedE::Renderer2D::DrawQuad({ 1.0f, 1.0f, 0.5f }, { 1.0f, 2.0f }, m_TextureTree);
 		GanymedE::Renderer2D::EndScene();
+#endif
 	}
 }
 
 void Sandbox2D::OnImGuiRender()
 {
 	// Note: Switch this to true to enable dockspace
-	static bool dockingEnabled = false;
+	static bool dockingEnabled = true;
 	if (dockingEnabled)
 	{
 		static bool dockspaceOpen = true;
@@ -146,8 +156,8 @@ void Sandbox2D::OnImGuiRender()
 
 		ImGui::ColorEdit4("Square Color", glm::value_ptr(m_SquareColor));
 
-		uint32_t textureID = m_CheckerboardTexture->GetRendererID();
-		ImGui::Image((void*)textureID, ImVec2{ 256.0f, 256.0f });
+		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
+		ImGui::Image((void*)textureID, ImVec2{ DEFAULT_WINDOW_WIDTH , DEFAULT_WINDOW_HEIGHT });
 		ImGui::End();
 
 		ImGui::End();
@@ -166,7 +176,7 @@ void Sandbox2D::OnImGuiRender()
 		ImGui::ColorEdit4("Square Color", glm::value_ptr(m_SquareColor));
 
 		uint32_t textureID = m_CheckerboardTexture->GetRendererID();
-		ImGui::Image((void*)textureID, ImVec2{ 256.0f, 256.0f });
+		ImGui::Image((void*)textureID, ImVec2{ DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT });
 		ImGui::End();
 	}
 }
