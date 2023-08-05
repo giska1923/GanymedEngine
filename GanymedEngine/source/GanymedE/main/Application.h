@@ -27,6 +27,8 @@ namespace GanymedE {
 
 		void Close();
 
+		ImGuiLayer* GetImGuiLayer() { return m_ImGuiLayer; }
+
 		inline static Application& Get() { return *s_instance; }
 		inline Window& GetWindow() { return *m_Window; }
 	private:
