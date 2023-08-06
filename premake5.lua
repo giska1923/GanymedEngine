@@ -18,6 +18,7 @@ IncludeDir["Glad"] = "GanymedEngine/extern/Glad/include"
 IncludeDir["ImGui"] = "GanymedEngine/extern/imgui"
 IncludeDir["glm"] = "GanymedEngine/extern/glm"
 IncludeDir["stb_image"] = "GanymedEngine/extern/stb_image"
+IncludeDir["entt"] = "GanymedEngine/extern/entt/include"
 
 group "Dependencies"
 	include "GanymedEngine/extern/GLFW"
@@ -62,7 +63,8 @@ project "GanymedEngine"
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.ImGui}",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.stb_image}"
+		"%{IncludeDir.stb_image}",
+		"%{IncludeDir.entt}"
 	}
 
 	links
@@ -118,7 +120,8 @@ project "Sandbox"
 		"GanymedEngine/extern/spdlog/include",
 		"GanymedEngine/source",
 		"GanymedEngine/extern/imgui",
-		"%{IncludeDir.glm}"
+		"%{IncludeDir.glm}",
+		"%{IncludeDir.entt}"
 	}
 
 	links
@@ -165,7 +168,8 @@ project "GanymedEditor"
 		"GanymedEngine/extern/spdlog/include",
 		"GanymedEngine/source",
 		"GanymedEngine/extern/imgui",
-		"%{IncludeDir.glm}"
+		"%{IncludeDir.glm}",
+		"%{IncludeDir.entt}"
 	}
 
 	links

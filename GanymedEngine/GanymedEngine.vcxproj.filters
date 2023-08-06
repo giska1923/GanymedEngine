@@ -43,6 +43,9 @@
     <Filter Include="source\GanymedE\Renderer">
       <UniqueIdentifier>{B5A50353-A1CA-52D3-CA15-3863B69951F1}</UniqueIdentifier>
     </Filter>
+    <Filter Include="source\GanymedE\Scene">
+      <UniqueIdentifier>{8C71027A-F8DD-BD74-C1D1-55D22DFDDFDC}</UniqueIdentifier>
+    </Filter>
     <Filter Include="source\GanymedE\events">
       <UniqueIdentifier>{5352A5E5-3F4C-CE37-28B9-6448145234A4}</UniqueIdentifier>
     </Filter>
@@ -1365,6 +1368,12 @@
     <ClInclude Include="source\GanymedE\Renderer\VertexArray.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Scene\Components.h">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Scene\Scene.h">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h">
       <Filter>source\GanymedE\events</Filter>
     </ClInclude>
@@ -1410,6 +1419,7 @@
     <ClInclude Include="source\gepch.h">
       <Filter>source</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Scene\Entity.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">
@@ -1466,6 +1476,9 @@
     <ClCompile Include="source\GanymedE\Renderer\VertexArray.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="source\GanymedE\Scene\Scene.cpp">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="source\GanymedE\main\Application.cpp">
       <Filter>source\GanymedE\main</Filter>
     </ClCompile>
@@ -1499,5 +1512,6 @@
     <ClCompile Include="source\gepch.cpp">
       <Filter>source</Filter>
     </ClCompile>
+    <ClCompile Include="source\GanymedE\Scene\Entity.cpp" />
   </ItemGroup>
 </Project>

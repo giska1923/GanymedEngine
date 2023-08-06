@@ -21,6 +21,10 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 
 #include "GanymedE/ImGui/ImGuiLayer.h"
 
+#include "GanymedE/Scene/Scene.h"
+#include "GanymedE/Scene/Entity.h"
+#include "GanymedE/Scene/Components.h"
+
 //-------------RENDERER--------------------
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Renderer/Renderer2D.h"
