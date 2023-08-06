@@ -26,15 +26,9 @@ namespace GanymedE {
 
 	class Instrumentor
 	{
-	private:
-		std::mutex m_Mutex;
-		InstrumentationSession* m_CurrentSession;
-		std::ofstream m_OutputStream;
 	public:
-		Instrumentor()
-			: m_CurrentSession(nullptr)
-		{
-		}
+		Instrumentor(const Instrumentor&) = delete;
+		Instrumentor(Instrumentor&&) = delete;
 
 		void BeginSession(const std::string& name, const std::string& filepath = "results.json")
 		{
@@ -102,6 +96,16 @@ namespace GanymedE {
 		}
 
 	private:
+		Instrumentor()
+			: m_CurrentSession(nullptr)
+		{
+		}
+
+		~Instrumentor()
+		{
+			EndSession();
+		}
+
 		void WriteHeader()
 		{
 			m_OutputStream << "{\"otherData\": {},\"traceEvents\":[{}";
@@ -126,6 +130,11 @@ namespace GanymedE {
 				m_CurrentSession = nullptr;
 			}
 		}
+
+		private:
+			std::mutex m_Mutex;
+			InstrumentationSession* m_CurrentSession;
+			std::ofstream m_OutputStream;
 	};
 
 	class InstrumentationTimer
@@ -213,8 +222,10 @@ namespace GanymedE {
 
 	#define GE_PROFILE_BEGIN_SESSION(name, filepath) ::GanymedE::Instrumentor::Get().BeginSession(name, filepath)
 	#define GE_PROFILE_END_SESSION() ::GanymedE::Instrumentor::Get().EndSession()
-	#define GE_PROFILE_SCOPE(name) constexpr auto fixedName = ::GanymedE::InstrumentorUtils::CleanupOutputString(name, "__cdecl ");\
-									::GanymedE::InstrumentationTimer timer##__LINE__(fixedName.Data)
+	#define GE_PROFILE_SCOPE_LINE2(name, line) constexpr auto fixedName##line = ::GanymedE::InstrumentorUtils::CleanupOutputString(name, "__cdecl ");\
+												   ::GanymedE::InstrumentationTimer timer##line(fixedName##line.Data)
+	#define GE_PROFILE_SCOPE_LINE(name, line) GE_PROFILE_SCOPE_LINE2(name, line)
+	#define GE_PROFILE_SCOPE(name) GE_PROFILE_SCOPE_LINE(name, __LINE__)
 	#define GE_PROFILE_FUNCTION() GE_PROFILE_SCOPE(GE_FUNC_SIG)
 #else
 	#define GE_PROFILE_BEGIN_SESSION(name, filepath)
