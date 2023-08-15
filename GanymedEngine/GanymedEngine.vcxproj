@@ -563,6 +563,7 @@
     <ClInclude Include="source\GanymedE\Debug\Instrumentor.h" />
     <ClInclude Include="source\GanymedE\ImGui\ImGuiLayer.h" />
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Camera.h" />
     <ClInclude Include="source\GanymedE\Renderer\Framebuffer.h" />
     <ClInclude Include="source\GanymedE\Renderer\GraphicsContext.h" />
     <ClInclude Include="source\GanymedE\Renderer\OrthographicCamera.h" />
@@ -584,6 +585,7 @@
     <ClInclude Include="source\GanymedE\events\MouseEvent.h" />
     <ClInclude Include="source\GanymedE\main\Application.h" />
     <ClInclude Include="source\GanymedE\main\EntryPoint.h" />
+    <ClInclude Include="source\GanymedE\Scene\SceneCamera.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLFramebuffer.h" />
@@ -616,6 +618,7 @@
     <ClCompile Include="source\GanymedE\Scene\Entity.cpp" />
     <ClCompile Include="source\GanymedE\Scene\Scene.cpp" />
     <ClCompile Include="source\GanymedE\main\Application.cpp" />
+    <ClCompile Include="source\GanymedE\Scene\SceneCamera.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLFramebuffer.cpp" />

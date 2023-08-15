@@ -5,6 +5,8 @@
 #include "Texture.h"
 #include "SubTexture2D.h"
 
+#include "GanymedE/Renderer/Camera.h"
+
 namespace GanymedE {
 	class Renderer2D
 	{
@@ -12,6 +14,7 @@ namespace GanymedE {
 		static void Init();
 		static void Shutdown();
 
+		static void BeginScene(const Camera& camera, const glm::mat4& transform);
 		static void BeginScene(const OrthographicCamera& camera);
 		static void EndScene();
 		static void Flush();

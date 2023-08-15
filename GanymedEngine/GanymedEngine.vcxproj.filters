@@ -1420,6 +1420,8 @@
       <Filter>source</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Scene\Entity.h" />
+    <ClInclude Include="source\GanymedE\Renderer\Camera.h" />
+    <ClInclude Include="source\GanymedE\Scene\SceneCamera.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">
@@ -1513,5 +1515,6 @@
       <Filter>source</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Scene\Entity.cpp" />
+    <ClCompile Include="source\GanymedE\Scene\SceneCamera.cpp" />
   </ItemGroup>
 </Project>
