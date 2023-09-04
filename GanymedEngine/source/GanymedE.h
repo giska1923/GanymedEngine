@@ -23,6 +23,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/Entity.h"
+#include "GanymedE/Scene/ScriptableEntity.h"
 #include "GanymedE/Scene/Components.h"
 
 //-------------RENDERER--------------------

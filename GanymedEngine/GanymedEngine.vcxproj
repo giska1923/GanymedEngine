@@ -586,6 +586,7 @@
     <ClInclude Include="source\GanymedE\main\Application.h" />
     <ClInclude Include="source\GanymedE\main\EntryPoint.h" />
     <ClInclude Include="source\GanymedE\Scene\SceneCamera.h" />
+    <ClInclude Include="source\GanymedE\Scene\ScriptableEntity.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLContext.h" />
     <ClInclude Include="source\Platform\OpenGL\OpenGLFramebuffer.h" />

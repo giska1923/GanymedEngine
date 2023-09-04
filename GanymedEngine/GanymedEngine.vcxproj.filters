@@ -1422,6 +1422,7 @@
     <ClInclude Include="source\GanymedE\Scene\Entity.h" />
     <ClInclude Include="source\GanymedE\Renderer\Camera.h" />
     <ClInclude Include="source\GanymedE\Scene\SceneCamera.h" />
+    <ClInclude Include="source\GanymedE\Scene\ScriptableEntity.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">
