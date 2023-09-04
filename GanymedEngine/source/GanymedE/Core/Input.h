@@ -1,15 +1,18 @@
 #pragma once
 
-#include "GanymedE/Core/Core.h"
+#include <glm/glm.hpp>
+
+#include "KeyCodes.h"
+#include "MouseButtonCodes.h"
 
 namespace GanymedE {
 	class GE_API Input
 	{
 	public:
-		static bool IsKeyPressed(int keycode);
+		static bool IsKeyPressed(KeyCode key);
 
-		static bool IsMouseButtonPressed(int button);
-		static std::pair<float, float> GetMousePosition();
+		static bool IsMouseButtonPressed(MouseCode button);
+		static glm::vec2 GetMousePosition();
 		static float GetMouseX();
 		static float GetMouseY();
 	};

@@ -1,6 +1,8 @@
 #pragma once
 
-#include "gepch.h"
+#include <functional>
+
+#include "GanymedE/Debug/Instrumentor.h"
 #include "GanymedE/Core/Core.h"
 
 namespace GanymedE {

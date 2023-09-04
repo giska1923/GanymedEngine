@@ -86,29 +86,29 @@ namespace GanymedE {
 			{
 				case GLFW_PRESS:
 				{
-					KeyPressedEvent event(key, 0);//static_cast<KeyCode>(key), 0);
+					KeyPressedEvent event(key, 0);
 					data.EventCallback(event);
 					break;
 				}
 				case GLFW_RELEASE:
 				{
-					KeyReleasedEvent event(key);//static_cast<KeyCode>(key));
+					KeyReleasedEvent event(key);
 					data.EventCallback(event);
 					break;
 				}
 				case GLFW_REPEAT:
 				{
-					KeyPressedEvent event(key, 1);//static_cast<KeyCode>(key), 1);
+					KeyPressedEvent event(key, 1);
 					data.EventCallback(event);
 					break;
 				}
 			}
 		});
 
-		glfwSetCharCallback(m_Window, [](GLFWwindow* window, unsigned int keyCode) {
+		glfwSetCharCallback(m_Window, [](GLFWwindow* window, unsigned int keycode) {
 			WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
 
-			KeyTypedEvent event(keyCode);
+			KeyTypedEvent event(keycode);
 			data.EventCallback(event);
 		});
 		
@@ -119,13 +119,13 @@ namespace GanymedE {
 			{
 			case GLFW_PRESS:
 			{
-				MouseButtonPressedEvent event(button);//static_cast<MouseCode>(button));
+				MouseButtonPressedEvent event(button);
 				data.EventCallback(event);
 				break;
 			}
 			case GLFW_RELEASE:
 			{
-				MouseButtonReleasedEvent event(button);//static_cast<MouseCode>(button));
+				MouseButtonReleasedEvent event(button);
 				data.EventCallback(event);
 				break;
 			}

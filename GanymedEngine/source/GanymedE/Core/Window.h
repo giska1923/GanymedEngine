@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gepch.h"
+#include <sstream>
 
 #include "Core.h"
 #include "GanymedE/events/Event.h"

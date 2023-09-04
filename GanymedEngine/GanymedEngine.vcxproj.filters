@@ -1317,6 +1317,9 @@
     <ClInclude Include="source\GanymedE\Core\MouseButtonCodes.h">
       <Filter>source\GanymedE\Core</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Core\PlatformDetection.h">
+      <Filter>source\GanymedE\Core</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\Core\Timestep.h">
       <Filter>source\GanymedE\Core</Filter>
     </ClInclude>
@@ -1330,6 +1333,9 @@
       <Filter>source\GanymedE\ImGui</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\Buffer.h">
+      <Filter>source\GanymedE\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Renderer\Camera.h">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\Renderer\Framebuffer.h">
@@ -1371,7 +1377,16 @@
     <ClInclude Include="source\GanymedE\Scene\Components.h">
       <Filter>source\GanymedE\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Scene\Entity.h">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\Scene\Scene.h">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Scene\SceneCamera.h">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\GanymedE\Scene\ScriptableEntity.h">
       <Filter>source\GanymedE\Scene</Filter>
     </ClInclude>
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h">
@@ -1419,10 +1434,6 @@
     <ClInclude Include="source\gepch.h">
       <Filter>source</Filter>
     </ClInclude>
-    <ClInclude Include="source\GanymedE\Scene\Entity.h" />
-    <ClInclude Include="source\GanymedE\Renderer\Camera.h" />
-    <ClInclude Include="source\GanymedE\Scene\SceneCamera.h" />
-    <ClInclude Include="source\GanymedE\Scene\ScriptableEntity.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="extern\stb_image\stb_image.cpp">
@@ -1479,7 +1490,13 @@
     <ClCompile Include="source\GanymedE\Renderer\VertexArray.cpp">
       <Filter>source\GanymedE\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="source\GanymedE\Scene\Entity.cpp">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="source\GanymedE\Scene\Scene.cpp">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Scene\SceneCamera.cpp">
       <Filter>source\GanymedE\Scene</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\main\Application.cpp">
@@ -1515,7 +1532,5 @@
     <ClCompile Include="source\gepch.cpp">
       <Filter>source</Filter>
     </ClCompile>
-    <ClCompile Include="source\GanymedE\Scene\Entity.cpp" />
-    <ClCompile Include="source\GanymedE\Scene\SceneCamera.cpp" />
   </ItemGroup>
 </Project>

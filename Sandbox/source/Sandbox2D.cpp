@@ -1,8 +1,8 @@
 #include "Sandbox2D.h"
-#include "imgui.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <imgui/imgui.h>
 
 Sandbox2D::Sandbox2D()
 	: Layer("Sandbox2D"), m_CameraController((float)DEFAULT_WINDOW_WIDTH / (float)DEFAULT_WINDOW_HEIGHT), m_SquareColor({ 0.2f, 0.3f, 0.8f, 1.0f })

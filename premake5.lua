@@ -1,6 +1,8 @@
+include "./vendor/premake/premake_customization/solution_items.lua"
+
 workspace "GanymedEngine"
-	architecture "x64"
-	startproject "Sandbox"
+	architecture "x86_64"
+	startproject "GanymedEditor"
 
 	configurations
 	{
@@ -9,188 +11,34 @@ workspace "GanymedEngine"
 		"Dist"
 	}
 
+	solution_items
+	{
+		".editorconfig"
+	}
+
+	flags
+	{
+		"MultiProcessorCompile"
+	}
+
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
 -- Include directories relative to root folder (solution directory)
 IncludeDir = {}
-IncludeDir["GLFW"] = "GanymedEngine/extern/GLFW/include"
-IncludeDir["Glad"] = "GanymedEngine/extern/Glad/include"
-IncludeDir["ImGui"] = "GanymedEngine/extern/imgui"
-IncludeDir["glm"] = "GanymedEngine/extern/glm"
-IncludeDir["stb_image"] = "GanymedEngine/extern/stb_image"
-IncludeDir["entt"] = "GanymedEngine/extern/entt/include"
+IncludeDir["GLFW"] = "%{wks.location}/GanymedEngine/extern/GLFW/include"
+IncludeDir["Glad"] = "%{wks.location}/GanymedEngine/extern/Glad/include"
+IncludeDir["ImGui"] = "%{wks.location}/GanymedEngine/extern/imgui"
+IncludeDir["glm"] = "%{wks.location}/GanymedEngine/extern/glm"
+IncludeDir["stb_image"] = "%{wks.location}/GanymedEngine/extern/stb_image"
+IncludeDir["entt"] = "%{wks.location}/GanymedEngine/extern/entt/include"
 
 group "Dependencies"
+	include "vendor/premake"
 	include "GanymedEngine/extern/GLFW"
 	include "GanymedEngine/extern/Glad"
 	include "GanymedEngine/extern/imgui"
-
 group ""
 
-project "GanymedEngine"
-	location "GanymedEngine"
-	kind "StaticLib"
-	language "C++"
-	cppdialect "C++17"
-	staticruntime "on"
-
-	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("temp/" .. outputdir .. "/%{prj.name}")
-
-	pchheader "gepch.h"
-	pchsource "GanymedEngine/source/gepch.cpp"
-
-	files
-	{
-		"%{prj.name}/source/**.h",
-		"%{prj.name}/source/**.cpp",
-		"%{prj.name}/extern/stb_image/**.cpp",
-		"%{prj.name}/extern/stb_image/**.h",
-		"%{prj.name}/extern/glm/glm/**.hpp",
-		"%{prj.name}/extern/glm/glm/**.inl"
-	}
-
-	defines
-	{
-		"_CRT_SECURE_NO_WARNINGS"
-	}
-
-	includedirs
-	{
-		"%{prj.name}/source",
-		"%{prj.name}/extern/spdlog/include",
-		"%{IncludeDir.Glad}",
-		"%{IncludeDir.GLFW}",
-		"%{IncludeDir.ImGui}",
-		"%{IncludeDir.glm}",
-		"%{IncludeDir.stb_image}",
-		"%{IncludeDir.entt}"
-	}
-
-	links
-	{
-		"GLFW",
-		"Glad",
-		"ImGui",
-		"opengl32.lib"
-	}
-	
-	filter "system:windows"
-		systemversion "latest"
-
-		defines
-		{
-			"GLFW_INCLUDE_NONE",
-			"GE_BUILD_DLL"
-		}
-
-	filter "configurations:Debug"
-		defines "GE_DEBUG"
-		runtime "Debug"
-		symbols "on"
-
-	filter "configurations:Release"
-		defines "GE_RELEASE"
-		runtime "Release"
-		optimize "on"
-
-	filter "configurations:Dist"
-		defines "GE_DIST"
-		runtime "Release"
-		optimize "on"
-
-project "Sandbox"
-	location "Sandbox"
-	kind "ConsoleApp"
-	language "C++"
-	cppdialect "C++17"
-	staticruntime "on"
-
-	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("temp/" .. outputdir .. "/%{prj.name}")
-
-	files
-	{
-		"%{prj.name}/source/**.h",
-		"%{prj.name}/source/**.cpp"
-	}
-
-	includedirs
-	{
-		"GanymedEngine/extern/spdlog/include",
-		"GanymedEngine/source",
-		"GanymedEngine/extern/imgui",
-		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}"
-	}
-
-	links
-	{
-		"GanymedEngine"
-	}
-
-	filter "system:windows"
-		systemversion "latest"
-
-	filter "configurations:Debug"
-		defines "GE_DEBUG"
-		runtime "Debug"
-		symbols "on"
-
-	filter "configurations:Release"
-		defines "GE_RELEASE"
-		runtime "Release"
-		optimize "on"
-
-	filter "configurations:Dist"
-		defines "GE_DIST"
-		runtime "Release"
-		optimize "on"
-
-project "GanymedEditor"
-	location "GanymedEditor"
-	kind "ConsoleApp"
-	language "C++"
-	cppdialect "C++17"
-	staticruntime "on"
-
-	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("temp/" .. outputdir .. "/%{prj.name}")
-
-	files
-	{
-		"%{prj.name}/source/**.h",
-		"%{prj.name}/source/**.cpp"
-	}
-
-	includedirs
-	{
-		"GanymedEngine/extern/spdlog/include",
-		"GanymedEngine/source",
-		"GanymedEngine/extern/imgui",
-		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}"
-	}
-
-	links
-	{
-		"GanymedEngine"
-	}
-
-	filter "system:windows"
-		systemversion "latest"
-
-	filter "configurations:Debug"
-		defines "GE_DEBUG"
-		runtime "Debug"
-		symbols "on"
-
-	filter "configurations:Release"
-		defines "GE_RELEASE"
-		runtime "Release"
-		optimize "on"
-
-	filter "configurations:Dist"
-		defines "GE_DIST"
-		runtime "Release"
-		optimize "on"
+include "GanymedEngine"
+include "Sandbox"
+include "GanymedEditor"
