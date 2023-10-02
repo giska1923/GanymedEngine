@@ -77,7 +77,7 @@
       <PrecompiledHeaderFile>gepch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;GLFW_INCLUDE_NONE;GE_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>source;extern\spdlog\include;extern\Glad\include;extern\GLFW\include;extern\imgui;extern\glm;extern\stb_image;extern\entt\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>source;extern\spdlog\include;extern\Glad\include;extern\GLFW\include;extern\imgui;extern\glm;extern\stb_image;extern\entt\include;extern\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <MinimalRebuild>false</MinimalRebuild>
@@ -99,7 +99,7 @@
       <PrecompiledHeaderFile>gepch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;GLFW_INCLUDE_NONE;GE_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>source;extern\spdlog\include;extern\Glad\include;extern\GLFW\include;extern\imgui;extern\glm;extern\stb_image;extern\entt\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>source;extern\spdlog\include;extern\Glad\include;extern\GLFW\include;extern\imgui;extern\glm;extern\stb_image;extern\entt\include;extern\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -124,7 +124,7 @@
       <PrecompiledHeaderFile>gepch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;GLFW_INCLUDE_NONE;GE_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>source;extern\spdlog\include;extern\Glad\include;extern\GLFW\include;extern\imgui;extern\glm;extern\stb_image;extern\entt\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>source;extern\spdlog\include;extern\Glad\include;extern\GLFW\include;extern\imgui;extern\glm;extern\stb_image;extern\entt\include;extern\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -585,6 +585,7 @@
     <ClInclude Include="source\GanymedE\Scene\Entity.h" />
     <ClInclude Include="source\GanymedE\Scene\Scene.h" />
     <ClInclude Include="source\GanymedE\Scene\SceneCamera.h" />
+    <ClInclude Include="source\GanymedE\Scene\SceneSerializer.h" />
     <ClInclude Include="source\GanymedE\Scene\ScriptableEntity.h" />
     <ClInclude Include="source\GanymedE\events\ApplicationEvent.h" />
     <ClInclude Include="source\GanymedE\events\Event.h" />
@@ -624,6 +625,7 @@
     <ClCompile Include="source\GanymedE\Scene\Entity.cpp" />
     <ClCompile Include="source\GanymedE\Scene\Scene.cpp" />
     <ClCompile Include="source\GanymedE\Scene\SceneCamera.cpp" />
+    <ClCompile Include="source\GanymedE\Scene\SceneSerializer.cpp" />
     <ClCompile Include="source\GanymedE\main\Application.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="source\Platform\OpenGL\OpenGLContext.cpp" />
@@ -647,6 +649,9 @@
     </ProjectReference>
     <ProjectReference Include="extern\imgui\ImGui.vcxproj">
       <Project>{C0FF640D-2C14-8DBE-F595-301E616989EF}</Project>
+    </ProjectReference>
+    <ProjectReference Include="extern\yaml-cpp\yaml-cpp.vcxproj">
+      <Project>{88F1A057-74BE-FB62-9DD7-E90A890331F1}</Project>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

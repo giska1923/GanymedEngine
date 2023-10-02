@@ -1386,6 +1386,9 @@
     <ClInclude Include="source\GanymedE\Scene\SceneCamera.h">
       <Filter>source\GanymedE\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="source\GanymedE\Scene\SceneSerializer.h">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="source\GanymedE\Scene\ScriptableEntity.h">
       <Filter>source\GanymedE\Scene</Filter>
     </ClInclude>
@@ -1497,6 +1500,9 @@
       <Filter>source\GanymedE\Scene</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\Scene\SceneCamera.cpp">
+      <Filter>source\GanymedE\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\GanymedE\Scene\SceneSerializer.cpp">
       <Filter>source\GanymedE\Scene</Filter>
     </ClCompile>
     <ClCompile Include="source\GanymedE\main\Application.cpp">
