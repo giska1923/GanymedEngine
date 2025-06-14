@@ -3,6 +3,9 @@
 !vendor/premake/bin
 bin/
 
+# Always track premake5.lua files (build configuration)
+!**/premake5.lua
+
 # Build artifacts in extern folders
 **/extern/**/bin/
 **/extern/**/bin-int/

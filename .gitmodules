@@ -3,7 +3,7 @@
 	url = https://github.com/gabime/spdlog
 [submodule "GanymedEngine/extern/GLFW"]
 	path = GanymedEngine/extern/GLFW
-	url = https://github.com/thecherno/glfw
+	url = https://github.com/glfw/glfw
 [submodule "GanymedEngine/extern/imgui"]
 	path = GanymedEngine/extern/imgui
 	url = https://github.com/ocornut/imgui
