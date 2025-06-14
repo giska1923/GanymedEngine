@@ -3,6 +3,24 @@
 !vendor/premake/bin
 bin/
 
+# Build artifacts in extern folders
+**/extern/**/bin/
+**/extern/**/bin-int/
+**/extern/**/temp/
+**/extern/**/*.vcxproj
+**/extern/**/*.vcxproj.filters
+**/extern/**/*.vcxproj.user
+**/extern/**/*.lib
+**/extern/**/*.pdb
+**/extern/**/*.obj
+
+# But keep the main extern submodule folders tracked
+!**/extern/*/
+!**/extern/*/.git
+
+# Temporary build folders
+temp/
+
 # GanymedE files
 *.log
 *.tlog
@@ -14,6 +32,10 @@ bin/
 **.vcxproj
 **.vcxproj.filters
 **.vcxproj.user
+vs-chromium-project.txt
+
+# ImGui settings
+imgui.ini
 
 *.exe
 *.idb
