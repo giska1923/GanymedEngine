@@ -2,7 +2,7 @@ project "Sandbox"
 	kind "ConsoleApp"
 	language "C++"
 	cppdialect "C++17"
-	staticruntime "on"
+	staticruntime "off"
 
 	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
@@ -29,6 +29,7 @@ project "Sandbox"
 
 	filter "system:windows"
 		systemversion "latest"
+		buildoptions { "/utf-8" }
 
 	filter "configurations:Debug"
 		defines "GE_DEBUG"
