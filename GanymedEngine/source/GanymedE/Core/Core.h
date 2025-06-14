@@ -38,6 +38,8 @@
 //to bind some function targeted with x and caller y (mainly this) as an std::function
 #define BIND_CALLBACK_FN(x,y) std::bind(&x, y, std::placeholders::_1)
 
+#define GE_BIND_EVENT_FN(fn) [this](auto&&... args) -> decltype(auto) { return this->fn(std::forward<decltype(args)>(args)...); }
+
 //defaults
 
 #ifdef GE_PLATFORM_WINDOWS
