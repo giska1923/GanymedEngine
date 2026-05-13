@@ -11,6 +11,38 @@ cd "$SCRIPT_DIR/.."
 
 echo "GanymedEngine - Cross-Platform Project Generator"
 echo "==============================================="
+echo "Working directory: $(pwd)"
+echo "Checking for premake5.lua..."
+
+if [ ! -f "premake5.lua" ]; then
+    echo "✗ premake5.lua not found in current directory!"
+    echo "Expected location: $(pwd)/premake5.lua"
+    echo "Contents of current directory:"
+    ls -la
+    exit 1
+else
+    echo "✓ Found premake5.lua"
+fi
+
+echo "Checking for required dependencies..."
+if [ ! -d "GanymedEngine/extern/GLFW" ]; then
+    echo "✗ GLFW not found at GanymedEngine/extern/GLFW"
+    echo "Contents of GanymedEngine/extern/:"
+    ls -la GanymedEngine/extern/ 2>/dev/null || echo "GanymedEngine/extern/ directory not found"
+    exit 1
+else
+    echo "✓ Found GLFW dependency"
+fi
+
+if [ ! -f "GanymedEngine/extern/GLFW/premake5.lua" ]; then
+    echo "✗ GLFW premake5.lua not found"
+    echo "Contents of GanymedEngine/extern/GLFW/:"
+    ls -la GanymedEngine/extern/GLFW/ 2>/dev/null || echo "GLFW directory not accessible"
+    exit 1
+else
+    echo "✓ Found GLFW premake5.lua"
+fi
+echo ""
 
 # Detect the current platform
 if [[ "$OSTYPE" == "darwin"* ]]; then

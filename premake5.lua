@@ -16,10 +16,10 @@ workspace "GanymedEngine"
 		".editorconfig"
 	}
 
-	flags
-	{
-		"MultiProcessorCompile"
-	}
+	-- Enable multi-processor compilation (compatible with older Premake5 versions)
+	filter "system:windows"
+		flags { "MultiProcessorCompile" }
+	filter {}
 
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
