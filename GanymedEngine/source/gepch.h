@@ -9,6 +9,17 @@
 	#endif
 #endif
 
+// Platform-specific includes
+#ifdef GE_PLATFORM_LINUX
+	#include <unistd.h>
+	#include <signal.h>
+#endif
+
+#ifdef GE_PLATFORM_MACOS
+	#include <unistd.h>
+	#include <signal.h>
+#endif
+
 #include <iostream>
 #include <memory>
 #include <utility>

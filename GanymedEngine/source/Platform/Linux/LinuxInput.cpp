@@ -6,7 +6,7 @@
 
 namespace GanymedE {
 
-#ifdef GE_PLATFORM_WINDOWS
+#ifdef GE_PLATFORM_LINUX
 	bool Input::IsKeyPressed(const KeyCode key)
 	{
 		auto* window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());

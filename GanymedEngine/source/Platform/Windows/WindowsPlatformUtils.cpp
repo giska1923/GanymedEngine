@@ -10,6 +10,7 @@
 
 namespace GanymedE {
 
+#ifdef GE_PLATFORM_WINDOWS
 	std::string FileDialogs::OpenFile(const char* filter)
 	{
 		OPENFILENAMEA ofn;
@@ -47,5 +48,6 @@ namespace GanymedE {
 		}
 		return std::string();
 	}
+#endif
 
 }
