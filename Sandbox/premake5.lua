@@ -31,6 +31,40 @@ project "Sandbox"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
 
+	-- Static libraries do not propagate their links outside Visual Studio,
+	-- so the executable links the dependency projects and system libraries itself
+	filter "system:linux"
+		systemversion "latest"
+
+		links
+		{
+			"GLFW",
+			"Glad",
+			"ImGui",
+			"yaml-cpp",
+			"GL",
+			"X11",
+			"dl",
+			"pthread"
+		}
+
+	filter "system:macosx"
+		systemversion "latest"
+
+		links
+		{
+			"GLFW",
+			"Glad",
+			"ImGui",
+			"yaml-cpp",
+			"Cocoa.framework",
+			"OpenGL.framework",
+			"IOKit.framework",
+			"CoreFoundation.framework",
+			"CoreVideo.framework",
+			"QuartzCore.framework"
+		}
+
 	filter "configurations:Debug"
 		defines "GE_DEBUG"
 		runtime "Debug"

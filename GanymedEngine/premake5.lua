@@ -44,17 +44,24 @@ project "GanymedEngine"
 		"GLFW",
 		"Glad",
 		"ImGui",
-		"yaml-cpp",
-		"opengl32.lib"
+		"yaml-cpp"
 	}
-	
+
 	filter "system:windows"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
 
-		defines
+		links
 		{
+			"opengl32.lib"
 		}
+
+	filter "system:linux"
+		pic "On"
+		systemversion "latest"
+
+	filter "system:macosx"
+		systemversion "latest"
 
 	filter "configurations:Debug"
 		defines "GE_DEBUG"
