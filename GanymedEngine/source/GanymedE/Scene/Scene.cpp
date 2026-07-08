@@ -102,7 +102,8 @@ namespace GanymedE {
 	template<typename T>
 	void Scene::OnComponentAdded(Entity entity, T& component)
 	{
-		static_assert(false);
+		// Must depend on T: a plain static_assert(false) fires even when never instantiated on GCC/Clang
+		static_assert(sizeof(T) == 0, "OnComponentAdded is not specialized for this component type!");
 	}
 
 	template<>

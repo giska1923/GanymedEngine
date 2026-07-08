@@ -1,9 +1,9 @@
 #include "gepch.h"
 #include "Platform/Windows/WindowsWindow.h"
 
-#include "GanymedE/Events/ApplicationEvent.h"
-#include "GanymedE/Events/MouseEvent.h"
-#include "GanymedE/Events/KeyEvent.h"
+#include "GanymedE/events/ApplicationEvent.h"
+#include "GanymedE/events/MouseEvent.h"
+#include "GanymedE/events/KeyEvent.h"
 
 #include "Platform/OpenGL/OpenGLContext.h"
 
