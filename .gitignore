@@ -3,6 +3,10 @@
 !vendor/premake/bin
 bin/
 
+# Premake-generated makefiles (regenerate with scripts/*_GenerateProjects.sh)
+Makefile
+*.make
+
 # Always track premake5.lua files (build configuration)
 !**/premake5.lua
 
