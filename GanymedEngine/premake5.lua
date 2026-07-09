@@ -10,9 +10,11 @@ project "GanymedEngine"
 	pchheader "gepch.h"
 	pchsource "source/gepch.cpp"
 
-	-- Xcode resolves the prefix header relative to the project directory, not the include dirs
+	-- Xcode resolves the prefix header relative to the project directory, not the include dirs,
+	-- and puts includedirs in USER_HEADER_SEARCH_PATHS which angled includes (spdlog) don't see
 	filter "action:xcode4"
 		pchheader "source/gepch.h"
+		xcodebuildsettings { ["ALWAYS_SEARCH_USER_PATHS"] = "YES" }
 	filter {}
 
 	files

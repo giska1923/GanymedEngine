@@ -30,6 +30,11 @@ project "GanymedEditor"
 	-- Assets are loaded via relative paths, so the debugger must launch from the project folder
 	debugdir "%{prj.location}"
 
+	-- Xcode puts includedirs in USER_HEADER_SEARCH_PATHS which angled includes (spdlog) don't see
+	filter "action:xcode4"
+		xcodebuildsettings { ["ALWAYS_SEARCH_USER_PATHS"] = "YES" }
+	filter {}
+
 	filter "system:windows"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
