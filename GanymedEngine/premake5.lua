@@ -10,6 +10,11 @@ project "GanymedEngine"
 	pchheader "gepch.h"
 	pchsource "source/gepch.cpp"
 
+	-- Xcode resolves the prefix header relative to the project directory, not the include dirs
+	filter "action:xcode4"
+		pchheader "source/gepch.h"
+	filter {}
+
 	files
 	{
 		"source/**.h",
