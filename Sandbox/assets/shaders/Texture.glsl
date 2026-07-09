@@ -35,9 +35,31 @@ in vec2 v_TexCoord;
 in float v_TexIndex;
 in float v_TilingFactor;
 
-uniform sampler2D u_Textures[32];
+// GLSL 330 requires constant sampler array indices; 16 units is the GL 4.1 guaranteed minimum
+uniform sampler2D u_Textures[16];
 
 void main()
 {
-	color = texture(u_Textures[int(v_TexIndex)], v_TexCoord * v_TilingFactor) * v_Color;
+	vec2 texCoord = v_TexCoord * v_TilingFactor;
+	vec4 texColor = vec4(1.0);
+	switch (int(v_TexIndex))
+	{
+		case  0: texColor = texture(u_Textures[ 0], texCoord); break;
+		case  1: texColor = texture(u_Textures[ 1], texCoord); break;
+		case  2: texColor = texture(u_Textures[ 2], texCoord); break;
+		case  3: texColor = texture(u_Textures[ 3], texCoord); break;
+		case  4: texColor = texture(u_Textures[ 4], texCoord); break;
+		case  5: texColor = texture(u_Textures[ 5], texCoord); break;
+		case  6: texColor = texture(u_Textures[ 6], texCoord); break;
+		case  7: texColor = texture(u_Textures[ 7], texCoord); break;
+		case  8: texColor = texture(u_Textures[ 8], texCoord); break;
+		case  9: texColor = texture(u_Textures[ 9], texCoord); break;
+		case 10: texColor = texture(u_Textures[10], texCoord); break;
+		case 11: texColor = texture(u_Textures[11], texCoord); break;
+		case 12: texColor = texture(u_Textures[12], texCoord); break;
+		case 13: texColor = texture(u_Textures[13], texCoord); break;
+		case 14: texColor = texture(u_Textures[14], texCoord); break;
+		case 15: texColor = texture(u_Textures[15], texCoord); break;
+	}
+	color = texColor * v_Color;
 }

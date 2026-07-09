@@ -1,9 +1,9 @@
 #include "gepch.h"
 #include "Platform/Windows/WindowsWindow.h"
 
-#include "GanymedE/Events/ApplicationEvent.h"
-#include "GanymedE/Events/MouseEvent.h"
-#include "GanymedE/Events/KeyEvent.h"
+#include "GanymedE/events/ApplicationEvent.h"
+#include "GanymedE/events/MouseEvent.h"
+#include "GanymedE/events/KeyEvent.h"
 
 #include "Platform/OpenGL/OpenGLContext.h"
 
@@ -15,9 +15,12 @@ namespace GanymedE {
 		GE_CORE_ERROR("GLFW Error ({0}): {1}", error, desc);
 	}
 
-	Window* Window::Create(const WindowProps& props) {
+#ifdef GE_PLATFORM_WINDOWS
+	Window* Window::Create(const WindowProps& props)
+	{
 		return new WindowsWindow(props);
 	}
+#endif
 
 	WindowsWindow::WindowsWindow(const WindowProps& props)
 	{

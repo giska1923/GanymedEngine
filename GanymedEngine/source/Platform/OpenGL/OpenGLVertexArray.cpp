@@ -30,7 +30,7 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		glCreateVertexArrays(1, &m_RendererID);
+		glGenVertexArrays(1, &m_RendererID);
 	}
 
 	OpenGLVertexArray::~OpenGLVertexArray()
@@ -84,7 +84,7 @@ namespace GanymedE {
 					ShaderDataTypeToOpenGLBaseType(element.Type),
 					element.Normalized ? GL_TRUE : GL_FALSE,
 					layout.GetStride(),
-					(const void*)element.Offset);
+					(const void*)(uintptr_t)element.Offset);
 				m_VertexBufferIndex++;
 				break;
 			}
@@ -100,7 +100,7 @@ namespace GanymedE {
 						ShaderDataTypeToOpenGLBaseType(element.Type),
 						element.Normalized ? GL_TRUE : GL_FALSE,
 						layout.GetStride(),
-						(const void*)(element.Offset + sizeof(float) * count * i));
+						(const void*)(uintptr_t)(element.Offset + sizeof(float) * count * i));
 					glVertexAttribDivisor(m_VertexBufferIndex, 1);
 					m_VertexBufferIndex++;
 				}

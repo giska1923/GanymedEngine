@@ -10,6 +10,13 @@ project "GanymedEngine"
 	pchheader "gepch.h"
 	pchsource "source/gepch.cpp"
 
+	-- Xcode resolves the prefix header relative to the project directory, not the include dirs,
+	-- and puts includedirs in USER_HEADER_SEARCH_PATHS which angled includes (spdlog) don't see
+	filter "action:xcode4"
+		pchheader "source/gepch.h"
+		xcodebuildsettings { ["ALWAYS_SEARCH_USER_PATHS"] = "YES" }
+	filter {}
+
 	files
 	{
 		"source/**.h",
@@ -44,17 +51,24 @@ project "GanymedEngine"
 		"GLFW",
 		"Glad",
 		"ImGui",
-		"yaml-cpp",
-		"opengl32.lib"
+		"yaml-cpp"
 	}
-	
+
 	filter "system:windows"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
 
-		defines
+		links
 		{
+			"opengl32.lib"
 		}
+
+	filter "system:linux"
+		pic "On"
+		systemversion "latest"
+
+	filter "system:macosx"
+		systemversion "latest"
 
 	filter "configurations:Debug"
 		defines "GE_DEBUG"

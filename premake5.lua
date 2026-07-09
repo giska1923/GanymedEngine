@@ -35,9 +35,9 @@ IncludeDir["yaml_cpp"] = "%{wks.location}/GanymedEngine/extern/yaml-cpp/include"
 
 group "Dependencies"
 	include "vendor/premake"
-	include "GanymedEngine/extern/GLFW"
+	include "GanymedEngine/extern/GLFW.lua"
 	include "GanymedEngine/extern/Glad"
-	include "GanymedEngine/extern/imgui"
+	include "GanymedEngine/extern/imgui.lua"
 	include "GanymedEngine/extern/yaml-cpp"
 group ""
 

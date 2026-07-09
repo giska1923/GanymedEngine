@@ -23,7 +23,6 @@
 #error "IOS is not supported!"
 #elif TARGET_OS_MAC == 1
 #define GE_PLATFORM_MACOS
-#error "MacOS is not supported!"
 #else
 #error "Unknown Apple platform!"
 #endif
@@ -35,7 +34,6 @@
 #error "Android is not supported!"
 #elif defined(__linux__)
 #define GE_PLATFORM_LINUX
-#error "Linux is not supported!"
 #else
 	/* Unknown compiler/platform */
 #error "Unknown platform!"

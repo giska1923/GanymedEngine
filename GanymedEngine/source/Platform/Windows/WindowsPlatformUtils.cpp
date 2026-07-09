@@ -1,6 +1,8 @@
 #include "gepch.h"
 #include "GanymedE/Utils/PlatformUtils.h"
 
+#ifdef GE_PLATFORM_WINDOWS
+
 #include <commdlg.h>
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -9,7 +11,6 @@
 #include "GanymedE/main/Application.h"
 
 namespace GanymedE {
-
 	std::string FileDialogs::OpenFile(const char* filter)
 	{
 		OPENFILENAMEA ofn;
@@ -49,3 +50,5 @@ namespace GanymedE {
 	}
 
 }
+
+#endif

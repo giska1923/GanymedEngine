@@ -266,6 +266,8 @@ namespace GanymedE {
 			break;
 		}
 		}
+
+		return false;
 	}
 
 	void EditorLayer::NewScene()
