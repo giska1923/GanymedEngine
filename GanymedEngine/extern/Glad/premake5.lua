@@ -18,6 +18,11 @@ project "Glad"
 		"include"
 	}
 
+	-- Xcode puts includedirs in USER_HEADER_SEARCH_PATHS which glad.c's angled self-includes don't see
+	filter "action:xcode4"
+		xcodebuildsettings { ["ALWAYS_SEARCH_USER_PATHS"] = "YES" }
+	filter {}
+
 	filter "system:windows"
 		systemversion "latest"
 
