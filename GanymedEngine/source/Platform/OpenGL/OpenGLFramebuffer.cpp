@@ -30,6 +30,9 @@ namespace GanymedE {
 			glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			// Clamp so shadow lookups outside the map are unlit (handled in-shader too)
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
 			glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentType, GL_TEXTURE_2D, id, 0);
 		}
@@ -39,6 +42,7 @@ namespace GanymedE {
 			switch (format)
 			{
 				case FramebufferTextureFormat::DEPTH24STENCIL8: return true;
+				case FramebufferTextureFormat::DEPTH32F: return true;
 				default: return false;
 			}
 		}
@@ -94,6 +98,9 @@ namespace GanymedE {
 					case FramebufferTextureFormat::RGBA8:
 						Utils::AttachColorTexture(m_ColorAttachments[i], GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, m_Specification.Width, m_Specification.Height, (int)i);
 						break;
+					case FramebufferTextureFormat::RGBA16F:
+						Utils::AttachColorTexture(m_ColorAttachments[i], GL_RGBA16F, GL_RGBA, GL_FLOAT, m_Specification.Width, m_Specification.Height, (int)i);
+						break;
 					case FramebufferTextureFormat::RED_INTEGER:
 						Utils::AttachColorTexture(m_ColorAttachments[i], GL_R32I, GL_RED_INTEGER, GL_INT, m_Specification.Width, m_Specification.Height, (int)i);
 						break;
@@ -110,6 +117,9 @@ namespace GanymedE {
 				case FramebufferTextureFormat::DEPTH24STENCIL8:
 					Utils::AttachDepthTexture(m_DepthAttachment, GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL_ATTACHMENT, m_Specification.Width, m_Specification.Height);
 					break;
+				case FramebufferTextureFormat::DEPTH32F:
+					Utils::AttachDepthTexture(m_DepthAttachment, GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT, GL_DEPTH_ATTACHMENT, m_Specification.Width, m_Specification.Height);
+					break;
 			}
 		}
 
@@ -121,8 +131,9 @@ namespace GanymedE {
 		}
 		else if (m_ColorAttachments.empty())
 		{
-			// Depth-only pass
+			// Depth-only pass (e.g. shadow map)
 			glDrawBuffer(GL_NONE);
+			glReadBuffer(GL_NONE);
 		}
 
 		GE_CORE_ASSERT(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "Framebuffer is incomplete!");
@@ -132,13 +143,31 @@ namespace GanymedE {
 
 	void OpenGLFramebuffer::Bind()
 	{
+		// Remember whatever was bound so nested passes can restore it on Unbind()
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &m_PreviousBinding);
+		glGetIntegerv(GL_VIEWPORT, m_PreviousViewport);
+
 		glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
 		glViewport(0, 0, m_Specification.Width, m_Specification.Height);
 	}
 
 	void OpenGLFramebuffer::Unbind()
 	{
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)m_PreviousBinding);
+		glViewport(m_PreviousViewport[0], m_PreviousViewport[1], m_PreviousViewport[2], m_PreviousViewport[3]);
+	}
+
+	void OpenGLFramebuffer::BindColorTexture(uint32_t attachmentIndex, uint32_t slot) const
+	{
+		GE_CORE_ASSERT(attachmentIndex < m_ColorAttachments.size(), "Color attachment index out of range!");
+		glActiveTexture(GL_TEXTURE0 + slot);
+		glBindTexture(GL_TEXTURE_2D, m_ColorAttachments[attachmentIndex]);
+	}
+
+	void OpenGLFramebuffer::BindDepthTexture(uint32_t slot) const
+	{
+		glActiveTexture(GL_TEXTURE0 + slot);
+		glBindTexture(GL_TEXTURE_2D, m_DepthAttachment);
 	}
 
 	void OpenGLFramebuffer::Resize(uint32_t width, uint32_t height)

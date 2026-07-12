@@ -31,10 +31,15 @@ namespace GanymedE {
 		void OnScenePlay();
 		void OnSceneStop();
 
+		// Seeds a fresh scene with a default sun + sky so meshes are lit immediately
+		void SetupDefaultEnvironment(const Ref<Scene>& scene);
+
 		// UI
 		void UI_Toolbar();
 	private:
-		Ref<Framebuffer> m_Framebuffer;
+		Ref<Framebuffer> m_Framebuffer;          // HDR scene target (RGBA16F + entity-id + depth)
+		Ref<Framebuffer> m_CompositeFramebuffer; // LDR tonemapped result shown in the viewport
+		float m_Exposure = 1.0f;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;

@@ -5,6 +5,7 @@
 #include "GanymedE/Renderer/OrthographicCamera.h"
 #include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Renderer/Material.h"
+#include "GanymedE/Renderer/Environment.h"
 
 #include <glm/glm.hpp>
 
@@ -24,6 +25,20 @@ namespace GanymedE {
 		static void SubmitMesh(const Ref<Mesh>& mesh, uint32_t submeshIndex, const Ref<Material>& material,
 			const glm::mat4& transform, int entityID = -1);
 
+		// Analytic lights (submit between BeginScene and EndScene)
+		static void SubmitDirectionalLight(const glm::vec3& direction, const glm::vec3& color, float intensity, bool castShadows);
+		static void SubmitPointLight(const glm::vec3& position, const glm::vec3& color, float intensity, float radius, float falloff);
+		static void SubmitSpotLight(const glm::vec3& position, const glm::vec3& direction, const glm::vec3& color,
+			float intensity, float range, float innerConeCos, float outerConeCos, float falloff);
+
+		// Environment / ambient. Procedural fallback when no HDR path is provided.
+		static void SubmitSkyLight(const glm::vec3& skyColor, const glm::vec3& groundColor, float intensity, bool drawSkybox);
+		static void SubmitEnvironment(const Ref<Environment>& environment, float intensity, bool drawSkybox);
+
+		// Loads and caches an HDR environment (relative to the assets/ folder).
+		static Ref<Environment> LoadEnvironment(const std::string& path);
+
+		static void DrawSkybox();
 		static void DrawGrid();
 
 		struct Statistics

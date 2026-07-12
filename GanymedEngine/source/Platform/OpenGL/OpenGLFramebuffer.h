@@ -25,10 +25,20 @@ namespace GanymedE {
 			return m_ColorAttachments[index];
 		}
 
+		virtual uint32_t GetDepthAttachmentRendererID() const override { return m_DepthAttachment; }
+
+		virtual void BindColorTexture(uint32_t attachmentIndex, uint32_t slot) const override;
+		virtual void BindDepthTexture(uint32_t slot) const override;
+
 		virtual const FramebufferSpecification& GetSpecification() const override { return m_Specification; }
 	private:
 		uint32_t m_RendererID = 0;
 		FramebufferSpecification m_Specification;
+
+		// Saved on Bind() and restored on Unbind() so nested passes (e.g. shadow maps)
+		// return control to the previously bound framebuffer/viewport.
+		int m_PreviousBinding = 0;
+		int m_PreviousViewport[4] = { 0, 0, 0, 0 };
 
 		std::vector<FramebufferTextureSpecification> m_ColorAttachmentSpecifications;
 		FramebufferTextureSpecification m_DepthAttachmentSpecification = FramebufferTextureFormat::None;

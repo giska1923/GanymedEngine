@@ -5,6 +5,7 @@
 #include "Components.h"
 #include "GanymedE/Renderer/Renderer2D.h"
 #include "GanymedE/Renderer/Renderer3D.h"
+#include "GanymedE/Renderer/Environment.h"
 
 #include <glm/glm.hpp>
 
@@ -60,6 +61,10 @@ namespace GanymedE {
 		CopyComponent<SpriteRendererComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<StaticMeshComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<CameraComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<DirectionalLightComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<PointLightComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<SpotLightComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<SkyLightComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<NativeScriptComponent>(dstRegistry, srcRegistry, enttMap);
 
 		// Runtime script instances must be recreated on play
@@ -218,6 +223,7 @@ namespace GanymedE {
 			glm::mat4 cameraWorld = cameraTransform;
 
 			Renderer3D::BeginScene(*mainCamera, cameraWorld);
+			SubmitLightsAndSky();
 			{
 				auto view = m_Registry.view<TransformComponent, StaticMeshComponent>();
 				for (auto entity : view)
@@ -248,6 +254,7 @@ namespace GanymedE {
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
 		Renderer3D::BeginScene(camera);
+		SubmitLightsAndSky();
 		Renderer3D::DrawGrid();
 
 		{
@@ -274,6 +281,72 @@ namespace GanymedE {
 		}
 
 		Renderer2D::EndScene();
+	}
+
+	void Scene::SubmitLightsAndSky()
+	{
+		// Directional lights (the first shadow-caster claims the shadow map)
+		{
+			auto view = m_Registry.view<TransformComponent, DirectionalLightComponent>();
+			for (auto entity : view)
+			{
+				auto& light = view.get<DirectionalLightComponent>(entity);
+				glm::mat4 world = GetWorldSpaceTransform(Entity{ entity, this });
+				glm::vec3 dir = glm::normalize(glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+				Renderer3D::SubmitDirectionalLight(dir, light.Color, light.Intensity, light.CastShadows);
+			}
+		}
+
+		// Point lights
+		{
+			auto view = m_Registry.view<TransformComponent, PointLightComponent>();
+			for (auto entity : view)
+			{
+				auto& light = view.get<PointLightComponent>(entity);
+				glm::mat4 world = GetWorldSpaceTransform(Entity{ entity, this });
+				glm::vec3 position = glm::vec3(world[3]);
+				Renderer3D::SubmitPointLight(position, light.Color, light.Intensity, light.Radius, light.Falloff);
+			}
+		}
+
+		// Spot lights
+		{
+			auto view = m_Registry.view<TransformComponent, SpotLightComponent>();
+			for (auto entity : view)
+			{
+				auto& light = view.get<SpotLightComponent>(entity);
+				glm::mat4 world = GetWorldSpaceTransform(Entity{ entity, this });
+				glm::vec3 position = glm::vec3(world[3]);
+				glm::vec3 dir = glm::normalize(glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+				Renderer3D::SubmitSpotLight(position, dir, light.Color, light.Intensity, light.Range,
+					glm::cos(light.InnerConeAngle), glm::cos(light.OuterConeAngle), light.Falloff);
+			}
+		}
+
+		// Sky light / environment (first one wins)
+		{
+			auto view = m_Registry.view<SkyLightComponent>();
+			for (auto entity : view)
+			{
+				auto& sky = view.get<SkyLightComponent>(entity);
+				if (!sky.EnvironmentPath.empty())
+				{
+					std::string fullPath = "assets/" + sky.EnvironmentPath;
+					Ref<Environment> environment = Renderer3D::LoadEnvironment(fullPath);
+					if (environment && environment->IsValid())
+						Renderer3D::SubmitEnvironment(environment, sky.Intensity, sky.DrawSkybox);
+					else
+						Renderer3D::SubmitSkyLight(sky.SkyColor, sky.GroundColor, sky.Intensity, sky.DrawSkybox);
+				}
+				else
+				{
+					Renderer3D::SubmitSkyLight(sky.SkyColor, sky.GroundColor, sky.Intensity, sky.DrawSkybox);
+				}
+				break;
+			}
+		}
+
+		Renderer3D::DrawSkybox();
 	}
 
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)
@@ -368,6 +441,26 @@ namespace GanymedE {
 
 	template<>
 	void Scene::OnComponentAdded<StaticMeshComponent>(Entity entity, StaticMeshComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<DirectionalLightComponent>(Entity entity, DirectionalLightComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<PointLightComponent>(Entity entity, PointLightComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<SpotLightComponent>(Entity entity, SpotLightComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<SkyLightComponent>(Entity entity, SkyLightComponent& component)
 	{
 	}
 

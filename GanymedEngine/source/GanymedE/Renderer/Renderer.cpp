@@ -3,6 +3,7 @@
 
 #include "Renderer2D.h"
 #include "Renderer3D.h"
+#include "PostProcess.h"
 
 namespace GanymedE {
 
@@ -13,10 +14,12 @@ namespace GanymedE {
 		RenderCommand::Init();
 		Renderer2D::Init();
 		Renderer3D::Init();
+		PostProcess::Init();
 	}
 
 	void Renderer::Shutdown()
 	{
+		PostProcess::Shutdown();
 		Renderer3D::Shutdown();
 		Renderer2D::Shutdown();
 	}

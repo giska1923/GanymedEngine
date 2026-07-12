@@ -7,6 +7,10 @@
 
 #include "GanymedE/Scene/Components.h"
 
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+
 namespace GanymedE {
 
 	SceneHierarchyPanel::SceneHierarchyPanel(const Ref<Scene>& context)
@@ -317,6 +321,42 @@ namespace GanymedE {
 				}
 			}
 
+			if (!m_SelectionContext.HasComponent<DirectionalLightComponent>())
+			{
+				if (ImGui::MenuItem("Directional Light"))
+				{
+					m_SelectionContext.AddComponent<DirectionalLightComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<PointLightComponent>())
+			{
+				if (ImGui::MenuItem("Point Light"))
+				{
+					m_SelectionContext.AddComponent<PointLightComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<SpotLightComponent>())
+			{
+				if (ImGui::MenuItem("Spot Light"))
+				{
+					m_SelectionContext.AddComponent<SpotLightComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<SkyLightComponent>())
+			{
+				if (ImGui::MenuItem("Sky Light"))
+				{
+					m_SelectionContext.AddComponent<SkyLightComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
 			ImGui::EndPopup();
 		}
 
@@ -442,6 +482,73 @@ namespace GanymedE {
 			{
 				ImGui::TextDisabled("No mesh assigned");
 			}
+		});
+
+		DrawComponent<DirectionalLightComponent>("Directional Light", entity, [](auto& component)
+		{
+			ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
+			ImGui::DragFloat("Intensity", &component.Intensity, 0.05f, 0.0f, 100.0f);
+			ImGui::Checkbox("Cast Shadows", &component.CastShadows);
+			ImGui::TextDisabled("Direction = entity -Z (rotate to aim)");
+		});
+
+		DrawComponent<PointLightComponent>("Point Light", entity, [](auto& component)
+		{
+			ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
+			ImGui::DragFloat("Intensity", &component.Intensity, 0.05f, 0.0f, 1000.0f);
+			ImGui::DragFloat("Radius", &component.Radius, 0.1f, 0.0f, 1000.0f);
+			ImGui::DragFloat("Falloff", &component.Falloff, 0.05f, 0.01f, 16.0f);
+		});
+
+		DrawComponent<SpotLightComponent>("Spot Light", entity, [](auto& component)
+		{
+			ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
+			ImGui::DragFloat("Intensity", &component.Intensity, 0.05f, 0.0f, 1000.0f);
+			ImGui::DragFloat("Range", &component.Range, 0.1f, 0.0f, 1000.0f);
+
+			float inner = glm::degrees(component.InnerConeAngle);
+			if (ImGui::DragFloat("Inner Cone", &inner, 0.5f, 0.0f, 89.0f))
+				component.InnerConeAngle = glm::radians(inner);
+
+			float outer = glm::degrees(component.OuterConeAngle);
+			if (ImGui::DragFloat("Outer Cone", &outer, 0.5f, 0.0f, 89.0f))
+				component.OuterConeAngle = glm::radians(glm::max(outer, inner));
+
+			ImGui::DragFloat("Falloff", &component.Falloff, 0.05f, 0.01f, 16.0f);
+			ImGui::TextDisabled("Direction = entity -Z (rotate to aim)");
+		});
+
+		DrawComponent<SkyLightComponent>("Sky Light", entity, [](auto& component)
+		{
+			char envBuffer[512];
+			memset(envBuffer, 0, sizeof(envBuffer));
+			strncpy(envBuffer, component.EnvironmentPath.c_str(), sizeof(envBuffer) - 1);
+			if (ImGui::InputText("HDR Path", envBuffer, sizeof(envBuffer)))
+				component.EnvironmentPath = std::string(envBuffer);
+
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
+				{
+					const char* path = (const char*)payload->Data;
+					std::string ext = std::filesystem::path(path).extension().string();
+					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+					if (ext == ".hdr")
+						component.EnvironmentPath = path;
+				}
+				ImGui::EndDragDropTarget();
+			}
+
+			if (!component.EnvironmentPath.empty())
+				ImGui::TextDisabled("Using HDR IBL (procedural colors are fallback)");
+			else
+			{
+				ImGui::ColorEdit3("Sky Color", glm::value_ptr(component.SkyColor));
+				ImGui::ColorEdit3("Ground Color", glm::value_ptr(component.GroundColor));
+			}
+
+			ImGui::DragFloat("Intensity", &component.Intensity, 0.02f, 0.0f, 20.0f);
+			ImGui::Checkbox("Draw Skybox", &component.DrawSkybox);
 		});
 	}
 }

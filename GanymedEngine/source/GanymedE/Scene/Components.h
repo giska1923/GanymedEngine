@@ -96,6 +96,56 @@ namespace GanymedE {
 		CameraComponent(const CameraComponent&) = default;
 	};
 
+	// The light "direction" is the entity's forward vector (-Z of its world transform).
+	struct DirectionalLightComponent
+	{
+		glm::vec3 Color{ 1.0f, 1.0f, 1.0f };
+		float Intensity = 1.0f;
+		bool CastShadows = true;
+
+		DirectionalLightComponent() = default;
+		DirectionalLightComponent(const DirectionalLightComponent&) = default;
+	};
+
+	struct PointLightComponent
+	{
+		glm::vec3 Color{ 1.0f, 1.0f, 1.0f };
+		float Intensity = 1.0f;
+		float Radius = 10.0f;
+		float Falloff = 1.0f;
+
+		PointLightComponent() = default;
+		PointLightComponent(const PointLightComponent&) = default;
+	};
+
+	struct SpotLightComponent
+	{
+		glm::vec3 Color{ 1.0f, 1.0f, 1.0f };
+		float Intensity = 1.0f;
+		float Range = 10.0f;
+		// Cone half-angles stored in radians
+		float InnerConeAngle = glm::radians(20.0f);
+		float OuterConeAngle = glm::radians(30.0f);
+		float Falloff = 1.0f;
+
+		SpotLightComponent() = default;
+		SpotLightComponent(const SpotLightComponent&) = default;
+	};
+
+	// Environment / image-based lighting. When EnvironmentPath is set, a baked HDR
+	// cubemap drives the skybox and IBL; otherwise the procedural hemispheric colors are used.
+	struct SkyLightComponent
+	{
+		std::string EnvironmentPath; // relative to assets/, e.g. "environments/studio.hdr"
+		glm::vec3 SkyColor{ 0.45f, 0.62f, 0.9f };
+		glm::vec3 GroundColor{ 0.28f, 0.26f, 0.22f };
+		float Intensity = 1.0f;
+		bool DrawSkybox = true;
+
+		SkyLightComponent() = default;
+		SkyLightComponent(const SkyLightComponent&) = default;
+	};
+
 	struct NativeScriptComponent
 	{
 		ScriptableEntity* Instance = nullptr;

@@ -178,6 +178,65 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		if (entity.HasComponent<DirectionalLightComponent>())
+		{
+			out << YAML::Key << "DirectionalLightComponent";
+			out << YAML::BeginMap;
+
+			auto& dlc = entity.GetComponent<DirectionalLightComponent>();
+			out << YAML::Key << "Color" << YAML::Value << dlc.Color;
+			out << YAML::Key << "Intensity" << YAML::Value << dlc.Intensity;
+			out << YAML::Key << "CastShadows" << YAML::Value << dlc.CastShadows;
+
+			out << YAML::EndMap;
+		}
+
+		if (entity.HasComponent<PointLightComponent>())
+		{
+			out << YAML::Key << "PointLightComponent";
+			out << YAML::BeginMap;
+
+			auto& plc = entity.GetComponent<PointLightComponent>();
+			out << YAML::Key << "Color" << YAML::Value << plc.Color;
+			out << YAML::Key << "Intensity" << YAML::Value << plc.Intensity;
+			out << YAML::Key << "Radius" << YAML::Value << plc.Radius;
+			out << YAML::Key << "Falloff" << YAML::Value << plc.Falloff;
+
+			out << YAML::EndMap;
+		}
+
+		if (entity.HasComponent<SpotLightComponent>())
+		{
+			out << YAML::Key << "SpotLightComponent";
+			out << YAML::BeginMap;
+
+			auto& slc = entity.GetComponent<SpotLightComponent>();
+			out << YAML::Key << "Color" << YAML::Value << slc.Color;
+			out << YAML::Key << "Intensity" << YAML::Value << slc.Intensity;
+			out << YAML::Key << "Range" << YAML::Value << slc.Range;
+			out << YAML::Key << "InnerConeAngle" << YAML::Value << slc.InnerConeAngle;
+			out << YAML::Key << "OuterConeAngle" << YAML::Value << slc.OuterConeAngle;
+			out << YAML::Key << "Falloff" << YAML::Value << slc.Falloff;
+
+			out << YAML::EndMap;
+		}
+
+		if (entity.HasComponent<SkyLightComponent>())
+		{
+			out << YAML::Key << "SkyLightComponent";
+			out << YAML::BeginMap;
+
+			auto& skc = entity.GetComponent<SkyLightComponent>();
+			if (!skc.EnvironmentPath.empty())
+				out << YAML::Key << "EnvironmentPath" << YAML::Value << skc.EnvironmentPath;
+			out << YAML::Key << "SkyColor" << YAML::Value << skc.SkyColor;
+			out << YAML::Key << "GroundColor" << YAML::Value << skc.GroundColor;
+			out << YAML::Key << "Intensity" << YAML::Value << skc.Intensity;
+			out << YAML::Key << "DrawSkybox" << YAML::Value << skc.DrawSkybox;
+
+			out << YAML::EndMap;
+		}
+
 		out << YAML::EndMap; // Entity
 	}
 
@@ -309,6 +368,50 @@ namespace GanymedE {
 							smc.Mesh = mesh;
 						}
 					}
+				}
+
+				auto directionalLightComponent = entity["DirectionalLightComponent"];
+				if (directionalLightComponent)
+				{
+					auto& dlc = deserializedEntity.AddComponent<DirectionalLightComponent>();
+					dlc.Color = directionalLightComponent["Color"].as<glm::vec3>();
+					dlc.Intensity = directionalLightComponent["Intensity"].as<float>();
+					dlc.CastShadows = directionalLightComponent["CastShadows"].as<bool>();
+				}
+
+				auto pointLightComponent = entity["PointLightComponent"];
+				if (pointLightComponent)
+				{
+					auto& plc = deserializedEntity.AddComponent<PointLightComponent>();
+					plc.Color = pointLightComponent["Color"].as<glm::vec3>();
+					plc.Intensity = pointLightComponent["Intensity"].as<float>();
+					plc.Radius = pointLightComponent["Radius"].as<float>();
+					plc.Falloff = pointLightComponent["Falloff"].as<float>();
+				}
+
+				auto spotLightComponent = entity["SpotLightComponent"];
+				if (spotLightComponent)
+				{
+					auto& slc = deserializedEntity.AddComponent<SpotLightComponent>();
+					slc.Color = spotLightComponent["Color"].as<glm::vec3>();
+					slc.Intensity = spotLightComponent["Intensity"].as<float>();
+					slc.Range = spotLightComponent["Range"].as<float>();
+					slc.InnerConeAngle = spotLightComponent["InnerConeAngle"].as<float>();
+					slc.OuterConeAngle = spotLightComponent["OuterConeAngle"].as<float>();
+					slc.Falloff = spotLightComponent["Falloff"].as<float>();
+				}
+
+				auto skyLightComponent = entity["SkyLightComponent"];
+				if (skyLightComponent)
+				{
+					auto& skc = deserializedEntity.AddComponent<SkyLightComponent>();
+					auto envPath = skyLightComponent["EnvironmentPath"];
+					if (envPath)
+						skc.EnvironmentPath = envPath.as<std::string>();
+					skc.SkyColor = skyLightComponent["SkyColor"].as<glm::vec3>();
+					skc.GroundColor = skyLightComponent["GroundColor"].as<glm::vec3>();
+					skc.Intensity = skyLightComponent["Intensity"].as<float>();
+					skc.DrawSkybox = skyLightComponent["DrawSkybox"].as<bool>();
 				}
 			}
 		}

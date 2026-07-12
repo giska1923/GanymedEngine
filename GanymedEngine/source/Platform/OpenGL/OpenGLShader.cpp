@@ -180,6 +180,10 @@ namespace GanymedE {
 		GLuint cameraBlockIndex = glGetUniformBlockIndex(program, "CameraData");
 		if (cameraBlockIndex != GL_INVALID_INDEX)
 			glUniformBlockBinding(program, cameraBlockIndex, 0);
+
+		GLuint lightBlockIndex = glGetUniformBlockIndex(program, "LightData");
+		if (lightBlockIndex != GL_INVALID_INDEX)
+			glUniformBlockBinding(program, lightBlockIndex, 1);
 	}
 
 	void OpenGLShader::Bind() const

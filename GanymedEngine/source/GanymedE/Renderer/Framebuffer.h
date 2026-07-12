@@ -9,10 +9,12 @@ namespace GanymedE {
 
 		// Color
 		RGBA8,
+		RGBA16F,
 		RED_INTEGER,
 
 		// Depth/stencil
 		DEPTH24STENCIL8,
+		DEPTH32F,
 
 		// Defaults
 		Depth = DEPTH24STENCIL8
@@ -61,6 +63,11 @@ namespace GanymedE {
 		virtual void ClearAttachment(uint32_t attachmentIndex, int value) = 0;
 
 		virtual uint32_t GetColorAttachmentRendererID(uint32_t index = 0) const = 0;
+		virtual uint32_t GetDepthAttachmentRendererID() const = 0;
+
+		// Bind an attachment as a sampler source on the given texture unit
+		virtual void BindColorTexture(uint32_t attachmentIndex, uint32_t slot) const = 0;
+		virtual void BindDepthTexture(uint32_t slot) const = 0;
 
 		virtual const FramebufferSpecification& GetSpecification() const = 0;
 

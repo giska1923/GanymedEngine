@@ -11,6 +11,7 @@
 #include "GanymedE/Math/Math.h"
 #include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Renderer/Renderer3D.h"
+#include "GanymedE/Renderer/PostProcess.h"
 
 #include <ImGuizmo.h>
 
@@ -35,12 +36,19 @@ namespace GanymedE {
 		m_IconStop = Texture2D::Create("resources/icons/StopButton.png");
 
 		FramebufferSpecification fbSpec;
-		fbSpec.Attachments = { FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
+		fbSpec.Attachments = { FramebufferTextureFormat::RGBA16F, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
 		fbSpec.Width = 1280;
 		fbSpec.Height = 720;
 		m_Framebuffer = Framebuffer::Create(fbSpec);
 
+		FramebufferSpecification compositeSpec;
+		compositeSpec.Attachments = { FramebufferTextureFormat::RGBA8 };
+		compositeSpec.Width = 1280;
+		compositeSpec.Height = 720;
+		m_CompositeFramebuffer = Framebuffer::Create(compositeSpec);
+
 		m_EditorScene = CreateRef<Scene>();
+		SetupDefaultEnvironment(m_EditorScene);
 		m_ActiveScene = m_EditorScene;
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
@@ -63,6 +71,7 @@ namespace GanymedE {
 			(spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
 		{
 			m_Framebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+			m_CompositeFramebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 			m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
 
 			m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
@@ -115,6 +124,12 @@ namespace GanymedE {
 		}
 
 		m_Framebuffer->Unbind();
+
+		// Tonemap the HDR scene target into the LDR composite target shown in the viewport
+		m_CompositeFramebuffer->Bind();
+		RenderCommand::Clear();
+		PostProcess::Tonemap(m_Framebuffer, m_Exposure);
+		m_CompositeFramebuffer->Unbind();
 	}
 
 	void EditorLayer::OnImGuiRender()
@@ -247,6 +262,10 @@ namespace GanymedE {
 		ImGui::Text("Draw Calls: %d", stats3D.DrawCalls);
 		ImGui::Text("Meshes: %d", stats3D.MeshCount);
 
+		ImGui::Separator();
+		ImGui::Text("Post Processing:");
+		ImGui::DragFloat("Exposure", &m_Exposure, 0.01f, 0.0f, 16.0f);
+
 		ImGui::End();
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
@@ -264,7 +283,7 @@ namespace GanymedE {
 		m_ViewportBounds[0] = { viewportScreenPos.x, viewportScreenPos.y };
 		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
 
-		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
+		uint32_t textureID = m_CompositeFramebuffer->GetColorAttachmentRendererID();
 		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
 		if (ImGui::BeginDragDropTarget())
@@ -471,10 +490,29 @@ namespace GanymedE {
 	void EditorLayer::NewScene()
 	{
 		m_EditorScene = CreateRef<Scene>();
+		SetupDefaultEnvironment(m_EditorScene);
 		m_ActiveScene = m_EditorScene;
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 		m_SceneState = SceneState::Edit;
+	}
+
+	void EditorLayer::SetupDefaultEnvironment(const Ref<Scene>& scene)
+	{
+		// Directional "sun": the light travels along the entity's -Z, so tilt it to come from above
+		Entity sun = scene->CreateEntity("Sun");
+		auto& sunTransform = sun.GetComponent<TransformComponent>();
+		sunTransform.Rotation = { glm::radians(-50.0f), glm::radians(30.0f), 0.0f };
+		auto& dl = sun.AddComponent<DirectionalLightComponent>();
+		dl.Color = { 1.0f, 0.98f, 0.92f };
+		dl.Intensity = 3.0f;
+		dl.CastShadows = true;
+
+		// Environment / ambient (HDR IBL when the asset is present, procedural fallback otherwise)
+		Entity sky = scene->CreateEntity("Sky Light");
+		auto& skyLight = sky.AddComponent<SkyLightComponent>();
+		skyLight.EnvironmentPath = "environments/studio_small_08_1k.hdr";
+		skyLight.Intensity = 1.0f;
 	}
 
 	void EditorLayer::OpenScene()

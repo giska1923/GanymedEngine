@@ -38,6 +38,9 @@ namespace GanymedE {
 		void OnComponentAdded(Entity entity, T& component);
 
 		void RemoveChildFromParent(UUID parentID, UUID childID);
+
+		// Gathers light + sky components and submits them to Renderer3D, then draws the sky.
+		void SubmitLightsAndSky();
 	private:
 		entt::registry m_Registry;
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
