@@ -11,7 +11,7 @@
 #include <utility>
 
 namespace GanymedE {
-	// In-editor viewport camera: orbits a focal point (Alt + LMB rotate, MMB pan, scroll zoom)
+	// In-editor viewport camera: orbit (Alt+LMB/MMB/scroll) and fly (RMB + WASD/QE)
 	class EditorCamera : public Camera
 	{
 	public:

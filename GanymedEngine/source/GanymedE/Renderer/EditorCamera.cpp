@@ -6,6 +6,7 @@
 #include "GanymedE/Core/MouseButtonCodes.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 
 namespace GanymedE {
 
@@ -24,7 +25,6 @@ namespace GanymedE {
 
 	void EditorCamera::UpdateView()
 	{
-		// m_Yaw = m_Pitch = 0.0f; // Lock the camera's rotation
 		m_Position = CalculatePosition();
 
 		glm::quat orientation = GetOrientation();
@@ -63,7 +63,35 @@ namespace GanymedE {
 		glm::vec2 delta = (mouse - m_InitialMousePosition) * 0.003f;
 		m_InitialMousePosition = mouse;
 
-		if (Input::IsKeyPressed(Key::LeftAlt))
+		// RMB fly mode (no Alt): look + WASD/QE move
+		if (Input::IsMouseButtonPressed(Mouse::ButtonRight) && !Input::IsKeyPressed(Key::LeftAlt))
+		{
+			MouseRotate(delta);
+			m_Pitch = std::clamp(m_Pitch, -1.5533f, 1.5533f); // ~±89°
+
+			float speed = 5.0f;
+			if (Input::IsKeyPressed(Key::LeftShift))
+				speed *= 3.0f;
+
+			float velocity = speed * ts;
+			glm::vec3 forward = GetForwardDirection();
+			glm::vec3 right = GetRightDirection();
+			glm::vec3 up = { 0.0f, 1.0f, 0.0f };
+
+			if (Input::IsKeyPressed(Key::W))
+				m_FocalPoint += forward * velocity;
+			if (Input::IsKeyPressed(Key::S))
+				m_FocalPoint -= forward * velocity;
+			if (Input::IsKeyPressed(Key::A))
+				m_FocalPoint -= right * velocity;
+			if (Input::IsKeyPressed(Key::D))
+				m_FocalPoint += right * velocity;
+			if (Input::IsKeyPressed(Key::Q))
+				m_FocalPoint -= up * velocity;
+			if (Input::IsKeyPressed(Key::E))
+				m_FocalPoint += up * velocity;
+		}
+		else if (Input::IsKeyPressed(Key::LeftAlt))
 		{
 			if (Input::IsMouseButtonPressed(Mouse::ButtonMiddle))
 				MousePan(delta);

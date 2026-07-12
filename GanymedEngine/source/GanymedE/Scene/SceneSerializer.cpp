@@ -4,6 +4,8 @@
 #include "Entity.h"
 #include "Components.h"
 
+#include "GanymedE/Renderer/MeshImporter.h"
+
 #include <fstream>
 
 #include <yaml-cpp/yaml.h>
@@ -164,6 +166,18 @@ namespace GanymedE {
 			out << YAML::EndMap; // SpriteRendererComponent
 		}
 
+		if (entity.HasComponent<StaticMeshComponent>())
+		{
+			out << YAML::Key << "StaticMeshComponent";
+			out << YAML::BeginMap;
+
+			auto& smc = entity.GetComponent<StaticMeshComponent>();
+			if (smc.Mesh)
+				out << YAML::Key << "MeshPath" << YAML::Value << smc.Mesh->GetPath();
+
+			out << YAML::EndMap;
+		}
+
 		out << YAML::EndMap; // Entity
 	}
 
@@ -211,9 +225,16 @@ namespace GanymedE {
 		auto entities = data["Entities"];
 		if (entities)
 		{
+			std::unordered_set<uint64_t> usedUUIDs;
+
 			for (auto entity : entities)
 			{
 				uint64_t uuid = entity["Entity"].as<uint64_t>();
+
+				// Older scenes serialized a hardcoded ID for every entity — mint a fresh UUID on collision
+				if (uuid == 0 || usedUUIDs.find(uuid) != usedUUIDs.end())
+					uuid = static_cast<uint64_t>(UUID());
+				usedUUIDs.insert(uuid);
 
 				std::string name;
 				auto tagComponent = entity["TagComponent"];
@@ -273,6 +294,21 @@ namespace GanymedE {
 				{
 					auto& src = deserializedEntity.AddComponent<SpriteRendererComponent>();
 					src.Color = spriteRendererComponent["Color"].as<glm::vec4>();
+				}
+
+				auto staticMeshComponent = entity["StaticMeshComponent"];
+				if (staticMeshComponent)
+				{
+					auto meshPath = staticMeshComponent["MeshPath"];
+					if (meshPath)
+					{
+						Ref<Mesh> mesh = MeshImporter::Load(meshPath.as<std::string>());
+						if (mesh)
+						{
+							auto& smc = deserializedEntity.AddComponent<StaticMeshComponent>();
+							smc.Mesh = mesh;
+						}
+					}
 				}
 			}
 		}

@@ -81,13 +81,17 @@ namespace GanymedE {
 		auto& tag = entity.GetComponent<TagComponent>().Tag;
 		auto& relationship = entity.GetComponent<RelationshipComponent>();
 
+		// Use the entt handle for ImGui IDs — always unique in-session.
+		// UUIDs can collide in older scene files that serialized a hardcoded ID.
+		ImGui::PushID((int32_t)(entt::entity)entity);
+
 		ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0)
 			| ImGuiTreeNodeFlags_OpenOnArrow
 			| ImGuiTreeNodeFlags_SpanAvailWidth;
 		if (relationship.Children.empty())
 			flags |= ImGuiTreeNodeFlags_Leaf;
 
-		bool opened = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, tag.c_str());
+		bool opened = ImGui::TreeNodeEx("Entity", flags, "%s", tag.c_str());
 		if (ImGui::IsItemClicked())
 		{
 			m_SelectionContext = entity;
@@ -126,7 +130,9 @@ namespace GanymedE {
 
 		if (opened)
 		{
-			for (UUID childID : relationship.Children)
+			// Copy children first — SetParent during drag can mutate the vector we're iterating
+			std::vector<UUID> children = relationship.Children;
+			for (UUID childID : children)
 			{
 				Entity child = m_Context->FindEntityByUUID(childID);
 				if (child)
@@ -134,6 +140,8 @@ namespace GanymedE {
 			}
 			ImGui::TreePop();
 		}
+
+		ImGui::PopID();
 
 		if (entityDeleted)
 		{
@@ -235,6 +243,7 @@ namespace GanymedE {
 			bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags, name.c_str());
 			ImGui::PopStyleVar();
 			ImGui::SameLine(contentRegionAvailable.x - lineHeight * 0.5f);
+			ImGui::PushID((int)typeid(T).hash_code());
 			if (ImGui::Button("+", ImVec2{ lineHeight, lineHeight }))
 			{
 				ImGui::OpenPopup("ComponentSettings");
@@ -250,6 +259,7 @@ namespace GanymedE {
 
 				ImGui::EndPopup();
 			}
+			ImGui::PopID();
 
 			if (open)
 			{
@@ -397,6 +407,41 @@ namespace GanymedE {
 		DrawComponent<SpriteRendererComponent>("Sprite Renderer", entity, [](auto& component)
 		{
 			ImGui::ColorEdit4("Color", glm::value_ptr(component.Color));
+		});
+
+		DrawComponent<StaticMeshComponent>("Static Mesh", entity, [](auto& component)
+		{
+			if (component.Mesh)
+			{
+				ImGui::Text("Mesh: %s", component.Mesh->GetPath().c_str());
+				ImGui::Text("Submeshes: %u", (uint32_t)component.Mesh->GetSubmeshes().size());
+				ImGui::Text("Materials: %u", (uint32_t)component.Mesh->GetMaterials().size());
+
+				const auto& materials = component.Mesh->GetMaterials();
+				for (uint32_t i = 0; i < (uint32_t)materials.size(); i++)
+				{
+					if (!materials[i])
+						continue;
+
+					ImGui::PushID((int)i);
+					ImGui::Separator();
+					ImGui::Text("%s", materials[i]->GetName().c_str());
+					glm::vec4 albedo = materials[i]->GetAlbedoColor();
+					if (ImGui::ColorEdit4("Albedo", glm::value_ptr(albedo)))
+						materials[i]->SetAlbedoColor(albedo);
+					float metallic = materials[i]->GetMetallic();
+					if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
+						materials[i]->SetMetallic(metallic);
+					float roughness = materials[i]->GetRoughness();
+					if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.0f, 1.0f))
+						materials[i]->SetRoughness(roughness);
+					ImGui::PopID();
+				}
+			}
+			else
+			{
+				ImGui::TextDisabled("No mesh assigned");
+			}
 		});
 	}
 }

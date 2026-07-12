@@ -6,6 +6,8 @@
 #include "SceneCamera.h"
 #include "ScriptableEntity.h"
 #include "GanymedE/Core/UUID.h"
+#include "GanymedE/Core/Core.h"
+#include "GanymedE/Renderer/Mesh.h"
 
 namespace GanymedE {
 
@@ -72,6 +74,16 @@ namespace GanymedE {
 		SpriteRendererComponent(const SpriteRendererComponent&) = default;
 		SpriteRendererComponent(const glm::vec4& color)
 			: Color(color) {}
+	};
+
+	struct StaticMeshComponent
+	{
+		Ref<Mesh> Mesh;
+
+		StaticMeshComponent() = default;
+		StaticMeshComponent(const StaticMeshComponent&) = default;
+		StaticMeshComponent(const Ref<GanymedE::Mesh>& mesh)
+			: Mesh(mesh) {}
 	};
 
 	struct CameraComponent

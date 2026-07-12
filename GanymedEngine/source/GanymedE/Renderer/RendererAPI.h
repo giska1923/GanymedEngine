@@ -5,6 +5,7 @@
 #include "VertexArray.h"
 
 namespace GanymedE {
+
 	class RendererAPI
 	{
 	public:
@@ -13,16 +14,45 @@ namespace GanymedE {
 			None = 0,
 			OpenGL = 1
 		};
+
+		enum class DepthFunc
+		{
+			Never = 0,
+			Less,
+			Equal,
+			LessEqual,
+			Greater,
+			NotEqual,
+			GreaterEqual,
+			Always
+		};
+
+		enum class CullMode
+		{
+			Front = 0,
+			Back,
+			FrontAndBack
+		};
 	public:
+		virtual ~RendererAPI() = default;
+
 		virtual void Init() = 0;
 		virtual void SetViewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) = 0;
 		virtual void SetClearColor(const glm::vec4& color) = 0;
 		virtual void Clear() = 0;
 
+		virtual void SetDepthTest(bool enabled) = 0;
+		virtual void SetDepthWrite(bool enabled) = 0;
+		virtual void SetDepthFunc(DepthFunc func) = 0;
+		virtual void SetCullFace(bool enabled) = 0;
+		virtual void SetCullMode(CullMode mode) = 0;
+
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) = 0;
+		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex) = 0;
 
 		inline static API GetAPI() { return s_API; }
 	private:
 		static API s_API;
 	};
+
 }

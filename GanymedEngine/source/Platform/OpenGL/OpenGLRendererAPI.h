@@ -3,6 +3,7 @@
 #include "GanymedE/Renderer/RendererAPI.h"
 
 namespace GanymedE {
+
 	class OpenGLRendererAPI : public RendererAPI
 	{
 	public:
@@ -12,6 +13,14 @@ namespace GanymedE {
 		virtual void SetClearColor(const glm::vec4& color) override;
 		virtual void Clear() override;
 
+		virtual void SetDepthTest(bool enabled) override;
+		virtual void SetDepthWrite(bool enabled) override;
+		virtual void SetDepthFunc(DepthFunc func) override;
+		virtual void SetCullFace(bool enabled) override;
+		virtual void SetCullMode(CullMode mode) override;
+
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) override;
+		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex) override;
 	};
+
 }

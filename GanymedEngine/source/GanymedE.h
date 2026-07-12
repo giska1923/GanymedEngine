@@ -30,6 +30,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 //-------------RENDERER--------------------
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Renderer/Renderer2D.h"
+#include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/Renderer/RenderCommand.h"
 
 #include "GanymedE/Renderer/Buffer.h"
@@ -39,6 +40,9 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Renderer/Texture.h"
 #include "GanymedE/Renderer/SubTexture2D.h"
 #include "GanymedE/Renderer/VertexArray.h"
+#include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Renderer/Material.h"
+#include "GanymedE/Renderer/MeshImporter.h"
 
 #include "GanymedE/Renderer/OrthographicCamera.h"
 #include "GanymedE/Renderer/EditorCamera.h"

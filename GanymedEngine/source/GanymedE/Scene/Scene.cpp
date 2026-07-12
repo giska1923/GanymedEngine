@@ -4,6 +4,7 @@
 #include "Entity.h"
 #include "Components.h"
 #include "GanymedE/Renderer/Renderer2D.h"
+#include "GanymedE/Renderer/Renderer3D.h"
 
 #include <glm/glm.hpp>
 
@@ -57,6 +58,7 @@ namespace GanymedE {
 		CopyComponent<TransformComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<RelationshipComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<SpriteRendererComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<StaticMeshComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<CameraComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<NativeScriptComponent>(dstRegistry, srcRegistry, enttMap);
 
@@ -213,6 +215,21 @@ namespace GanymedE {
 
 		if (mainCamera)
 		{
+			glm::mat4 cameraWorld = cameraTransform;
+
+			Renderer3D::BeginScene(*mainCamera, cameraWorld);
+			{
+				auto view = m_Registry.view<TransformComponent, StaticMeshComponent>();
+				for (auto entity : view)
+				{
+					auto [transform, meshComp] = view.get<TransformComponent, StaticMeshComponent>(entity);
+					(void)transform;
+					if (meshComp.Mesh)
+						Renderer3D::SubmitMesh(meshComp.Mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
+				}
+			}
+			Renderer3D::EndScene();
+
 			Renderer2D::BeginScene(*mainCamera, cameraTransform);
 
 			auto view = m_Registry.view<TransformComponent, SpriteRendererComponent>();
@@ -230,6 +247,21 @@ namespace GanymedE {
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
+		Renderer3D::BeginScene(camera);
+		Renderer3D::DrawGrid();
+
+		{
+			auto view = m_Registry.view<TransformComponent, StaticMeshComponent>();
+			for (auto entity : view)
+			{
+				auto [transform, meshComp] = view.get<TransformComponent, StaticMeshComponent>(entity);
+				(void)transform;
+				if (meshComp.Mesh)
+					Renderer3D::SubmitMesh(meshComp.Mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
+			}
+		}
+		Renderer3D::EndScene();
+
 		Renderer2D::BeginScene(camera);
 
 		auto view = m_Registry.view<TransformComponent, SpriteRendererComponent>();
@@ -331,6 +363,11 @@ namespace GanymedE {
 
 	template<>
 	void Scene::OnComponentAdded<SpriteRendererComponent>(Entity entity, SpriteRendererComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<StaticMeshComponent>(Entity entity, StaticMeshComponent& component)
 	{
 	}
 

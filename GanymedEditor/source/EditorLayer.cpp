@@ -9,8 +9,13 @@
 
 #include "GanymedE/Utils/PlatformUtils.h"
 #include "GanymedE/Math/Math.h"
+#include "GanymedE/Renderer/MeshImporter.h"
+#include "GanymedE/Renderer/Renderer3D.h"
 
 #include <ImGuizmo.h>
+
+#include <algorithm>
+#include <cctype>
 
 namespace GanymedE {
 
@@ -65,6 +70,7 @@ namespace GanymedE {
 
 		// Render
 		Renderer2D::ResetStats();
+		Renderer3D::ResetStats();
 		m_Framebuffer->Bind();
 		RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
 		RenderCommand::Clear();
@@ -236,6 +242,11 @@ namespace GanymedE {
 		ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
 		ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
 
+		auto stats3D = Renderer3D::GetStats();
+		ImGui::Text("Renderer3D Stats:");
+		ImGui::Text("Draw Calls: %d", stats3D.DrawCalls);
+		ImGui::Text("Meshes: %d", stats3D.MeshCount);
+
 		ImGui::End();
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
@@ -261,7 +272,23 @@ namespace GanymedE {
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
 			{
 				const char* path = (const char*)payload->Data;
-				OpenScene(g_AssetPath / path);
+				std::filesystem::path fullPath = g_AssetPath / path;
+				std::string ext = fullPath.extension().string();
+				std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+				if (ext == ".ganymede")
+				{
+					OpenScene(fullPath);
+				}
+				else if (ext == ".gltf" || ext == ".glb")
+				{
+					if (m_SceneState == SceneState::Edit)
+					{
+						Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
+						if (entity)
+							m_SceneHierarchyPanel.SetSelectedEntity(entity);
+					}
+				}
 			}
 			ImGui::EndDragDropTarget();
 		}
@@ -404,25 +431,25 @@ namespace GanymedE {
 		// Gizmos
 		case Key::Q:
 		{
-			if (!ImGuizmo::IsUsing())
+			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
 				m_GizmoType = -1;
 			break;
 		}
 		case Key::W:
 		{
-			if (!ImGuizmo::IsUsing())
+			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
 				m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
 			break;
 		}
 		case Key::E:
 		{
-			if (!ImGuizmo::IsUsing())
+			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
 				m_GizmoType = ImGuizmo::OPERATION::ROTATE;
 			break;
 		}
 		case Key::R:
 		{
-			if (!ImGuizmo::IsUsing())
+			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
 				m_GizmoType = ImGuizmo::OPERATION::SCALE;
 			break;
 		}

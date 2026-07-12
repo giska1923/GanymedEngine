@@ -14,6 +14,7 @@ namespace GanymedE {
 		virtual void Bind(uint32_t binding) const override;
 	private:
 		uint32_t m_RendererID = 0;
+		uint32_t m_Binding = 0;
 	};
 
 }
