@@ -1,0 +1,4 @@
+// GLFW looks up an icon resource named GLFW_ICON for the window/taskbar icon
+// (see extern/GLFW/src/win32_window.c); as the first icon group in the exe it
+// also serves as the Explorer file icon.
+GLFW_ICON ICON "icon.ico"

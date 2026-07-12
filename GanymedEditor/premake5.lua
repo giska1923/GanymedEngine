@@ -44,6 +44,9 @@ project "GanymedEditor"
 		buildoptions { "/utf-8" }
 		entrypoint "mainCRTStartup"
 
+		-- Embeds the executable icon (resources/icon.ico)
+		files { "resources/GanymedEditor.rc" }
+
 	-- Static libraries do not propagate their links outside Visual Studio,
 	-- so the executable links the dependency projects and system libraries itself
 	filter "system:linux"
