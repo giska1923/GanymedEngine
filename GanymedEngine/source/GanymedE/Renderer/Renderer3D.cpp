@@ -10,6 +10,8 @@
 #include "Environment.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -95,6 +97,18 @@ namespace GanymedE {
 		glm::vec3 ShadowLightDir{ 0.0f, -1.0f, 0.0f };
 		bool HasShadowLight = false;
 
+		// Debug lines
+		struct LineVertex
+		{
+			glm::vec3 Position;
+			glm::vec4 Color;
+		};
+		std::vector<LineVertex> LineVertices;
+		Ref<Shader> LineShader;
+		Ref<VertexArray> LineVertexArray;
+		Ref<VertexBuffer> LineVertexBuffer;
+		static constexpr uint32_t MaxLineVertices = 20000;
+
 		// Environment
 		glm::vec3 SkyColor{ 0.0f };
 		glm::vec3 GroundColor{ 0.0f };
@@ -158,6 +172,16 @@ namespace GanymedE {
 		shadowSpec.Height = kShadowMapSize;
 		for (uint32_t i = 0; i < kCascadeCount; i++)
 			s_Data.ShadowFramebuffers[i] = Framebuffer::Create(shadowSpec);
+
+		s_Data.LineShader = Shader::Create("assets/shaders/Line.glsl");
+		s_Data.LineVertexArray = VertexArray::Create();
+		s_Data.LineVertexBuffer = VertexBuffer::Create(s_Data.MaxLineVertices * sizeof(Renderer3DData::LineVertex));
+		s_Data.LineVertexBuffer->SetLayout({
+			{ ShaderDataType::Float3, "a_Position" },
+			{ ShaderDataType::Float4, "a_Color" }
+		});
+		s_Data.LineVertexArray->AddVertexBuffer(s_Data.LineVertexBuffer);
+		s_Data.LineVertices.reserve(s_Data.MaxLineVertices);
 	}
 
 	void Renderer3D::Shutdown()
@@ -173,11 +197,16 @@ namespace GanymedE {
 			s_Data.ShadowFramebuffers[i] = nullptr;
 		s_Data.CameraUniformBuffer = nullptr;
 		s_Data.LightUniformBuffer = nullptr;
+		s_Data.LineShader = nullptr;
+		s_Data.LineVertexArray = nullptr;
+		s_Data.LineVertexBuffer = nullptr;
+		s_Data.LineVertices.clear();
 	}
 
 	static void ResetFrameState()
 	{
 		s_Data.DrawList.clear();
+		s_Data.LineVertices.clear();
 
 		s_Data.LightBuffer = LightsUBO{};
 		s_Data.HasShadowLight = false;
@@ -528,6 +557,23 @@ namespace GanymedE {
 
 		RenderCommand::SetCullFace(true);
 		s_Data.DrawList.clear();
+
+		// Debug line overlay (after opaque, depth-tested)
+		if (!s_Data.LineVertices.empty() && s_Data.LineShader && s_Data.LineVertexBuffer)
+		{
+			uint32_t count = (uint32_t)s_Data.LineVertices.size();
+			if (count > s_Data.MaxLineVertices)
+				count = s_Data.MaxLineVertices;
+
+			s_Data.LineVertexBuffer->SetData(s_Data.LineVertices.data(), count * sizeof(Renderer3DData::LineVertex));
+			s_Data.LineShader->Bind();
+			RenderCommand::SetDepthTest(true);
+			RenderCommand::SetDepthWrite(false);
+			RenderCommand::DrawLines(s_Data.LineVertexArray, count);
+			RenderCommand::SetDepthWrite(true);
+			s_Data.Stats.DrawCalls++;
+			s_Data.LineVertices.clear();
+		}
 	}
 
 	void Renderer3D::DrawSkybox()
@@ -605,6 +651,91 @@ namespace GanymedE {
 	Renderer3D::Statistics Renderer3D::GetStats()
 	{
 		return s_Data.Stats;
+	}
+
+	void Renderer3D::DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color)
+	{
+		if (s_Data.LineVertices.size() + 2 > s_Data.MaxLineVertices)
+			return;
+
+		s_Data.LineVertices.push_back({ p0, color });
+		s_Data.LineVertices.push_back({ p1, color });
+	}
+
+	void Renderer3D::DrawWireBox(const glm::mat4& transform, const glm::vec4& color)
+	{
+		glm::vec3 corners[8] = {
+			{ -0.5f, -0.5f, -0.5f }, {  0.5f, -0.5f, -0.5f },
+			{  0.5f,  0.5f, -0.5f }, { -0.5f,  0.5f, -0.5f },
+			{ -0.5f, -0.5f,  0.5f }, {  0.5f, -0.5f,  0.5f },
+			{  0.5f,  0.5f,  0.5f }, { -0.5f,  0.5f,  0.5f }
+		};
+		for (int i = 0; i < 8; i++)
+			corners[i] = glm::vec3(transform * glm::vec4(corners[i], 1.0f));
+
+		auto edge = [&](int a, int b) { DrawLine(corners[a], corners[b], color); };
+		edge(0, 1); edge(1, 2); edge(2, 3); edge(3, 0);
+		edge(4, 5); edge(5, 6); edge(6, 7); edge(7, 4);
+		edge(0, 4); edge(1, 5); edge(2, 6); edge(3, 7);
+	}
+
+	void Renderer3D::DrawWireSphere(const glm::vec3& center, float radius, const glm::vec4& color, int segments)
+	{
+		segments = glm::max(segments, 8);
+		auto ring = [&](const glm::vec3& axisA, const glm::vec3& axisB)
+		{
+			for (int i = 0; i < segments; i++)
+			{
+				float t0 = (float)i / (float)segments * glm::two_pi<float>();
+				float t1 = (float)(i + 1) / (float)segments * glm::two_pi<float>();
+				glm::vec3 p0 = center + (axisA * glm::cos(t0) + axisB * glm::sin(t0)) * radius;
+				glm::vec3 p1 = center + (axisA * glm::cos(t1) + axisB * glm::sin(t1)) * radius;
+				DrawLine(p0, p1, color);
+			}
+		};
+		ring({ 1, 0, 0 }, { 0, 1, 0 });
+		ring({ 1, 0, 0 }, { 0, 0, 1 });
+		ring({ 0, 1, 0 }, { 0, 0, 1 });
+	}
+
+	void Renderer3D::DrawWireCapsule(const glm::vec3& center, const glm::quat& rotation, float radius, float halfHeight,
+		const glm::vec4& color, int segments)
+	{
+		segments = glm::max(segments, 8);
+		glm::vec3 up = rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+		glm::vec3 right = rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+		glm::vec3 forward = rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+
+		glm::vec3 top = center + up * halfHeight;
+		glm::vec3 bottom = center - up * halfHeight;
+
+		for (int i = 0; i < segments; i++)
+		{
+			float t0 = (float)i / (float)segments * glm::two_pi<float>();
+			float t1 = (float)(i + 1) / (float)segments * glm::two_pi<float>();
+			glm::vec3 d0 = (right * glm::cos(t0) + forward * glm::sin(t0)) * radius;
+			glm::vec3 d1 = (right * glm::cos(t1) + forward * glm::sin(t1)) * radius;
+			DrawLine(top + d0, top + d1, color);
+			DrawLine(bottom + d0, bottom + d1, color);
+			DrawLine(top + d0, bottom + d0, color);
+		}
+
+		// Hemisphere arcs in two planes
+		for (int i = 0; i < segments / 2; i++)
+		{
+			float t0 = (float)i / (float)(segments / 2) * glm::half_pi<float>();
+			float t1 = (float)(i + 1) / (float)(segments / 2) * glm::half_pi<float>();
+			auto arc = [&](const glm::vec3& base, const glm::vec3& a, const glm::vec3& b, float sign)
+			{
+				glm::vec3 p0 = base + (a * glm::cos(t0) + b * glm::sin(t0) * sign) * radius;
+				glm::vec3 p1 = base + (a * glm::cos(t1) + b * glm::sin(t1) * sign) * radius;
+				DrawLine(p0, p1, color);
+			};
+			arc(top, right, up, 1.0f);
+			arc(top, forward, up, 1.0f);
+			arc(bottom, right, up, -1.0f);
+			arc(bottom, forward, up, -1.0f);
+		}
 	}
 
 }

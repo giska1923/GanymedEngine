@@ -6,8 +6,11 @@
 #include "GanymedE/Renderer/Renderer2D.h"
 #include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/Renderer/Environment.h"
+#include "GanymedE/Physics/PhysicsScene.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace GanymedE {
 
@@ -17,6 +20,85 @@ namespace GanymedE {
 
 	Scene::~Scene()
 	{
+		OnRuntimeStop();
+	}
+
+	void Scene::OnRuntimeStart()
+	{
+		InstantiateScripts();
+
+		m_PhysicsScene = CreateScope<PhysicsScene>();
+		m_PhysicsScene->Start(this);
+		m_PhysicsAccumulator = 0.0f;
+	}
+
+	void Scene::OnRuntimeStop()
+	{
+		if (m_PhysicsScene)
+		{
+			m_PhysicsScene->Stop();
+			m_PhysicsScene.reset();
+		}
+		m_PhysicsAccumulator = 0.0f;
+
+		// Destroy script instances
+		{
+			auto view = m_Registry.view<NativeScriptComponent>();
+			for (auto e : view)
+			{
+				auto& nsc = view.get<NativeScriptComponent>(e);
+				if (nsc.Instance)
+				{
+					nsc.Instance->OnDestroy();
+					nsc.DestroyScript(&nsc);
+				}
+			}
+		}
+	}
+
+	void Scene::InstantiateScripts()
+	{
+		m_Registry.view<NativeScriptComponent>().each([=](auto entity, auto& nsc)
+		{
+			if (!nsc.Instance && nsc.InstantiateScript)
+			{
+				nsc.Instance = nsc.InstantiateScript();
+				nsc.Instance->m_Entity = Entity{ entity, this };
+				nsc.Instance->OnCreate();
+			}
+		});
+	}
+
+	void Scene::DispatchCollisionEvents()
+	{
+		if (!m_PhysicsScene)
+			return;
+
+		for (const auto& event : m_PhysicsScene->GetCollisionEvents())
+		{
+			Entity a = FindEntityByUUID(event.EntityA);
+			Entity b = FindEntityByUUID(event.EntityB);
+			if (!a || !b)
+				continue;
+
+			auto notify = [&](Entity self, Entity other)
+			{
+				if (!self.HasComponent<NativeScriptComponent>())
+					return;
+				auto& nsc = self.GetComponent<NativeScriptComponent>();
+				if (!nsc.Instance)
+					return;
+				if (event.Entered)
+					nsc.Instance->OnCollisionEnter(other);
+				else
+					nsc.Instance->OnCollisionExit(other);
+			};
+
+			notify(a, b);
+			notify(b, a);
+		}
+
+		m_PhysicsScene->ClearCollisionEvents();
 	}
 
 	template<typename Component>
@@ -66,6 +148,10 @@ namespace GanymedE {
 		CopyComponent<SpotLightComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<SkyLightComponent>(dstRegistry, srcRegistry, enttMap);
 		CopyComponent<NativeScriptComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<RigidBodyComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<BoxColliderComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<SphereColliderComponent>(dstRegistry, srcRegistry, enttMap);
+		CopyComponent<CapsuleColliderComponent>(dstRegistry, srcRegistry, enttMap);
 
 		// Runtime script instances must be recreated on play
 		{
@@ -181,26 +267,45 @@ namespace GanymedE {
 		m_Registry.destroy(entity);
 	}
 
-	void Scene::OnUpdateRuntime(Timestep ts)
+	void Scene::OnUpdateRuntime(Timestep ts, EditorCamera* fallbackCamera)
 	{
+		// Fixed-timestep physics
+		if (m_PhysicsScene && m_PhysicsScene->IsActive())
+		{
+			m_PhysicsAccumulator += ts;
+			// Spiral-of-death guard
+			constexpr int maxSteps = 5;
+			int steps = 0;
+			while (m_PhysicsAccumulator >= s_FixedTimestep && steps < maxSteps)
+			{
+				m_PhysicsScene->Step(s_FixedTimestep);
+				DispatchCollisionEvents();
+				m_PhysicsAccumulator -= s_FixedTimestep;
+				steps++;
+			}
+			if (steps == maxSteps)
+				m_PhysicsAccumulator = 0.0f;
+
+			float alpha = m_PhysicsAccumulator / s_FixedTimestep;
+			m_PhysicsScene->SyncTransforms(this, alpha);
+		}
+
 		// Update scripts
 		{
 			m_Registry.view<NativeScriptComponent>().each([=](auto entity, auto& nsc)
 				{
-					// TODO: Move to Scene::OnScenePlay
-					if (!nsc.Instance)
+					if (!nsc.Instance && nsc.InstantiateScript)
 					{
 						nsc.Instance = nsc.InstantiateScript();
 						nsc.Instance->m_Entity = Entity{ entity, this };
-
 						nsc.Instance->OnCreate();
 					}
 
-					nsc.Instance->OnUpdate(ts);
+					if (nsc.Instance)
+						nsc.Instance->OnUpdate(ts);
 				});
 		}
 
-		// Render 2D
 		Camera* mainCamera = nullptr;
 		glm::mat4 cameraTransform;
 		{
@@ -218,11 +323,8 @@ namespace GanymedE {
 			}
 		}
 
-		if (mainCamera)
+		auto renderScene3D = [&](const glm::vec3& cameraPos)
 		{
-			glm::mat4 cameraWorld = cameraTransform;
-
-			Renderer3D::BeginScene(*mainCamera, cameraWorld);
 			SubmitLightsAndSky();
 			{
 				auto view = m_Registry.view<TransformComponent, StaticMeshComponent>();
@@ -234,19 +336,45 @@ namespace GanymedE {
 						Renderer3D::SubmitMesh(meshComp.Mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
 				}
 			}
+
+			// Prefer Jolt's view of the world when enabled; otherwise draw authored collider gizmos
+			if (m_PhysicsScene && m_PhysicsScene->IsActive() && m_PhysicsDebugDraw.Enabled)
+				m_PhysicsScene->DebugDraw(cameraPos, m_PhysicsDebugDraw);
+			else
+				DrawColliderGizmos();
+
 			Renderer3D::EndScene();
+		};
+
+		if (mainCamera)
+		{
+			Renderer3D::BeginScene(*mainCamera, cameraTransform);
+			renderScene3D(glm::vec3(cameraTransform[3]));
 
 			Renderer2D::BeginScene(*mainCamera, cameraTransform);
-
 			auto view = m_Registry.view<TransformComponent, SpriteRendererComponent>();
 			for (auto entity : view)
 			{
 				auto [transform, sprite] = view.get<TransformComponent, SpriteRendererComponent>(entity);
 				(void)transform;
-
 				Renderer2D::DrawQuad(GetWorldSpaceTransform(Entity{ entity, this }), sprite.Color, (int)entity);
 			}
+			Renderer2D::EndScene();
+		}
+		else if (fallbackCamera)
+		{
+			// Editor convenience: Play with no scene Camera still shows the viewport
+			Renderer3D::BeginScene(*fallbackCamera);
+			renderScene3D(fallbackCamera->GetPosition());
 
+			Renderer2D::BeginScene(*fallbackCamera);
+			auto view = m_Registry.view<TransformComponent, SpriteRendererComponent>();
+			for (auto entity : view)
+			{
+				auto [transform, sprite] = view.get<TransformComponent, SpriteRendererComponent>(entity);
+				(void)transform;
+				Renderer2D::DrawQuad(GetWorldSpaceTransform(Entity{ entity, this }), sprite.Color, (int)entity);
+			}
 			Renderer2D::EndScene();
 		}
 	}
@@ -267,6 +395,7 @@ namespace GanymedE {
 					Renderer3D::SubmitMesh(meshComp.Mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
 			}
 		}
+		DrawColliderGizmos();
 		Renderer3D::EndScene();
 
 		Renderer2D::BeginScene(camera);
@@ -281,6 +410,67 @@ namespace GanymedE {
 		}
 
 		Renderer2D::EndScene();
+	}
+
+	void Scene::DrawColliderGizmos()
+	{
+		const glm::vec4 boxColor{ 0.2f, 0.9f, 0.35f, 1.0f };
+		const glm::vec4 sphereColor{ 0.3f, 0.7f, 1.0f, 1.0f };
+		const glm::vec4 capsuleColor{ 1.0f, 0.75f, 0.2f, 1.0f };
+
+		{
+			auto view = m_Registry.view<TransformComponent, BoxColliderComponent>();
+			for (auto entity : view)
+			{
+				Entity e{ entity, this };
+				auto& col = e.GetComponent<BoxColliderComponent>();
+				glm::mat4 world = GetWorldSpaceTransform(e);
+				glm::mat4 collider = world
+					* glm::translate(glm::mat4(1.0f), col.Offset)
+					* glm::scale(glm::mat4(1.0f), col.HalfExtents * 2.0f);
+				Renderer3D::DrawWireBox(collider, boxColor);
+			}
+		}
+		{
+			auto view = m_Registry.view<TransformComponent, SphereColliderComponent>();
+			for (auto entity : view)
+			{
+				Entity e{ entity, this };
+				auto& col = e.GetComponent<SphereColliderComponent>();
+				glm::mat4 world = GetWorldSpaceTransform(e);
+				glm::vec3 center = glm::vec3(world * glm::vec4(col.Offset, 1.0f));
+				glm::vec3 scale = {
+					glm::length(glm::vec3(world[0])),
+					glm::length(glm::vec3(world[1])),
+					glm::length(glm::vec3(world[2]))
+				};
+				float radius = col.Radius * glm::max(scale.x, glm::max(scale.y, scale.z));
+				Renderer3D::DrawWireSphere(center, radius, sphereColor);
+			}
+		}
+		{
+			auto view = m_Registry.view<TransformComponent, CapsuleColliderComponent>();
+			for (auto entity : view)
+			{
+				Entity e{ entity, this };
+				auto& col = e.GetComponent<CapsuleColliderComponent>();
+				glm::mat4 world = GetWorldSpaceTransform(e);
+				glm::vec3 center = glm::vec3(world * glm::vec4(col.Offset, 1.0f));
+				glm::vec3 scale = {
+					glm::length(glm::vec3(world[0])),
+					glm::length(glm::vec3(world[1])),
+					glm::length(glm::vec3(world[2]))
+				};
+				float radius = col.Radius * glm::max(scale.x, scale.z);
+				float halfHeight = col.HalfHeight * scale.y;
+				glm::quat rotation = glm::normalize(glm::quat_cast(glm::mat3(
+					glm::vec3(world[0]) / glm::max(scale.x, 1e-6f),
+					glm::vec3(world[1]) / glm::max(scale.y, 1e-6f),
+					glm::vec3(world[2]) / glm::max(scale.z, 1e-6f)
+				)));
+				Renderer3D::DrawWireCapsule(center, rotation, radius, halfHeight, capsuleColor);
+			}
+		}
 	}
 
 	void Scene::SubmitLightsAndSky()
@@ -471,6 +661,26 @@ namespace GanymedE {
 
 	template<>
 	void Scene::OnComponentAdded<NativeScriptComponent>(Entity entity, NativeScriptComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<RigidBodyComponent>(Entity entity, RigidBodyComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<BoxColliderComponent>(Entity entity, BoxColliderComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<SphereColliderComponent>(Entity entity, SphereColliderComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<CapsuleColliderComponent>(Entity entity, CapsuleColliderComponent& component)
 	{
 	}
 }

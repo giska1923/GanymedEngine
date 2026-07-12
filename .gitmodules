@@ -16,3 +16,6 @@
 [submodule "GanymedEngine/extern/entt"]
 	path = GanymedEngine/extern/entt
 	url = https://github.com/skypjack/entt.git
+[submodule "GanymedEngine/extern/JoltPhysics"]
+	path = GanymedEngine/extern/JoltPhysics
+	url = https://github.com/jrouwe/JoltPhysics.git

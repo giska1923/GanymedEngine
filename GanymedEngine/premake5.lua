@@ -30,7 +30,17 @@ project "GanymedEngine"
 	defines
 	{
 		"_CRT_SECURE_NO_WARNINGS",
-		"GLFW_INCLUDE_NONE"
+		"GLFW_INCLUDE_NONE",
+		-- Must match Jolt.lua so headers/types agree across the static lib boundary
+		"JPH_OBJECT_STREAM",
+		"JPH_USE_AVX2",
+		"JPH_USE_AVX",
+		"JPH_USE_SSE4_1",
+		"JPH_USE_SSE4_2",
+		"JPH_USE_LZCNT",
+		"JPH_USE_TZCNT",
+		"JPH_USE_F16C",
+		"JPH_USE_FMADD"
 	}
 
 	includedirs
@@ -44,7 +54,8 @@ project "GanymedEngine"
 		"%{IncludeDir.stb_image}",
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.yaml_cpp}",
-		"%{IncludeDir.cgltf}"
+		"%{IncludeDir.cgltf}",
+		"%{IncludeDir.Jolt}"
 	}
 
 	links
@@ -52,12 +63,13 @@ project "GanymedEngine"
 		"GLFW",
 		"Glad",
 		"ImGui",
-		"yaml-cpp"
+		"yaml-cpp",
+		"Jolt"
 	}
 
 	filter "system:windows"
 		systemversion "latest"
-		buildoptions { "/utf-8" }
+		buildoptions { "/utf-8", "/arch:AVX2" }
 
 		links
 		{
@@ -67,21 +79,22 @@ project "GanymedEngine"
 	filter "system:linux"
 		pic "On"
 		systemversion "latest"
+		buildoptions { "-mavx2", "-mbmi", "-mpopcnt", "-mlzcnt", "-mf16c", "-mfma" }
 
 	filter "system:macosx"
 		systemversion "latest"
 
 	filter "configurations:Debug"
-		defines "GE_DEBUG"
+		defines { "GE_DEBUG", "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
 		runtime "Debug"
 		symbols "on"
 
 	filter "configurations:Release"
-		defines "GE_RELEASE"
+		defines { "GE_RELEASE", "NDEBUG", "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
 		runtime "Release"
 		optimize "on"
 
 	filter "configurations:Dist"
-		defines "GE_DIST"
+		defines { "GE_DIST", "NDEBUG" }
 		runtime "Release"
 		optimize "on"

@@ -357,6 +357,42 @@ namespace GanymedE {
 				}
 			}
 
+			if (!m_SelectionContext.HasComponent<RigidBodyComponent>())
+			{
+				if (ImGui::MenuItem("Rigid Body"))
+				{
+					m_SelectionContext.AddComponent<RigidBodyComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<BoxColliderComponent>())
+			{
+				if (ImGui::MenuItem("Box Collider"))
+				{
+					m_SelectionContext.AddComponent<BoxColliderComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<SphereColliderComponent>())
+			{
+				if (ImGui::MenuItem("Sphere Collider"))
+				{
+					m_SelectionContext.AddComponent<SphereColliderComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<CapsuleColliderComponent>())
+			{
+				if (ImGui::MenuItem("Capsule Collider"))
+				{
+					m_SelectionContext.AddComponent<CapsuleColliderComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
 			ImGui::EndPopup();
 		}
 
@@ -549,6 +585,47 @@ namespace GanymedE {
 
 			ImGui::DragFloat("Intensity", &component.Intensity, 0.02f, 0.0f, 20.0f);
 			ImGui::Checkbox("Draw Skybox", &component.DrawSkybox);
+		});
+
+		DrawComponent<RigidBodyComponent>("Rigid Body", entity, [](auto& component)
+		{
+			const char* typeStrings[] = { "Static", "Dynamic", "Kinematic" };
+			int type = (int)component.Type;
+			if (ImGui::Combo("Type", &type, typeStrings, 3))
+				component.Type = (RigidBodyType)type;
+
+			ImGui::DragFloat("Mass", &component.Mass, 0.05f, 0.001f, 100000.0f);
+			ImGui::DragFloat("Linear Damping", &component.LinearDamping, 0.01f, 0.0f, 10.0f);
+			ImGui::DragFloat("Angular Damping", &component.AngularDamping, 0.01f, 0.0f, 10.0f);
+			ImGui::Checkbox("Use Gravity", &component.UseGravity);
+		});
+
+		auto drawPhysicsMaterial = [](PhysicsMaterial& mat)
+		{
+			ImGui::DragFloat("Friction", &mat.Friction, 0.01f, 0.0f, 10.0f);
+			ImGui::DragFloat("Restitution", &mat.Restitution, 0.01f, 0.0f, 1.0f);
+		};
+
+		DrawComponent<BoxColliderComponent>("Box Collider", entity, [&](auto& component)
+		{
+			DrawVec3Control("Half Extents", component.HalfExtents, 0.5f);
+			DrawVec3Control("Offset", component.Offset);
+			drawPhysicsMaterial(component.Material);
+		});
+
+		DrawComponent<SphereColliderComponent>("Sphere Collider", entity, [&](auto& component)
+		{
+			ImGui::DragFloat("Radius", &component.Radius, 0.05f, 0.001f, 1000.0f);
+			DrawVec3Control("Offset", component.Offset);
+			drawPhysicsMaterial(component.Material);
+		});
+
+		DrawComponent<CapsuleColliderComponent>("Capsule Collider", entity, [&](auto& component)
+		{
+			ImGui::DragFloat("Radius", &component.Radius, 0.05f, 0.001f, 1000.0f);
+			ImGui::DragFloat("Half Height", &component.HalfHeight, 0.05f, 0.001f, 1000.0f);
+			DrawVec3Control("Offset", component.Offset);
+			drawPhysicsMaterial(component.Material);
 		});
 	}
 }

@@ -18,6 +18,8 @@ namespace GanymedE {
 		virtual void OnCreate() {}
 		virtual void OnDestroy() {}
 		virtual void OnUpdate(Timestep ts) {}
+		virtual void OnCollisionEnter(Entity other) { (void)other; }
+		virtual void OnCollisionExit(Entity other) { (void)other; }
 	private:
 		Entity m_Entity;
 		friend class Scene;

@@ -8,6 +8,7 @@
 #include "GanymedE/Renderer/Environment.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace GanymedE {
 
@@ -40,6 +41,13 @@ namespace GanymedE {
 
 		static void DrawSkybox();
 		static void DrawGrid();
+
+		// Immediate-ish debug drawing (accumulated and flushed in EndScene)
+		static void DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color = glm::vec4(1.0f));
+		static void DrawWireBox(const glm::mat4& transform, const glm::vec4& color = glm::vec4(0.2f, 0.9f, 0.35f, 1.0f));
+		static void DrawWireSphere(const glm::vec3& center, float radius, const glm::vec4& color = glm::vec4(0.3f, 0.7f, 1.0f, 1.0f), int segments = 24);
+		static void DrawWireCapsule(const glm::vec3& center, const glm::quat& rotation, float radius, float halfHeight,
+			const glm::vec4& color = glm::vec4(1.0f, 0.75f, 0.2f, 1.0f), int segments = 16);
 
 		struct Statistics
 		{

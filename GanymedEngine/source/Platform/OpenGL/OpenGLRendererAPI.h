@@ -21,6 +21,7 @@ namespace GanymedE {
 
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) override;
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex) override;
+		virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) override;
 	};
 
 }

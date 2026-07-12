@@ -237,6 +237,59 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		if (entity.HasComponent<RigidBodyComponent>())
+		{
+			out << YAML::Key << "RigidBodyComponent";
+			out << YAML::BeginMap;
+			auto& rb = entity.GetComponent<RigidBodyComponent>();
+			out << YAML::Key << "Type" << YAML::Value << (int)rb.Type;
+			out << YAML::Key << "Mass" << YAML::Value << rb.Mass;
+			out << YAML::Key << "LinearDamping" << YAML::Value << rb.LinearDamping;
+			out << YAML::Key << "AngularDamping" << YAML::Value << rb.AngularDamping;
+			out << YAML::Key << "UseGravity" << YAML::Value << rb.UseGravity;
+			out << YAML::EndMap;
+		}
+
+		auto serializePhysicsMaterial = [](YAML::Emitter& emitter, const PhysicsMaterial& mat)
+		{
+			emitter << YAML::Key << "Friction" << YAML::Value << mat.Friction;
+			emitter << YAML::Key << "Restitution" << YAML::Value << mat.Restitution;
+		};
+
+		if (entity.HasComponent<BoxColliderComponent>())
+		{
+			out << YAML::Key << "BoxColliderComponent";
+			out << YAML::BeginMap;
+			auto& col = entity.GetComponent<BoxColliderComponent>();
+			out << YAML::Key << "HalfExtents" << YAML::Value << col.HalfExtents;
+			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
+			serializePhysicsMaterial(out, col.Material);
+			out << YAML::EndMap;
+		}
+
+		if (entity.HasComponent<SphereColliderComponent>())
+		{
+			out << YAML::Key << "SphereColliderComponent";
+			out << YAML::BeginMap;
+			auto& col = entity.GetComponent<SphereColliderComponent>();
+			out << YAML::Key << "Radius" << YAML::Value << col.Radius;
+			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
+			serializePhysicsMaterial(out, col.Material);
+			out << YAML::EndMap;
+		}
+
+		if (entity.HasComponent<CapsuleColliderComponent>())
+		{
+			out << YAML::Key << "CapsuleColliderComponent";
+			out << YAML::BeginMap;
+			auto& col = entity.GetComponent<CapsuleColliderComponent>();
+			out << YAML::Key << "Radius" << YAML::Value << col.Radius;
+			out << YAML::Key << "HalfHeight" << YAML::Value << col.HalfHeight;
+			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
+			serializePhysicsMaterial(out, col.Material);
+			out << YAML::EndMap;
+		}
+
 		out << YAML::EndMap; // Entity
 	}
 
@@ -412,6 +465,53 @@ namespace GanymedE {
 					skc.GroundColor = skyLightComponent["GroundColor"].as<glm::vec3>();
 					skc.Intensity = skyLightComponent["Intensity"].as<float>();
 					skc.DrawSkybox = skyLightComponent["DrawSkybox"].as<bool>();
+				}
+
+				auto rigidBodyComponent = entity["RigidBodyComponent"];
+				if (rigidBodyComponent)
+				{
+					auto& rb = deserializedEntity.AddComponent<RigidBodyComponent>();
+					rb.Type = (RigidBodyType)rigidBodyComponent["Type"].as<int>();
+					rb.Mass = rigidBodyComponent["Mass"].as<float>();
+					rb.LinearDamping = rigidBodyComponent["LinearDamping"].as<float>();
+					rb.AngularDamping = rigidBodyComponent["AngularDamping"].as<float>();
+					rb.UseGravity = rigidBodyComponent["UseGravity"].as<bool>();
+				}
+
+				auto readPhysicsMaterial = [](const YAML::Node& node, PhysicsMaterial& mat)
+				{
+					if (node["Friction"])
+						mat.Friction = node["Friction"].as<float>();
+					if (node["Restitution"])
+						mat.Restitution = node["Restitution"].as<float>();
+				};
+
+				auto boxColliderComponent = entity["BoxColliderComponent"];
+				if (boxColliderComponent)
+				{
+					auto& col = deserializedEntity.AddComponent<BoxColliderComponent>();
+					col.HalfExtents = boxColliderComponent["HalfExtents"].as<glm::vec3>();
+					col.Offset = boxColliderComponent["Offset"].as<glm::vec3>();
+					readPhysicsMaterial(boxColliderComponent, col.Material);
+				}
+
+				auto sphereColliderComponent = entity["SphereColliderComponent"];
+				if (sphereColliderComponent)
+				{
+					auto& col = deserializedEntity.AddComponent<SphereColliderComponent>();
+					col.Radius = sphereColliderComponent["Radius"].as<float>();
+					col.Offset = sphereColliderComponent["Offset"].as<glm::vec3>();
+					readPhysicsMaterial(sphereColliderComponent, col.Material);
+				}
+
+				auto capsuleColliderComponent = entity["CapsuleColliderComponent"];
+				if (capsuleColliderComponent)
+				{
+					auto& col = deserializedEntity.AddComponent<CapsuleColliderComponent>();
+					col.Radius = capsuleColliderComponent["Radius"].as<float>();
+					col.HalfHeight = capsuleColliderComponent["HalfHeight"].as<float>();
+					col.Offset = capsuleColliderComponent["Offset"].as<glm::vec3>();
+					readPhysicsMaterial(capsuleColliderComponent, col.Material);
 				}
 			}
 		}

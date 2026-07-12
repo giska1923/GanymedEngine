@@ -40,6 +40,7 @@ namespace GanymedE {
 		Ref<Framebuffer> m_Framebuffer;          // HDR scene target (RGBA16F + entity-id + depth)
 		Ref<Framebuffer> m_CompositeFramebuffer; // LDR tonemapped result shown in the viewport
 		float m_Exposure = 1.0f;
+		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;

@@ -160,4 +160,60 @@ namespace GanymedE {
 			DestroyScript = [](NativeScriptComponent* nsc) { delete nsc->Instance; nsc->Instance = nullptr; };
 		}
 	};
+
+	struct PhysicsMaterial
+	{
+		float Friction = 0.5f;
+		float Restitution = 0.0f;
+	};
+
+	enum class RigidBodyType : uint8_t
+	{
+		Static = 0,
+		Dynamic,
+		Kinematic
+	};
+
+	struct RigidBodyComponent
+	{
+		RigidBodyType Type = RigidBodyType::Dynamic;
+		float Mass = 1.0f;
+		float LinearDamping = 0.05f;
+		float AngularDamping = 0.05f;
+		bool UseGravity = true;
+
+		RigidBodyComponent() = default;
+		RigidBodyComponent(const RigidBodyComponent&) = default;
+	};
+
+	struct BoxColliderComponent
+	{
+		glm::vec3 HalfExtents{ 0.5f, 0.5f, 0.5f };
+		glm::vec3 Offset{ 0.0f, 0.0f, 0.0f };
+		PhysicsMaterial Material;
+
+		BoxColliderComponent() = default;
+		BoxColliderComponent(const BoxColliderComponent&) = default;
+	};
+
+	struct SphereColliderComponent
+	{
+		float Radius = 0.5f;
+		glm::vec3 Offset{ 0.0f, 0.0f, 0.0f };
+		PhysicsMaterial Material;
+
+		SphereColliderComponent() = default;
+		SphereColliderComponent(const SphereColliderComponent&) = default;
+	};
+
+	struct CapsuleColliderComponent
+	{
+		float Radius = 0.5f;
+		float HalfHeight = 0.5f; // half-length of the cylindrical section
+		glm::vec3 Offset{ 0.0f, 0.0f, 0.0f };
+		PhysicsMaterial Material;
+
+		CapsuleColliderComponent() = default;
+		CapsuleColliderComponent(const CapsuleColliderComponent&) = default;
+	};
 }

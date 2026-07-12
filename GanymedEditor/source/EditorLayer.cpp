@@ -99,7 +99,10 @@ namespace GanymedE {
 			}
 			case SceneState::Play:
 			{
-				m_ActiveScene->OnUpdateRuntime(ts);
+				// Fall back to the editor camera when the scene has no primary Camera
+				m_EditorCamera.OnUpdate(ts);
+				m_ActiveScene->GetPhysicsDebugDrawSettings() = m_PhysicsDebugDraw;
+				m_ActiveScene->OnUpdateRuntime(ts, &m_EditorCamera);
 				break;
 			}
 		}
@@ -265,6 +268,18 @@ namespace GanymedE {
 		ImGui::Separator();
 		ImGui::Text("Post Processing:");
 		ImGui::DragFloat("Exposure", &m_Exposure, 0.01f, 0.0f, 16.0f);
+
+		ImGui::Separator();
+		ImGui::Text("Physics Debug:");
+		ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
+		ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
+		ImGui::Checkbox("Wireframe Shapes", &m_PhysicsDebugDraw.Wireframe);
+		ImGui::Checkbox("Bounding Boxes", &m_PhysicsDebugDraw.BoundingBoxes);
+		ImGui::Checkbox("Velocities", &m_PhysicsDebugDraw.Velocities);
+		ImGui::Checkbox("Center of Mass", &m_PhysicsDebugDraw.CenterOfMass);
+		ImGui::Checkbox("Constraints", &m_PhysicsDebugDraw.Constraints);
+		ImGui::EndDisabled();
+		ImGui::TextDisabled("Visible during Play (uses Jolt body state)");
 
 		ImGui::End();
 
@@ -558,6 +573,7 @@ namespace GanymedE {
 		m_EditorScene = m_ActiveScene;
 		m_ActiveScene = Scene::Copy(m_EditorScene);
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+		m_ActiveScene->OnRuntimeStart();
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 		m_SceneHierarchyPanel.SetSelectedEntity({});
 		m_SceneState = SceneState::Play;
@@ -565,6 +581,7 @@ namespace GanymedE {
 
 	void EditorLayer::OnSceneStop()
 	{
+		m_ActiveScene->OnRuntimeStop();
 		m_ActiveScene = m_EditorScene;
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);

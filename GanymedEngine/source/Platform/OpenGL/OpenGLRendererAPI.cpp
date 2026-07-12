@@ -98,4 +98,10 @@ namespace GanymedE {
 			(void*)(sizeof(uint32_t) * baseIndex), baseVertex);
 	}
 
+	void OpenGLRendererAPI::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)
+	{
+		vertexArray->Bind();
+		glDrawArrays(GL_LINES, 0, vertexCount);
+	}
+
 }
