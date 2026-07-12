@@ -39,4 +39,5 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Renderer/VertexArray.h"
 
 #include "GanymedE/Renderer/OrthographicCamera.h"
+#include "GanymedE/Renderer/EditorCamera.h"
 //-----------------------------------------

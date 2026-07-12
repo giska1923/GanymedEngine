@@ -10,7 +10,9 @@ project "GanymedEditor"
 	files
 	{
 		"source/**.h",
-		"source/**.cpp"
+		"source/**.cpp",
+		"%{wks.location}/GanymedEngine/extern/ImGuizmo/src/ImGuizmo.h",
+		"%{wks.location}/GanymedEngine/extern/ImGuizmo/src/ImGuizmo.cpp"
 	}
 
 	includedirs
@@ -19,7 +21,9 @@ project "GanymedEditor"
 		"%{wks.location}/GanymedEngine/source",
 		"%{wks.location}/GanymedEngine/extern",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}"
+		"%{IncludeDir.entt}",
+		"%{IncludeDir.ImGui}",
+		"%{IncludeDir.ImGuizmo}"
 	}
 
 	links

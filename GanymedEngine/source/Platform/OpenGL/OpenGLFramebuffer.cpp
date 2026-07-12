@@ -7,15 +7,63 @@ namespace GanymedE {
 
 	static const uint32_t s_MaxFramebufferSize = 8192;
 
+	namespace Utils {
+
+		static void AttachColorTexture(uint32_t id, GLenum internalFormat, GLenum format, GLenum type, uint32_t width, uint32_t height, int index)
+		{
+			glBindTexture(GL_TEXTURE_2D, id);
+			glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
+
+			// Integer textures do not support linear filtering
+			GLint filter = (format == GL_RED_INTEGER) ? GL_NEAREST : GL_LINEAR;
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + index, GL_TEXTURE_2D, id, 0);
+		}
+
+		static void AttachDepthTexture(uint32_t id, GLenum internalFormat, GLenum format, GLenum type, GLenum attachmentType, uint32_t width, uint32_t height)
+		{
+			glBindTexture(GL_TEXTURE_2D, id);
+			glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+			glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentType, GL_TEXTURE_2D, id, 0);
+		}
+
+		static bool IsDepthFormat(FramebufferTextureFormat format)
+		{
+			switch (format)
+			{
+				case FramebufferTextureFormat::DEPTH24STENCIL8: return true;
+				default: return false;
+			}
+		}
+
+	}
+
 	OpenGLFramebuffer::OpenGLFramebuffer(const FramebufferSpecification& spec)
 		: m_Specification(spec)
 	{
+		for (auto attachmentSpec : m_Specification.Attachments.Attachments)
+		{
+			if (!Utils::IsDepthFormat(attachmentSpec.TextureFormat))
+				m_ColorAttachmentSpecifications.emplace_back(attachmentSpec);
+			else
+				m_DepthAttachmentSpecification = attachmentSpec;
+		}
+
 		Invalidate();
 	}
 
 	OpenGLFramebuffer::~OpenGLFramebuffer()
 	{
 		glDeleteFramebuffers(1, &m_RendererID);
+		glDeleteTextures((GLsizei)m_ColorAttachments.size(), m_ColorAttachments.data());
+		glDeleteTextures(1, &m_DepthAttachment);
 	}
 
 	void OpenGLFramebuffer::Invalidate()
@@ -23,25 +71,59 @@ namespace GanymedE {
 		if (m_RendererID)
 		{
 			glDeleteFramebuffers(1, &m_RendererID);
-			glDeleteTextures(1, &m_ColorAttachment);
+			glDeleteTextures((GLsizei)m_ColorAttachments.size(), m_ColorAttachments.data());
 			glDeleteTextures(1, &m_DepthAttachment);
+
+			m_ColorAttachments.clear();
+			m_DepthAttachment = 0;
 		}
 
 		glGenFramebuffers(1, &m_RendererID);
 		glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
 
-		glGenTextures(1, &m_ColorAttachment);
-		glBindTexture(GL_TEXTURE_2D, m_ColorAttachment);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, m_Specification.Width, m_Specification.Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		// Attachments
+		if (m_ColorAttachmentSpecifications.size())
+		{
+			m_ColorAttachments.resize(m_ColorAttachmentSpecifications.size());
+			glGenTextures((GLsizei)m_ColorAttachments.size(), m_ColorAttachments.data());
 
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_ColorAttachment, 0);
+			for (size_t i = 0; i < m_ColorAttachments.size(); i++)
+			{
+				switch (m_ColorAttachmentSpecifications[i].TextureFormat)
+				{
+					case FramebufferTextureFormat::RGBA8:
+						Utils::AttachColorTexture(m_ColorAttachments[i], GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, m_Specification.Width, m_Specification.Height, (int)i);
+						break;
+					case FramebufferTextureFormat::RED_INTEGER:
+						Utils::AttachColorTexture(m_ColorAttachments[i], GL_R32I, GL_RED_INTEGER, GL_INT, m_Specification.Width, m_Specification.Height, (int)i);
+						break;
+				}
+			}
+		}
 
-		glGenTextures(1, &m_DepthAttachment);
-		glBindTexture(GL_TEXTURE_2D, m_DepthAttachment);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, m_Specification.Width, m_Specification.Height, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_DepthAttachment, 0);
+		if (m_DepthAttachmentSpecification.TextureFormat != FramebufferTextureFormat::None)
+		{
+			glGenTextures(1, &m_DepthAttachment);
+
+			switch (m_DepthAttachmentSpecification.TextureFormat)
+			{
+				case FramebufferTextureFormat::DEPTH24STENCIL8:
+					Utils::AttachDepthTexture(m_DepthAttachment, GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL_ATTACHMENT, m_Specification.Width, m_Specification.Height);
+					break;
+			}
+		}
+
+		if (m_ColorAttachments.size() > 1)
+		{
+			GE_CORE_ASSERT(m_ColorAttachments.size() <= 4, "Only up to 4 color attachments are supported!");
+			GLenum buffers[4] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3 };
+			glDrawBuffers((GLsizei)m_ColorAttachments.size(), buffers);
+		}
+		else if (m_ColorAttachments.empty())
+		{
+			// Depth-only pass
+			glDrawBuffer(GL_NONE);
+		}
 
 		GE_CORE_ASSERT(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "Framebuffer is incomplete!");
 
@@ -51,6 +133,7 @@ namespace GanymedE {
 	void OpenGLFramebuffer::Bind()
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
+		glViewport(0, 0, m_Specification.Width, m_Specification.Height);
 	}
 
 	void OpenGLFramebuffer::Unbind()
@@ -70,5 +153,35 @@ namespace GanymedE {
 		m_Specification.Height = height;
 
 		Invalidate();
+	}
+
+	int OpenGLFramebuffer::ReadPixel(uint32_t attachmentIndex, int x, int y)
+	{
+		GE_CORE_ASSERT(attachmentIndex < m_ColorAttachments.size(), "Color attachment index out of range!");
+
+		GLint previousFramebuffer = 0;
+		glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousFramebuffer);
+
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, m_RendererID);
+		glReadBuffer(GL_COLOR_ATTACHMENT0 + attachmentIndex);
+		int pixelData = -1;
+		glReadPixels(x, y, 1, 1, GL_RED_INTEGER, GL_INT, &pixelData);
+
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, previousFramebuffer);
+		return pixelData;
+	}
+
+	void OpenGLFramebuffer::ClearAttachment(uint32_t attachmentIndex, int value)
+	{
+		GE_CORE_ASSERT(attachmentIndex < m_ColorAttachments.size(), "Color attachment index out of range!");
+
+		// glClearTexImage is GL 4.4+, so clear through the framebuffer to stay on the GL 4.1 baseline
+		GLint previousFramebuffer = 0;
+		glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFramebuffer);
+
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_RendererID);
+		glClearBufferiv(GL_COLOR, attachmentIndex, &value);
+
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previousFramebuffer);
 	}
 }
