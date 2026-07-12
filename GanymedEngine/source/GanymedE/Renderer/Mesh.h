@@ -37,6 +37,8 @@ namespace GanymedE {
 		Mesh(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices,
 			const std::vector<Submesh>& submeshes, const std::vector<Ref<Material>>& materials);
 
+		const std::vector<MeshVertex>& GetVertices() const { return m_Vertices; }
+		const std::vector<uint32_t>& GetIndices() const { return m_Indices; }
 		const std::vector<Submesh>& GetSubmeshes() const { return m_Submeshes; }
 		const std::vector<Ref<Material>>& GetMaterials() const { return m_Materials; }
 		Ref<Material> GetMaterial(uint32_t index) const;

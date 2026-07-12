@@ -1,17 +1,49 @@
 #include "ContentBrowserPanel.h"
 
+#include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/AssetTypes.h"
+#include "GanymedE/Core/Log.h"
+
 #include <imgui/imgui.h>
+
+#include <algorithm>
+#include <cctype>
 
 namespace GanymedE {
 
-	// Root of the browsable asset tree; navigation can never leave this directory
-	extern const std::filesystem::path g_AssetPath = "assets";
+	// Kept for editor code that still references g_AssetPath
+	extern const std::filesystem::path g_AssetPath = GetAssetRoot();
 
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_BaseDirectory(g_AssetPath), m_CurrentDirectory(m_BaseDirectory)
 	{
 		m_DirectoryIcon = Texture2D::Create("resources/icons/ContentBrowser/DirectoryIcon.png");
 		m_FileIcon = Texture2D::Create("resources/icons/ContentBrowser/FileIcon.png");
+	}
+
+	static ImVec4 GetAssetIconTint(const std::filesystem::path& path, bool isDirectory)
+	{
+		if (isDirectory)
+			return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+
+		AssetType type = AssetTypeFromExtension(path.extension().string());
+		switch (type)
+		{
+			case AssetType::StaticMesh:  return ImVec4(0.55f, 0.75f, 1.0f, 1.0f);
+			case AssetType::Environment: return ImVec4(1.0f, 0.75f, 0.35f, 1.0f);
+			case AssetType::Scene:       return ImVec4(0.55f, 1.0f, 0.65f, 1.0f);
+			case AssetType::Texture:     return ImVec4(1.0f, 0.55f, 0.85f, 1.0f);
+			case AssetType::Material:    return ImVec4(0.85f, 0.55f, 1.0f, 1.0f);
+			default:                     return ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+		}
+	}
+
+	static bool IsImportableAsset(const std::filesystem::path& path)
+	{
+		AssetType type = AssetTypeFromExtension(path.extension().string());
+		return type == AssetType::StaticMesh || type == AssetType::Environment
+			|| type == AssetType::Texture || type == AssetType::Material;
 	}
 
 	void ContentBrowserPanel::OnImGuiRender()
@@ -46,12 +78,19 @@ namespace GanymedE {
 		for (auto& directoryEntry : std::filesystem::directory_iterator(m_CurrentDirectory))
 		{
 			const auto& path = directoryEntry.path();
+			if (path.filename() == ".assets")
+				continue;
+
 			std::string filenameString = path.filename().string();
+			bool isDirectory = directoryEntry.is_directory();
 
 			ImGui::PushID(filenameString.c_str());
-			Ref<Texture2D> icon = directoryEntry.is_directory() ? m_DirectoryIcon : m_FileIcon;
+			Ref<Texture2D> icon = isDirectory ? m_DirectoryIcon : m_FileIcon;
+			ImVec4 iconTint = GetAssetIconTint(path, isDirectory);
+
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-			ImGui::ImageButton("##thumbnail", (ImTextureID)(uintptr_t)icon->GetRendererID(), { thumbnailSize, thumbnailSize }, { 0, 1 }, { 1, 0 });
+			ImGui::ImageButton("##thumbnail", (ImTextureID)(uintptr_t)icon->GetRendererID(),
+				{ thumbnailSize, thumbnailSize }, { 0, 1 }, { 1, 0 }, ImVec4(0, 0, 0, 0), iconTint);
 
 			if (ImGui::BeginDragDropSource())
 			{
@@ -62,10 +101,25 @@ namespace GanymedE {
 				ImGui::EndDragDropSource();
 			}
 
+			if (!isDirectory && ImGui::BeginPopupContextItem())
+			{
+				if (IsImportableAsset(path))
+				{
+					if (ImGui::MenuItem("Import"))
+					{
+						auto relativePath = std::filesystem::relative(path, g_AssetPath);
+						AssetHandle handle = AssetManager::ImportAsset(relativePath);
+						if (IsAssetHandleValid(handle))
+							GE_CORE_INFO("Imported '{0}'", relativePath.string());
+					}
+				}
+				ImGui::EndPopup();
+			}
+
 			ImGui::PopStyleColor();
 			if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 			{
-				if (directoryEntry.is_directory())
+				if (isDirectory)
 					m_CurrentDirectory /= path.filename();
 			}
 			ImGui::TextWrapped("%s", filenameString.c_str());

@@ -7,7 +7,7 @@
 #include "ScriptableEntity.h"
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/Core/Core.h"
-#include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Assets/AssetTypes.h"
 
 namespace GanymedE {
 
@@ -78,11 +78,11 @@ namespace GanymedE {
 
 	struct StaticMeshComponent
 	{
-		Ref<Mesh> Mesh;
+		AssetHandle Mesh = InvalidAssetHandle;
 
 		StaticMeshComponent() = default;
 		StaticMeshComponent(const StaticMeshComponent&) = default;
-		StaticMeshComponent(const Ref<GanymedE::Mesh>& mesh)
+		StaticMeshComponent(AssetHandle mesh)
 			: Mesh(mesh) {}
 	};
 
@@ -132,11 +132,11 @@ namespace GanymedE {
 		SpotLightComponent(const SpotLightComponent&) = default;
 	};
 
-	// Environment / image-based lighting. When EnvironmentPath is set, a baked HDR
+	// Environment / image-based lighting. When Environment is set, a baked HDR
 	// cubemap drives the skybox and IBL; otherwise the procedural hemispheric colors are used.
 	struct SkyLightComponent
 	{
-		std::string EnvironmentPath; // relative to assets/, e.g. "environments/studio.hdr"
+		AssetHandle Environment = InvalidAssetHandle;
 		glm::vec3 SkyColor{ 0.45f, 0.62f, 0.9f };
 		glm::vec3 GroundColor{ 0.28f, 0.26f, 0.22f };
 		float Intensity = 1.0f;

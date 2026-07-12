@@ -2,7 +2,12 @@
 #include "Log.h"
 
 #include <spdlog/sinks/basic_file_sink.h>
+
+#ifdef GE_PLATFORM_WINDOWS
+#include <spdlog/sinks/msvc_sink.h>
+#else
 #include <spdlog/sinks/stdout_color_sinks.h>
+#endif
 
 namespace GanymedE {
 	std::shared_ptr<spdlog::logger> Log::s_CoreLogger;
@@ -11,7 +16,12 @@ namespace GanymedE {
 	void Log::Init()
 	{
 		std::vector<spdlog::sink_ptr> logSinks;
+#ifdef GE_PLATFORM_WINDOWS
+		// Routes to Visual Studio's Output window (Debug pane) when debugging
+		logSinks.emplace_back(std::make_shared<spdlog::sinks::msvc_sink_mt>());
+#else
 		logSinks.emplace_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+#endif
 		logSinks.emplace_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>("GanymedE.log", true));
 
 		logSinks[0]->set_pattern("%^[%T] %n: %v%$");

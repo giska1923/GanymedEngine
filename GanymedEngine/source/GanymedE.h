@@ -44,6 +44,9 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/MeshImporter.h"
 
+#include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Assets/AssetTypes.h"
+
 #include "GanymedE/Renderer/OrthographicCamera.h"
 #include "GanymedE/Renderer/EditorCamera.h"
 //-----------------------------------------

@@ -4,6 +4,8 @@
 #include "Material.h"
 #include "Shader.h"
 #include "Texture.h"
+#include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Components.h"
@@ -25,7 +27,8 @@ namespace GanymedE {
 			return s_Shader;
 		}
 
-		Ref<Texture2D> CreateTextureFromImage(const cgltf_image* image, const std::filesystem::path& basePath)
+		Ref<Texture2D> CreateTextureFromImage(const cgltf_image* image, const std::filesystem::path& basePath,
+			std::string* outRelativePath = nullptr)
 		{
 			if (!image)
 				return nullptr;
@@ -33,6 +36,12 @@ namespace GanymedE {
 			if (image->uri)
 			{
 				std::filesystem::path imagePath = basePath / image->uri;
+				if (outRelativePath)
+				{
+					std::error_code ec;
+					auto relative = std::filesystem::relative(imagePath, GetAssetRoot(), ec);
+					*outRelativePath = ec ? imagePath.string() : relative.generic_string();
+				}
 				return Texture2D::Create(imagePath.string());
 			}
 
@@ -145,13 +154,25 @@ namespace GanymedE {
 				material->SetRoughness(pbr.roughness_factor);
 
 				if (pbr.base_color_texture.texture)
-					material->SetAlbedoMap(CreateTextureFromImage(pbr.base_color_texture.texture->image, basePath));
+				{
+					std::string texPath;
+					material->SetAlbedoMap(CreateTextureFromImage(pbr.base_color_texture.texture->image, basePath, &texPath));
+					material->SetAlbedoMapPath(texPath);
+				}
 				if (pbr.metallic_roughness_texture.texture)
-					material->SetMetallicRoughnessMap(CreateTextureFromImage(pbr.metallic_roughness_texture.texture->image, basePath));
+				{
+					std::string texPath;
+					material->SetMetallicRoughnessMap(CreateTextureFromImage(pbr.metallic_roughness_texture.texture->image, basePath, &texPath));
+					material->SetMetallicRoughnessMapPath(texPath);
+				}
 			}
 
 			if (src.normal_texture.texture)
-				material->SetNormalMap(CreateTextureFromImage(src.normal_texture.texture->image, basePath));
+			{
+				std::string texPath;
+				material->SetNormalMap(CreateTextureFromImage(src.normal_texture.texture->image, basePath, &texPath));
+				material->SetNormalMapPath(texPath);
+			}
 
 			materials.push_back(material);
 		}
@@ -300,7 +321,7 @@ namespace GanymedE {
 			submesh.LocalTransform = glm::mat4(1.0f);
 
 		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials);
-		mesh->SetPath(path.string());
+		mesh->SetPath(MakeAssetRelative(path).generic_string());
 		GE_CORE_INFO("Loaded mesh '{0}' ({1} verts, {2} indices, {3} submeshes)",
 			path.filename().string(), vertices.size(), indices.size(), submeshes.size());
 		return mesh;
@@ -308,13 +329,18 @@ namespace GanymedE {
 
 	Entity MeshImporter::Instantiate(Scene* scene, const std::filesystem::path& path)
 	{
-		Ref<Mesh> mesh = Load(path);
+		std::filesystem::path relativePath = MakeAssetRelative(path);
+		AssetHandle handle = AssetManager::ImportAsset(relativePath);
+		if (!IsAssetHandleValid(handle))
+			return {};
+
+		Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(handle);
 		if (!mesh)
 			return {};
 
 		Entity entity = scene->CreateEntity(path.stem().string());
 		auto& smc = entity.AddComponent<StaticMeshComponent>();
-		smc.Mesh = mesh;
+		smc.Mesh = handle;
 		return entity;
 	}
 

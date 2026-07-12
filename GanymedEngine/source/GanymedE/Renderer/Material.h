@@ -31,12 +31,18 @@ namespace GanymedE {
 
 		void SetAlbedoMap(const Ref<Texture2D>& texture) { m_AlbedoMap = texture; }
 		Ref<Texture2D> GetAlbedoMap() const { return m_AlbedoMap; }
+		void SetAlbedoMapPath(const std::string& path) { m_AlbedoMapPath = path; }
+		const std::string& GetAlbedoMapPath() const { return m_AlbedoMapPath; }
 
 		void SetNormalMap(const Ref<Texture2D>& texture) { m_NormalMap = texture; }
 		Ref<Texture2D> GetNormalMap() const { return m_NormalMap; }
+		void SetNormalMapPath(const std::string& path) { m_NormalMapPath = path; }
+		const std::string& GetNormalMapPath() const { return m_NormalMapPath; }
 
 		void SetMetallicRoughnessMap(const Ref<Texture2D>& texture) { m_MetallicRoughnessMap = texture; }
 		Ref<Texture2D> GetMetallicRoughnessMap() const { return m_MetallicRoughnessMap; }
+		void SetMetallicRoughnessMapPath(const std::string& path) { m_MetallicRoughnessMapPath = path; }
+		const std::string& GetMetallicRoughnessMapPath() const { return m_MetallicRoughnessMapPath; }
 
 		void SetTwoSided(bool twoSided) { m_TwoSided = twoSided; }
 		bool IsTwoSided() const { return m_TwoSided; }
@@ -59,6 +65,10 @@ namespace GanymedE {
 		Ref<Texture2D> m_AlbedoMap;
 		Ref<Texture2D> m_NormalMap;
 		Ref<Texture2D> m_MetallicRoughnessMap;
+
+		std::string m_AlbedoMapPath;
+		std::string m_NormalMapPath;
+		std::string m_MetallicRoughnessMapPath;
 
 		bool m_TwoSided = false;
 	};

@@ -6,10 +6,12 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "GanymedE/Scene/SceneSerializer.h"
+#include "GanymedE/Assets/AssetManager.h"
 
 #include "GanymedE/Utils/PlatformUtils.h"
 #include "GanymedE/Math/Math.h"
 #include "GanymedE/Renderer/MeshImporter.h"
+#include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/Renderer/PostProcess.h"
 
@@ -30,6 +32,8 @@ namespace GanymedE {
 	void EditorLayer::OnAttach()
 	{
 		GE_PROFILE_FUNCTION();
+
+		AssetManager::Init();
 
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 		m_IconPlay = Texture2D::Create("resources/icons/PlayButton.png");
@@ -59,6 +63,7 @@ namespace GanymedE {
 	void EditorLayer::OnDetach()
 	{
 		GE_PROFILE_FUNCTION();
+		AssetManager::Shutdown();
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
@@ -526,7 +531,7 @@ namespace GanymedE {
 		// Environment / ambient (HDR IBL when the asset is present, procedural fallback otherwise)
 		Entity sky = scene->CreateEntity("Sky Light");
 		auto& skyLight = sky.AddComponent<SkyLightComponent>();
-		skyLight.EnvironmentPath = "environments/studio_small_08_1k.hdr";
+		skyLight.Environment = AssetManager::ImportAsset("environments/studio_small_08_1k.hdr");
 		skyLight.Intensity = 1.0f;
 	}
 

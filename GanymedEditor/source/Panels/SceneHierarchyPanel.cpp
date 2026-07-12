@@ -6,6 +6,8 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "GanymedE/Scene/Components.h"
+#include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Renderer/Mesh.h"
 
 #include <algorithm>
 #include <cctype>
@@ -487,36 +489,58 @@ namespace GanymedE {
 
 		DrawComponent<StaticMeshComponent>("Static Mesh", entity, [](auto& component)
 		{
-			if (component.Mesh)
+			if (IsAssetHandleValid(component.Mesh))
 			{
-				ImGui::Text("Mesh: %s", component.Mesh->GetPath().c_str());
-				ImGui::Text("Submeshes: %u", (uint32_t)component.Mesh->GetSubmeshes().size());
-				ImGui::Text("Materials: %u", (uint32_t)component.Mesh->GetMaterials().size());
+				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Mesh);
+				if (metadata)
+					ImGui::Text("Mesh: %s", metadata->FilePath.c_str());
+				else
+					ImGui::Text("Mesh handle: %llu", static_cast<uint64_t>(component.Mesh));
 
-				const auto& materials = component.Mesh->GetMaterials();
-				for (uint32_t i = 0; i < (uint32_t)materials.size(); i++)
+				Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(component.Mesh);
+				if (mesh)
 				{
-					if (!materials[i])
-						continue;
+					ImGui::Text("Submeshes: %u", (uint32_t)mesh->GetSubmeshes().size());
+					ImGui::Text("Materials: %u", (uint32_t)mesh->GetMaterials().size());
 
-					ImGui::PushID((int)i);
-					ImGui::Separator();
-					ImGui::Text("%s", materials[i]->GetName().c_str());
-					glm::vec4 albedo = materials[i]->GetAlbedoColor();
-					if (ImGui::ColorEdit4("Albedo", glm::value_ptr(albedo)))
-						materials[i]->SetAlbedoColor(albedo);
-					float metallic = materials[i]->GetMetallic();
-					if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
-						materials[i]->SetMetallic(metallic);
-					float roughness = materials[i]->GetRoughness();
-					if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.0f, 1.0f))
-						materials[i]->SetRoughness(roughness);
-					ImGui::PopID();
+					const auto& materials = mesh->GetMaterials();
+					for (uint32_t i = 0; i < (uint32_t)materials.size(); i++)
+					{
+						if (!materials[i])
+							continue;
+
+						ImGui::PushID((int)i);
+						ImGui::Separator();
+						ImGui::Text("%s", materials[i]->GetName().c_str());
+						glm::vec4 albedo = materials[i]->GetAlbedoColor();
+						if (ImGui::ColorEdit4("Albedo", glm::value_ptr(albedo)))
+							materials[i]->SetAlbedoColor(albedo);
+						float metallic = materials[i]->GetMetallic();
+						if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
+							materials[i]->SetMetallic(metallic);
+						float roughness = materials[i]->GetRoughness();
+						if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.0f, 1.0f))
+							materials[i]->SetRoughness(roughness);
+						ImGui::PopID();
+					}
 				}
 			}
 			else
 			{
 				ImGui::TextDisabled("No mesh assigned");
+			}
+
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
+				{
+					const char* path = (const char*)payload->Data;
+					std::string ext = std::filesystem::path(path).extension().string();
+					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+					if (ext == ".gltf" || ext == ".glb")
+						component.Mesh = AssetManager::ImportAsset(path);
+				}
+				ImGui::EndDragDropTarget();
 			}
 		});
 
@@ -556,11 +580,18 @@ namespace GanymedE {
 
 		DrawComponent<SkyLightComponent>("Sky Light", entity, [](auto& component)
 		{
-			char envBuffer[512];
-			memset(envBuffer, 0, sizeof(envBuffer));
-			strncpy(envBuffer, component.EnvironmentPath.c_str(), sizeof(envBuffer) - 1);
-			if (ImGui::InputText("HDR Path", envBuffer, sizeof(envBuffer)))
-				component.EnvironmentPath = std::string(envBuffer);
+			if (IsAssetHandleValid(component.Environment))
+			{
+				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Environment);
+				if (metadata)
+					ImGui::Text("Environment: %s", metadata->FilePath.c_str());
+				ImGui::TextDisabled("Using HDR IBL (procedural colors are fallback)");
+			}
+			else
+			{
+				ImGui::ColorEdit3("Sky Color", glm::value_ptr(component.SkyColor));
+				ImGui::ColorEdit3("Ground Color", glm::value_ptr(component.GroundColor));
+			}
 
 			if (ImGui::BeginDragDropTarget())
 			{
@@ -570,17 +601,9 @@ namespace GanymedE {
 					std::string ext = std::filesystem::path(path).extension().string();
 					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 					if (ext == ".hdr")
-						component.EnvironmentPath = path;
+						component.Environment = AssetManager::ImportAsset(path);
 				}
 				ImGui::EndDragDropTarget();
-			}
-
-			if (!component.EnvironmentPath.empty())
-				ImGui::TextDisabled("Using HDR IBL (procedural colors are fallback)");
-			else
-			{
-				ImGui::ColorEdit3("Sky Color", glm::value_ptr(component.SkyColor));
-				ImGui::ColorEdit3("Ground Color", glm::value_ptr(component.GroundColor));
 			}
 
 			ImGui::DragFloat("Intensity", &component.Intensity, 0.02f, 0.0f, 20.0f);

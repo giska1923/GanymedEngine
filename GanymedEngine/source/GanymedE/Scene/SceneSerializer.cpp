@@ -4,7 +4,7 @@
 #include "Entity.h"
 #include "Components.h"
 
-#include "GanymedE/Renderer/MeshImporter.h"
+#include "GanymedE/Assets/AssetManager.h"
 
 #include <fstream>
 
@@ -172,8 +172,8 @@ namespace GanymedE {
 			out << YAML::BeginMap;
 
 			auto& smc = entity.GetComponent<StaticMeshComponent>();
-			if (smc.Mesh)
-				out << YAML::Key << "MeshPath" << YAML::Value << smc.Mesh->GetPath();
+			if (IsAssetHandleValid(smc.Mesh))
+				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(smc.Mesh);
 
 			out << YAML::EndMap;
 		}
@@ -227,8 +227,8 @@ namespace GanymedE {
 			out << YAML::BeginMap;
 
 			auto& skc = entity.GetComponent<SkyLightComponent>();
-			if (!skc.EnvironmentPath.empty())
-				out << YAML::Key << "EnvironmentPath" << YAML::Value << skc.EnvironmentPath;
+			if (IsAssetHandleValid(skc.Environment))
+				out << YAML::Key << "Environment" << YAML::Value << static_cast<uint64_t>(skc.Environment);
 			out << YAML::Key << "SkyColor" << YAML::Value << skc.SkyColor;
 			out << YAML::Key << "GroundColor" << YAML::Value << skc.GroundColor;
 			out << YAML::Key << "Intensity" << YAML::Value << skc.Intensity;
@@ -411,15 +411,20 @@ namespace GanymedE {
 				auto staticMeshComponent = entity["StaticMeshComponent"];
 				if (staticMeshComponent)
 				{
-					auto meshPath = staticMeshComponent["MeshPath"];
-					if (meshPath)
+					auto& smc = deserializedEntity.AddComponent<StaticMeshComponent>();
+
+					auto meshHandle = staticMeshComponent["Mesh"];
+					if (meshHandle)
 					{
-						Ref<Mesh> mesh = MeshImporter::Load(meshPath.as<std::string>());
-						if (mesh)
-						{
-							auto& smc = deserializedEntity.AddComponent<StaticMeshComponent>();
-							smc.Mesh = mesh;
-						}
+						smc.Mesh = meshHandle.as<uint64_t>();
+						AssetManager::GetAsset<Mesh>(smc.Mesh);
+					}
+					else
+					{
+						// Backward compatibility with path-based scenes
+						auto meshPath = staticMeshComponent["MeshPath"];
+						if (meshPath)
+							smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
 					}
 				}
 
@@ -458,9 +463,17 @@ namespace GanymedE {
 				if (skyLightComponent)
 				{
 					auto& skc = deserializedEntity.AddComponent<SkyLightComponent>();
-					auto envPath = skyLightComponent["EnvironmentPath"];
-					if (envPath)
-						skc.EnvironmentPath = envPath.as<std::string>();
+
+					auto envHandle = skyLightComponent["Environment"];
+					if (envHandle)
+						skc.Environment = envHandle.as<uint64_t>();
+					else
+					{
+						// Backward compatibility with path-based scenes
+						auto envPath = skyLightComponent["EnvironmentPath"];
+						if (envPath)
+							skc.Environment = AssetManager::ImportAsset(envPath.as<std::string>());
+					}
 					skc.SkyColor = skyLightComponent["SkyColor"].as<glm::vec3>();
 					skc.GroundColor = skyLightComponent["GroundColor"].as<glm::vec3>();
 					skc.Intensity = skyLightComponent["Intensity"].as<float>();

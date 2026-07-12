@@ -1,5 +1,5 @@
 project "GanymedEditor"
-	kind "ConsoleApp"
+	kind "WindowedApp"
 	language "C++"
 	cppdialect "C++17"
 	staticruntime "off"
@@ -42,6 +42,7 @@ project "GanymedEditor"
 	filter "system:windows"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
+		entrypoint "mainCRTStartup"
 
 	-- Static libraries do not propagate their links outside Visual Studio,
 	-- so the executable links the dependency projects and system libraries itself

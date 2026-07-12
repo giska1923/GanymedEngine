@@ -3,6 +3,8 @@
 
 #include "Entity.h"
 #include "Components.h"
+#include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Renderer/Renderer2D.h"
 #include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/Renderer/Environment.h"
@@ -332,8 +334,12 @@ namespace GanymedE {
 				{
 					auto [transform, meshComp] = view.get<TransformComponent, StaticMeshComponent>(entity);
 					(void)transform;
-					if (meshComp.Mesh)
-						Renderer3D::SubmitMesh(meshComp.Mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
+					if (IsAssetHandleValid(meshComp.Mesh))
+					{
+						Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(meshComp.Mesh);
+						if (mesh)
+							Renderer3D::SubmitMesh(mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
+					}
 				}
 			}
 
@@ -391,8 +397,12 @@ namespace GanymedE {
 			{
 				auto [transform, meshComp] = view.get<TransformComponent, StaticMeshComponent>(entity);
 				(void)transform;
-				if (meshComp.Mesh)
-					Renderer3D::SubmitMesh(meshComp.Mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
+				if (IsAssetHandleValid(meshComp.Mesh))
+				{
+					Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(meshComp.Mesh);
+					if (mesh)
+						Renderer3D::SubmitMesh(mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
+				}
 			}
 		}
 		DrawColliderGizmos();
@@ -519,10 +529,9 @@ namespace GanymedE {
 			for (auto entity : view)
 			{
 				auto& sky = view.get<SkyLightComponent>(entity);
-				if (!sky.EnvironmentPath.empty())
+				if (IsAssetHandleValid(sky.Environment))
 				{
-					std::string fullPath = "assets/" + sky.EnvironmentPath;
-					Ref<Environment> environment = Renderer3D::LoadEnvironment(fullPath);
+					Ref<Environment> environment = AssetManager::GetAsset<Environment>(sky.Environment);
 					if (environment && environment->IsValid())
 						Renderer3D::SubmitEnvironment(environment, sky.Intensity, sky.DrawSkybox);
 					else
