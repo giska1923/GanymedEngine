@@ -1,4 +1,7 @@
 Assets:
+  - Handle: 12857661232348130083
+    Type: 1
+    FilePath: models/BoxTextured.glb
   - Handle: 13533065294358047213
     Type: 2
     FilePath: environments/studio_small_08_1k.hdr

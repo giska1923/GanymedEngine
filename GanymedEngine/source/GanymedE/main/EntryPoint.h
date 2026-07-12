@@ -15,6 +15,7 @@ int main(int argc, char** argv) {
 #endif
 
 	GE_PROFILE_BEGIN_SESSION("Startup", "GanymedEProfile-Startup.json");
+	GanymedE::Application::SetCommandLineArgs({ argc, argv });
 	GanymedE::Application* app = GanymedE::CreateApplication();
 	GE_PROFILE_END_SESSION();
 

@@ -18,9 +18,12 @@ namespace GanymedE {
 		virtual void SetDepthFunc(DepthFunc func) override;
 		virtual void SetCullFace(bool enabled) override;
 		virtual void SetCullMode(CullMode mode) override;
+		virtual void SetBlend(bool enabled) override;
+		virtual void SetBlendMode(BlendMode mode) override;
 
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) override;
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex) override;
+		virtual void DrawIndexedInstanced(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex, uint32_t instanceCount) override;
 		virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) override;
 	};
 

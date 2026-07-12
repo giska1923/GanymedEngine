@@ -84,6 +84,23 @@ namespace GanymedE {
 		}
 	}
 
+	void OpenGLRendererAPI::SetBlend(bool enabled)
+	{
+		if (enabled)
+			glEnable(GL_BLEND);
+		else
+			glDisable(GL_BLEND);
+	}
+
+	void OpenGLRendererAPI::SetBlendMode(BlendMode mode)
+	{
+		switch (mode)
+		{
+			case BlendMode::Alpha:    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); break;
+			case BlendMode::Additive: glBlendFunc(GL_ONE, GL_ONE); break;
+		}
+	}
+
 	void OpenGLRendererAPI::DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount)
 	{
 		vertexArray->Bind();
@@ -96,6 +113,13 @@ namespace GanymedE {
 		vertexArray->Bind();
 		glDrawElementsBaseVertex(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT,
 			(void*)(sizeof(uint32_t) * baseIndex), baseVertex);
+	}
+
+	void OpenGLRendererAPI::DrawIndexedInstanced(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex, uint32_t instanceCount)
+	{
+		vertexArray->Bind();
+		glDrawElementsInstancedBaseVertex(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT,
+			(void*)(sizeof(uint32_t) * baseIndex), instanceCount, baseVertex);
 	}
 
 	void OpenGLRendererAPI::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)

@@ -33,6 +33,12 @@ namespace GanymedE {
 			Back,
 			FrontAndBack
 		};
+
+		enum class BlendMode
+		{
+			Alpha = 0, // src_alpha, one_minus_src_alpha (default)
+			Additive   // one, one
+		};
 	public:
 		virtual ~RendererAPI() = default;
 
@@ -46,9 +52,12 @@ namespace GanymedE {
 		virtual void SetDepthFunc(DepthFunc func) = 0;
 		virtual void SetCullFace(bool enabled) = 0;
 		virtual void SetCullMode(CullMode mode) = 0;
+		virtual void SetBlend(bool enabled) = 0;
+		virtual void SetBlendMode(BlendMode mode) = 0;
 
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) = 0;
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex) = 0;
+		virtual void DrawIndexedInstanced(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex, uint32_t instanceCount) = 0;
 		virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) = 0;
 
 		inline static API GetAPI() { return s_API; }

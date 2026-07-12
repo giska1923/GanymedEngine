@@ -52,7 +52,10 @@ namespace GanymedE {
 		struct Statistics
 		{
 			uint32_t DrawCalls = 0;
-			uint32_t MeshCount = 0;
+			uint32_t MeshCount = 0;        // submitted submesh draw commands
+			uint32_t CulledMeshes = 0;     // rejected by camera frustum culling
+			uint32_t InstancedDraws = 0;   // draw calls that batched > 1 instance
+			uint32_t TransparentMeshes = 0;
 		};
 		static void ResetStats();
 		static Statistics GetStats();

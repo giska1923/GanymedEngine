@@ -8,6 +8,7 @@
 #include "Buffer.h"
 #include "Framebuffer.h"
 #include "Environment.h"
+#include "GanymedE/Math/BoundingVolumes.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
@@ -57,20 +58,26 @@ namespace GanymedE {
 		GPULight Lights[kMaxLights]{};
 	};
 
+	// Aliases keep the member names from shadowing the type names (GCC rejects that)
+	using MeshRef = Ref<Mesh>;
+	using MaterialRef = Ref<Material>;
+
 	struct DrawCommand
 	{
-		Ref<Mesh> Mesh;
+		MeshRef Mesh;
 		uint32_t SubmeshIndex = 0;
-		Ref<Material> Material;
+		MaterialRef Material;
 		glm::mat4 Transform{ 1.0f };
 		int EntityID = -1;
-		float SortKey = 0.0f; // distance from camera for front-to-back
+		float SortKey = 0.0f;  // squared distance from camera
+		AABB WorldBounds;      // submesh bounds in world space, for frustum culling
 	};
 
 	struct Renderer3DData
 	{
 		CameraUBO CameraBuffer{};
 		Ref<UniformBuffer> CameraUniformBuffer;
+		Frustum CameraFrustum;
 
 		LightsUBO LightBuffer{};
 		Ref<UniformBuffer> LightUniformBuffer;
@@ -224,6 +231,7 @@ namespace GanymedE {
 		s_Data.CameraBuffer.Projection = projection;
 		s_Data.CameraBuffer.CameraPosition = cameraPos;
 		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraUBO));
+		s_Data.CameraFrustum = Frustum::FromViewProjection(s_Data.CameraBuffer.ViewProjection);
 	}
 
 	void Renderer3D::BeginScene(const Camera& camera, const glm::mat4& transform)
@@ -355,8 +363,9 @@ namespace GanymedE {
 		cmd.Material = material;
 		cmd.Transform = transform * mesh->GetSubmeshes()[submeshIndex].LocalTransform;
 		cmd.EntityID = entityID;
+		cmd.WorldBounds = mesh->GetSubmeshes()[submeshIndex].Bounds.Transformed(cmd.Transform);
 
-		glm::vec3 center = glm::vec3(cmd.Transform[3]);
+		glm::vec3 center = (cmd.WorldBounds.Min + cmd.WorldBounds.Max) * 0.5f;
 		cmd.SortKey = glm::dot(center - s_Data.CameraBuffer.CameraPosition, center - s_Data.CameraBuffer.CameraPosition);
 
 		s_Data.DrawList.push_back(cmd);
@@ -446,12 +455,47 @@ namespace GanymedE {
 		}
 	}
 
-	static void RenderShadowPass()
+	// Draws a contiguous run of commands sharing (mesh, submesh) as instanced chunks.
+	static void DrawInstancedGroup(const DrawCommand* const* cmds, size_t count)
 	{
-		if (!s_Data.HasShadowLight || !s_Data.ShadowDepthShader)
+		static std::vector<MeshInstanceData> s_Instances;
+
+		const Ref<Mesh>& mesh = cmds[0]->Mesh;
+		const Submesh& submesh = mesh->GetSubmeshes()[cmds[0]->SubmeshIndex];
+
+		for (size_t offset = 0; offset < count; offset += Mesh::MaxInstancesPerDraw)
+		{
+			size_t chunk = std::min((size_t)Mesh::MaxInstancesPerDraw, count - offset);
+			s_Instances.resize(chunk);
+			for (size_t i = 0; i < chunk; i++)
+			{
+				s_Instances[i].Transform = cmds[offset + i]->Transform;
+				s_Instances[i].EntityID = cmds[offset + i]->EntityID;
+			}
+
+			mesh->SetInstanceData(s_Instances.data(), (uint32_t)chunk);
+			RenderCommand::DrawIndexedInstanced(mesh->GetVertexArray(), submesh.IndexCount,
+				submesh.BaseIndex, (int32_t)submesh.BaseVertex, (uint32_t)chunk);
+			s_Data.Stats.DrawCalls++;
+			if (chunk > 1)
+				s_Data.Stats.InstancedDraws++;
+		}
+	}
+
+	static void RenderShadowPass(std::vector<const DrawCommand*>& casters)
+	{
+		if (!s_Data.HasShadowLight || !s_Data.ShadowDepthShader || casters.empty())
 			return;
 
 		ComputeCascades(s_Data.ShadowLightDir);
+
+		// Group instances by mesh + submesh (material is irrelevant for depth)
+		std::sort(casters.begin(), casters.end(), [](const DrawCommand* a, const DrawCommand* b)
+		{
+			if (a->Mesh != b->Mesh)
+				return a->Mesh < b->Mesh;
+			return a->SubmeshIndex < b->SubmeshIndex;
+		});
 
 		s_Data.ShadowDepthShader->Bind();
 
@@ -471,17 +515,49 @@ namespace GanymedE {
 
 			s_Data.ShadowDepthShader->SetMat4("u_LightSpaceMatrix", s_Data.CascadeLightSpace[c]);
 
-			for (const DrawCommand& cmd : s_Data.DrawList)
+			for (size_t i = 0; i < casters.size(); )
 			{
-				const Submesh& submesh = cmd.Mesh->GetSubmeshes()[cmd.SubmeshIndex];
-				s_Data.ShadowDepthShader->SetMat4("u_Transform", cmd.Transform);
-				RenderCommand::DrawIndexed(cmd.Mesh->GetVertexArray(), submesh.IndexCount, submesh.BaseIndex, (int32_t)submesh.BaseVertex);
-				s_Data.Stats.DrawCalls++;
+				size_t end = i + 1;
+				while (end < casters.size()
+					&& casters[end]->Mesh == casters[i]->Mesh
+					&& casters[end]->SubmeshIndex == casters[i]->SubmeshIndex)
+					end++;
+
+				DrawInstancedGroup(&casters[i], end - i);
+				i = end;
 			}
 
 			RenderCommand::SetCullMode(RendererAPI::CullMode::Back);
 			s_Data.ShadowFramebuffers[c]->Unbind();
 		}
+	}
+
+	// Bind a material plus the per-pass shadow/IBL uniforms its shader needs
+	static void BindMaterialForColorPass(const Ref<Material>& material)
+	{
+		RenderCommand::SetCullFace(!material->IsTwoSided());
+		material->Bind();
+
+		const Ref<Shader>& shader = material->GetShader();
+		const float shadowTexelSize = 1.0f / (float)kShadowMapSize;
+
+		shader->SetInt("u_UseShadows", s_Data.HasShadowLight ? 1 : 0);
+		shader->SetInt("u_CascadeCount", (int)kCascadeCount);
+		shader->SetFloat("u_ShadowTexelSize", shadowTexelSize);
+		for (uint32_t c = 0; c < kCascadeCount; c++)
+		{
+			std::string idx = std::to_string(c);
+			shader->SetMat4("u_LightSpaceMatrices[" + idx + "]", s_Data.CascadeLightSpace[c]);
+			shader->SetInt("u_ShadowMaps[" + idx + "]", (int)(kShadowMapSlot0 + c));
+			shader->SetFloat("u_CascadeSplits[" + idx + "]", s_Data.CascadeSplits[c]);
+		}
+
+		shader->SetInt("u_UseIBL", s_Data.UseIBL ? 1 : 0);
+		shader->SetInt("u_IrradianceMap", (int)kIrradianceSlot);
+		shader->SetInt("u_PrefilterMap", (int)kPrefilterSlot);
+		shader->SetInt("u_BRDFLUT", (int)kBRDFLutSlot);
+		shader->SetFloat("u_MaxReflectionLod",
+			s_Data.ActiveEnvironment ? s_Data.ActiveEnvironment->GetMaxReflectionLod() : 0.0f);
 	}
 
 	void Renderer3D::EndScene()
@@ -491,24 +567,58 @@ namespace GanymedE {
 		// Push all shared frame data to the GPU
 		s_Data.LightUniformBuffer->SetData(&s_Data.LightBuffer, sizeof(LightsUBO));
 
-		// Shadow depth pass (renders the same draw list from the light's POV)
-		RenderShadowPass();
+		// Partition the draw list: shadow casters skip camera culling (an off-screen
+		// mesh still casts a visible shadow); the color passes are frustum-culled.
+		std::vector<const DrawCommand*> shadowCasters;
+		std::vector<const DrawCommand*> opaque;
+		std::vector<const DrawCommand*> transparent;
+		shadowCasters.reserve(s_Data.DrawList.size());
+		opaque.reserve(s_Data.DrawList.size());
 
-		// Opaque front-to-back, then group by material pointer for fewer state changes
-		std::sort(s_Data.DrawList.begin(), s_Data.DrawList.end(), [](const DrawCommand& a, const DrawCommand& b)
+		for (const DrawCommand& cmd : s_Data.DrawList)
 		{
-			if (a.Material != b.Material)
-				return a.Material < b.Material;
-			if (a.Mesh != b.Mesh)
-				return a.Mesh < b.Mesh;
-			return a.SortKey < b.SortKey;
+			bool isTransparent = cmd.Material && cmd.Material->IsTransparent();
+			if (!isTransparent)
+				shadowCasters.push_back(&cmd);
+
+			if (!s_Data.CameraFrustum.Intersects(cmd.WorldBounds))
+			{
+				s_Data.Stats.CulledMeshes++;
+				continue;
+			}
+
+			if (isTransparent)
+			{
+				transparent.push_back(&cmd);
+				s_Data.Stats.TransparentMeshes++;
+			}
+			else
+			{
+				opaque.push_back(&cmd);
+			}
+		}
+
+		// Shadow depth pass (re-renders the caster list from the light's POV)
+		RenderShadowPass(shadowCasters);
+
+		// Opaque: group by material -> mesh -> submesh (instancing batches within a
+		// group), front-to-back inside each group for early-z
+		std::sort(opaque.begin(), opaque.end(), [](const DrawCommand* a, const DrawCommand* b)
+		{
+			if (a->Material != b->Material)
+				return a->Material < b->Material;
+			if (a->Mesh != b->Mesh)
+				return a->Mesh < b->Mesh;
+			if (a->SubmeshIndex != b->SubmeshIndex)
+				return a->SubmeshIndex < b->SubmeshIndex;
+			return a->SortKey < b->SortKey;
 		});
 
 		RenderCommand::SetDepthTest(true);
 		RenderCommand::SetDepthWrite(true);
+		RenderCommand::SetBlend(false);
 
 		// Bind all cascade depth maps once for the whole pass (slots 5..8)
-		const float shadowTexelSize = 1.0f / (float)kShadowMapSize;
 		for (uint32_t c = 0; c < kCascadeCount; c++)
 		{
 			if (s_Data.ShadowFramebuffers[c])
@@ -519,42 +629,62 @@ namespace GanymedE {
 		if (s_Data.UseIBL && s_Data.ActiveEnvironment)
 			s_Data.ActiveEnvironment->BindIBL(kIrradianceSlot, kPrefilterSlot, kBRDFLutSlot);
 
-		for (const DrawCommand& cmd : s_Data.DrawList)
+		const Material* boundMaterial = nullptr;
+		for (size_t i = 0; i < opaque.size(); )
 		{
-			const Submesh& submesh = cmd.Mesh->GetSubmeshes()[cmd.SubmeshIndex];
+			size_t end = i + 1;
+			while (end < opaque.size()
+				&& opaque[end]->Material == opaque[i]->Material
+				&& opaque[end]->Mesh == opaque[i]->Mesh
+				&& opaque[end]->SubmeshIndex == opaque[i]->SubmeshIndex)
+				end++;
 
-			if (cmd.Material)
+			if (opaque[i]->Material && opaque[i]->Material.get() != boundMaterial)
 			{
-				RenderCommand::SetCullFace(!cmd.Material->IsTwoSided());
-				cmd.Material->Bind();
-
-				const Ref<Shader>& shader = cmd.Material->GetShader();
-				shader->SetMat4("u_Transform", cmd.Transform);
-				shader->SetInt("u_EntityID", cmd.EntityID);
-
-				shader->SetInt("u_UseShadows", s_Data.HasShadowLight ? 1 : 0);
-				shader->SetInt("u_CascadeCount", (int)kCascadeCount);
-				shader->SetFloat("u_ShadowTexelSize", shadowTexelSize);
-				for (uint32_t c = 0; c < kCascadeCount; c++)
-				{
-					std::string idx = std::to_string(c);
-					shader->SetMat4("u_LightSpaceMatrices[" + idx + "]", s_Data.CascadeLightSpace[c]);
-					shader->SetInt("u_ShadowMaps[" + idx + "]", (int)(kShadowMapSlot0 + c));
-					shader->SetFloat("u_CascadeSplits[" + idx + "]", s_Data.CascadeSplits[c]);
-				}
-
-				shader->SetInt("u_UseIBL", s_Data.UseIBL ? 1 : 0);
-				shader->SetInt("u_IrradianceMap", (int)kIrradianceSlot);
-				shader->SetInt("u_PrefilterMap", (int)kPrefilterSlot);
-				shader->SetInt("u_BRDFLUT", (int)kBRDFLutSlot);
-				shader->SetFloat("u_MaxReflectionLod",
-					s_Data.ActiveEnvironment ? s_Data.ActiveEnvironment->GetMaxReflectionLod() : 0.0f);
+				BindMaterialForColorPass(opaque[i]->Material);
+				boundMaterial = opaque[i]->Material.get();
 			}
 
-			RenderCommand::DrawIndexed(cmd.Mesh->GetVertexArray(), submesh.IndexCount, submesh.BaseIndex, (int32_t)submesh.BaseVertex);
-			s_Data.Stats.DrawCalls++;
+			DrawInstancedGroup(&opaque[i], end - i);
+			i = end;
 		}
 
+		// Transparent: back-to-front after opaque, depth-tested but not depth-written
+		if (!transparent.empty())
+		{
+			std::sort(transparent.begin(), transparent.end(), [](const DrawCommand* a, const DrawCommand* b)
+			{
+				return a->SortKey > b->SortKey;
+			});
+
+			RenderCommand::SetBlend(true);
+			RenderCommand::SetDepthWrite(false);
+
+			for (size_t i = 0; i < transparent.size(); )
+			{
+				// Only merge neighbours that stayed adjacent after the depth sort
+				size_t end = i + 1;
+				while (end < transparent.size()
+					&& transparent[end]->Material == transparent[i]->Material
+					&& transparent[end]->Mesh == transparent[i]->Mesh
+					&& transparent[end]->SubmeshIndex == transparent[i]->SubmeshIndex)
+					end++;
+
+				if (transparent[i]->Material && transparent[i]->Material.get() != boundMaterial)
+				{
+					BindMaterialForColorPass(transparent[i]->Material);
+					boundMaterial = transparent[i]->Material.get();
+				}
+
+				DrawInstancedGroup(&transparent[i], end - i);
+				i = end;
+			}
+
+			RenderCommand::SetDepthWrite(true);
+		}
+
+		// Leave blending on: the 2D renderer, grid, and debug lines rely on it
+		RenderCommand::SetBlend(true);
 		RenderCommand::SetCullFace(true);
 		s_Data.DrawList.clear();
 

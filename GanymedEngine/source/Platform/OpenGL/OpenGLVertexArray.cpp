@@ -80,6 +80,8 @@ namespace GanymedE {
 					element.Normalized ? GL_TRUE : GL_FALSE,
 					layout.GetStride(),
 					(const void*)(uintptr_t)element.Offset);
+				if (element.Instanced)
+					glVertexAttribDivisor(m_VertexBufferIndex, 1);
 				m_VertexBufferIndex++;
 				break;
 			}
@@ -96,6 +98,8 @@ namespace GanymedE {
 					ShaderDataTypeToOpenGLBaseType(element.Type),
 					layout.GetStride(),
 					(const void*)(uintptr_t)element.Offset);
+				if (element.Instanced)
+					glVertexAttribDivisor(m_VertexBufferIndex, 1);
 				m_VertexBufferIndex++;
 				break;
 			}
@@ -112,7 +116,8 @@ namespace GanymedE {
 						element.Normalized ? GL_TRUE : GL_FALSE,
 						layout.GetStride(),
 						(const void*)(uintptr_t)(element.Offset + sizeof(float) * count * i));
-					glVertexAttribDivisor(m_VertexBufferIndex, 1);
+					if (element.Instanced)
+						glVertexAttribDivisor(m_VertexBufferIndex, 1);
 					m_VertexBufferIndex++;
 				}
 				break;

@@ -8,6 +8,9 @@ layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec3 a_Normal;
 layout(location = 2) in vec3 a_Tangent;
 layout(location = 3) in vec2 a_TexCoord;
+// Per-instance (divisor 1): world transform + entity ID
+layout(location = 4) in mat4 a_InstanceTransform;
+layout(location = 8) in int a_InstanceEntityID;
 
 layout(std140) uniform CameraData
 {
@@ -18,22 +21,22 @@ layout(std140) uniform CameraData
 	float _camPad0;
 };
 
-uniform mat4 u_Transform;
-
 out vec3 v_WorldPos;
 out vec3 v_Normal;
 out vec3 v_Tangent;
 out vec2 v_TexCoord;
+flat out int v_EntityID;
 
 void main()
 {
-	vec4 worldPos = u_Transform * vec4(a_Position, 1.0);
+	vec4 worldPos = a_InstanceTransform * vec4(a_Position, 1.0);
 	v_WorldPos = worldPos.xyz;
 
-	mat3 normalMatrix = mat3(u_Transform);
+	mat3 normalMatrix = mat3(a_InstanceTransform);
 	v_Normal = normalize(normalMatrix * a_Normal);
 	v_Tangent = normalize(normalMatrix * a_Tangent);
 	v_TexCoord = a_TexCoord;
+	v_EntityID = a_InstanceEntityID;
 
 	gl_Position = u_ViewProjection * worldPos;
 }
@@ -48,6 +51,7 @@ in vec3 v_WorldPos;
 in vec3 v_Normal;
 in vec3 v_Tangent;
 in vec2 v_TexCoord;
+flat in int v_EntityID;
 
 const float PI = 3.14159265359;
 const int MAX_LIGHTS = 32;
@@ -107,8 +111,6 @@ uniform samplerCube u_PrefilterMap;
 uniform sampler2D u_BRDFLUT;
 uniform int u_UseIBL;
 uniform float u_MaxReflectionLod;
-
-uniform int u_EntityID;
 
 float DistributionGGX(vec3 N, vec3 H, float roughness)
 {
@@ -326,5 +328,5 @@ void main()
 	}
 
 	color = vec4(ambient + Lo, albedoSample.a);
-	entityID = u_EntityID;
+	entityID = v_EntityID;
 }

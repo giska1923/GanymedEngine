@@ -7,6 +7,8 @@
 #include "GanymedE/Renderer/Shader.h"
 #include "GanymedE/Renderer/Texture.h"
 
+#include <stb_image.h>
+
 #include <fstream>
 
 namespace GanymedE {
@@ -14,7 +16,7 @@ namespace GanymedE {
 	namespace {
 
 		constexpr uint32_t MESH_CACHE_MAGIC = 0x48434D47; // 'GMCH'
-		constexpr uint32_t MESH_CACHE_VERSION = 1;
+		constexpr uint32_t MESH_CACHE_VERSION = 3; // v3: embedded texture bytes for pathless maps
 
 		Ref<Shader> GetMeshShader()
 		{
@@ -49,6 +51,42 @@ namespace GanymedE {
 		void ReadValue(std::istream& in, T& value)
 		{
 			in.read(reinterpret_cast<char*>(&value), sizeof(T));
+		}
+
+		void WriteBlob(std::ostream& out, const std::vector<uint8_t>& data)
+		{
+			uint32_t size = (uint32_t)data.size();
+			WriteValue(out, size);
+			if (size > 0)
+				out.write(reinterpret_cast<const char*>(data.data()), size);
+		}
+
+		std::vector<uint8_t> ReadBlob(std::istream& in)
+		{
+			uint32_t size = 0;
+			ReadValue(in, size);
+			std::vector<uint8_t> data(size);
+			if (size > 0)
+				in.read(reinterpret_cast<char*>(data.data()), size);
+			return data;
+		}
+
+		// Mirrors MeshImporter's embedded-image decode (compressed PNG/JPEG bytes -> RGBA texture)
+		Ref<Texture2D> CreateTextureFromEmbedded(const std::vector<uint8_t>& data)
+		{
+			if (data.empty())
+				return nullptr;
+
+			stbi_set_flip_vertically_on_load(1);
+			int width, height, channels;
+			unsigned char* pixels = stbi_load_from_memory(data.data(), (int)data.size(), &width, &height, &channels, 4);
+			if (!pixels)
+				return nullptr;
+
+			Ref<Texture2D> texture = Texture2D::Create((uint32_t)width, (uint32_t)height);
+			texture->SetData(pixels, width * height * 4);
+			stbi_image_free(pixels);
+			return texture;
 		}
 
 		void WriteVector(std::ostream& out, const std::vector<MeshVertex>& vertices)
@@ -129,9 +167,13 @@ namespace GanymedE {
 					WriteValue(out, 0.0f);
 					WriteValue(out, 0.5f);
 					WriteValue(out, false);
+					WriteValue(out, false);
 					WriteString(out, "");
+					WriteBlob(out, {});
 					WriteString(out, "");
+					WriteBlob(out, {});
 					WriteString(out, "");
+					WriteBlob(out, {});
 					continue;
 				}
 
@@ -140,9 +182,13 @@ namespace GanymedE {
 				WriteValue(out, material->GetMetallic());
 				WriteValue(out, material->GetRoughness());
 				WriteValue(out, material->IsTwoSided());
+				WriteValue(out, material->IsTransparent());
 				WriteString(out, material->GetAlbedoMapPath());
+				WriteBlob(out, material->GetAlbedoMapEmbeddedData());
 				WriteString(out, material->GetNormalMapPath());
+				WriteBlob(out, material->GetNormalMapEmbeddedData());
 				WriteString(out, material->GetMetallicRoughnessMapPath());
+				WriteBlob(out, material->GetMetallicRoughnessMapEmbeddedData());
 			}
 		}
 
@@ -162,20 +208,25 @@ namespace GanymedE {
 
 				glm::vec4 albedo;
 				float metallic, roughness;
-				bool twoSided;
+				bool twoSided, transparent;
 				ReadValue(in, albedo);
 				ReadValue(in, metallic);
 				ReadValue(in, roughness);
 				ReadValue(in, twoSided);
+				ReadValue(in, transparent);
 
 				material->SetAlbedoColor(albedo);
 				material->SetMetallic(metallic);
 				material->SetRoughness(roughness);
 				material->SetTwoSided(twoSided);
+				material->SetTransparent(transparent);
 
 				std::string albedoPath = ReadString(in);
+				std::vector<uint8_t> albedoEmbedded = ReadBlob(in);
 				std::string normalPath = ReadString(in);
+				std::vector<uint8_t> normalEmbedded = ReadBlob(in);
 				std::string mrPath = ReadString(in);
+				std::vector<uint8_t> mrEmbedded = ReadBlob(in);
 
 				material->SetAlbedoMapPath(albedoPath);
 				material->SetNormalMapPath(normalPath);
@@ -183,10 +234,23 @@ namespace GanymedE {
 
 				if (!albedoPath.empty())
 					material->SetAlbedoMap(Texture2D::Create((GetAssetRoot() / albedoPath).string()));
+				else
+					material->SetAlbedoMap(CreateTextureFromEmbedded(albedoEmbedded));
+
 				if (!normalPath.empty())
 					material->SetNormalMap(Texture2D::Create((GetAssetRoot() / normalPath).string()));
+				else
+					material->SetNormalMap(CreateTextureFromEmbedded(normalEmbedded));
+
 				if (!mrPath.empty())
 					material->SetMetallicRoughnessMap(Texture2D::Create((GetAssetRoot() / mrPath).string()));
+				else
+					material->SetMetallicRoughnessMap(CreateTextureFromEmbedded(mrEmbedded));
+
+				// Keep the bytes so a future cache rewrite doesn't drop the textures
+				material->SetAlbedoMapEmbeddedData(std::move(albedoEmbedded));
+				material->SetNormalMapEmbeddedData(std::move(normalEmbedded));
+				material->SetMetallicRoughnessMapEmbeddedData(std::move(mrEmbedded));
 
 				materials.push_back(material);
 			}

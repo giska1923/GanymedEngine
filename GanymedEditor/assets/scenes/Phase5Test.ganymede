@@ -1,0 +1,553 @@
+Scene: Phase5Test
+Entities:
+  - Entity: 10000000000000000001
+    TagComponent:
+      Tag: Box_0_0
+    TransformComponent:
+      Translation: [-45, 0.5, 0]
+      Rotation: [0, 1.956, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000002
+    TagComponent:
+      Tag: Box_0_1
+    TransformComponent:
+      Translation: [-45, 0.5, -4]
+      Rotation: [0, 2.329, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000003
+    TagComponent:
+      Tag: Box_0_2
+    TransformComponent:
+      Translation: [-45, 0.5, -8]
+      Rotation: [0, 2.497, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000004
+    TagComponent:
+      Tag: Box_0_3
+    TransformComponent:
+      Translation: [-45, 0.5, -12]
+      Rotation: [0, 2.959, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000005
+    TagComponent:
+      Tag: Box_1_0
+    TransformComponent:
+      Translation: [-35, 0.5, 0]
+      Rotation: [0, 2.323, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000006
+    TagComponent:
+      Tag: Box_1_1
+    TransformComponent:
+      Translation: [-35, 0.5, -4]
+      Rotation: [0, 2.896, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000007
+    TagComponent:
+      Tag: Box_1_2
+    TransformComponent:
+      Translation: [-35, 0.5, -8]
+      Rotation: [0, 0.091, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000008
+    TagComponent:
+      Tag: Box_1_3
+    TransformComponent:
+      Translation: [-35, 0.5, -12]
+      Rotation: [0, 1.462, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000009
+    TagComponent:
+      Tag: Box_2_0
+    TransformComponent:
+      Translation: [-25, 0.5, 0]
+      Rotation: [0, 2.962, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000010
+    TagComponent:
+      Tag: Box_2_1
+    TransformComponent:
+      Translation: [-25, 0.5, -4]
+      Rotation: [0, 2.038, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000011
+    TagComponent:
+      Tag: Box_2_2
+    TransformComponent:
+      Translation: [-25, 0.5, -8]
+      Rotation: [0, 2.829, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000012
+    TagComponent:
+      Tag: Box_2_3
+    TransformComponent:
+      Translation: [-25, 0.5, -12]
+      Rotation: [0, 0.355, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000013
+    TagComponent:
+      Tag: Box_3_0
+    TransformComponent:
+      Translation: [-15, 0.5, 0]
+      Rotation: [0, 1.473, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000014
+    TagComponent:
+      Tag: Box_3_1
+    TransformComponent:
+      Translation: [-15, 0.5, -4]
+      Rotation: [0, 0.774, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000015
+    TagComponent:
+      Tag: Box_3_2
+    TransformComponent:
+      Translation: [-15, 0.5, -8]
+      Rotation: [0, 1.707, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000016
+    TagComponent:
+      Tag: Box_3_3
+    TransformComponent:
+      Translation: [-15, 0.5, -12]
+      Rotation: [0, 1.802, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000017
+    TagComponent:
+      Tag: Box_4_0
+    TransformComponent:
+      Translation: [-5, 0.5, 0]
+      Rotation: [0, 0.041, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000018
+    TagComponent:
+      Tag: Box_4_1
+    TransformComponent:
+      Translation: [-5, 0.5, -4]
+      Rotation: [0, 0.681, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000019
+    TagComponent:
+      Tag: Box_4_2
+    TransformComponent:
+      Translation: [-5, 0.5, -8]
+      Rotation: [0, 0.878, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000020
+    TagComponent:
+      Tag: Box_4_3
+    TransformComponent:
+      Translation: [-5, 0.5, -12]
+      Rotation: [0, 2.877, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000021
+    TagComponent:
+      Tag: Box_5_0
+    TransformComponent:
+      Translation: [5, 0.5, 0]
+      Rotation: [0, 2.404, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000022
+    TagComponent:
+      Tag: Box_5_1
+    TransformComponent:
+      Translation: [5, 0.5, -4]
+      Rotation: [0, 0.501, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000023
+    TagComponent:
+      Tag: Box_5_2
+    TransformComponent:
+      Translation: [5, 0.5, -8]
+      Rotation: [0, 2.503, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000024
+    TagComponent:
+      Tag: Box_5_3
+    TransformComponent:
+      Translation: [5, 0.5, -12]
+      Rotation: [0, 0.436, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000025
+    TagComponent:
+      Tag: Box_6_0
+    TransformComponent:
+      Translation: [15, 0.5, 0]
+      Rotation: [0, 1.939, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000026
+    TagComponent:
+      Tag: Box_6_1
+    TransformComponent:
+      Translation: [15, 0.5, -4]
+      Rotation: [0, 0.398, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000027
+    TagComponent:
+      Tag: Box_6_2
+    TransformComponent:
+      Translation: [15, 0.5, -8]
+      Rotation: [0, 0.006, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000028
+    TagComponent:
+      Tag: Box_6_3
+    TransformComponent:
+      Translation: [15, 0.5, -12]
+      Rotation: [0, 2.736, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000029
+    TagComponent:
+      Tag: Box_7_0
+    TransformComponent:
+      Translation: [25, 0.5, 0]
+      Rotation: [0, 0.658, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000030
+    TagComponent:
+      Tag: Box_7_1
+    TransformComponent:
+      Translation: [25, 0.5, -4]
+      Rotation: [0, 0.677, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000031
+    TagComponent:
+      Tag: Box_7_2
+    TransformComponent:
+      Translation: [25, 0.5, -8]
+      Rotation: [0, 3.085, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000032
+    TagComponent:
+      Tag: Box_7_3
+    TransformComponent:
+      Translation: [25, 0.5, -12]
+      Rotation: [0, 2.739, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000033
+    TagComponent:
+      Tag: Box_8_0
+    TransformComponent:
+      Translation: [35, 0.5, 0]
+      Rotation: [0, 0.908, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000034
+    TagComponent:
+      Tag: Box_8_1
+    TransformComponent:
+      Translation: [35, 0.5, -4]
+      Rotation: [0, 3.019, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000035
+    TagComponent:
+      Tag: Box_8_2
+    TransformComponent:
+      Translation: [35, 0.5, -8]
+      Rotation: [0, 1.693, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000036
+    TagComponent:
+      Tag: Box_8_3
+    TransformComponent:
+      Translation: [35, 0.5, -12]
+      Rotation: [0, 2.128, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000037
+    TagComponent:
+      Tag: Box_9_0
+    TransformComponent:
+      Translation: [45, 0.5, 0]
+      Rotation: [0, 0.643, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000038
+    TagComponent:
+      Tag: Box_9_1
+    TransformComponent:
+      Translation: [45, 0.5, -4]
+      Rotation: [0, 2.955, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000039
+    TagComponent:
+      Tag: Box_9_2
+    TransformComponent:
+      Translation: [45, 0.5, -8]
+      Rotation: [0, 2.169, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000040
+    TagComponent:
+      Tag: Box_9_3
+    TransformComponent:
+      Translation: [45, 0.5, -12]
+      Rotation: [0, 3.035, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      MeshPath: models/BoxTextured.glb
+  - Entity: 10000000000000000041
+    TagComponent:
+      Tag: Sun
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [-0.873, 0.524, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    DirectionalLightComponent:
+      Color: [1, 0.980000019, 0.920000017]
+      Intensity: 3
+      CastShadows: true
+  - Entity: 10000000000000000042
+    TagComponent:
+      Tag: Sky Light
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    SkyLightComponent:
+      SkyColor: [0.4, 0.6, 0.9]
+      GroundColor: [0.25, 0.22, 0.2]
+      Intensity: 1
+      DrawSkybox: true

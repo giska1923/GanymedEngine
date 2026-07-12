@@ -11,7 +11,8 @@
 namespace GanymedE {
 
 	Application* Application::s_instance = nullptr;
-	
+	ApplicationCommandLineArgs Application::s_CommandLineArgs;
+
 	Application::Application(const std::string& name)
 	{
 		GE_PROFILE_FUNCTION();

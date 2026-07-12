@@ -45,11 +45,12 @@ namespace GanymedE {
 		uint32_t Size;
 		uint32_t Offset;
 		bool Normalized;
+		bool Instanced; // advance per instance (attribute divisor 1) instead of per vertex
 
 		BufferElement() {}
 
-		BufferElement(ShaderDataType type, const std::string& name, bool normalized = false)
-			: Name(name), Type(type), Size(ShaderDataTypeSize(type)), Offset(0), Normalized(normalized)
+		BufferElement(ShaderDataType type, const std::string& name, bool normalized = false, bool instanced = false)
+			: Name(name), Type(type), Size(ShaderDataTypeSize(type)), Offset(0), Normalized(normalized), Instanced(instanced)
 		{
 		}
 

@@ -23,6 +23,11 @@ in vec2 v_TexCoord;
 uniform sampler2D u_Texture;
 uniform float u_Exposure;
 
+// Optional bloom composite (added in HDR before the tonemap curve)
+uniform sampler2D u_BloomTexture;
+uniform float u_BloomIntensity;
+uniform int u_UseBloom;
+
 // Narkowicz 2015 ACES filmic curve
 vec3 ACESFilm(vec3 x)
 {
@@ -37,6 +42,8 @@ vec3 ACESFilm(vec3 x)
 void main()
 {
 	vec3 hdr = texture(u_Texture, v_TexCoord).rgb;
+	if (u_UseBloom == 1)
+		hdr += texture(u_BloomTexture, v_TexCoord).rgb * u_BloomIntensity;
 	hdr *= u_Exposure;
 
 	vec3 mapped = ACESFilm(hdr);

@@ -43,14 +43,27 @@ namespace GanymedE {
 		s_Data.FullscreenQuad = nullptr;
 	}
 
-	void PostProcess::Tonemap(const Ref<Framebuffer>& source, float exposure)
+	void PostProcess::DrawFullscreenQuad()
 	{
-		if (!source || !s_Data.TonemapShader || !s_Data.FullscreenQuad)
+		if (!s_Data.FullscreenQuad)
 			return;
 
 		RenderCommand::SetDepthTest(false);
 		RenderCommand::SetDepthWrite(false);
 		RenderCommand::SetCullFace(false);
+
+		RenderCommand::DrawIndexed(s_Data.FullscreenQuad);
+
+		RenderCommand::SetDepthTest(true);
+		RenderCommand::SetDepthWrite(true);
+		RenderCommand::SetCullFace(true);
+	}
+
+	void PostProcess::Tonemap(const Ref<Framebuffer>& source, float exposure,
+		const Ref<Framebuffer>& bloom, float bloomIntensity)
+	{
+		if (!source || !s_Data.TonemapShader || !s_Data.FullscreenQuad)
+			return;
 
 		source->BindColorTexture(0, 0);
 
@@ -58,11 +71,16 @@ namespace GanymedE {
 		s_Data.TonemapShader->SetInt("u_Texture", 0);
 		s_Data.TonemapShader->SetFloat("u_Exposure", exposure);
 
-		RenderCommand::DrawIndexed(s_Data.FullscreenQuad);
+		bool useBloom = bloom != nullptr;
+		s_Data.TonemapShader->SetInt("u_UseBloom", useBloom ? 1 : 0);
+		if (useBloom)
+		{
+			bloom->BindColorTexture(0, 1);
+			s_Data.TonemapShader->SetInt("u_BloomTexture", 1);
+			s_Data.TonemapShader->SetFloat("u_BloomIntensity", bloomIntensity);
+		}
 
-		RenderCommand::SetDepthTest(true);
-		RenderCommand::SetDepthWrite(true);
-		RenderCommand::SetCullFace(true);
+		DrawFullscreenQuad();
 	}
 
 }

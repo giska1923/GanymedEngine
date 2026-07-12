@@ -52,6 +52,16 @@ namespace GanymedE {
 			s_RendererAPI->SetCullMode(mode);
 		}
 
+		inline static void SetBlend(bool enabled)
+		{
+			s_RendererAPI->SetBlend(enabled);
+		}
+
+		inline static void SetBlendMode(RendererAPI::BlendMode mode)
+		{
+			s_RendererAPI->SetBlendMode(mode);
+		}
+
 		inline static void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t count = 0)
 		{
 			s_RendererAPI->DrawIndexed(vertexArray, count);
@@ -60,6 +70,11 @@ namespace GanymedE {
 		inline static void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex)
 		{
 			s_RendererAPI->DrawIndexed(vertexArray, indexCount, baseIndex, baseVertex);
+		}
+
+		inline static void DrawIndexedInstanced(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex, uint32_t instanceCount)
+		{
+			s_RendererAPI->DrawIndexedInstanced(vertexArray, indexCount, baseIndex, baseVertex, instanceCount);
 		}
 
 		inline static void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)

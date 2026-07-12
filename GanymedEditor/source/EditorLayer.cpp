@@ -13,7 +13,6 @@
 #include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/Renderer3D.h"
-#include "GanymedE/Renderer/PostProcess.h"
 
 #include <ImGuizmo.h>
 
@@ -39,17 +38,7 @@ namespace GanymedE {
 		m_IconPlay = Texture2D::Create("resources/icons/PlayButton.png");
 		m_IconStop = Texture2D::Create("resources/icons/StopButton.png");
 
-		FramebufferSpecification fbSpec;
-		fbSpec.Attachments = { FramebufferTextureFormat::RGBA16F, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
-		fbSpec.Width = 1280;
-		fbSpec.Height = 720;
-		m_Framebuffer = Framebuffer::Create(fbSpec);
-
-		FramebufferSpecification compositeSpec;
-		compositeSpec.Attachments = { FramebufferTextureFormat::RGBA8 };
-		compositeSpec.Width = 1280;
-		compositeSpec.Height = 720;
-		m_CompositeFramebuffer = Framebuffer::Create(compositeSpec);
+		m_SceneRenderer = CreateRef<SceneRenderer>(1280, 720);
 
 		m_EditorScene = CreateRef<Scene>();
 		SetupDefaultEnvironment(m_EditorScene);
@@ -58,6 +47,17 @@ namespace GanymedE {
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+
+		// Optional scene on the command line: GanymedEditor <path/to/scene.ganymede>
+		const auto& args = Application::GetCommandLineArgs();
+		if (args.Count > 1)
+		{
+			std::filesystem::path scenePath = args[1];
+			if (std::filesystem::exists(scenePath))
+				OpenScene(scenePath);
+			else
+				GE_WARN("Scene passed on the command line not found: {0}", scenePath.string());
+		}
 	}
 
 	void EditorLayer::OnDetach()
@@ -71,12 +71,10 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		// Resize
-		if (FramebufferSpecification spec = m_Framebuffer->GetSpecification();
-			m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && // zero sized framebuffer is invalid
-			(spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
+		if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && // zero sized framebuffer is invalid
+			(m_SceneRenderer->GetWidth() != (uint32_t)m_ViewportSize.x || m_SceneRenderer->GetHeight() != (uint32_t)m_ViewportSize.y))
 		{
-			m_Framebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-			m_CompositeFramebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+			m_SceneRenderer->SetViewportSize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 			m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
 
 			m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
@@ -85,12 +83,7 @@ namespace GanymedE {
 		// Render
 		Renderer2D::ResetStats();
 		Renderer3D::ResetStats();
-		m_Framebuffer->Bind();
-		RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
-		RenderCommand::Clear();
-
-		// Clear the entity ID attachment to "no entity"
-		m_Framebuffer->ClearAttachment(1, -1);
+		m_SceneRenderer->BeginFrame();
 
 		// Update scene
 		switch (m_SceneState)
@@ -123,7 +116,7 @@ namespace GanymedE {
 
 		if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
 		{
-			int pixelData = m_Framebuffer->ReadPixel(1, mouseX, mouseY);
+			int pixelData = m_SceneRenderer->ReadEntityID(mouseX, mouseY);
 			m_HoveredEntity = pixelData == -1 ? Entity() : Entity((entt::entity)pixelData, m_ActiveScene.get());
 		}
 		else
@@ -131,13 +124,8 @@ namespace GanymedE {
 			m_HoveredEntity = {};
 		}
 
-		m_Framebuffer->Unbind();
-
-		// Tonemap the HDR scene target into the LDR composite target shown in the viewport
-		m_CompositeFramebuffer->Bind();
-		RenderCommand::Clear();
-		PostProcess::Tonemap(m_Framebuffer, m_Exposure);
-		m_CompositeFramebuffer->Unbind();
+		// Post stack: bloom -> tonemap -> FXAA into the composite shown in the viewport
+		m_SceneRenderer->EndFrame();
 	}
 
 	void EditorLayer::OnImGuiRender()
@@ -269,10 +257,22 @@ namespace GanymedE {
 		ImGui::Text("Renderer3D Stats:");
 		ImGui::Text("Draw Calls: %d", stats3D.DrawCalls);
 		ImGui::Text("Meshes: %d", stats3D.MeshCount);
+		ImGui::Text("Culled (frustum): %d", stats3D.CulledMeshes);
+		ImGui::Text("Instanced Draws: %d", stats3D.InstancedDraws);
+		ImGui::Text("Transparent: %d", stats3D.TransparentMeshes);
 
 		ImGui::Separator();
 		ImGui::Text("Post Processing:");
-		ImGui::DragFloat("Exposure", &m_Exposure, 0.01f, 0.0f, 16.0f);
+		auto& rendererSettings = m_SceneRenderer->GetSettings();
+		ImGui::DragFloat("Exposure", &rendererSettings.Exposure, 0.01f, 0.0f, 16.0f);
+		ImGui::Checkbox("Bloom", &rendererSettings.BloomEnabled);
+		ImGui::BeginDisabled(!rendererSettings.BloomEnabled);
+		ImGui::DragFloat("Threshold", &rendererSettings.BloomThreshold, 0.01f, 0.0f, 16.0f);
+		ImGui::DragFloat("Knee", &rendererSettings.BloomKnee, 0.01f, 0.01f, 1.0f);
+		ImGui::DragFloat("Intensity", &rendererSettings.BloomIntensity, 0.01f, 0.0f, 4.0f);
+		ImGui::DragFloat("Radius", &rendererSettings.BloomFilterRadius, 0.01f, 0.1f, 4.0f);
+		ImGui::EndDisabled();
+		ImGui::Checkbox("FXAA", &rendererSettings.FXAAEnabled);
 
 		ImGui::Separator();
 		ImGui::Text("Physics Debug:");
@@ -303,7 +303,7 @@ namespace GanymedE {
 		m_ViewportBounds[0] = { viewportScreenPos.x, viewportScreenPos.y };
 		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
 
-		uint32_t textureID = m_CompositeFramebuffer->GetColorAttachmentRendererID();
+		uint32_t textureID = m_SceneRenderer->GetFinalImageRendererID();
 		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
 		if (ImGui::BeginDragDropTarget())

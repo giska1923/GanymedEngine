@@ -28,7 +28,7 @@ namespace GanymedE {
 		}
 
 		Ref<Texture2D> CreateTextureFromImage(const cgltf_image* image, const std::filesystem::path& basePath,
-			std::string* outRelativePath = nullptr)
+			std::string* outRelativePath = nullptr, std::vector<uint8_t>* outEmbeddedData = nullptr)
 		{
 			if (!image)
 				return nullptr;
@@ -59,6 +59,11 @@ namespace GanymedE {
 				Ref<Texture2D> texture = Texture2D::Create((uint32_t)width, (uint32_t)height);
 				texture->SetData(pixels, width * height * 4);
 				stbi_image_free(pixels);
+
+				// No file on disk to reload from — keep the compressed bytes so MeshCache can persist them
+				if (outEmbeddedData)
+					outEmbeddedData->assign(data, data + view->size);
+
 				return texture;
 			}
 
@@ -145,6 +150,7 @@ namespace GanymedE {
 				material->SetName(src.name);
 
 			material->SetTwoSided(src.double_sided);
+			material->SetTransparent(src.alpha_mode == cgltf_alpha_mode_blend);
 
 			if (src.has_pbr_metallic_roughness)
 			{
@@ -156,22 +162,28 @@ namespace GanymedE {
 				if (pbr.base_color_texture.texture)
 				{
 					std::string texPath;
-					material->SetAlbedoMap(CreateTextureFromImage(pbr.base_color_texture.texture->image, basePath, &texPath));
+					std::vector<uint8_t> embedded;
+					material->SetAlbedoMap(CreateTextureFromImage(pbr.base_color_texture.texture->image, basePath, &texPath, &embedded));
 					material->SetAlbedoMapPath(texPath);
+					material->SetAlbedoMapEmbeddedData(std::move(embedded));
 				}
 				if (pbr.metallic_roughness_texture.texture)
 				{
 					std::string texPath;
-					material->SetMetallicRoughnessMap(CreateTextureFromImage(pbr.metallic_roughness_texture.texture->image, basePath, &texPath));
+					std::vector<uint8_t> embedded;
+					material->SetMetallicRoughnessMap(CreateTextureFromImage(pbr.metallic_roughness_texture.texture->image, basePath, &texPath, &embedded));
 					material->SetMetallicRoughnessMapPath(texPath);
+					material->SetMetallicRoughnessMapEmbeddedData(std::move(embedded));
 				}
 			}
 
 			if (src.normal_texture.texture)
 			{
 				std::string texPath;
-				material->SetNormalMap(CreateTextureFromImage(src.normal_texture.texture->image, basePath, &texPath));
+				std::vector<uint8_t> embedded;
+				material->SetNormalMap(CreateTextureFromImage(src.normal_texture.texture->image, basePath, &texPath, &embedded));
 				material->SetNormalMapPath(texPath);
+				material->SetNormalMapEmbeddedData(std::move(embedded));
 			}
 
 			materials.push_back(material);

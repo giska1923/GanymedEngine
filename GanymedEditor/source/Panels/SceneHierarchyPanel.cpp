@@ -521,6 +521,13 @@ namespace GanymedE {
 						float roughness = materials[i]->GetRoughness();
 						if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.0f, 1.0f))
 							materials[i]->SetRoughness(roughness);
+						bool transparent = materials[i]->IsTransparent();
+						if (ImGui::Checkbox("Transparent", &transparent))
+							materials[i]->SetTransparent(transparent);
+						ImGui::SameLine();
+						bool twoSided = materials[i]->IsTwoSided();
+						if (ImGui::Checkbox("Two Sided", &twoSided))
+							materials[i]->SetTwoSided(twoSided);
 						ImGui::PopID();
 					}
 				}

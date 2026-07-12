@@ -8,6 +8,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace GanymedE {
 
@@ -44,8 +45,23 @@ namespace GanymedE {
 		void SetMetallicRoughnessMapPath(const std::string& path) { m_MetallicRoughnessMapPath = path; }
 		const std::string& GetMetallicRoughnessMapPath() const { return m_MetallicRoughnessMapPath; }
 
+		// Compressed image bytes (PNG/JPEG) for textures embedded in the model file,
+		// where the map path is empty; lets MeshCache persist them across sessions
+		void SetAlbedoMapEmbeddedData(std::vector<uint8_t> data) { m_AlbedoMapEmbedded = std::move(data); }
+		const std::vector<uint8_t>& GetAlbedoMapEmbeddedData() const { return m_AlbedoMapEmbedded; }
+
+		void SetNormalMapEmbeddedData(std::vector<uint8_t> data) { m_NormalMapEmbedded = std::move(data); }
+		const std::vector<uint8_t>& GetNormalMapEmbeddedData() const { return m_NormalMapEmbedded; }
+
+		void SetMetallicRoughnessMapEmbeddedData(std::vector<uint8_t> data) { m_MetallicRoughnessMapEmbedded = std::move(data); }
+		const std::vector<uint8_t>& GetMetallicRoughnessMapEmbeddedData() const { return m_MetallicRoughnessMapEmbedded; }
+
 		void SetTwoSided(bool twoSided) { m_TwoSided = twoSided; }
 		bool IsTwoSided() const { return m_TwoSided; }
+
+		// Transparent materials render in a sorted back-to-front pass after opaque
+		void SetTransparent(bool transparent) { m_Transparent = transparent; }
+		bool IsTransparent() const { return m_Transparent; }
 
 		void SetName(const std::string& name) { m_Name = name; }
 		const std::string& GetName() const { return m_Name; }
@@ -70,7 +86,12 @@ namespace GanymedE {
 		std::string m_NormalMapPath;
 		std::string m_MetallicRoughnessMapPath;
 
+		std::vector<uint8_t> m_AlbedoMapEmbedded;
+		std::vector<uint8_t> m_NormalMapEmbedded;
+		std::vector<uint8_t> m_MetallicRoughnessMapEmbedded;
+
 		bool m_TwoSided = false;
+		bool m_Transparent = false;
 	};
 
 }
