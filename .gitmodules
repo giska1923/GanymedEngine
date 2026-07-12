@@ -13,3 +13,6 @@
 [submodule "GanymedEngine/extern/ImGuizmo"]
 	path = GanymedEngine/extern/ImGuizmo
 	url = https://github.com/CedricGuillemet/ImGuizmo
+[submodule "GanymedEngine/extern/entt"]
+	path = GanymedEngine/extern/entt
+	url = https://github.com/skypjack/entt.git

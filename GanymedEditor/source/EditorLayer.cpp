@@ -35,7 +35,8 @@ namespace GanymedE {
 		fbSpec.Height = 720;
 		m_Framebuffer = Framebuffer::Create(fbSpec);
 
-		m_ActiveScene = CreateRef<Scene>();
+		m_EditorScene = CreateRef<Scene>();
+		m_ActiveScene = m_EditorScene;
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 
@@ -279,9 +280,9 @@ namespace GanymedE {
 			const glm::mat4& cameraProjection = m_EditorCamera.GetProjection();
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
 
-			// Entity transform
+			// Entity transform (world space so parented entities gizmo correctly)
 			auto& tc = selectedEntity.GetComponent<TransformComponent>();
-			glm::mat4 transform = tc.GetTransform();
+			glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(selectedEntity);
 
 			// Snapping
 			bool snap = Input::IsKeyPressed(Key::LeftControl);
@@ -298,6 +299,15 @@ namespace GanymedE {
 
 			if (ImGuizmo::IsUsing())
 			{
+				// Convert manipulated world transform back to local
+				UUID parentID = selectedEntity.GetComponent<RelationshipComponent>().Parent;
+				if (parentID != UUID{ 0 })
+				{
+					Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
+					if (parent)
+						transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
+				}
+
 				glm::vec3 translation, rotation, scale;
 				Math::DecomposeTransform(transform, translation, rotation, scale);
 
@@ -433,9 +443,11 @@ namespace GanymedE {
 
 	void EditorLayer::NewScene()
 	{
-		m_ActiveScene = CreateRef<Scene>();
+		m_EditorScene = CreateRef<Scene>();
+		m_ActiveScene = m_EditorScene;
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_SceneState = SceneState::Edit;
 	}
 
 	void EditorLayer::OpenScene()
@@ -456,12 +468,14 @@ namespace GanymedE {
 			return;
 		}
 
-		m_ActiveScene = CreateRef<Scene>();
+		m_EditorScene = CreateRef<Scene>();
+		m_ActiveScene = m_EditorScene;
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 
 		SceneSerializer serializer(m_ActiveScene);
 		serializer.Deserialize(path.string());
+		m_SceneState = SceneState::Edit;
 	}
 
 	void EditorLayer::SaveSceneAs()
@@ -469,18 +483,27 @@ namespace GanymedE {
 		std::string filepath = FileDialogs::SaveFile("GanymedE Scene (*.ganymede)\0*.ganymede\0");
 		if (!filepath.empty())
 		{
-			SceneSerializer serializer(m_ActiveScene);
+			SceneSerializer serializer(m_SceneState == SceneState::Edit ? m_ActiveScene : m_EditorScene);
 			serializer.Serialize(filepath);
 		}
 	}
 
 	void EditorLayer::OnScenePlay()
 	{
+		m_EditorScene = m_ActiveScene;
+		m_ActiveScene = Scene::Copy(m_EditorScene);
+		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_SceneHierarchyPanel.SetSelectedEntity({});
 		m_SceneState = SceneState::Play;
 	}
 
 	void EditorLayer::OnSceneStop()
 	{
+		m_ActiveScene = m_EditorScene;
+		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_SceneHierarchyPanel.SetSelectedEntity({});
 		m_SceneState = SceneState::Edit;
 	}
 }

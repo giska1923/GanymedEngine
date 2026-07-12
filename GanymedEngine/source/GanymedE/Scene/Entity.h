@@ -1,8 +1,9 @@
 #pragma once
 
 #include "Scene.h"
+#include "GanymedE/Core/UUID.h"
 
-#include "entt.hpp"
+#include <entt/entt.hpp>
 
 namespace GanymedE {
 
@@ -30,9 +31,16 @@ namespace GanymedE {
 		}
 
 		template<typename T>
-		bool HasComponent()
+		const T& GetComponent() const
 		{
-			return m_Scene->m_Registry.has<T>(m_EntityHandle);
+			GE_CORE_ASSERT(HasComponent<T>(), "Entity does not have component!");
+			return m_Scene->m_Registry.get<T>(m_EntityHandle);
+		}
+
+		template<typename T>
+		bool HasComponent() const
+		{
+			return m_Scene->m_Registry.all_of<T>(m_EntityHandle);
 		}
 
 		template<typename T>
@@ -41,6 +49,9 @@ namespace GanymedE {
 			GE_CORE_ASSERT(HasComponent<T>(), "Entity does not have component!");
 			m_Scene->m_Registry.remove<T>(m_EntityHandle);
 		}
+
+		UUID GetUUID() const;
+		const std::string& GetName() const;
 
 		operator bool() const { return m_EntityHandle != entt::null; }
 		operator entt::entity() const { return m_EntityHandle; }

@@ -13,6 +13,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Core/Log.h"
 
 #include "GanymedE/Core/Timestep.h"
+#include "GanymedE/Core/UUID.h"
 
 #include "GanymedE/Core/Input.h"
 #include "GanymedE/Core/KeyCodes.h"
@@ -32,6 +33,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Renderer/RenderCommand.h"
 
 #include "GanymedE/Renderer/Buffer.h"
+#include "GanymedE/Renderer/UniformBuffer.h"
 #include "GanymedE/Renderer/Shader.h"
 #include "GanymedE/Renderer/Framebuffer.h"
 #include "GanymedE/Renderer/Texture.h"

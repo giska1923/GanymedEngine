@@ -5,8 +5,19 @@
 
 #include "SceneCamera.h"
 #include "ScriptableEntity.h"
+#include "GanymedE/Core/UUID.h"
 
 namespace GanymedE {
+
+	struct IDComponent
+	{
+		UUID ID;
+
+		IDComponent() = default;
+		IDComponent(const IDComponent&) = default;
+		IDComponent(UUID uuid)
+			: ID(uuid) {}
+	};
 
 	struct TagComponent
 	{
@@ -29,7 +40,7 @@ namespace GanymedE {
 		TransformComponent(const glm::vec3& translation)
 			: Translation(translation) {}
 
-		glm::mat4 GetTransform() const
+		glm::mat4 GetLocalTransform() const
 		{
 			glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), Rotation.x, { 1, 0, 0 })
 				* glm::rotate(glm::mat4(1.0f), Rotation.y, { 0, 1, 0 })
@@ -39,6 +50,18 @@ namespace GanymedE {
 				* rotation
 				* glm::scale(glm::mat4(1.0f), Scale);
 		}
+
+		// Back-compat alias used throughout the engine/editor
+		glm::mat4 GetTransform() const { return GetLocalTransform(); }
+	};
+
+	struct RelationshipComponent
+	{
+		UUID Parent{ 0 };
+		std::vector<UUID> Children;
+
+		RelationshipComponent() = default;
+		RelationshipComponent(const RelationshipComponent&) = default;
 	};
 
 	struct SpriteRendererComponent
@@ -65,8 +88,8 @@ namespace GanymedE {
 	{
 		ScriptableEntity* Instance = nullptr;
 
-		ScriptableEntity*(*InstantiateScript)();
-		void(*DestroyScript)(NativeScriptComponent*);
+		ScriptableEntity*(*InstantiateScript)() = nullptr;
+		void(*DestroyScript)(NativeScriptComponent*) = nullptr;
 
 		template<typename T>
 		void Bind()

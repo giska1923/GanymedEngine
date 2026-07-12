@@ -30,7 +30,7 @@ IncludeDir["Glad"] = "%{wks.location}/GanymedEngine/extern/Glad/include"
 IncludeDir["ImGui"] = "%{wks.location}/GanymedEngine/extern/imgui"
 IncludeDir["glm"] = "%{wks.location}/GanymedEngine/extern/glm"
 IncludeDir["stb_image"] = "%{wks.location}/GanymedEngine/extern/stb_image"
-IncludeDir["entt"] = "%{wks.location}/GanymedEngine/extern/entt/include"
+IncludeDir["entt"] = "%{wks.location}/GanymedEngine/extern/entt/single_include"
 IncludeDir["yaml_cpp"] = "%{wks.location}/GanymedEngine/extern/yaml-cpp/include"
 IncludeDir["ImGuizmo"] = "%{wks.location}/GanymedEngine/extern/ImGuizmo/src"
 

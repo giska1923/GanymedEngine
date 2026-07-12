@@ -37,6 +37,7 @@ namespace GanymedE {
 		Ref<Framebuffer> m_Framebuffer;
 
 		Ref<Scene> m_ActiveScene;
+		Ref<Scene> m_EditorScene;
 
 		EditorCamera m_EditorCamera;
 

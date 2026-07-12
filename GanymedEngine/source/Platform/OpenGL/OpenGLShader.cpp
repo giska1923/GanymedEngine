@@ -175,6 +175,11 @@ namespace GanymedE {
 			glDetachShader(program, id);
 			glDeleteShader(id);
 		}
+
+		// GL 4.1: bind known uniform blocks without relying on layout(binding=N)
+		GLuint cameraBlockIndex = glGetUniformBlockIndex(program, "CameraData");
+		if (cameraBlockIndex != GL_INVALID_INDEX)
+			glUniformBlockBinding(program, cameraBlockIndex, 0);
 	}
 
 	void OpenGLShader::Bind() const

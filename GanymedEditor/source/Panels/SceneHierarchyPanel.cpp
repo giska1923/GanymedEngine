@@ -24,26 +24,45 @@ namespace GanymedE {
 	{
 		ImGui::Begin("Scene Hierarchy");
 
-		m_Context->m_Registry.each([&](auto entityID)
+		if (m_Context)
 		{
-			Entity entity{ entityID , m_Context.get() };
-			DrawEntityNode(entity);
-		});
-
-		if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
-		{
-			m_SelectionContext = {};
-		}
-
-		// Right-click on blank space
-		if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
-		{
-			if (ImGui::MenuItem("Create Empty Entity"))
+			// Draw root entities only; children are drawn recursively
+			auto view = m_Context->m_Registry.view<IDComponent, RelationshipComponent, TagComponent>();
+			for (auto entityID : view)
 			{
-				m_Context->CreateEntity("Empty Entity");
+				Entity entity{ entityID, m_Context.get() };
+				if (entity.GetComponent<RelationshipComponent>().Parent == UUID{ 0 })
+					DrawEntityNode(entity);
 			}
 
-			ImGui::EndPopup();
+			if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
+			{
+				m_SelectionContext = {};
+			}
+
+			// Drop onto empty space → unparent
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_HIERARCHY_ENTITY"))
+				{
+					UUID droppedID = *(const UUID*)payload->Data;
+					Entity dropped = m_Context->FindEntityByUUID(droppedID);
+					if (dropped)
+						m_Context->Unparent(dropped);
+				}
+				ImGui::EndDragDropTarget();
+			}
+
+			// Right-click on blank space
+			if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+			{
+				if (ImGui::MenuItem("Create Empty Entity"))
+				{
+					m_Context->CreateEntity("Empty Entity");
+				}
+
+				ImGui::EndPopup();
+			}
 		}
 
 		ImGui::End();
@@ -60,13 +79,38 @@ namespace GanymedE {
 	void SceneHierarchyPanel::DrawEntityNode(Entity entity)
 	{
 		auto& tag = entity.GetComponent<TagComponent>().Tag;
+		auto& relationship = entity.GetComponent<RelationshipComponent>();
 
-		ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
-		flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
-		bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, tag.c_str());
+		ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0)
+			| ImGuiTreeNodeFlags_OpenOnArrow
+			| ImGuiTreeNodeFlags_SpanAvailWidth;
+		if (relationship.Children.empty())
+			flags |= ImGuiTreeNodeFlags_Leaf;
+
+		bool opened = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, tag.c_str());
 		if (ImGui::IsItemClicked())
 		{
 			m_SelectionContext = entity;
+		}
+
+		if (ImGui::BeginDragDropSource())
+		{
+			UUID entityID = entity.GetUUID();
+			ImGui::SetDragDropPayload("SCENE_HIERARCHY_ENTITY", &entityID, sizeof(UUID));
+			ImGui::Text("%s", tag.c_str());
+			ImGui::EndDragDropSource();
+		}
+
+		if (ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_HIERARCHY_ENTITY"))
+			{
+				UUID droppedID = *(const UUID*)payload->Data;
+				Entity dropped = m_Context->FindEntityByUUID(droppedID);
+				if (dropped && dropped != entity)
+					m_Context->SetParent(dropped, entity);
+			}
+			ImGui::EndDragDropTarget();
 		}
 
 		bool entityDeleted = false;
@@ -82,13 +126,12 @@ namespace GanymedE {
 
 		if (opened)
 		{
-			ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-			bool opened = ImGui::TreeNodeEx((void*)9817239, flags, tag.c_str());
-			if (opened)
+			for (UUID childID : relationship.Children)
 			{
-				ImGui::TreePop();
+				Entity child = m_Context->FindEntityByUUID(childID);
+				if (child)
+					DrawEntityNode(child);
 			}
-
 			ImGui::TreePop();
 		}
 
@@ -246,16 +289,22 @@ namespace GanymedE {
 
 		if (ImGui::BeginPopup("AddComponent"))
 		{
-			if (ImGui::MenuItem("Camera"))
+			if (!m_SelectionContext.HasComponent<CameraComponent>())
 			{
-				m_SelectionContext.AddComponent<CameraComponent>();
-				ImGui::CloseCurrentPopup();
+				if (ImGui::MenuItem("Camera"))
+				{
+					m_SelectionContext.AddComponent<CameraComponent>();
+					ImGui::CloseCurrentPopup();
+				}
 			}
 
-			if (ImGui::MenuItem("Sprite Renderer"))
+			if (!m_SelectionContext.HasComponent<SpriteRendererComponent>())
 			{
-				m_SelectionContext.AddComponent<SpriteRendererComponent>();
-				ImGui::CloseCurrentPopup();
+				if (ImGui::MenuItem("Sprite Renderer"))
+				{
+					m_SelectionContext.AddComponent<SpriteRendererComponent>();
+					ImGui::CloseCurrentPopup();
+				}
 			}
 
 			ImGui::EndPopup();

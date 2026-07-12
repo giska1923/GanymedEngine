@@ -1,8 +1,10 @@
 #pragma once
 
-#include "entt.hpp"
+#include <entt/entt.hpp>
 
+#include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Timestep.h"
+#include "GanymedE/Core/UUID.h"
 #include "GanymedE/Renderer/EditorCamera.h"
 
 namespace GanymedE {
@@ -15,7 +17,10 @@ namespace GanymedE {
 		Scene();
 		~Scene();
 
+		static Ref<Scene> Copy(Ref<Scene> other);
+
 		Entity CreateEntity(const std::string& name = std::string());
+		Entity CreateEntityWithUUID(UUID uuid, const std::string& name = std::string());
 		void DestroyEntity(Entity entity);
 
 		void OnUpdateRuntime(Timestep ts);
@@ -23,9 +28,16 @@ namespace GanymedE {
 		void OnViewportResize(uint32_t width, uint32_t height);
 
 		Entity GetPrimaryCameraEntity();
+		Entity FindEntityByUUID(UUID uuid);
+
+		glm::mat4 GetWorldSpaceTransform(Entity entity);
+		void SetParent(Entity child, Entity parent);
+		void Unparent(Entity child);
 	private:
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);
+
+		void RemoveChildFromParent(UUID parentID, UUID childID);
 	private:
 		entt::registry m_Registry;
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;

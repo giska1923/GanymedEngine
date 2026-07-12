@@ -3,6 +3,7 @@
 
 #include "VertexArray.h"
 #include "Shader.h"
+#include "UniformBuffer.h"
 #include "RenderCommand.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -19,6 +20,11 @@ namespace GanymedE {
 
 		// Editor-only: written to a RED_INTEGER attachment for mouse picking
 		int EntityID;
+	};
+
+	struct CameraData
+	{
+		glm::mat4 ViewProjection;
 	};
 
 	struct Renderer2DData
@@ -42,6 +48,9 @@ namespace GanymedE {
 		uint32_t TextureSlotIndex = 1; // 0 = white texture
 
 		glm::vec4 QuadVertexPositions[4];
+
+		CameraData CameraBuffer;
+		Ref<UniformBuffer> CameraUniformBuffer;
 
 		Renderer2D::Statistics Stats;
 	};
@@ -102,6 +111,8 @@ namespace GanymedE {
 		// Set first texture slot to 0
 		s_Data.TextureSlots[0] = s_Data.WhiteTexture;
 
+		s_Data.CameraUniformBuffer = UniformBuffer::Create(sizeof(CameraData), 0);
+
 		s_Data.QuadVertexPositions[0] = { -0.5f, -0.5f, 0.0f, 1.0f };
 		s_Data.QuadVertexPositions[1] = { 0.5f, -0.5f, 0.0f, 1.0f };
 		s_Data.QuadVertexPositions[2] = { 0.5f,  0.5f, 0.0f, 1.0f };
@@ -119,11 +130,10 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		glm::mat4 viewProj = camera.GetProjection() * glm::inverse(transform);
+		s_Data.CameraBuffer.ViewProjection = camera.GetProjection() * glm::inverse(transform);
+		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
 
 		s_Data.TextureShader->Bind();
-		s_Data.TextureShader->SetMat4("u_ViewProjection", viewProj);
-
 		StartBatch();
 	}
 
@@ -131,11 +141,10 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		glm::mat4 viewProj = camera.GetViewProjection();
+		s_Data.CameraBuffer.ViewProjection = camera.GetViewProjection();
+		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
 
 		s_Data.TextureShader->Bind();
-		s_Data.TextureShader->SetMat4("u_ViewProjection", viewProj);
-
 		StartBatch();
 	}
 
@@ -143,9 +152,10 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		s_Data.TextureShader->Bind();
-		s_Data.TextureShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
+		s_Data.CameraBuffer.ViewProjection = camera.GetViewProjectionMatrix();
+		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
 
+		s_Data.TextureShader->Bind();
 		StartBatch();
 	}
 
@@ -175,10 +185,13 @@ namespace GanymedE {
 		uint32_t dataSize = (uint32_t)((uint8_t*)s_Data.QuadVertexBufferPtr - (uint8_t*)s_Data.QuadVertexBufferBase);
 		s_Data.QuadVertexBuffer->SetData(s_Data.QuadVertexBufferBase, dataSize);
 
+		s_Data.TextureShader->Bind();
+
 		// Bind textures
 		for (uint32_t i = 0; i < s_Data.TextureSlotIndex; i++)
 			s_Data.TextureSlots[i]->Bind(i);
 
+		s_Data.QuadVertexArray->Bind();
 		RenderCommand::DrawIndexed(s_Data.QuadVertexArray, s_Data.QuadIndexCount);
 		s_Data.Stats.DrawCalls++;
 	}

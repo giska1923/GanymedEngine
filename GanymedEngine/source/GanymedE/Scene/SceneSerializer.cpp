@@ -84,8 +84,10 @@ namespace GanymedE {
 
 	static void SerializeEntity(YAML::Emitter& out, Entity entity)
 	{
+		GE_CORE_ASSERT(entity.HasComponent<IDComponent>(), "Entity missing IDComponent");
+
 		out << YAML::BeginMap; // Entity
-		out << YAML::Key << "Entity" << YAML::Value << "12837192831273"; // TODO: Entity ID goes here
+		out << YAML::Key << "Entity" << YAML::Value << static_cast<uint64_t>(entity.GetUUID());
 
 		if (entity.HasComponent<TagComponent>())
 		{
@@ -109,6 +111,21 @@ namespace GanymedE {
 			out << YAML::Key << "Scale" << YAML::Value << tc.Scale;
 
 			out << YAML::EndMap; // TransformComponent
+		}
+
+		if (entity.HasComponent<RelationshipComponent>())
+		{
+			out << YAML::Key << "RelationshipComponent";
+			out << YAML::BeginMap;
+
+			auto& rc = entity.GetComponent<RelationshipComponent>();
+			out << YAML::Key << "Parent" << YAML::Value << static_cast<uint64_t>(rc.Parent);
+			out << YAML::Key << "Children" << YAML::Value << YAML::BeginSeq;
+			for (UUID child : rc.Children)
+				out << static_cast<uint64_t>(child);
+			out << YAML::EndSeq;
+
+			out << YAML::EndMap;
 		}
 
 		if (entity.HasComponent<CameraComponent>())
@@ -156,14 +173,15 @@ namespace GanymedE {
 		out << YAML::BeginMap;
 		out << YAML::Key << "Scene" << YAML::Value << "Untitled";
 		out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
-		m_Scene->m_Registry.each([&](auto entityID)
-			{
-				Entity entity = { entityID, m_Scene.get() };
-				if (!entity)
-					return;
+		auto view = m_Scene->m_Registry.view<IDComponent>();
+		for (auto entityID : view)
+		{
+			Entity entity = { entityID, m_Scene.get() };
+			if (!entity)
+				continue;
 
-				SerializeEntity(out, entity);
-			});
+			SerializeEntity(out, entity);
+		}
 		out << YAML::EndSeq;
 		out << YAML::EndMap;
 
@@ -195,7 +213,7 @@ namespace GanymedE {
 		{
 			for (auto entity : entities)
 			{
-				uint64_t uuid = entity["Entity"].as<uint64_t>(); // TODO
+				uint64_t uuid = entity["Entity"].as<uint64_t>();
 
 				std::string name;
 				auto tagComponent = entity["TagComponent"];
@@ -204,7 +222,7 @@ namespace GanymedE {
 
 				GE_CORE_TRACE("Deserialized entity with ID = {0}, name = {1}", uuid, name);
 
-				Entity deserializedEntity = m_Scene->CreateEntity(name);
+				Entity deserializedEntity = m_Scene->CreateEntityWithUUID(uuid, name);
 
 				auto transformComponent = entity["TransformComponent"];
 				if (transformComponent)
@@ -214,6 +232,20 @@ namespace GanymedE {
 					tc.Translation = transformComponent["Translation"].as<glm::vec3>();
 					tc.Rotation = transformComponent["Rotation"].as<glm::vec3>();
 					tc.Scale = transformComponent["Scale"].as<glm::vec3>();
+				}
+
+				auto relationshipComponent = entity["RelationshipComponent"];
+				if (relationshipComponent)
+				{
+					auto& rc = deserializedEntity.GetComponent<RelationshipComponent>();
+					rc.Parent = relationshipComponent["Parent"].as<uint64_t>();
+					rc.Children.clear();
+					auto children = relationshipComponent["Children"];
+					if (children)
+					{
+						for (auto child : children)
+							rc.Children.push_back(child.as<uint64_t>());
+					}
 				}
 
 				auto cameraComponent = entity["CameraComponent"];
