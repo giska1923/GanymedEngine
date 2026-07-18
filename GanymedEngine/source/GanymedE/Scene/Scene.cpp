@@ -27,6 +27,9 @@ namespace GanymedE {
 			if constexpr (ComponentTraits<T>::TrackChanges)
 				m_Registry.on_construct<T>().template connect<&Scene::OnTrackedConstruct<T>>(*this);
 
+			if constexpr (ComponentTraits<T>::EnableInit)
+				m_Registry.on_construct<T>().template connect<&Scene::OnInitConstruct<T>>(*this);
+
 			// on_destroy fires before the instance is removed, so the handler can still copy it.
 			if constexpr (ComponentTraits<T>::EnableFini)
 				m_Registry.on_destroy<T>().template connect<&Scene::OnFiniDestroy<T>>(*this);
@@ -49,9 +52,30 @@ namespace GanymedE {
 	}
 
 	template<typename T>
+	void Scene::OnInitConstruct(entt::registry&, entt::entity entity)
+	{
+		m_Reactive[entt::type_hash<T>::value()].InitSinceLastUpdate.push_back(entity);
+	}
+
+	template<typename T>
 	void Scene::OnFiniDestroy(entt::registry& registry, entt::entity entity)
 	{
 		GetGraveyard<T>().Bury(entity, registry.get<T>(entity));   // still alive inside on_destroy
+		m_Reactive[entt::type_hash<T>::value()].FiniSinceLastUpdate.push_back(entity);
+	}
+
+	const std::vector<entt::entity>& Scene::GetInitBuffer(entt::id_type componentTypeId) const
+	{
+		static const std::vector<entt::entity> s_Empty;
+		auto it = m_Reactive.find(componentTypeId);
+		return it != m_Reactive.end() ? it->second.InitSinceLastUpdate : s_Empty;
+	}
+
+	const std::vector<entt::entity>& Scene::GetFiniBuffer(entt::id_type componentTypeId) const
+	{
+		static const std::vector<entt::entity> s_Empty;
+		auto it = m_Reactive.find(componentTypeId);
+		return it != m_Reactive.end() ? it->second.FiniSinceLastUpdate : s_Empty;
 	}
 
 	ECS::ChangeBuffer& Scene::GetChangeBuffer(entt::id_type componentTypeId)
@@ -72,14 +96,24 @@ namespace GanymedE {
 
 	void Scene::FrameBegin()
 	{
+		m_FrameEpoch++;
+
 		for (auto& entry : m_ChangeBuffers)
 			entry.second.NextFrame();
 
-		// Order matters: graveyards and change history live exactly one frame and must die
-		// *before* the flush that refills them, or a removal queued last frame would be cleared
-		// again in the same breath it was recorded.
-		ClearGraveyards();
+		// The flush is what generates this update's init/fini events and graveyard entries, on top
+		// of anything already recorded since the last update (e.g. by the editor between frames).
 		FlushCommands();
+	}
+
+	void Scene::FrameEnd()
+	{
+		for (auto& entry : m_Reactive)
+		{
+			entry.second.InitSinceLastUpdate.clear();
+			entry.second.FiniSinceLastUpdate.clear();
+		}
+		ClearGraveyards();
 	}
 
 	Scene::~Scene()
@@ -269,6 +303,8 @@ namespace GanymedE {
 		m_IsUpdating = true;
 		m_Systems->OnUpdate(ts);
 		m_IsUpdating = false;
+
+		FrameEnd();
 	}
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
@@ -280,6 +316,8 @@ namespace GanymedE {
 		m_IsUpdating = true;
 		m_Systems->OnUpdateEditor(ts);
 		m_IsUpdating = false;
+
+		FrameEnd();
 	}
 
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)

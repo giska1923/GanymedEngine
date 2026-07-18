@@ -74,7 +74,27 @@ namespace GanymedE {
 		// True while systems are running. Structural changes are illegal in that window.
 		bool IsUpdating() const { return m_IsUpdating; }
 
-		// One-frame storage of components removed since the last FrameBegin, for FiniView.
+		// Monotonic per-update counter driving the reactive views' epoch protocol.
+		// Starts at 1 so that a view state's Epoch of 0 unambiguously means "never read".
+		uint32_t GetFrameEpoch() const { return m_FrameEpoch; }
+
+		// Entities whose component of this type was created / destroyed since systems last ran.
+		const std::vector<entt::entity>& GetInitBuffer(entt::id_type componentTypeId) const;
+		const std::vector<entt::entity>& GetFiniBuffer(entt::id_type componentTypeId) const;
+
+		template<typename T>
+		const std::vector<entt::entity>& GetInitBuffer() const
+		{
+			return GetInitBuffer(entt::type_hash<T>::value());
+		}
+
+		template<typename T>
+		const std::vector<entt::entity>& GetFiniBuffer() const
+		{
+			return GetFiniBuffer(entt::type_hash<T>::value());
+		}
+
+		// One-frame storage of components removed since systems last ran, for FiniView.
 		template<typename T>
 		ECS::Graveyard<T>& GetGraveyard()
 		{
@@ -100,10 +120,22 @@ namespace GanymedE {
 		template<typename T>
 		void OnFiniDestroy(entt::registry& registry, entt::entity entity);
 
-		// Per-frame preamble for both runtime and editor updates, in this exact order:
-		// rotate change history, clear graveyards, then flush the command queue (which refills
-		// the graveyards via on_destroy). Phase 6 adds the frame epoch and reactive buffer resets.
+		template<typename T>
+		void OnInitConstruct(entt::registry& registry, entt::entity entity);
+
+		// Preamble for both runtime and editor updates: bump the epoch, rotate change history,
+		// then flush the command queue (which refills the init/fini buffers and graveyards).
 		void FrameBegin();
+
+		// Postamble: discard the reactive events and corpses this update's systems have now seen.
+		//
+		// DEVIATION from the guide, which clears these at the *top* of FrameBegin. Doing so drops
+		// anything recorded outside the flush — notably a component the editor removes between two
+		// frames — before a single system can react to it, which would leak script instances.
+		// Clearing after the systems have run means the buffers hold "everything since systems
+		// last ran", which is what the reactive views actually promise.
+		void FrameEnd();
+
 		void FlushCommands();
 		void ClearGraveyards();
 
@@ -120,6 +152,15 @@ namespace GanymedE {
 		Scope<ECS::CommandQueue> m_Commands;
 
 		std::unordered_map<entt::id_type, Scope<ECS::GraveyardBase>> m_Graveyards;
+
+		struct ReactiveState
+		{
+			std::vector<entt::entity> InitSinceLastUpdate;
+			std::vector<entt::entity> FiniSinceLastUpdate;
+		};
+		std::unordered_map<entt::id_type, ReactiveState> m_Reactive;
+
+		uint32_t m_FrameEpoch = 1;   // MUST start at 1; 0 means "this view has never been read"
 		bool m_IsUpdating = false;
 
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;

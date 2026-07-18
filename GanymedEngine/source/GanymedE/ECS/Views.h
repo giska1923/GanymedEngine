@@ -1,8 +1,11 @@
 #pragma once
 
 #include <entt/entt.hpp>
+#include <algorithm>
+#include <array>
 #include <tuple>
 #include <type_traits>
+#include <vector>
 
 #include "AccessWrappers.h"
 #include "ComponentAccessor.h"
@@ -225,6 +228,15 @@ namespace GanymedE::ECS {
 			return true;
 		}
 
+		template<typename... Xs>
+		bool MatchesExcludes(const entt::registry& registry, entt::entity entity, TypeList<Xs...>)
+		{
+			if constexpr (sizeof...(Xs) > 0)
+				return !registry.any_of<Xs...>(entity);
+			else
+				return true;
+		}
+
 		// Locate the (normalized) slot element that provides component U.
 		template<typename U, typename... Ss> struct FindSlotElement;
 		template<typename U> struct FindSlotElement<U>
@@ -268,6 +280,115 @@ namespace GanymedE::ECS {
 			EnttIterator m_Iterator;
 		};
 
+		// ---- Graveyard-backed slots (FiniView) --------------------------------------------
+		// A Fini event means the component is already gone from the registry, so its slot reads
+		// the copy taken in on_destroy instead.
+
+		template<typename E> struct GraveyardSlot {};
+
+		template<typename E>
+		struct ElementTraits<GraveyardSlot<E>> : ElementTraits<E> {};
+
+		template<typename E>
+		struct SlotBuilder<GraveyardSlot<E>>
+		{
+			using Component = TypeListElementT<typename ElementTraits<E>::AccessedTypes, 0>;
+			static constexpr bool Writeable = ElementTraits<E>::Writeable;
+
+			using Type = std::conditional_t<Writeable, Component&, const Component&>;
+
+			static Type Build(Scene& scene, entt::registry& registry, entt::entity entity)
+			{
+				// Graveyard first, then the live pool: a component removed and re-added within one
+				// update has both a corpse and a new instance, and the Fini event refers to the
+				// corpse. Note the accessor never gets a change buffer — modifying a corpse is not
+				// a change anyone should react to.
+				if (Component* buried = scene.GetGraveyard<Component>().Find(entity))
+					return *buried;
+
+				Component* live = registry.valid(entity) ? registry.try_get<Component>(entity) : nullptr;
+				GE_CORE_ASSERT(live,
+					"FiniView slot has neither a buried nor a live component - is EnableFini set on it?");
+				return *live;
+			}
+		};
+
+		// Rewrites the react-type slots of a pack to read from the graveyard.
+		template<typename E, typename ReactList> struct FiniSlot;
+		template<typename E, typename... Rs>
+		struct FiniSlot<E, TypeList<Rs...>>
+		{
+			using Component = TypeListElementT<typename ElementTraits<E>::AccessedTypes, 0>;
+			static constexpr bool IsReact = (std::is_same_v<Component, Rs> || ...);
+			using Type = std::conditional_t<IsReact, GraveyardSlot<E>, E>;
+		};
+		template<typename... Rs> struct FiniSlot<EntityId, TypeList<Rs...>> { using Type = EntityId; };
+
+		template<typename SlotPack, typename ReactList> struct MakeFiniPack;
+		template<typename... Ss, typename ReactList>
+		struct MakeFiniPack<TypeList<Ss...>, ReactList>
+		{
+			using Type = TypeList<typename FiniSlot<Ss, ReactList>::Type...>;
+		};
+
+		// ---- Trait guards for the reactive views -------------------------------------------
+
+		template<typename TL> struct AllTrackChanges;
+		template<typename... Ts> struct AllTrackChanges<TypeList<Ts...>>
+			: std::bool_constant<(ComponentTraits<Ts>::TrackChanges && ...)> {};
+
+		template<typename TL> struct AllEnableInit;
+		template<typename... Ts> struct AllEnableInit<TypeList<Ts...>>
+			: std::bool_constant<(ComponentTraits<Ts>::EnableInit && ...)> {};
+
+		template<typename TL> struct AllEnableFini;
+		template<typename... Ts> struct AllEnableFini<TypeList<Ts...>>
+			: std::bool_constant<(ComponentTraits<Ts>::EnableFini && ...)> {};
+
+		// ---- Gathering reactive events -----------------------------------------------------
+
+		inline void AppendAll(std::vector<entt::entity>& out, const std::vector<entt::entity>& in)
+		{
+			out.insert(out.end(), in.begin(), in.end());
+		}
+
+		template<typename ReactList> struct ReactiveGather;
+		template<typename... Rs>
+		struct ReactiveGather<TypeList<Rs...>>
+		{
+			static void Init(const Scene& scene, std::vector<entt::entity>& out)
+			{
+				(AppendAll(out, scene.GetInitBuffer<Rs>()), ...);
+			}
+
+			static void Fini(const Scene& scene, std::vector<entt::entity>& out)
+			{
+				(AppendAll(out, scene.GetFiniBuffer<Rs>()), ...);
+			}
+
+			template<size_t N>
+			static void RecordHeads(Scene& scene, std::array<ChangeBuffer::VirtualIndex, N>& cursors)
+			{
+				size_t index = 0;
+				((cursors[index++] = scene.GetChangeBuffer<Rs>().Head()), ...);
+			}
+
+			template<size_t N>
+			static void CollectSince(Scene& scene, std::array<ChangeBuffer::VirtualIndex, N>& cursors,
+				std::vector<entt::entity>& out)
+			{
+				size_t index = 0;
+				((cursors[index] = scene.GetChangeBuffer<Rs>().CollectSince(cursors[index], out),
+				  index++), ...);
+			}
+		};
+
+		inline void SortAndUnique(std::vector<entt::entity>& entities)
+		{
+			std::sort(entities.begin(), entities.end());
+			entities.erase(std::unique(entities.begin(), entities.end()), entities.end());
+		}
+
 		// A range over an entt view that builds tuples from an arbitrary slot pack. IterView is
 		// one of these; Subset<> and Modify<> return others sharing the same entt view.
 		template<typename EnttView, typename SlotPack>
@@ -286,6 +407,27 @@ namespace GanymedE::ECS {
 		protected:
 			Scene* m_Scene = nullptr;
 			EnttView m_View;
+		};
+
+		// A range over an explicit entity list — what the reactive views iterate, since their
+		// contents come from event buffers rather than from a live entt query.
+		template<typename SlotPack>
+		class EntityListRange
+		{
+		public:
+			using Iterator = TupleIterator<std::vector<entt::entity>::const_iterator, SlotPack>;
+
+			EntityListRange(Scene& scene, const std::vector<entt::entity>& entities)
+				: m_Scene(&scene), m_Entities(&entities) {}
+
+			Iterator begin() const { return Iterator{ m_Scene, m_Entities->begin() }; }
+			Iterator end()   const { return Iterator{ m_Scene, m_Entities->end() }; }
+			bool Empty()     const { return m_Entities->empty(); }
+			size_t Size()    const { return m_Entities->size(); }
+
+		protected:
+			Scene* m_Scene = nullptr;
+			const std::vector<entt::entity>* m_Entities = nullptr;
 		};
 	}
 
@@ -341,6 +483,211 @@ namespace GanymedE::ECS {
 				"Modify<> requested a component this view did not declare as writeable");
 			using NewPack = typename Detail::MakeModifiedPack<SlotPack, Us...>::Type;
 			return Detail::SlotRange<EnttView, NewPack>{ *this->m_Scene, this->m_View };
+		}
+	};
+
+	// ---- Reactive views ------------------------------------------------------------------
+	//
+	// All three answer "what happened since *this system* last looked", which is why their state
+	// lives in the system's ViewHolder rather than globally.
+	//
+	// InitView and FiniView follow the epoch protocol; each branch below is load-bearing:
+	//
+	//   state.Epoch == 0               first ever read
+	//                                    InitView: everything currently matching counts as new
+	//                                    FiniView: nothing (nothing has been removed yet)
+	//   state.Epoch == frameEpoch      already read this update -> empty
+	//   state.Epoch + 1 == frameEpoch  first read this update -> use this update's buffers
+	//   state.Epoch < frameEpoch - 1   a whole update was skipped -> events were lost, assert
+	//
+	// ChangeView does not use epochs: it is read-time based, tracking a cursor per react type into
+	// that type's ChangeBuffer, so "since my last read" is exact even across uneven read cadences.
+
+	template<typename... Es>
+	class InitView : public Detail::EntityListRange<Detail::NormalizePackT<TypeList<Es...>>>
+	{
+		using Traits = Detail::AccessorPackTraits<Es...>;
+		using SlotPack = Detail::NormalizePackT<TypeList<Es...>>;
+		using Base = Detail::EntityListRange<SlotPack>;
+
+		static_assert(Traits::ReactTypes::Size > 0,
+			"InitView needs at least one React<...> element to react to");
+		static_assert(Detail::AllEnableInit<typename Traits::ReactTypes>::value,
+			"Every React<...> type in an InitView needs ComponentTraits<T>::EnableInit");
+		static_assert(Traits::IncludeTypes::Size > 0,
+			"InitView needs at least one included component");
+
+	public:
+		struct State
+		{
+			uint32_t Epoch = 0;
+			std::vector<entt::entity> Scratch;
+		};
+
+		InitView(Scene& scene, State& state) : Base(scene, Select(scene, state)) {}
+
+	private:
+		static const std::vector<entt::entity>& Select(Scene& scene, State& state)
+		{
+			const uint32_t frameEpoch = scene.GetFrameEpoch();
+			std::vector<entt::entity>& out = state.Scratch;
+			out.clear();
+
+			if (state.Epoch == frameEpoch)
+			{
+				// Already reacted this update; a second read sees nothing.
+			}
+			else if (state.Epoch == 0)
+			{
+				for (auto entity : Detail::MakeEnttView(scene.Reg(),
+					typename Traits::IncludeTypes{}, typename Traits::ExcludeTypes{}))
+				{
+					out.push_back(entity);
+				}
+			}
+			else
+			{
+				GE_CORE_ASSERT(state.Epoch + 1 == frameEpoch,
+					"InitView skipped an update - creation events were lost. Read every reactive view every update.");
+
+				Detail::ReactiveGather<typename Traits::ReactTypes>::Init(scene, out);
+				Detail::SortAndUnique(out);
+
+				// Filter against the entity's state *now*: something created and then destroyed
+				// before any system looked simply never shows up.
+				out.erase(std::remove_if(out.begin(), out.end(), [&](entt::entity entity)
+				{
+					return !Detail::MatchesFilter(scene.Reg(), entity,
+						typename Traits::IncludeTypes{}, typename Traits::ExcludeTypes{});
+				}), out.end());
+			}
+
+			state.Epoch = frameEpoch;
+			return out;
+		}
+	};
+
+	template<typename... Es>
+	class FiniView : public Detail::EntityListRange<
+		typename Detail::MakeFiniPack<Detail::NormalizePackT<TypeList<Es...>>,
+		                              typename Detail::AccessorPackTraits<Es...>::ReactTypes>::Type>
+	{
+		using Traits = Detail::AccessorPackTraits<Es...>;
+		using SlotPack = typename Detail::MakeFiniPack<Detail::NormalizePackT<TypeList<Es...>>,
+			typename Traits::ReactTypes>::Type;
+		using Base = Detail::EntityListRange<SlotPack>;
+
+		static_assert(Traits::ReactTypes::Size > 0,
+			"FiniView needs at least one React<...> element to react to");
+		static_assert(Detail::AllEnableFini<typename Traits::ReactTypes>::value,
+			"Every React<...> type in a FiniView needs ComponentTraits<T>::EnableFini, or there "
+			"would be no buried copy left to read");
+
+		// Restriction beyond the guide, on purpose: a Fini event may be an entity destruction, in
+		// which case *every* component on it is gone, not just the reacted-to one. Only react types
+		// have a graveyard copy to fall back on, so a non-react slot would dangle. Reading extra
+		// components during teardown needs component-mask snapshots; until something needs that,
+		// refusing the pack is safer than handing out a reference into a destroyed entity.
+		static_assert(Traits::ReadTypes::Size == Traits::ReactTypes::Size,
+			"FiniView may only access its React<...> types - other components may already be gone");
+
+	public:
+		struct State
+		{
+			uint32_t Epoch = 0;
+			std::vector<entt::entity> Scratch;
+		};
+
+		FiniView(Scene& scene, State& state) : Base(scene, Select(scene, state)) {}
+
+	private:
+		static const std::vector<entt::entity>& Select(Scene& scene, State& state)
+		{
+			const uint32_t frameEpoch = scene.GetFrameEpoch();
+			std::vector<entt::entity>& out = state.Scratch;
+			out.clear();
+
+			// First ever read sees nothing: at that point nothing has been removed yet. This is
+			// the one place InitView and FiniView deliberately disagree.
+			if (state.Epoch != 0 && state.Epoch != frameEpoch)
+			{
+				GE_CORE_ASSERT(state.Epoch + 1 == frameEpoch,
+					"FiniView skipped an update - removal events were lost. Read every reactive view every update.");
+
+				Detail::ReactiveGather<typename Traits::ReactTypes>::Fini(scene, out);
+				Detail::SortAndUnique(out);
+
+				// Include filters are meaningless here (the component is already gone, which is
+				// the whole point), so only exclusions are applied, and only where the entity
+				// still exists to check.
+				out.erase(std::remove_if(out.begin(), out.end(), [&](entt::entity entity)
+				{
+					if (!scene.Reg().valid(entity))
+						return false;
+					return !Detail::MatchesExcludes(scene.Reg(), entity, typename Traits::ExcludeTypes{});
+				}), out.end());
+			}
+
+			state.Epoch = frameEpoch;
+			return out;
+		}
+	};
+
+	template<typename... Es>
+	class ChangeView : public Detail::EntityListRange<Detail::NormalizePackT<TypeList<Es...>>>
+	{
+		using Traits = Detail::AccessorPackTraits<Es...>;
+		using SlotPack = Detail::NormalizePackT<TypeList<Es...>>;
+		using Base = Detail::EntityListRange<SlotPack>;
+
+		static_assert(Traits::ReactTypes::Size > 0,
+			"ChangeView needs at least one React<...> element to react to");
+		static_assert(Detail::AllTrackChanges<typename Traits::ReactTypes>::value,
+			"Every React<...> type in a ChangeView needs ComponentTraits<T>::TrackChanges");
+		static_assert(Traits::IncludeTypes::Size > 0,
+			"ChangeView needs at least one included component");
+
+	public:
+		struct State
+		{
+			// One cursor per react type, in ReactTypes order. 0 means "never read".
+			std::array<ChangeBuffer::VirtualIndex, Traits::ReactTypes::Size> Cursors{};
+			std::vector<entt::entity> Buffer;
+		};
+
+		ChangeView(Scene& scene, State& state) : Base(scene, Select(scene, state)) {}
+
+	private:
+		static const std::vector<entt::entity>& Select(Scene& scene, State& state)
+		{
+			std::vector<entt::entity>& out = state.Buffer;
+			out.clear();
+
+			if (state.Cursors[0] == 0)
+			{
+				// First read: everything matching counts as changed, and the cursors start at the
+				// current head so the next read reports only genuine changes.
+				for (auto entity : Detail::MakeEnttView(scene.Reg(),
+					typename Traits::IncludeTypes{}, typename Traits::ExcludeTypes{}))
+				{
+					out.push_back(entity);
+				}
+				Detail::ReactiveGather<typename Traits::ReactTypes>::RecordHeads(scene, state.Cursors);
+			}
+			else
+			{
+				Detail::ReactiveGather<typename Traits::ReactTypes>::CollectSince(scene, state.Cursors, out);
+				Detail::SortAndUnique(out);
+
+				// Drop entities that died or no longer match since the change was logged.
+				out.erase(std::remove_if(out.begin(), out.end(), [&](entt::entity entity)
+				{
+					return !Detail::MatchesFilter(scene.Reg(), entity,
+						typename Traits::IncludeTypes{}, typename Traits::ExcludeTypes{});
+				}), out.end());
+			}
+
+			return out;
 		}
 	};
 

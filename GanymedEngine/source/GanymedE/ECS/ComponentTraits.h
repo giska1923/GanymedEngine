@@ -12,6 +12,7 @@ namespace GanymedE {
 	struct ComponentTraits
 	{
 		static constexpr bool TrackChanges = false;   // enables ChangeView on T
+		static constexpr bool EnableInit   = false;   // records component creation, for InitView on T
 		static constexpr bool EnableFini   = false;   // keeps removed instances readable for one
 		                                              // frame (graveyard), for FiniView on T
 	};
@@ -23,6 +24,7 @@ namespace GanymedE {
 	template<> struct ComponentTraits<TransformComponent>
 	{
 		static constexpr bool TrackChanges = true;
+		static constexpr bool EnableInit   = false;
 		static constexpr bool EnableFini   = false;
 	};
 
@@ -32,6 +34,7 @@ namespace GanymedE {
 	template<> struct ComponentTraits<NativeScriptComponent>
 	{
 		static constexpr bool TrackChanges = false;
+		static constexpr bool EnableInit   = true;
 		static constexpr bool EnableFini   = true;
 	};
 

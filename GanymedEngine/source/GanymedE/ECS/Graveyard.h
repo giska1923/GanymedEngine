@@ -37,6 +37,14 @@ namespace GanymedE::ECS {
 			return it != m_Dead.end() ? &it->second : nullptr;
 		}
 
+		// Non-const so a FiniView can hand out a writeable slot into the corpse — script teardown
+		// nulls the instance pointer on the copy it is given.
+		T* Find(entt::entity entity)
+		{
+			auto it = m_Dead.find(entity);
+			return it != m_Dead.end() ? &it->second : nullptr;
+		}
+
 		bool Empty() const { return m_Dead.empty(); }
 		size_t Size() const { return m_Dead.size(); }
 
