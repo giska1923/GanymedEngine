@@ -16,14 +16,14 @@ namespace GanymedE {
 		context.MainCamera = nullptr;
 		context.CameraTransform = glm::mat4{ 1.0f };
 
-		for (auto [entity, transform, camera] : View<CameraView>())
+		for (auto [entity, worldTransform, camera] : View<CameraView>())
 		{
-			(void)transform;
+			(void)entity;
 			if (!camera.Primary)
 				continue;
 
 			context.MainCamera = &camera.Camera;
-			context.CameraTransform = m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene });
+			context.CameraTransform = worldTransform.World;
 			break;   // first primary wins, as before
 		}
 	}

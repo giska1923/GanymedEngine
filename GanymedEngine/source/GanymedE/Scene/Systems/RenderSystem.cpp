@@ -22,28 +22,28 @@ namespace GanymedE {
 	void RenderSystem::SubmitLightsAndSky()
 	{
 		// Directional lights (the first shadow-caster claims the shadow map)
-		for (auto [entity, transform, light] : View<DirLightView>())
+		for (auto [entity, worldTransform, light] : View<DirLightView>())
 		{
-			(void)transform;
-			glm::mat4 world = m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene });
+			(void)entity;
+			const glm::mat4& world = worldTransform.World;
 			glm::vec3 direction = glm::normalize(glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
 			Renderer3D::SubmitDirectionalLight(direction, light.Color, light.Intensity, light.CastShadows);
 		}
 
 		// Point lights
-		for (auto [entity, transform, light] : View<PointLightView>())
+		for (auto [entity, worldTransform, light] : View<PointLightView>())
 		{
-			(void)transform;
-			glm::mat4 world = m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene });
+			(void)entity;
+			const glm::mat4& world = worldTransform.World;
 			glm::vec3 position = glm::vec3(world[3]);
 			Renderer3D::SubmitPointLight(position, light.Color, light.Intensity, light.Radius, light.Falloff);
 		}
 
 		// Spot lights
-		for (auto [entity, transform, light] : View<SpotLightView>())
+		for (auto [entity, worldTransform, light] : View<SpotLightView>())
 		{
-			(void)transform;
-			glm::mat4 world = m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene });
+			(void)entity;
+			const glm::mat4& world = worldTransform.World;
 			glm::vec3 position = glm::vec3(world[3]);
 			glm::vec3 direction = glm::normalize(glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
 			Renderer3D::SubmitSpotLight(position, direction, light.Color, light.Intensity, light.Range,
@@ -74,29 +74,21 @@ namespace GanymedE {
 
 	void RenderSystem::SubmitMeshes()
 	{
-		for (auto [entity, transform, meshComponent] : View<MeshView>())
+		for (auto [entity, worldTransform, meshComponent] : View<MeshView>())
 		{
-			(void)transform;
 			if (!IsAssetHandleValid(meshComponent.Mesh))
 				continue;
 
 			Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(meshComponent.Mesh);
 			if (mesh)
-			{
-				Renderer3D::SubmitMesh(mesh, m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene }),
-					(int)entity);
-			}
+				Renderer3D::SubmitMesh(mesh, worldTransform.World, (int)entity);
 		}
 	}
 
 	void RenderSystem::SubmitSprites()
 	{
-		for (auto [entity, transform, sprite] : View<SpriteView>())
-		{
-			(void)transform;
-			Renderer2D::DrawQuad(m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene }),
-				sprite.Color, (int)entity);
-		}
+		for (auto [entity, worldTransform, sprite] : View<SpriteView>())
+			Renderer2D::DrawQuad(worldTransform.World, sprite.Color, (int)entity);
 	}
 
 	void RenderSystem::DrawColliderGizmos()
@@ -105,20 +97,20 @@ namespace GanymedE {
 		const glm::vec4 sphereColor{ 0.3f, 0.7f, 1.0f, 1.0f };
 		const glm::vec4 capsuleColor{ 1.0f, 0.75f, 0.2f, 1.0f };
 
-		for (auto [entity, transform, collider] : View<BoxColliderView>())
+		for (auto [entity, worldTransform, collider] : View<BoxColliderView>())
 		{
-			(void)transform;
-			glm::mat4 world = m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene });
+			(void)entity;
+			const glm::mat4& world = worldTransform.World;
 			glm::mat4 colliderTransform = world
 				* glm::translate(glm::mat4(1.0f), collider.Offset)
 				* glm::scale(glm::mat4(1.0f), collider.HalfExtents * 2.0f);
 			Renderer3D::DrawWireBox(colliderTransform, boxColor);
 		}
 
-		for (auto [entity, transform, collider] : View<SphereColliderView>())
+		for (auto [entity, worldTransform, collider] : View<SphereColliderView>())
 		{
-			(void)transform;
-			glm::mat4 world = m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene });
+			(void)entity;
+			const glm::mat4& world = worldTransform.World;
 			glm::vec3 center = glm::vec3(world * glm::vec4(collider.Offset, 1.0f));
 			glm::vec3 scale = {
 				glm::length(glm::vec3(world[0])),
@@ -129,10 +121,10 @@ namespace GanymedE {
 			Renderer3D::DrawWireSphere(center, radius, sphereColor);
 		}
 
-		for (auto [entity, transform, collider] : View<CapsuleColliderView>())
+		for (auto [entity, worldTransform, collider] : View<CapsuleColliderView>())
 		{
-			(void)transform;
-			glm::mat4 world = m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene });
+			(void)entity;
+			const glm::mat4& world = worldTransform.World;
 			glm::vec3 center = glm::vec3(world * glm::vec4(collider.Offset, 1.0f));
 			glm::vec3 scale = {
 				glm::length(glm::vec3(world[0])),

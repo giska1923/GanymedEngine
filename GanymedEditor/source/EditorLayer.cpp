@@ -382,6 +382,10 @@ namespace GanymedE {
 				tc.Translation = translation;
 				tc.Rotation += deltaRotation;
 				tc.Scale = scale;
+
+				// Gizmo edits write the component directly, so the world-transform cache has to be
+				// told; without this the entity would keep rendering at its pre-drag position.
+				m_ActiveScene->MarkChanged<TransformComponent>(selectedEntity);
 			}
 		}
 
@@ -523,6 +527,7 @@ namespace GanymedE {
 		Entity sun = scene->CreateEntity("Sun");
 		auto& sunTransform = sun.GetComponent<TransformComponent>();
 		sunTransform.Rotation = { glm::radians(-50.0f), glm::radians(30.0f), 0.0f };
+		scene->MarkChanged<TransformComponent>(sun);
 		auto& dl = sun.AddComponent<DirectionalLightComponent>();
 		dl.Color = { 1.0f, 0.98f, 0.92f };
 		dl.Intensity = 3.0f;

@@ -27,6 +27,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtc/epsilon.hpp>
 #include <glm/gtx/euler_angles.hpp>
 #include <glm/gtx/norm.hpp>
 
@@ -582,9 +583,23 @@ namespace GanymedE {
 					world = glm::inverse(scene->GetWorldSpaceTransform(parent)) * world;
 			}
 
+			const glm::vec3 translation = glm::vec3(world[3]);
+			const glm::vec3 rotation = QuatToEulerXYZ(GetTransformRotation(world));
+
 			auto& tc = entity.GetComponent<TransformComponent>();
-			tc.Translation = glm::vec3(world[3]);
-			tc.Rotation = QuatToEulerXYZ(GetTransformRotation(world));
+
+			// Only report an actual movement. Writing every dynamic body every frame regardless
+			// would dirty the world-transform cache for bodies that are asleep or resting, which
+			// is exactly the per-frame recompute this cache exists to avoid.
+			constexpr float epsilon = 1e-6f;
+			const bool moved = glm::any(glm::epsilonNotEqual(tc.Translation, translation, epsilon))
+				|| glm::any(glm::epsilonNotEqual(tc.Rotation, rotation, epsilon));
+
+			tc.Translation = translation;
+			tc.Rotation = rotation;
+
+			if (moved)
+				scene->MarkChanged<TransformComponent>(entity);
 		}
 	}
 

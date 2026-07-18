@@ -10,6 +10,7 @@
 #include "GanymedE/Scene/Systems/NativeScriptSystem.h"
 #include "GanymedE/Scene/Systems/PhysicsSystem.h"
 #include "GanymedE/Scene/Systems/RenderSystem.h"
+#include "GanymedE/Scene/Systems/TransformSystem.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 
 #include <glm/glm.hpp>
@@ -48,8 +49,16 @@ namespace GanymedE {
 		m_Systems = CreateScope<ECS::SystemManager>();
 		m_Systems->Add<PhysicsSystem>(*this);
 		m_Systems->Add<NativeScriptSystem>(*this);
-		m_Systems->Add<CameraSystem>(*this);
+		m_Systems->Add<TransformSystem>(*this);   // after anything that moves entities...
+		m_Systems->Add<CameraSystem>(*this);      // ...and before anything that reads world space
 		m_Systems->Add<RenderSystem>(*this);
+
+		// The views the systems declare imply an ordering; check the order above actually honours
+		// it, rather than relying on the comments staying true.
+		const size_t orderingViolations = m_Systems->ValidateOrdering();
+		GE_CORE_ASSERT(orderingViolations == 0,
+			"System registration order contradicts the systems' declared component access");
+		(void)orderingViolations;
 	}
 
 	template<typename T>
@@ -205,6 +214,7 @@ namespace GanymedE {
 		entity.AddComponent<IDComponent>(uuid);
 		m_EntityMap[uuid] = (entt::entity)entity;
 		entity.AddComponent<TransformComponent>();
+		entity.AddComponent<WorldTransformComponent>();
 		entity.AddComponent<RelationshipComponent>();
 		auto& tag = entity.AddComponent<TagComponent>();
 		tag.Tag = name.empty() ? "Entity" : name;
@@ -219,6 +229,7 @@ namespace GanymedE {
 
 		auto& children = parent.GetComponent<RelationshipComponent>().Children;
 		children.erase(std::remove(children.begin(), children.end(), childID), children.end());
+		MarkChanged<RelationshipComponent>(parent);
 	}
 
 	void Scene::Unparent(Entity child)
@@ -232,6 +243,7 @@ namespace GanymedE {
 
 		RemoveChildFromParent(relationship.Parent, child.GetUUID());
 		relationship.Parent = UUID{ 0 };
+		MarkChanged<RelationshipComponent>(child);   // the child's world transform just changed
 	}
 
 	void Scene::SetParent(Entity child, Entity parent)
@@ -265,11 +277,14 @@ namespace GanymedE {
 		if (!parent)
 		{
 			childRel.Parent = UUID{ 0 };
+			MarkChanged<RelationshipComponent>(child);
 			return;
 		}
 
 		childRel.Parent = parent.GetUUID();
 		parent.GetComponent<RelationshipComponent>().Children.push_back(child.GetUUID());
+		MarkChanged<RelationshipComponent>(child);
+		MarkChanged<RelationshipComponent>(parent);
 	}
 
 	void Scene::DestroyEntity(Entity entity)

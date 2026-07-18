@@ -21,7 +21,16 @@ namespace GanymedE {
 	// exercised. Nothing consumes the log until ChangeView lands (Phase 6) — note that
 	// PhysicsScene::SyncTransforms still writes transforms straight through the registry, so the
 	// log under-reports until that write is routed through Modify() in Phase 12.
+	// The two inputs to the world-transform cache. TransformSystem's ChangeView reacts to either,
+	// so only entities whose local transform or parenting actually moved get recomputed.
 	template<> struct ComponentTraits<TransformComponent>
+	{
+		static constexpr bool TrackChanges = true;
+		static constexpr bool EnableInit   = false;
+		static constexpr bool EnableFini   = false;
+	};
+
+	template<> struct ComponentTraits<RelationshipComponent>
 	{
 		static constexpr bool TrackChanges = true;
 		static constexpr bool EnableInit   = false;
@@ -47,6 +56,7 @@ namespace GanymedE {
 	// by CreateEntityWithUUID and never copied generically.
 	using ComponentList = TypeList<
 		TransformComponent,
+		WorldTransformComponent,
 		RelationshipComponent,
 		SpriteRendererComponent,
 		StaticMeshComponent,

@@ -400,13 +400,23 @@ namespace GanymedE {
 
 		ImGui::PopItemWidth();
 
-		DrawComponent<TransformComponent>("Transform", entity, [](auto& component)
+		DrawComponent<TransformComponent>("Transform", entity, [&](auto& component)
 		{
+			const glm::vec3 before[] = { component.Translation, component.Rotation, component.Scale };
+
 			DrawVec3Control("Translation", component.Translation);
 			glm::vec3 rotation = glm::degrees(component.Rotation);
 			DrawVec3Control("Rotation", rotation);
 			component.Rotation = glm::radians(rotation);
 			DrawVec3Control("Scale", component.Scale, 1.0f);
+
+			// Editing the component directly is invisible to change tracking, so the cached world
+			// transform would never be refreshed. Report it when something actually moved.
+			if (before[0] != component.Translation || before[1] != component.Rotation
+				|| before[2] != component.Scale)
+			{
+				m_Context->MarkChanged<TransformComponent>(entity);
+			}
 		});
 
 		DrawComponent<CameraComponent>("Camera", entity, [](auto& component)

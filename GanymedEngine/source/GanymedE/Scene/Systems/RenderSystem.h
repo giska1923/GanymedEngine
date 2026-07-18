@@ -16,15 +16,15 @@ namespace GanymedE {
 	public:
 		// The primary-camera search now lives in CameraSystem, which runs first and leaves the
 		// answer in the RenderContext singleton.
-		using MeshView       = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<StaticMeshComponent>>;
-		using SpriteView     = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<SpriteRendererComponent>>;
-		using DirLightView   = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<DirectionalLightComponent>>;
-		using PointLightView = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<PointLightComponent>>;
-		using SpotLightView  = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<SpotLightComponent>>;
+		using MeshView       = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<StaticMeshComponent>>;
+		using SpriteView     = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<SpriteRendererComponent>>;
+		using DirLightView   = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<DirectionalLightComponent>>;
+		using PointLightView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<PointLightComponent>>;
+		using SpotLightView  = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<SpotLightComponent>>;
 		using SkyView        = ECS::IterView<ECS::RO<SkyLightComponent>>;
-		using BoxColliderView     = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<BoxColliderComponent>>;
-		using SphereColliderView  = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<SphereColliderComponent>>;
-		using CapsuleColliderView = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<CapsuleColliderComponent>>;
+		using BoxColliderView     = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<BoxColliderComponent>>;
+		using SphereColliderView  = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<SphereColliderComponent>>;
+		using CapsuleColliderView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<CapsuleColliderComponent>>;
 
 		using Views = TypeList<
 			MeshView,
@@ -42,6 +42,7 @@ namespace GanymedE {
 
 		void OnUpdate(Timestep ts) override;
 		void OnUpdateEditor(Timestep ts) override;
+		const char* Name() const override { return "RenderSystem"; }
 
 	private:
 		void SubmitLightsAndSky();

@@ -28,6 +28,7 @@ namespace GanymedE {
 		void OnUpdate(Timestep ts) override;
 		void OnUpdateEditor(Timestep ts) override;
 		void OnRuntimeStop() override;
+		const char* Name() const override { return "NativeScriptSystem"; }
 
 	private:
 		void InstantiateScript(entt::entity entity, NativeScriptComponent& script);

@@ -17,13 +17,20 @@ namespace GanymedE {
 	public:
 		// Collision dispatch needs random access to script instances by entity, not iteration.
 		using ScriptAccess = ECS::AccessView<ECS::RW<NativeScriptComponent>>;
-		using Views = TypeList<ScriptAccess>;
+
+		// PhysicsScene::SyncTransforms writes TransformComponent directly, outside any view.
+		// Declaring it here keeps the access metadata honest, so ordering validation knows
+		// TransformSystem has to run after this system rather than before it.
+		using TransformWrite = ECS::AccessView<ECS::RW<TransformComponent>>;
+
+		using Views = TypeList<ScriptAccess, TransformWrite>;
 
 		using ECS::System<PhysicsSystem>::System;
 
 		void OnRuntimeStart() override;
 		void OnUpdate(Timestep ts) override;
 		void OnRuntimeStop() override;
+		const char* Name() const override { return "PhysicsSystem"; }
 
 		// Exposed for the renderer's Jolt debug view; Phase 7 should route this through a
 		// PhysicsSettings/PhysicsState singleton instead of a direct system lookup.

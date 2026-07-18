@@ -57,6 +57,21 @@ namespace GanymedE {
 		glm::mat4 GetTransform() const { return GetLocalTransform(); }
 	};
 
+	// Cached world-space transform, maintained by TransformSystem from TransformComponent and
+	// RelationshipComponent. Derived data: never authored, never serialized, and only recomputed
+	// for entities whose local transform or parenting actually changed.
+	//
+	// Because rendering reads this instead of walking the parent chain, anything that writes a
+	// TransformComponent directly (rather than through a view's Modify()) must call
+	// Scene::MarkChanged<TransformComponent>() or this cache goes silently stale.
+	struct WorldTransformComponent
+	{
+		glm::mat4 World{ 1.0f };
+
+		WorldTransformComponent() = default;
+		WorldTransformComponent(const WorldTransformComponent&) = default;
+	};
+
 	struct RelationshipComponent
 	{
 		UUID Parent{ 0 };

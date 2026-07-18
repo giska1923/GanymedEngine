@@ -9,6 +9,7 @@
 
 #include "AccessWrappers.h"
 #include "ComponentAccessor.h"
+#include "ViewDesc.h"
 #include "ComponentTraits.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
@@ -455,6 +456,9 @@ namespace GanymedE::ECS {
 		// reactive views (Phase 6), whose State holds cursors and scratch buffers.
 		struct State {};
 
+		// Access metadata for ordering/scheduling (Phase 8), derived from this pack's wrappers.
+		static ViewDesc Desc() { return Detail::MakeViewDesc<Traits>(); }
+
 		IterView(Scene& scene, State&)
 			: Base(scene, Detail::MakeEnttView(scene.Reg(),
 				typename Traits::IncludeTypes{}, typename Traits::ExcludeTypes{})) {}
@@ -523,6 +527,9 @@ namespace GanymedE::ECS {
 			uint32_t Epoch = 0;
 			std::vector<entt::entity> Scratch;
 		};
+
+		// Access metadata for ordering/scheduling (Phase 8), derived from this pack's wrappers.
+		static ViewDesc Desc() { return Detail::MakeViewDesc<Traits>(); }
 
 		InitView(Scene& scene, State& state) : Base(scene, Select(scene, state)) {}
 
@@ -598,6 +605,9 @@ namespace GanymedE::ECS {
 			std::vector<entt::entity> Scratch;
 		};
 
+		// Access metadata for ordering/scheduling (Phase 8), derived from this pack's wrappers.
+		static ViewDesc Desc() { return Detail::MakeViewDesc<Traits>(); }
+
 		FiniView(Scene& scene, State& state) : Base(scene, Select(scene, state)) {}
 
 	private:
@@ -655,6 +665,10 @@ namespace GanymedE::ECS {
 			std::vector<entt::entity> Buffer;
 		};
 
+
+		// Access metadata for ordering/scheduling (Phase 8), derived from this pack's wrappers.
+		static ViewDesc Desc() { return Detail::MakeViewDesc<Traits>(); }
+
 		ChangeView(Scene& scene, State& state) : Base(scene, Select(scene, state)) {}
 
 	private:
@@ -704,6 +718,9 @@ namespace GanymedE::ECS {
 
 	public:
 		struct State {};
+
+		// Access metadata for ordering/scheduling (Phase 8), derived from this pack's wrappers.
+		static ViewDesc Desc() { return Detail::MakeViewDesc<Traits>(); }
 
 		AccessView(Scene& scene, State&) : m_Scene(&scene) {}
 		explicit AccessView(Scene& scene) : m_Scene(&scene) {}

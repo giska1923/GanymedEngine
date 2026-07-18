@@ -93,6 +93,16 @@ namespace GanymedE {
 		template<typename T>
 		ECS::ChangeBuffer& GetChangeBuffer() { return GetChangeBuffer(entt::type_hash<T>::value()); }
 
+		// Records that a tracked component was written outside the view/Modify() path.
+		//
+		// Writes made through Entity::GetComponent<T>() are invisible to change tracking, so any
+		// code that mutates a tracked component that way has to say so — otherwise consumers such
+		// as the world-transform cache never learn the value moved. Editor panels, gizmos and
+		// PhysicsScene::SyncTransforms all go through here; system code should prefer a view's
+		// Modify(), which does this automatically.
+		template<typename T>
+		void MarkChanged(entt::entity entity) { GetChangeBuffer<T>().Add(entity); }
+
 		// Deferred structural changes. Systems must mutate through this rather than the immediate
 		// Entity API; the queue is applied in FrameBegin, before any system runs.
 		ECS::CommandQueue& Commands() { return *m_Commands; }

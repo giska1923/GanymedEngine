@@ -14,13 +14,15 @@ namespace GanymedE {
 	class CameraSystem : public ECS::System<CameraSystem>
 	{
 	public:
-		using CameraView = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<CameraComponent>>;
+		// Reads the cached world transform, which TransformSystem has already refreshed this update.
+		using CameraView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<CameraComponent>>;
 		using Views = TypeList<CameraView>;
 
 		using ECS::System<CameraSystem>::System;
 
 		void OnUpdate(Timestep ts) override;
 		void OnUpdateEditor(Timestep ts) override;
+		const char* Name() const override { return "CameraSystem"; }
 
 	private:
 		void ResolveMainCamera();
