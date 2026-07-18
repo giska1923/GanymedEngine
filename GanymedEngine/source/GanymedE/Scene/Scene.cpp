@@ -4,11 +4,10 @@
 #include "Entity.h"
 #include "Components.h"
 #include "GanymedE/ECS/ComponentTraits.h"
-#include "GanymedE/Assets/AssetManager.h"
-#include "GanymedE/Renderer/Mesh.h"
-#include "GanymedE/Renderer/Renderer2D.h"
-#include "GanymedE/Renderer/Renderer3D.h"
-#include "GanymedE/Renderer/Environment.h"
+#include "GanymedE/ECS/System.h"
+#include "GanymedE/Scene/Systems/NativeScriptSystem.h"
+#include "GanymedE/Scene/Systems/PhysicsSystem.h"
+#include "GanymedE/Scene/Systems/RenderSystem.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 
 #include <glm/glm.hpp>
@@ -27,6 +26,13 @@ namespace GanymedE {
 			if constexpr (ComponentTraits<T>::TrackChanges)
 				m_Registry.on_construct<T>().template connect<&Scene::OnTrackedConstruct<T>>(*this);
 		});
+
+		// Registration order IS execution order, and matches the order the logic previously ran
+		// inline in OnUpdateRuntime: physics, then scripts, then rendering.
+		m_Systems = CreateScope<ECS::SystemManager>();
+		m_Systems->Add<PhysicsSystem>(*this);
+		m_Systems->Add<NativeScriptSystem>(*this);
+		m_Systems->Add<RenderSystem>(*this);
 	}
 
 	template<typename T>
@@ -53,80 +59,12 @@ namespace GanymedE {
 
 	void Scene::OnRuntimeStart()
 	{
-		InstantiateScripts();
-
-		m_PhysicsScene = CreateScope<PhysicsScene>();
-		m_PhysicsScene->Start(this);
-		m_PhysicsAccumulator = 0.0f;
+		m_Systems->OnRuntimeStart();
 	}
 
 	void Scene::OnRuntimeStop()
 	{
-		if (m_PhysicsScene)
-		{
-			m_PhysicsScene->Stop();
-			m_PhysicsScene.reset();
-		}
-		m_PhysicsAccumulator = 0.0f;
-
-		// Destroy script instances
-		{
-			auto view = m_Registry.view<NativeScriptComponent>();
-			for (auto e : view)
-			{
-				auto& nsc = view.get<NativeScriptComponent>(e);
-				if (nsc.Instance)
-				{
-					nsc.Instance->OnDestroy();
-					nsc.DestroyScript(&nsc);
-				}
-			}
-		}
-	}
-
-	void Scene::InstantiateScripts()
-	{
-		m_Registry.view<NativeScriptComponent>().each([=](auto entity, auto& nsc)
-		{
-			if (!nsc.Instance && nsc.InstantiateScript)
-			{
-				nsc.Instance = nsc.InstantiateScript();
-				nsc.Instance->m_Entity = Entity{ entity, this };
-				nsc.Instance->OnCreate();
-			}
-		});
-	}
-
-	void Scene::DispatchCollisionEvents()
-	{
-		if (!m_PhysicsScene)
-			return;
-
-		for (const auto& event : m_PhysicsScene->GetCollisionEvents())
-		{
-			Entity a = FindEntityByUUID(event.EntityA);
-			Entity b = FindEntityByUUID(event.EntityB);
-			if (!a || !b)
-				continue;
-
-			auto notify = [&](Entity self, Entity other)
-			{
-				if (!self.HasComponent<NativeScriptComponent>())
-					return;
-				auto& nsc = self.GetComponent<NativeScriptComponent>();
-				if (!nsc.Instance)
-					return;
-				if (event.Entered)
-					nsc.Instance->OnCollisionEnter(other);
-				else
-					nsc.Instance->OnCollisionExit(other);
-			};
-
-			notify(a, b);
-			notify(b, a);
-		}
-
-		m_PhysicsScene->ClearCollisionEvents();
+		m_Systems->OnRuntimeStop();
 	}
 
 	template<typename Component>
@@ -292,283 +230,19 @@ namespace GanymedE {
 	{
 		FrameBegin();
 
-		// Fixed-timestep physics
-		if (m_PhysicsScene && m_PhysicsScene->IsActive())
-		{
-			m_PhysicsAccumulator += ts;
-			// Spiral-of-death guard
-			constexpr int maxSteps = 5;
-			int steps = 0;
-			while (m_PhysicsAccumulator >= s_FixedTimestep && steps < maxSteps)
-			{
-				m_PhysicsScene->Step(s_FixedTimestep);
-				DispatchCollisionEvents();
-				m_PhysicsAccumulator -= s_FixedTimestep;
-				steps++;
-			}
-			if (steps == maxSteps)
-				m_PhysicsAccumulator = 0.0f;
+		// Used by RenderSystem only when the scene has no primary camera.
+		m_ActiveEditorCamera = fallbackCamera;
 
-			float alpha = m_PhysicsAccumulator / s_FixedTimestep;
-			m_PhysicsScene->SyncTransforms(this, alpha);
-		}
-
-		// Update scripts
-		{
-			m_Registry.view<NativeScriptComponent>().each([=](auto entity, auto& nsc)
-				{
-					if (!nsc.Instance && nsc.InstantiateScript)
-					{
-						nsc.Instance = nsc.InstantiateScript();
-						nsc.Instance->m_Entity = Entity{ entity, this };
-						nsc.Instance->OnCreate();
-					}
-
-					if (nsc.Instance)
-						nsc.Instance->OnUpdate(ts);
-				});
-		}
-
-		Camera* mainCamera = nullptr;
-		glm::mat4 cameraTransform;
-		{
-			auto view = m_Registry.view<TransformComponent, CameraComponent>();
-			for (auto entity : view)
-			{
-				auto [transform, camera] = view.get<TransformComponent, CameraComponent>(entity);
-
-				if (camera.Primary)
-				{
-					mainCamera = &camera.Camera;
-					cameraTransform = GetWorldSpaceTransform(Entity{ entity, this });
-					break;
-				}
-			}
-		}
-
-		auto renderScene3D = [&](const glm::vec3& cameraPos)
-		{
-			SubmitLightsAndSky();
-			{
-				auto view = m_Registry.view<TransformComponent, StaticMeshComponent>();
-				for (auto entity : view)
-				{
-					auto [transform, meshComp] = view.get<TransformComponent, StaticMeshComponent>(entity);
-					(void)transform;
-					if (IsAssetHandleValid(meshComp.Mesh))
-					{
-						Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(meshComp.Mesh);
-						if (mesh)
-							Renderer3D::SubmitMesh(mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
-					}
-				}
-			}
-
-			// Prefer Jolt's view of the world when enabled; otherwise draw authored collider gizmos
-			if (m_PhysicsScene && m_PhysicsScene->IsActive() && m_PhysicsDebugDraw.Enabled)
-				m_PhysicsScene->DebugDraw(cameraPos, m_PhysicsDebugDraw);
-			else
-				DrawColliderGizmos();
-
-			Renderer3D::EndScene();
-		};
-
-		if (mainCamera)
-		{
-			Renderer3D::BeginScene(*mainCamera, cameraTransform);
-			renderScene3D(glm::vec3(cameraTransform[3]));
-
-			Renderer2D::BeginScene(*mainCamera, cameraTransform);
-			auto view = m_Registry.view<TransformComponent, SpriteRendererComponent>();
-			for (auto entity : view)
-			{
-				auto [transform, sprite] = view.get<TransformComponent, SpriteRendererComponent>(entity);
-				(void)transform;
-				Renderer2D::DrawQuad(GetWorldSpaceTransform(Entity{ entity, this }), sprite.Color, (int)entity);
-			}
-			Renderer2D::EndScene();
-		}
-		else if (fallbackCamera)
-		{
-			// Editor convenience: Play with no scene Camera still shows the viewport
-			Renderer3D::BeginScene(*fallbackCamera);
-			renderScene3D(fallbackCamera->GetPosition());
-
-			Renderer2D::BeginScene(*fallbackCamera);
-			auto view = m_Registry.view<TransformComponent, SpriteRendererComponent>();
-			for (auto entity : view)
-			{
-				auto [transform, sprite] = view.get<TransformComponent, SpriteRendererComponent>(entity);
-				(void)transform;
-				Renderer2D::DrawQuad(GetWorldSpaceTransform(Entity{ entity, this }), sprite.Color, (int)entity);
-			}
-			Renderer2D::EndScene();
-		}
+		m_Systems->OnUpdate(ts);
 	}
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
 		FrameBegin();
 
-		Renderer3D::BeginScene(camera);
-		SubmitLightsAndSky();
-		Renderer3D::DrawGrid();
+		m_ActiveEditorCamera = &camera;
 
-		{
-			auto view = m_Registry.view<TransformComponent, StaticMeshComponent>();
-			for (auto entity : view)
-			{
-				auto [transform, meshComp] = view.get<TransformComponent, StaticMeshComponent>(entity);
-				(void)transform;
-				if (IsAssetHandleValid(meshComp.Mesh))
-				{
-					Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(meshComp.Mesh);
-					if (mesh)
-						Renderer3D::SubmitMesh(mesh, GetWorldSpaceTransform(Entity{ entity, this }), (int)entity);
-				}
-			}
-		}
-		DrawColliderGizmos();
-		Renderer3D::EndScene();
-
-		Renderer2D::BeginScene(camera);
-
-		auto view = m_Registry.view<TransformComponent, SpriteRendererComponent>();
-		for (auto entity : view)
-		{
-			auto [transform, sprite] = view.get<TransformComponent, SpriteRendererComponent>(entity);
-			(void)transform;
-
-			Renderer2D::DrawQuad(GetWorldSpaceTransform(Entity{ entity, this }), sprite.Color, (int)entity);
-		}
-
-		Renderer2D::EndScene();
-	}
-
-	void Scene::DrawColliderGizmos()
-	{
-		const glm::vec4 boxColor{ 0.2f, 0.9f, 0.35f, 1.0f };
-		const glm::vec4 sphereColor{ 0.3f, 0.7f, 1.0f, 1.0f };
-		const glm::vec4 capsuleColor{ 1.0f, 0.75f, 0.2f, 1.0f };
-
-		{
-			auto view = m_Registry.view<TransformComponent, BoxColliderComponent>();
-			for (auto entity : view)
-			{
-				Entity e{ entity, this };
-				auto& col = e.GetComponent<BoxColliderComponent>();
-				glm::mat4 world = GetWorldSpaceTransform(e);
-				glm::mat4 collider = world
-					* glm::translate(glm::mat4(1.0f), col.Offset)
-					* glm::scale(glm::mat4(1.0f), col.HalfExtents * 2.0f);
-				Renderer3D::DrawWireBox(collider, boxColor);
-			}
-		}
-		{
-			auto view = m_Registry.view<TransformComponent, SphereColliderComponent>();
-			for (auto entity : view)
-			{
-				Entity e{ entity, this };
-				auto& col = e.GetComponent<SphereColliderComponent>();
-				glm::mat4 world = GetWorldSpaceTransform(e);
-				glm::vec3 center = glm::vec3(world * glm::vec4(col.Offset, 1.0f));
-				glm::vec3 scale = {
-					glm::length(glm::vec3(world[0])),
-					glm::length(glm::vec3(world[1])),
-					glm::length(glm::vec3(world[2]))
-				};
-				float radius = col.Radius * glm::max(scale.x, glm::max(scale.y, scale.z));
-				Renderer3D::DrawWireSphere(center, radius, sphereColor);
-			}
-		}
-		{
-			auto view = m_Registry.view<TransformComponent, CapsuleColliderComponent>();
-			for (auto entity : view)
-			{
-				Entity e{ entity, this };
-				auto& col = e.GetComponent<CapsuleColliderComponent>();
-				glm::mat4 world = GetWorldSpaceTransform(e);
-				glm::vec3 center = glm::vec3(world * glm::vec4(col.Offset, 1.0f));
-				glm::vec3 scale = {
-					glm::length(glm::vec3(world[0])),
-					glm::length(glm::vec3(world[1])),
-					glm::length(glm::vec3(world[2]))
-				};
-				float radius = col.Radius * glm::max(scale.x, scale.z);
-				float halfHeight = col.HalfHeight * scale.y;
-				glm::quat rotation = glm::normalize(glm::quat_cast(glm::mat3(
-					glm::vec3(world[0]) / glm::max(scale.x, 1e-6f),
-					glm::vec3(world[1]) / glm::max(scale.y, 1e-6f),
-					glm::vec3(world[2]) / glm::max(scale.z, 1e-6f)
-				)));
-				Renderer3D::DrawWireCapsule(center, rotation, radius, halfHeight, capsuleColor);
-			}
-		}
-	}
-
-	void Scene::SubmitLightsAndSky()
-	{
-		// Directional lights (the first shadow-caster claims the shadow map)
-		{
-			auto view = m_Registry.view<TransformComponent, DirectionalLightComponent>();
-			for (auto entity : view)
-			{
-				auto& light = view.get<DirectionalLightComponent>(entity);
-				glm::mat4 world = GetWorldSpaceTransform(Entity{ entity, this });
-				glm::vec3 dir = glm::normalize(glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
-				Renderer3D::SubmitDirectionalLight(dir, light.Color, light.Intensity, light.CastShadows);
-			}
-		}
-
-		// Point lights
-		{
-			auto view = m_Registry.view<TransformComponent, PointLightComponent>();
-			for (auto entity : view)
-			{
-				auto& light = view.get<PointLightComponent>(entity);
-				glm::mat4 world = GetWorldSpaceTransform(Entity{ entity, this });
-				glm::vec3 position = glm::vec3(world[3]);
-				Renderer3D::SubmitPointLight(position, light.Color, light.Intensity, light.Radius, light.Falloff);
-			}
-		}
-
-		// Spot lights
-		{
-			auto view = m_Registry.view<TransformComponent, SpotLightComponent>();
-			for (auto entity : view)
-			{
-				auto& light = view.get<SpotLightComponent>(entity);
-				glm::mat4 world = GetWorldSpaceTransform(Entity{ entity, this });
-				glm::vec3 position = glm::vec3(world[3]);
-				glm::vec3 dir = glm::normalize(glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
-				Renderer3D::SubmitSpotLight(position, dir, light.Color, light.Intensity, light.Range,
-					glm::cos(light.InnerConeAngle), glm::cos(light.OuterConeAngle), light.Falloff);
-			}
-		}
-
-		// Sky light / environment (first one wins)
-		{
-			auto view = m_Registry.view<SkyLightComponent>();
-			for (auto entity : view)
-			{
-				auto& sky = view.get<SkyLightComponent>(entity);
-				if (IsAssetHandleValid(sky.Environment))
-				{
-					Ref<Environment> environment = AssetManager::GetAsset<Environment>(sky.Environment);
-					if (environment && environment->IsValid())
-						Renderer3D::SubmitEnvironment(environment, sky.Intensity, sky.DrawSkybox);
-					else
-						Renderer3D::SubmitSkyLight(sky.SkyColor, sky.GroundColor, sky.Intensity, sky.DrawSkybox);
-				}
-				else
-				{
-					Renderer3D::SubmitSkyLight(sky.SkyColor, sky.GroundColor, sky.Intensity, sky.DrawSkybox);
-				}
-				break;
-			}
-		}
-
-		Renderer3D::DrawSkybox();
+		m_Systems->OnUpdateEditor(ts);
 	}
 
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)

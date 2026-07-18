@@ -22,6 +22,11 @@ namespace GanymedE {
 		virtual void OnCollisionExit(Entity other) { (void)other; }
 	private:
 		Entity m_Entity;
+
+		// The lifecycle hooks above are protected; these are the systems that drive them.
+		// (Scene stays a friend: it still owns entity identity and the registry.)
 		friend class Scene;
+		friend class NativeScriptSystem;
+		friend class PhysicsSystem;
 	};
 }

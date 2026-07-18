@@ -16,6 +16,8 @@ namespace GanymedE {
 	class Entity;
 	struct CameraComponent;
 
+	namespace ECS { class SystemManager; }
+
 	class Scene
 	{
 	public:
@@ -48,6 +50,14 @@ namespace GanymedE {
 		PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() { return m_PhysicsDebugDraw; }
 		const PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() const { return m_PhysicsDebugDraw; }
 
+		ECS::SystemManager& Systems() { return *m_Systems; }
+		const ECS::SystemManager& Systems() const { return *m_Systems; }
+
+		// The editor camera for the current update: the view camera in edit mode, or the Play-mode
+		// fallback used when the scene has no primary camera. Set at the top of each update.
+		// Phase 7 replaces this with a RenderContext singleton in registry.ctx().
+		EditorCamera* GetActiveEditorCamera() const { return m_ActiveEditorCamera; }
+
 		// Change log for one tracked component type, created on first use.
 		// Scene.h cannot include ComponentTraits.h (Components.h -> ScriptableEntity.h -> Entity.h
 		// -> Scene.h), so the TrackChanges guard lives at the call sites in ECS/ that can.
@@ -71,22 +81,18 @@ namespace GanymedE {
 		void FrameBegin();
 
 		void RemoveChildFromParent(UUID parentID, UUID childID);
-
-		// Gathers light + sky components and submits them to Renderer3D, then draws the sky.
-		void SubmitLightsAndSky();
-		void DrawColliderGizmos();
-		void DispatchCollisionEvents();
-		void InstantiateScripts();
 	private:
 		entt::registry m_Registry;
 		std::unordered_map<UUID, entt::entity> m_EntityMap;   // O(1) FindEntityByUUID
 		std::unordered_map<entt::id_type, ECS::ChangeBuffer> m_ChangeBuffers;   // one per tracked type
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
 
-		Scope<PhysicsScene> m_PhysicsScene;
-		float m_PhysicsAccumulator = 0.0f;
-		static constexpr float s_FixedTimestep = 1.0f / 60.0f;
+		// Held by pointer so Scene.h need not include System.h: the systems include Views.h, which
+		// includes Scene.h. Scene's destructor is defined in Scene.cpp, where the type is complete.
+		Scope<ECS::SystemManager> m_Systems;
+
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
+		EditorCamera* m_ActiveEditorCamera = nullptr;
 
 		friend class Entity;
 		friend class SceneSerializer;
