@@ -14,6 +14,12 @@ namespace GanymedE {
 		static constexpr bool TrackChanges = false;   // enables ChangeView on T
 	};
 
+	// Tracked from Phase 2 so the signal hookup and per-frame buffer rotation are actually
+	// exercised. Nothing consumes the log until ChangeView lands (Phase 6) — note that
+	// PhysicsScene::SyncTransforms still writes transforms straight through the registry, so the
+	// log under-reports until that write is routed through Modify() in Phase 12.
+	template<> struct ComponentTraits<TransformComponent> { static constexpr bool TrackChanges = true; };
+
 	// ---- Every user-facing component, in one place ----
 	// This is the single source of truth: anything that must be applied to "all components"
 	// (Scene::Copy, and later serialization / editor menus / change-buffer hookup) iterates this

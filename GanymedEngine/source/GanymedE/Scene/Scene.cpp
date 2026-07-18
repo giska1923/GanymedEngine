@@ -19,6 +19,31 @@ namespace GanymedE {
 
 	Scene::Scene()
 	{
+		// Component creation counts as a change, so ChangeViews see a remove + re-add within one
+		// frame rather than treating the new instance as unchanged.
+		ForEachType(ComponentList{}, [this](auto typeTag)
+		{
+			using T = typename decltype(typeTag)::Type;
+			if constexpr (ComponentTraits<T>::TrackChanges)
+				m_Registry.on_construct<T>().template connect<&Scene::OnTrackedConstruct<T>>(*this);
+		});
+	}
+
+	template<typename T>
+	void Scene::OnTrackedConstruct(entt::registry&, entt::entity entity)
+	{
+		GetChangeBuffer<T>().Add(entity);
+	}
+
+	ECS::ChangeBuffer& Scene::GetChangeBuffer(entt::id_type componentTypeId)
+	{
+		return m_ChangeBuffers[componentTypeId];
+	}
+
+	void Scene::FrameBegin()
+	{
+		for (auto& entry : m_ChangeBuffers)
+			entry.second.NextFrame();
 	}
 
 	Scene::~Scene()
@@ -265,6 +290,8 @@ namespace GanymedE {
 
 	void Scene::OnUpdateRuntime(Timestep ts, EditorCamera* fallbackCamera)
 	{
+		FrameBegin();
+
 		// Fixed-timestep physics
 		if (m_PhysicsScene && m_PhysicsScene->IsActive())
 		{
@@ -381,6 +408,8 @@ namespace GanymedE {
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
+		FrameBegin();
+
 		Renderer3D::BeginScene(camera);
 		SubmitLightsAndSky();
 		Renderer3D::DrawGrid();

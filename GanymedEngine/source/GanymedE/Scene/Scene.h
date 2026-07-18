@@ -7,6 +7,7 @@
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Timestep.h"
 #include "GanymedE/Core/UUID.h"
+#include "GanymedE/ECS/ChangeBuffer.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Renderer/EditorCamera.h"
 
@@ -46,11 +47,28 @@ namespace GanymedE {
 
 		PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() { return m_PhysicsDebugDraw; }
 		const PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() const { return m_PhysicsDebugDraw; }
+
+		// Change log for one tracked component type, created on first use.
+		// Scene.h cannot include ComponentTraits.h (Components.h -> ScriptableEntity.h -> Entity.h
+		// -> Scene.h), so the TrackChanges guard lives at the call sites in ECS/ that can.
+		ECS::ChangeBuffer& GetChangeBuffer(entt::id_type componentTypeId);
+
+		template<typename T>
+		ECS::ChangeBuffer& GetChangeBuffer() { return GetChangeBuffer(entt::type_hash<T>::value()); }
 	private:
 		// Default: components need no post-add fixup. Specialize below (out of class) only for the
 		// ones that do — no need to touch this when adding a component type.
 		template<typename T>
 		void OnComponentAdded(Entity, T&) {}
+
+		// on_construct handler for change-tracked components: creating a component counts as a
+		// change, so that a remove + re-add within one frame still surfaces in ChangeViews.
+		template<typename T>
+		void OnTrackedConstruct(entt::registry& registry, entt::entity entity);
+
+		// Per-frame preamble for both runtime and editor updates. Rotates change history; later
+		// phases add graveyard clearing, reactive buffer resets, the frame epoch and command flush.
+		void FrameBegin();
 
 		void RemoveChildFromParent(UUID parentID, UUID childID);
 
@@ -62,6 +80,7 @@ namespace GanymedE {
 	private:
 		entt::registry m_Registry;
 		std::unordered_map<UUID, entt::entity> m_EntityMap;   // O(1) FindEntityByUUID
+		std::unordered_map<entt::id_type, ECS::ChangeBuffer> m_ChangeBuffers;   // one per tracked type
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
 
 		Scope<PhysicsScene> m_PhysicsScene;
