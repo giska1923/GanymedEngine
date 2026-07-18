@@ -3,6 +3,7 @@
 
 #include "Entity.h"
 #include "Components.h"
+#include "GanymedE/ECS/ComponentTraits.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Renderer/Renderer2D.h"
@@ -140,20 +141,11 @@ namespace GanymedE {
 		}
 
 		// Copy components (skip ID and Tag — already set in CreateEntityWithUUID)
-		CopyComponent<TransformComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<RelationshipComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<SpriteRendererComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<StaticMeshComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<CameraComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<DirectionalLightComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<PointLightComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<SpotLightComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<SkyLightComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<NativeScriptComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<RigidBodyComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<BoxColliderComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<SphereColliderComponent>(dstRegistry, srcRegistry, enttMap);
-		CopyComponent<CapsuleColliderComponent>(dstRegistry, srcRegistry, enttMap);
+		ForEachType(ComponentList{}, [&](auto typeTag)
+		{
+			using T = typename decltype(typeTag)::Type;
+			CopyComponent<T>(dstRegistry, srcRegistry, enttMap);
+		});
 
 		// Runtime script instances must be recreated on play
 		{
@@ -177,6 +169,7 @@ namespace GanymedE {
 	{
 		Entity entity = { m_Registry.create(), this };
 		entity.AddComponent<IDComponent>(uuid);
+		m_EntityMap[uuid] = (entt::entity)entity;
 		entity.AddComponent<TransformComponent>();
 		entity.AddComponent<RelationshipComponent>();
 		auto& tag = entity.AddComponent<TagComponent>();
@@ -266,6 +259,7 @@ namespace GanymedE {
 				child.GetComponent<RelationshipComponent>().Parent = UUID{ 0 };
 		}
 
+		m_EntityMap.erase(entityID);
 		m_Registry.destroy(entity);
 	}
 
@@ -577,12 +571,9 @@ namespace GanymedE {
 
 	Entity Scene::FindEntityByUUID(UUID uuid)
 	{
-		auto view = m_Registry.view<IDComponent>();
-		for (auto entity : view)
-		{
-			if (view.get<IDComponent>(entity).ID == uuid)
-				return Entity{ entity, this };
-		}
+		auto it = m_EntityMap.find(uuid);
+		if (it != m_EntityMap.end())
+			return Entity{ it->second, this };
 		return {};
 	}
 
@@ -604,92 +595,12 @@ namespace GanymedE {
 		return transform;
 	}
 
-	template<typename T>
-	void Scene::OnComponentAdded(Entity entity, T& component)
-	{
-		// Must depend on T: a plain static_assert(false) fires even when never instantiated on GCC/Clang
-		static_assert(sizeof(T) == 0, "OnComponentAdded is not specialized for this component type!");
-	}
-
-	template<>
-	void Scene::OnComponentAdded<IDComponent>(Entity entity, IDComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<TransformComponent>(Entity entity, TransformComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<RelationshipComponent>(Entity entity, RelationshipComponent& component)
-	{
-	}
-
+	// The primary template lives in Scene.h and does nothing; only components needing post-add
+	// fixup are specialized here (declared in Scene.h so every TU picks up the specialization).
 	template<>
 	void Scene::OnComponentAdded<CameraComponent>(Entity entity, CameraComponent& component)
 	{
 		if (m_ViewportWidth > 0 && m_ViewportHeight > 0)
 			component.Camera.SetViewportSize(m_ViewportWidth, m_ViewportHeight);
-	}
-
-	template<>
-	void Scene::OnComponentAdded<SpriteRendererComponent>(Entity entity, SpriteRendererComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<StaticMeshComponent>(Entity entity, StaticMeshComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<DirectionalLightComponent>(Entity entity, DirectionalLightComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<PointLightComponent>(Entity entity, PointLightComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<SpotLightComponent>(Entity entity, SpotLightComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<SkyLightComponent>(Entity entity, SkyLightComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<TagComponent>(Entity entity, TagComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<NativeScriptComponent>(Entity entity, NativeScriptComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<RigidBodyComponent>(Entity entity, RigidBodyComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<BoxColliderComponent>(Entity entity, BoxColliderComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<SphereColliderComponent>(Entity entity, SphereColliderComponent& component)
-	{
-	}
-
-	template<>
-	void Scene::OnComponentAdded<CapsuleColliderComponent>(Entity entity, CapsuleColliderComponent& component)
-	{
 	}
 }

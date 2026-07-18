@@ -2,6 +2,8 @@
 
 #include <entt/entt.hpp>
 
+#include <unordered_map>
+
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Timestep.h"
 #include "GanymedE/Core/UUID.h"
@@ -11,6 +13,7 @@
 namespace GanymedE {
 
 	class Entity;
+	struct CameraComponent;
 
 	class Scene
 	{
@@ -44,8 +47,10 @@ namespace GanymedE {
 		PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() { return m_PhysicsDebugDraw; }
 		const PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() const { return m_PhysicsDebugDraw; }
 	private:
+		// Default: components need no post-add fixup. Specialize below (out of class) only for the
+		// ones that do — no need to touch this when adding a component type.
 		template<typename T>
-		void OnComponentAdded(Entity entity, T& component);
+		void OnComponentAdded(Entity, T&) {}
 
 		void RemoveChildFromParent(UUID parentID, UUID childID);
 
@@ -56,6 +61,7 @@ namespace GanymedE {
 		void InstantiateScripts();
 	private:
 		entt::registry m_Registry;
+		std::unordered_map<UUID, entt::entity> m_EntityMap;   // O(1) FindEntityByUUID
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
 
 		Scope<PhysicsScene> m_PhysicsScene;
@@ -68,4 +74,9 @@ namespace GanymedE {
 		friend class SceneHierarchyPanel;
 		friend class PhysicsScene;
 	};
+
+	// Must be declared before any use of AddComponent<CameraComponent>, otherwise translation units
+	// would silently instantiate the empty primary template instead.
+	template<>
+	void Scene::OnComponentAdded<CameraComponent>(Entity entity, CameraComponent& component);
 }
