@@ -5,7 +5,7 @@
 #include "GanymedE/events/MouseEvent.h"
 #include "GanymedE/events/KeyEvent.h"
 
-#include "Platform/OpenGL/OpenGLContext.h"
+#include "Platform/Bgfx/BgfxContext.h"
 
 namespace GanymedE {
 
@@ -57,14 +57,21 @@ namespace GanymedE {
 
 		{
 			GE_PROFILE_SCOPE("glfwCreateWindow");
+
+			// bgfx creates and owns the graphics device itself (including the GL
+			// context when the GL backend is picked), so GLFW must not make one.
+			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
 			m_Window = glfwCreateWindow((int)props.Width, (int)props.Height, m_Data.Title.c_str(), nullptr, nullptr);
 		}
 
-		m_Context = CreateScope<OpenGLContext>(m_Window);
-		m_Context->Init();
+		m_Context = CreateScope<BgfxContext>(m_Window);
+		m_Context->Init(m_Data.Width, m_Data.Height);
 
 		glfwSetWindowUserPointer(m_Window, &m_Data);
-		SetVSync(true);
+
+		// Read back rather than forcing: Init() already applied the default.
+		m_Data.VSync = m_Context->IsVSync();
 
 		// setting callbacks
 		glfwSetWindowSizeCallback(m_Window, [](GLFWwindow* window, int width, int height) {
@@ -154,6 +161,9 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
+		// bgfx holds this window's native handle, so it has to let go first.
+		m_Context.reset();
+
 		glfwDestroyWindow(m_Window);
 	}
 
@@ -162,18 +172,20 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		glfwPollEvents();
-		m_Context->SwapBuffers();
+
+		// The GLFW callback only records the new size; the swapchain is reset
+		// here so it happens on a frame boundary. No-ops when nothing changed.
+		m_Context->Resize(m_Data.Width, m_Data.Height);
+
+		m_Context->Frame();
 	}
 
 	void WindowsWindow::SetVSync(bool enabled)
 	{
 		GE_PROFILE_FUNCTION();
 
-		if (enabled)
-			glfwSwapInterval(1);
-		else
-			glfwSwapInterval(0);
-
+		// Under bgfx vsync is a swapchain reset flag, not a GLFW swap interval.
+		m_Context->SetVSync(enabled);
 		m_Data.VSync = enabled;
 	}
 

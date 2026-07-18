@@ -12,7 +12,12 @@ namespace GanymedE {
 		enum class API
 		{
 			None = 0,
-			OpenGL = 1
+			OpenGL = 1,
+			// Under bgfx this stops being a dispatch mechanism: there is one
+			// backend, and the concrete GPU API is chosen via bgfx::Init::type.
+			// It survives only as the migration switch until Platform/OpenGL is
+			// deleted in Phase 7. See docs/BGFX_MIGRATION.md.
+			Bgfx = 2
 		};
 
 		enum class DepthFunc

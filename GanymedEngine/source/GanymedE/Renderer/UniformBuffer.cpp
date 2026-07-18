@@ -15,6 +15,10 @@ namespace GanymedE {
 			return nullptr;
 		case RendererAPI::API::OpenGL:
 			return CreateRef<OpenGLUniformBuffer>(size, binding);
+		case RendererAPI::API::Bgfx:
+			// Dormant: the bgfx implementation lands in a later phase.
+			// See docs/BGFX_MIGRATION.md.
+			return nullptr;
 		}
 
 		GE_CORE_ASSERT(false, "Unknown RendererAPI!");

@@ -9,7 +9,7 @@
 
 #include "GanymedE/Renderer/Renderer.h"
 
-#include "Platform/OpenGL/OpenGLContext.h"
+#include "Platform/Bgfx/BgfxContext.h"
 
 namespace GanymedE {
 
@@ -59,24 +59,22 @@ namespace GanymedE {
 
 		{
 			GE_PROFILE_SCOPE("glfwCreateWindow");
-#if defined(GE_DEBUG)
-			if (Renderer::GetAPI() == RendererAPI::API::OpenGL)
-				glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
-#endif
-			// Request the same 4.1 core profile as macOS so every platform runs the renderer's baseline
-			glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-			glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+			// bgfx creates and owns the graphics device itself (including the GL
+			// context when the GL backend is picked), so GLFW must not make one.
+			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
 			m_Window = glfwCreateWindow((int)props.Width, (int)props.Height, m_Data.Title.c_str(), nullptr, nullptr);
 			++s_GLFWWindowCount;
 		}
 
-		m_Context = GraphicsContext::Create(m_Window);
-		m_Context->Init();
+		m_Context = CreateScope<BgfxContext>(m_Window);
+		m_Context->Init(m_Data.Width, m_Data.Height);
 
 		glfwSetWindowUserPointer(m_Window, &m_Data);
-		SetVSync(true);
+
+		// Read back rather than forcing: Init() already applied the default.
+		m_Data.VSync = m_Context->IsVSync();
 
 		// Set GLFW callbacks
 		glfwSetWindowSizeCallback(m_Window, [](GLFWwindow* window, int width, int height)
@@ -173,6 +171,9 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
+		// bgfx holds this window's native handle, so it has to let go first.
+		m_Context.reset();
+
 		glfwDestroyWindow(m_Window);
 		--s_GLFWWindowCount;
 
@@ -187,18 +188,20 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		glfwPollEvents();
-		m_Context->SwapBuffers();
+
+		// The GLFW callback only records the new size; the swapchain is reset
+		// here so it happens on a frame boundary. No-ops when nothing changed.
+		m_Context->Resize(m_Data.Width, m_Data.Height);
+
+		m_Context->Frame();
 	}
 
 	void LinuxWindow::SetVSync(bool enabled)
 	{
 		GE_PROFILE_FUNCTION();
 
-		if (enabled)
-			glfwSwapInterval(1);
-		else
-			glfwSwapInterval(0);
-
+		// Under bgfx vsync is a swapchain reset flag, not a GLFW swap interval.
+		m_Context->SetVSync(enabled);
 		m_Data.VSync = enabled;
 	}
 

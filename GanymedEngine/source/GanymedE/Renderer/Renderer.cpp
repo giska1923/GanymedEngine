@@ -5,11 +5,21 @@
 #include "Renderer3D.h"
 #include "PostProcess.h"
 
+#include <bgfx/bgfx.h>
+
 namespace GanymedE {
+
+	static bool s_DebugStats = false;
 
 	void Renderer::Init()
 	{
 		GE_PROFILE_FUNCTION();
+
+		// Renderer2D/3D and PostProcess build their shaders, buffers and
+		// framebuffers through OpenGL directly. There is no GL context under
+		// bgfx, so they stay dormant until Phases 2-5 port them.
+		if (IsLegacyGLPathDormant())
+			return;
 
 		RenderCommand::Init();
 		Renderer2D::Init();
@@ -19,6 +29,9 @@ namespace GanymedE {
 
 	void Renderer::Shutdown()
 	{
+		if (IsLegacyGLPathDormant())
+			return;
+
 		PostProcess::Shutdown();
 		Renderer3D::Shutdown();
 		Renderer2D::Shutdown();
@@ -26,7 +39,23 @@ namespace GanymedE {
 
 	void Renderer::OnWindowResize(uint32_t width, uint32_t height)
 	{
+		// bgfx resizes with the swapchain (BgfxContext::Resize), and viewports
+		// are per-view state set at submit time rather than global.
+		if (IsLegacyGLPathDormant())
+			return;
+
 		RenderCommand::SetViewport(0, 0, width, height);
+	}
+
+	void Renderer::SetDebugStatsEnabled(bool enabled)
+	{
+		s_DebugStats = enabled;
+		bgfx::setDebug(enabled ? (BGFX_DEBUG_TEXT | BGFX_DEBUG_STATS) : BGFX_DEBUG_TEXT);
+	}
+
+	bool Renderer::IsDebugStatsEnabled()
+	{
+		return s_DebugStats;
 	}
 
 }

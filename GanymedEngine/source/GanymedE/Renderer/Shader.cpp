@@ -14,6 +14,10 @@ namespace GanymedE {
 			return nullptr;
 		case RendererAPI::API::OpenGL:
 			return std::make_shared<OpenGLShader>(filepath);
+		case RendererAPI::API::Bgfx:
+			// Dormant: the bgfx implementation lands in a later phase.
+			// See docs/BGFX_MIGRATION.md.
+			return nullptr;
 		}
 
 		GE_CORE_ASSERT(false, "Unknown RendererAPI!");
@@ -29,6 +33,10 @@ namespace GanymedE {
 			return nullptr;
 		case RendererAPI::API::OpenGL:
 			return std::make_shared<OpenGLShader>(name, vertexSrc, fragmentSrc);
+		case RendererAPI::API::Bgfx:
+			// Dormant: the bgfx implementation lands in a later phase.
+			// See docs/BGFX_MIGRATION.md.
+			return nullptr;
 		}
 
 		GE_CORE_ASSERT(false, "Unknown RendererAPI!");

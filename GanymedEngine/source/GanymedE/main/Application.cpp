@@ -1,10 +1,12 @@
 #include "gepch.h"
 #include "Application.h"
 #include "GanymedE/events/ApplicationEvent.h"
+#include "GanymedE/events/KeyEvent.h"
 
 #include "GanymedE/Renderer/Renderer.h"
 
 #include "GanymedE/Core/Input.h"
+#include "GanymedE/Core/KeyCodes.h"
 
 #include <GLFW/glfw3.h>
 
@@ -41,7 +43,14 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		m_LayerStack.PushLayer(layer);
+
+		// OnAttach is where layers build textures, shaders and framebuffers -
+		// all still OpenGL. Attaching is deferred until those ports land.
+		if (Renderer::IsLegacyGLPathDormant())
+			return;
+
 		layer->OnAttach();
+		layer->SetAttached(true);
 	}
 
 	void Application::PushOverlay(Layer* overlay)
@@ -49,7 +58,12 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		m_LayerStack.PushOverlay(overlay);
+
+		if (Renderer::IsLegacyGLPathDormant())
+			return;
+
 		overlay->OnAttach();
+		overlay->SetAttached(true);
 	}
 
 	void Application::Close()
@@ -64,11 +78,18 @@ namespace GanymedE {
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowCloseEvent>(BIND_CALLBACK_FN(Application::OnWindowClose, this));
 		dispatcher.Dispatch<WindowResizeEvent>(BIND_CALLBACK_FN(Application::OnWindowResize, this));
+		dispatcher.Dispatch<KeyPressedEvent>(BIND_CALLBACK_FN(Application::OnKeyPressed, this));
 
 		for (auto it = m_LayerStack.rbegin(); it != m_LayerStack.rend(); ++it)
 		{
 			if (e.IsHandled())
 				break;
+
+			// A layer that never attached has no state to handle events with -
+			// ImGuiLayer, for one, dereferences a context OnAttach creates.
+			if (!(*it)->IsAttached())
+				continue;
+
 			(*it)->OnEvent(e);
 		}
 	}
@@ -77,6 +98,17 @@ namespace GanymedE {
 	{
 		m_Running = false;
 		return true;
+	}
+
+	bool Application::OnKeyPressed(KeyPressedEvent& e)
+	{
+		if (e.GetKeyCode() == Key::F1)
+		{
+			Renderer::SetDebugStatsEnabled(!Renderer::IsDebugStatsEnabled());
+			return true;
+		}
+
+		return false;
 	}
 
 	bool Application::OnWindowResize(WindowResizeEvent& e)
@@ -107,7 +139,12 @@ namespace GanymedE {
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
-			if (!m_Minimized)
+			// Layer rendering and the ImGui backend are both still OpenGL. Until
+			// they are ported (Phases 2-6) the loop does nothing but drive
+			// bgfx's frame, which clears and presents the backbuffer.
+			const bool legacyDormant = Renderer::IsLegacyGLPathDormant();
+
+			if (!m_Minimized && !legacyDormant)
 			{
 				GE_PROFILE_SCOPE("LayerStack OnUpdate");
 
@@ -115,14 +152,17 @@ namespace GanymedE {
 					layer->OnUpdate(timestep);
 			}
 
-			m_ImGuiLayer->Begin();
+			if (!legacyDormant)
 			{
-				GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
+				m_ImGuiLayer->Begin();
+				{
+					GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
 
-				for (Layer* layer : m_LayerStack)
-					layer->OnImGuiRender();
+					for (Layer* layer : m_LayerStack)
+						layer->OnImGuiRender();
+				}
+				m_ImGuiLayer->End();
 			}
-			m_ImGuiLayer->End();
 
 			m_Window->OnUpdate();
 		}
