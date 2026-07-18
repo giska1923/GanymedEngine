@@ -19,7 +19,8 @@ project "Sandbox"
 		"%{wks.location}/GanymedEngine/source",
 		"%{wks.location}/GanymedEngine/extern",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}"
+		"%{IncludeDir.entt}",
+		"%{IncludeDir.bgfx}"
 	}
 
 	links
@@ -51,6 +52,9 @@ project "Sandbox"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			"bgfx",
+			"bimg",
+			"bx",
 			"GL",
 			"X11",
 			"dl",
@@ -67,12 +71,17 @@ project "Sandbox"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			"bgfx",
+			"bimg",
+			"bx",
 			"Cocoa.framework",
 			"OpenGL.framework",
 			"IOKit.framework",
 			"CoreFoundation.framework",
 			"CoreVideo.framework",
-			"QuartzCore.framework"
+			"QuartzCore.framework",
+			"Metal.framework",
+			"MetalKit.framework"
 		}
 
 	filter "configurations:Debug"

@@ -28,6 +28,9 @@ Makefile
 # Temporary build folders
 temp/
 
+# Locally built bgfx tools (build with scripts/build_shader_tools.*)
+scripts/tools/
+
 # GanymedE files
 *.log
 *.tlog

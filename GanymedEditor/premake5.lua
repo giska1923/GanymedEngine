@@ -59,6 +59,9 @@ project "GanymedEditor"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			"bgfx",
+			"bimg",
+			"bx",
 			"GL",
 			"X11",
 			"dl",
@@ -75,12 +78,17 @@ project "GanymedEditor"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			"bgfx",
+			"bimg",
+			"bx",
 			"Cocoa.framework",
 			"OpenGL.framework",
 			"IOKit.framework",
 			"CoreFoundation.framework",
 			"CoreVideo.framework",
-			"QuartzCore.framework"
+			"QuartzCore.framework",
+			"Metal.framework",
+			"MetalKit.framework"
 		}
 
 	filter "configurations:Debug"

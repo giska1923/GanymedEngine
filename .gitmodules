@@ -19,3 +19,12 @@
 [submodule "GanymedEngine/extern/JoltPhysics"]
 	path = GanymedEngine/extern/JoltPhysics
 	url = https://github.com/jrouwe/JoltPhysics.git
+[submodule "GanymedEngine/extern/bx"]
+	path = GanymedEngine/extern/bx
+	url = https://github.com/bkaradzic/bx
+[submodule "GanymedEngine/extern/bimg"]
+	path = GanymedEngine/extern/bimg
+	url = https://github.com/bkaradzic/bimg
+[submodule "GanymedEngine/extern/bgfx"]
+	path = GanymedEngine/extern/bgfx
+	url = https://github.com/bkaradzic/bgfx

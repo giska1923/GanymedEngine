@@ -55,7 +55,10 @@ project "GanymedEngine"
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.yaml_cpp}",
 		"%{IncludeDir.cgltf}",
-		"%{IncludeDir.Jolt}"
+		"%{IncludeDir.Jolt}",
+		"%{IncludeDir.bx}",
+		"%{IncludeDir.bimg}",
+		"%{IncludeDir.bgfx}"
 	}
 
 	links
@@ -64,7 +67,10 @@ project "GanymedEngine"
 		"Glad",
 		"ImGui",
 		"yaml-cpp",
-		"Jolt"
+		"Jolt",
+		"bgfx",
+		"bimg",
+		"bx"
 	}
 
 	filter "system:windows"
@@ -73,7 +79,11 @@ project "GanymedEngine"
 
 		links
 		{
-			"opengl32.lib"
+			"opengl32.lib",
+			-- Required by bgfx's static lib (window/monitor queries, D3D device GUIDs)
+			"gdi32.lib",
+			"psapi.lib",
+			"uuid.lib"
 		}
 
 	filter "system:linux"
