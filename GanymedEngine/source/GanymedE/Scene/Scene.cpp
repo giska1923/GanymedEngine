@@ -6,6 +6,7 @@
 #include "GanymedE/ECS/CommandQueue.h"
 #include "GanymedE/ECS/ComponentTraits.h"
 #include "GanymedE/ECS/System.h"
+#include "GanymedE/Scene/Systems/CameraSystem.h"
 #include "GanymedE/Scene/Systems/NativeScriptSystem.h"
 #include "GanymedE/Scene/Systems/PhysicsSystem.h"
 #include "GanymedE/Scene/Systems/RenderSystem.h"
@@ -37,11 +38,17 @@ namespace GanymedE {
 
 		m_Commands = CreateScope<ECS::CommandQueue>();
 
+		// Scene-wide state the systems below expect to exist.
+		SetSingleton<RenderContext>();
+		SetSingleton<PhysicsSettings>();
+
 		// Registration order IS execution order, and matches the order the logic previously ran
-		// inline in OnUpdateRuntime: physics, then scripts, then rendering.
+		// inline in OnUpdateRuntime: physics, then scripts, then rendering. CameraSystem must
+		// come before RenderSystem, which now reads the camera it resolves.
 		m_Systems = CreateScope<ECS::SystemManager>();
 		m_Systems->Add<PhysicsSystem>(*this);
 		m_Systems->Add<NativeScriptSystem>(*this);
+		m_Systems->Add<CameraSystem>(*this);
 		m_Systems->Add<RenderSystem>(*this);
 	}
 
@@ -298,7 +305,7 @@ namespace GanymedE {
 		FrameBegin();
 
 		// Used by RenderSystem only when the scene has no primary camera.
-		m_ActiveEditorCamera = fallbackCamera;
+		GetSingleton<RenderContext>().EditorViewCamera = fallbackCamera;
 
 		m_IsUpdating = true;
 		m_Systems->OnUpdate(ts);
@@ -311,7 +318,7 @@ namespace GanymedE {
 	{
 		FrameBegin();
 
-		m_ActiveEditorCamera = &camera;
+		GetSingleton<RenderContext>().EditorViewCamera = &camera;
 
 		m_IsUpdating = true;
 		m_Systems->OnUpdateEditor(ts);

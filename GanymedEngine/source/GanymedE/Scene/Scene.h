@@ -9,6 +9,7 @@
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/ECS/ChangeBuffer.h"
 #include "GanymedE/ECS/Graveyard.h"
+#include "GanymedE/Scene/SceneSingletons.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Renderer/EditorCamera.h"
 
@@ -48,16 +49,41 @@ namespace GanymedE {
 		entt::registry& Reg() { return m_Registry; }
 		const entt::registry& Reg() const { return m_Registry; }
 
-		PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() { return m_PhysicsDebugDraw; }
-		const PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() const { return m_PhysicsDebugDraw; }
+		// ---- Singletons, stored in registry.ctx() ----
+		// Scene-wide state that belongs to no entity. Systems reach these through
+		// ECS::SingletonAccessView; the raw accessors below exist for editor and tooling code.
+
+		template<typename T, typename... Args>
+		T& SetSingleton(Args&&... args)
+		{
+			T& value = m_Registry.ctx().insert_or_assign<T>(T{ std::forward<Args>(args)... });
+			++m_SingletonEpochs[entt::type_hash<T>::value()];   // 0 -> 1: "created" counts as a change
+			return value;
+		}
+
+		template<typename T> bool HasSingleton() const { return m_Registry.ctx().contains<T>(); }
+		template<typename T> T* FindSingleton() { return m_Registry.ctx().find<T>(); }
+		template<typename T> const T* FindSingleton() const { return m_Registry.ctx().find<T>(); }
+
+		template<typename T>
+		T& GetSingleton()
+		{
+			GE_CORE_ASSERT(HasSingleton<T>(), "Singleton is not present on this scene");
+			return m_Registry.ctx().get<T>();
+		}
+
+		// Bumped by SingletonAccessor::Modify(). 0 means "absent or never written".
+		size_t& GetSingletonEpoch(entt::id_type singletonTypeId) { return m_SingletonEpochs[singletonTypeId]; }
+
+		// Editor-facing shortcut; the settings themselves live in the PhysicsSettings singleton.
+		PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() { return GetSingleton<PhysicsSettings>().DebugDraw; }
+		const PhysicsDebugDrawSettings& GetPhysicsDebugDrawSettings() const
+		{
+			return m_Registry.ctx().get<PhysicsSettings>().DebugDraw;
+		}
 
 		ECS::SystemManager& Systems() { return *m_Systems; }
 		const ECS::SystemManager& Systems() const { return *m_Systems; }
-
-		// The editor camera for the current update: the view camera in edit mode, or the Play-mode
-		// fallback used when the scene has no primary camera. Set at the top of each update.
-		// Phase 7 replaces this with a RenderContext singleton in registry.ctx().
-		EditorCamera* GetActiveEditorCamera() const { return m_ActiveEditorCamera; }
 
 		// Change log for one tracked component type, created on first use.
 		// Scene.h cannot include ComponentTraits.h (Components.h -> ScriptableEntity.h -> Entity.h
@@ -160,11 +186,10 @@ namespace GanymedE {
 		};
 		std::unordered_map<entt::id_type, ReactiveState> m_Reactive;
 
+		std::unordered_map<entt::id_type, size_t> m_SingletonEpochs;
+
 		uint32_t m_FrameEpoch = 1;   // MUST start at 1; 0 means "this view has never been read"
 		bool m_IsUpdating = false;
-
-		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
-		EditorCamera* m_ActiveEditorCamera = nullptr;
 
 		friend class Entity;
 		friend class SceneSerializer;

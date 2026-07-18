@@ -1,8 +1,10 @@
 #include "gepch.h"
 #include "PhysicsSystem.h"
 
+#include "GanymedE/ECS/Singleton.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
+#include "GanymedE/Scene/SceneSingletons.h"
 
 namespace GanymedE {
 
@@ -61,22 +63,26 @@ namespace GanymedE {
 		if (!m_PhysicsScene || !m_PhysicsScene->IsActive())
 			return;
 
+		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
+		const PhysicsSettings& settings = *settingsView.Get();
+		const float fixedTimestep = settings.FixedTimestep;
+		const int maxSteps = settings.MaxStepsPerFrame;
+
 		m_Accumulator += ts;
 
 		// Spiral-of-death guard
-		constexpr int maxSteps = 5;
 		int steps = 0;
-		while (m_Accumulator >= s_FixedTimestep && steps < maxSteps)
+		while (m_Accumulator >= fixedTimestep && steps < maxSteps)
 		{
-			m_PhysicsScene->Step(s_FixedTimestep);
+			m_PhysicsScene->Step(fixedTimestep);
 			DispatchCollisionEvents();
-			m_Accumulator -= s_FixedTimestep;
+			m_Accumulator -= fixedTimestep;
 			steps++;
 		}
 		if (steps == maxSteps)
 			m_Accumulator = 0.0f;
 
-		const float alpha = m_Accumulator / s_FixedTimestep;
+		const float alpha = m_Accumulator / fixedTimestep;
 		m_PhysicsScene->SyncTransforms(&m_Scene, alpha);
 	}
 }

@@ -34,6 +34,6 @@ namespace GanymedE {
 
 		Scope<PhysicsScene> m_PhysicsScene;
 		float m_Accumulator = 0.0f;
-		static constexpr float s_FixedTimestep = 1.0f / 60.0f;
+		// Fixed timestep and the step cap now live in the PhysicsSettings singleton.
 	};
 }

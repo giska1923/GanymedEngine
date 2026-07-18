@@ -2,6 +2,8 @@
 #include "RenderSystem.h"
 
 #include "PhysicsSystem.h"
+#include "GanymedE/ECS/Singleton.h"
+#include "GanymedE/Scene/SceneSingletons.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/EditorCamera.h"
 #include "GanymedE/Renderer/Environment.h"
@@ -154,7 +156,8 @@ namespace GanymedE {
 		if (PhysicsSystem* physicsSystem = m_Scene.Systems().Get<PhysicsSystem>())
 			physics = physicsSystem->GetPhysicsScene();
 
-		const PhysicsDebugDrawSettings& settings = m_Scene.GetPhysicsDebugDrawSettings();
+		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
+		const PhysicsDebugDrawSettings& settings = settingsView.Get()->DebugDraw;
 
 		// Prefer Jolt's view of the world when enabled; otherwise draw authored collider gizmos
 		if (physics && physics->IsActive() && settings.Enabled)
@@ -167,19 +170,8 @@ namespace GanymedE {
 	{
 		(void)ts;
 
-		const Camera* mainCamera = nullptr;
-		glm::mat4 cameraTransform{ 1.0f };
-
-		for (auto [entity, transform, camera] : View<CameraView>())
-		{
-			(void)transform;
-			if (camera.Primary)
-			{
-				mainCamera = &camera.Camera;
-				cameraTransform = m_Scene.GetWorldSpaceTransform(Entity{ entity, &m_Scene });
-				break;
-			}
-		}
+		ECS::SingletonAccessView<RenderContext> renderView{ m_Scene };
+		const RenderContext& context = *renderView.Get();
 
 		auto renderScene3D = [&](const glm::vec3& cameraPosition)
 		{
@@ -189,16 +181,16 @@ namespace GanymedE {
 			Renderer3D::EndScene();
 		};
 
-		if (mainCamera)
+		if (context.MainCamera)
 		{
-			Renderer3D::BeginScene(*mainCamera, cameraTransform);
-			renderScene3D(glm::vec3(cameraTransform[3]));
+			Renderer3D::BeginScene(*context.MainCamera, context.CameraTransform);
+			renderScene3D(glm::vec3(context.CameraTransform[3]));
 
-			Renderer2D::BeginScene(*mainCamera, cameraTransform);
+			Renderer2D::BeginScene(*context.MainCamera, context.CameraTransform);
 			SubmitSprites();
 			Renderer2D::EndScene();
 		}
-		else if (EditorCamera* fallbackCamera = m_Scene.GetActiveEditorCamera())
+		else if (EditorCamera* fallbackCamera = context.EditorViewCamera)
 		{
 			// Editor convenience: Play with no scene Camera still shows the viewport
 			Renderer3D::BeginScene(*fallbackCamera);
@@ -214,7 +206,8 @@ namespace GanymedE {
 	{
 		(void)ts;
 
-		EditorCamera* camera = m_Scene.GetActiveEditorCamera();
+		ECS::SingletonAccessView<RenderContext> renderView{ m_Scene };
+		EditorCamera* camera = renderView.Get()->EditorViewCamera;
 		GE_CORE_ASSERT(camera, "Editor update without an active editor camera");
 		if (!camera)
 			return;

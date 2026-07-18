@@ -14,7 +14,8 @@ namespace GanymedE {
 	class RenderSystem : public ECS::System<RenderSystem>
 	{
 	public:
-		using CameraView     = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<CameraComponent>>;
+		// The primary-camera search now lives in CameraSystem, which runs first and leaves the
+		// answer in the RenderContext singleton.
 		using MeshView       = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<StaticMeshComponent>>;
 		using SpriteView     = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<SpriteRendererComponent>>;
 		using DirLightView   = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<DirectionalLightComponent>>;
@@ -26,7 +27,6 @@ namespace GanymedE {
 		using CapsuleColliderView = ECS::IterView<ECS::EntityId, ECS::RO<TransformComponent>, ECS::RO<CapsuleColliderComponent>>;
 
 		using Views = TypeList<
-			CameraView,
 			MeshView,
 			SpriteView,
 			DirLightView,
