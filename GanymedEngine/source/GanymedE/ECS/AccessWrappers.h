@@ -72,7 +72,11 @@ namespace GanymedE::ECS {
 			static constexpr bool Optional   = FL == FilterLevel::Ignore;
 			static constexpr bool Writeable  = AL == AccessLevel::ReadWrite;
 			static constexpr bool IsEntityId = false;
-			static constexpr size_t SlotCount = sizeof...(Ts);
+
+			// Number of result-tuple slots contributed. Elements that filter without granting
+			// access (Has / No / ReactHas / ReactOpt) contribute none — they constrain which
+			// entities match without appearing in the tuple.
+			static constexpr size_t SlotCount = AccessedTypes::Size;
 		};
 
 		template<typename T> struct ElementTraits
@@ -118,6 +122,46 @@ namespace GanymedE::ECS {
 			static constexpr bool IsEntityId = true;
 			static constexpr size_t SlotCount = 1;
 		};
+
+		// ---- Rebinding: re-wrap an element around a different component type ----
+		// Used to normalize a pack into one-type-per-element form, so that RW<A, B> becomes
+		// RW<A>, RW<B> and every downstream slot rule can assume a single component per element.
+		template<typename E> struct ElementRebind        { template<typename U> using To = RO<U>; };  // bare T
+		template<typename... Ts> struct ElementRebind<Has<Ts...>>        { template<typename U> using To = Has<U>; };
+		template<typename... Ts> struct ElementRebind<RO<Ts...>>         { template<typename U> using To = RO<U>; };
+		template<typename... Ts> struct ElementRebind<RW<Ts...>>         { template<typename U> using To = RW<U>; };
+		template<typename... Ts> struct ElementRebind<OptRO<Ts...>>      { template<typename U> using To = OptRO<U>; };
+		template<typename... Ts> struct ElementRebind<OptRW<Ts...>>      { template<typename U> using To = OptRW<U>; };
+		template<typename... Ts> struct ElementRebind<No<Ts...>>         { template<typename U> using To = No<U>; };
+		template<typename... Ts> struct ElementRebind<ReactHas<Ts...>>   { template<typename U> using To = ReactHas<U>; };
+		template<typename... Ts> struct ElementRebind<ReactRO<Ts...>>    { template<typename U> using To = ReactRO<U>; };
+		template<typename... Ts> struct ElementRebind<ReactRW<Ts...>>    { template<typename U> using To = ReactRW<U>; };
+		template<typename... Ts> struct ElementRebind<ReactOpt<Ts...>>   { template<typename U> using To = ReactOpt<U>; };
+		template<typename... Ts> struct ElementRebind<ReactOptRO<Ts...>> { template<typename U> using To = ReactOptRO<U>; };
+		template<typename... Ts> struct ElementRebind<ReactOptRW<Ts...>> { template<typename U> using To = ReactOptRW<U>; };
+		template<> struct ElementRebind<EntityId>                        { template<typename U> using To = EntityId; };
+
+		// Expands one element into its slot-producing, single-type form.
+		// Has/No/ReactHas/ReactOpt have no accessed types and so vanish; EntityId is kept as-is.
+		template<typename E, typename AccessedList> struct NormalizeElementImpl;
+		template<typename E, typename... Ts>
+		struct NormalizeElementImpl<E, TypeList<Ts...>>
+		{
+			using Type = TypeList<typename ElementRebind<E>::template To<Ts>...>;
+		};
+
+		template<typename E>
+		struct NormalizeElement : NormalizeElementImpl<E, typename ElementTraits<E>::AccessedTypes> {};
+		template<> struct NormalizeElement<EntityId> { using Type = TypeList<EntityId>; };
+
+		// The slot pack: pack elements in declaration order, one component each, filters dropped.
+		template<typename PackList> struct NormalizePack;
+		template<typename... Es>
+		struct NormalizePack<TypeList<Es...>>
+		{
+			using Type = TypeListMergeT<typename NormalizeElement<Es>::Type...>;
+		};
+		template<typename PackList> using NormalizePackT = typename NormalizePack<PackList>::Type;
 
 		// Flattens a whole pack of elements into the five type lists views are built from.
 		template<typename... Es>

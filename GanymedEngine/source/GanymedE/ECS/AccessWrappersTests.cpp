@@ -35,7 +35,12 @@ namespace GanymedE::ECS::Detail {
 		// ---- Has: filters but grants no access ----
 		static_assert(SameList<Traits<Has<A>>::IncludeTypes, TypeList<A>>);
 		static_assert(SameList<Traits<Has<A>>::ReadTypes,    TypeList<>>);
-		static_assert(Traits<Has<A>>::SlotCount == 1);   // still occupies a pack slot
+		static_assert(Traits<Has<A>>::SlotCount == 0);   // filters, but never appears in the tuple
+		static_assert(Traits<No<A>>::SlotCount == 0);
+		static_assert(Traits<ReactHas<A>>::SlotCount == 0);
+		static_assert(Traits<ReactOpt<A>>::SlotCount == 0);
+		static_assert(Traits<RO<A>>::SlotCount == 1);
+		static_assert(Traits<RW<A, B>>::SlotCount == 2);
 
 		// ---- No: excludes, never accesses ----
 		static_assert(SameList<Traits<No<A>>::ExcludeTypes, TypeList<A>>);
@@ -84,7 +89,7 @@ namespace GanymedE::ECS::Detail {
 		static_assert(SameList<Pack::WriteTypes,   TypeList<B>>);
 		static_assert(SameList<Pack::ReactTypes,   TypeList<>>);
 		static_assert(SameList<Pack::PackElements, TypeList<EntityId, RO<A>, RW<B>, OptRO<C>, No<A>>>);
-		static_assert(Pack::SlotCount == 5);
+		static_assert(Pack::SlotCount == 4);   // EntityId + A + B + C; No<A> contributes nothing
 
 		// Phase 3's FindSome/GetSome gate on this: asking a view for a type it never declared
 		// must be a compile error, not a silently wrong answer.
