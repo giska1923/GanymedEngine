@@ -8,6 +8,7 @@
 #include "GanymedE/Core/Timestep.h"
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/ECS/ChangeBuffer.h"
+#include "GanymedE/ECS/Graveyard.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Renderer/EditorCamera.h"
 
@@ -16,7 +17,7 @@ namespace GanymedE {
 	class Entity;
 	struct CameraComponent;
 
-	namespace ECS { class SystemManager; }
+	namespace ECS { class SystemManager; class CommandQueue; }
 
 	class Scene
 	{
@@ -65,6 +66,24 @@ namespace GanymedE {
 
 		template<typename T>
 		ECS::ChangeBuffer& GetChangeBuffer() { return GetChangeBuffer(entt::type_hash<T>::value()); }
+
+		// Deferred structural changes. Systems must mutate through this rather than the immediate
+		// Entity API; the queue is applied in FrameBegin, before any system runs.
+		ECS::CommandQueue& Commands() { return *m_Commands; }
+
+		// True while systems are running. Structural changes are illegal in that window.
+		bool IsUpdating() const { return m_IsUpdating; }
+
+		// One-frame storage of components removed since the last FrameBegin, for FiniView.
+		template<typename T>
+		ECS::Graveyard<T>& GetGraveyard()
+		{
+			const entt::id_type id = entt::type_hash<T>::value();
+			auto it = m_Graveyards.find(id);
+			if (it == m_Graveyards.end())
+				it = m_Graveyards.emplace(id, CreateScope<ECS::Graveyard<T>>()).first;
+			return static_cast<ECS::Graveyard<T>&>(*it->second);
+		}
 	private:
 		// Default: components need no post-add fixup. Specialize below (out of class) only for the
 		// ones that do — no need to touch this when adding a component type.
@@ -76,9 +95,17 @@ namespace GanymedE {
 		template<typename T>
 		void OnTrackedConstruct(entt::registry& registry, entt::entity entity);
 
-		// Per-frame preamble for both runtime and editor updates. Rotates change history; later
-		// phases add graveyard clearing, reactive buffer resets, the frame epoch and command flush.
+		// on_destroy handler for components with EnableFini: entt fires this *before* the instance
+		// is removed, which is the only moment a copy can still be taken.
+		template<typename T>
+		void OnFiniDestroy(entt::registry& registry, entt::entity entity);
+
+		// Per-frame preamble for both runtime and editor updates, in this exact order:
+		// rotate change history, clear graveyards, then flush the command queue (which refills
+		// the graveyards via on_destroy). Phase 6 adds the frame epoch and reactive buffer resets.
 		void FrameBegin();
+		void FlushCommands();
+		void ClearGraveyards();
 
 		void RemoveChildFromParent(UUID parentID, UUID childID);
 	private:
@@ -90,6 +117,10 @@ namespace GanymedE {
 		// Held by pointer so Scene.h need not include System.h: the systems include Views.h, which
 		// includes Scene.h. Scene's destructor is defined in Scene.cpp, where the type is complete.
 		Scope<ECS::SystemManager> m_Systems;
+		Scope<ECS::CommandQueue> m_Commands;
+
+		std::unordered_map<entt::id_type, Scope<ECS::GraveyardBase>> m_Graveyards;
+		bool m_IsUpdating = false;
 
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
 		EditorCamera* m_ActiveEditorCamera = nullptr;

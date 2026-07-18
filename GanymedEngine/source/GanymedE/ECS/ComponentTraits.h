@@ -12,13 +12,28 @@ namespace GanymedE {
 	struct ComponentTraits
 	{
 		static constexpr bool TrackChanges = false;   // enables ChangeView on T
+		static constexpr bool EnableFini   = false;   // keeps removed instances readable for one
+		                                              // frame (graveyard), for FiniView on T
 	};
 
 	// Tracked from Phase 2 so the signal hookup and per-frame buffer rotation are actually
 	// exercised. Nothing consumes the log until ChangeView lands (Phase 6) — note that
 	// PhysicsScene::SyncTransforms still writes transforms straight through the registry, so the
 	// log under-reports until that write is routed through Modify() in Phase 12.
-	template<> struct ComponentTraits<TransformComponent> { static constexpr bool TrackChanges = true; };
+	template<> struct ComponentTraits<TransformComponent>
+	{
+		static constexpr bool TrackChanges = true;
+		static constexpr bool EnableFini   = false;
+	};
+
+	// Script teardown is what FiniView expresses in Phase 6: when a NativeScriptComponent goes
+	// away, its instance still needs OnDestroy called and deleting. The graveyard keeps the removed
+	// instance readable for the one frame that takes.
+	template<> struct ComponentTraits<NativeScriptComponent>
+	{
+		static constexpr bool TrackChanges = false;
+		static constexpr bool EnableFini   = true;
+	};
 
 	// ---- Every user-facing component, in one place ----
 	// This is the single source of truth: anything that must be applied to "all components"

@@ -3,6 +3,7 @@
 
 #include "Entity.h"
 #include "Components.h"
+#include "GanymedE/ECS/CommandQueue.h"
 #include "GanymedE/ECS/ComponentTraits.h"
 #include "GanymedE/ECS/System.h"
 #include "GanymedE/Scene/Systems/NativeScriptSystem.h"
@@ -25,7 +26,13 @@ namespace GanymedE {
 			using T = typename decltype(typeTag)::Type;
 			if constexpr (ComponentTraits<T>::TrackChanges)
 				m_Registry.on_construct<T>().template connect<&Scene::OnTrackedConstruct<T>>(*this);
+
+			// on_destroy fires before the instance is removed, so the handler can still copy it.
+			if constexpr (ComponentTraits<T>::EnableFini)
+				m_Registry.on_destroy<T>().template connect<&Scene::OnFiniDestroy<T>>(*this);
 		});
+
+		m_Commands = CreateScope<ECS::CommandQueue>();
 
 		// Registration order IS execution order, and matches the order the logic previously ran
 		// inline in OnUpdateRuntime: physics, then scripts, then rendering.
@@ -41,15 +48,38 @@ namespace GanymedE {
 		GetChangeBuffer<T>().Add(entity);
 	}
 
+	template<typename T>
+	void Scene::OnFiniDestroy(entt::registry& registry, entt::entity entity)
+	{
+		GetGraveyard<T>().Bury(entity, registry.get<T>(entity));   // still alive inside on_destroy
+	}
+
 	ECS::ChangeBuffer& Scene::GetChangeBuffer(entt::id_type componentTypeId)
 	{
 		return m_ChangeBuffers[componentTypeId];
+	}
+
+	void Scene::ClearGraveyards()
+	{
+		for (auto& entry : m_Graveyards)
+			entry.second->Clear();
+	}
+
+	void Scene::FlushCommands()
+	{
+		m_Commands->Flush(*this);
 	}
 
 	void Scene::FrameBegin()
 	{
 		for (auto& entry : m_ChangeBuffers)
 			entry.second.NextFrame();
+
+		// Order matters: graveyards and change history live exactly one frame and must die
+		// *before* the flush that refills them, or a removal queued last frame would be cleared
+		// again in the same breath it was recorded.
+		ClearGraveyards();
+		FlushCommands();
 	}
 
 	Scene::~Scene()
@@ -203,6 +233,9 @@ namespace GanymedE {
 
 	void Scene::DestroyEntity(Entity entity)
 	{
+		GE_CORE_ASSERT(!m_IsUpdating,
+			"Immediate DestroyEntity during system update - use Scene::Commands().DestroyEntity()");
+
 		if (!entity)
 			return;
 
@@ -233,7 +266,9 @@ namespace GanymedE {
 		// Used by RenderSystem only when the scene has no primary camera.
 		m_ActiveEditorCamera = fallbackCamera;
 
+		m_IsUpdating = true;
 		m_Systems->OnUpdate(ts);
+		m_IsUpdating = false;
 	}
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
@@ -242,7 +277,9 @@ namespace GanymedE {
 
 		m_ActiveEditorCamera = &camera;
 
+		m_IsUpdating = true;
 		m_Systems->OnUpdateEditor(ts);
+		m_IsUpdating = false;
 	}
 
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)
