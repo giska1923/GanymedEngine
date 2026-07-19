@@ -23,7 +23,9 @@ project "GanymedEditor"
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.ImGui}",
-		"%{IncludeDir.ImGuizmo}"
+		"%{IncludeDir.ImGuizmo}",
+		-- Buffer.h now exposes bgfx types, so anything including GanymedE.h needs this
+		"%{IncludeDir.bgfx}"
 	}
 
 	links

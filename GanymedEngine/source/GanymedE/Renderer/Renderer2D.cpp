@@ -1,7 +1,6 @@
 #include "gepch.h"
 #include "Renderer2D.h"
 
-#include "VertexArray.h"
 #include "Shader.h"
 #include "UniformBuffer.h"
 #include "RenderCommand.h"
@@ -35,7 +34,7 @@ namespace GanymedE {
 		// GL 4.1 (macOS) only guarantees 16 fragment texture units
 		static const uint32_t MaxTextureSlots = 16; // TODO: RenderCaps
 
-		Ref<VertexArray> QuadVertexArray;
+		Geometry QuadGeometry;
 		Ref<VertexBuffer> QuadVertexBuffer;
 		Ref<Shader> TextureShader;
 		Ref<Texture2D> WhiteTexture;
@@ -61,10 +60,7 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		s_Data.QuadVertexArray = VertexArray::Create();
-
-		s_Data.QuadVertexBuffer = VertexBuffer::Create(s_Data.MaxVertices * sizeof(QuadVertex));
-		s_Data.QuadVertexBuffer->SetLayout({
+		s_Data.QuadVertexBuffer = VertexBuffer::Create(s_Data.MaxVertices * sizeof(QuadVertex), {
 			{ ShaderDataType::Float3, "a_Position" },
 			{ ShaderDataType::Float4, "a_Color" },
 			{ ShaderDataType::Float2, "a_TexCoord" },
@@ -72,7 +68,7 @@ namespace GanymedE {
 			{ ShaderDataType::Float, "a_TilingFactor" },
 			{ ShaderDataType::Int, "a_EntityID" }
 			});
-		s_Data.QuadVertexArray->AddVertexBuffer(s_Data.QuadVertexBuffer);
+		s_Data.QuadGeometry.Vertices = s_Data.QuadVertexBuffer;
 
 		s_Data.QuadVertexBufferBase = new QuadVertex[s_Data.MaxVertices];
 
@@ -92,8 +88,7 @@ namespace GanymedE {
 			offset += 4;
 		}
 
-		Ref<IndexBuffer> quadIB = IndexBuffer::Create(quadIndices, s_Data.MaxIndices);
-		s_Data.QuadVertexArray->SetIndexBuffer(quadIB);
+		s_Data.QuadGeometry.Indices = IndexBuffer::Create(quadIndices, s_Data.MaxIndices);
 		delete[] quadIndices;
 
 		s_Data.WhiteTexture = Texture2D::Create(1, 1);
@@ -191,8 +186,7 @@ namespace GanymedE {
 		for (uint32_t i = 0; i < s_Data.TextureSlotIndex; i++)
 			s_Data.TextureSlots[i]->Bind(i);
 
-		s_Data.QuadVertexArray->Bind();
-		RenderCommand::DrawIndexed(s_Data.QuadVertexArray, s_Data.QuadIndexCount);
+		RenderCommand::DrawIndexed(s_Data.QuadGeometry, s_Data.QuadIndexCount);
 		s_Data.Stats.DrawCalls++;
 	}
 

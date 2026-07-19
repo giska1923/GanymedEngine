@@ -2,7 +2,6 @@
 #include "Environment.h"
 
 #include "Renderer.h"
-#include "Platform/OpenGL/OpenGLEnvironment.h"
 
 namespace GanymedE {
 
@@ -14,9 +13,12 @@ namespace GanymedE {
 			GE_CORE_ASSERT(false, "RendererAPI::None is currently not supported.");
 			return nullptr;
 		case RendererAPI::API::OpenGL:
-			return CreateRef<OpenGLEnvironment>(filepath);
+			// OpenGLEnvironment was deleted in Phase 2: its IBL bake was built on
+			// VertexArray, which bgfx has no equivalent for. Phase 4 rewrites the
+			// bake against bgfx cubemap framebuffers.
+			return nullptr;
 		case RendererAPI::API::Bgfx:
-			// Dormant: the bgfx implementation lands in a later phase.
+			// Dormant: the bgfx implementation lands in Phase 4.
 			// See docs/BGFX_MIGRATION.md.
 			return nullptr;
 		}

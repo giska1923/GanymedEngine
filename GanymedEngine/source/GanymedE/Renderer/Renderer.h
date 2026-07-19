@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RenderCommand.h"
+#include "RendererAPI.h"
 
 #include "GanymedE/Renderer/Shader.h"
 

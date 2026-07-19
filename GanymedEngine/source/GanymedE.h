@@ -40,7 +40,6 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Renderer/SceneRenderer.h"
 #include "GanymedE/Renderer/Texture.h"
 #include "GanymedE/Renderer/SubTexture2D.h"
-#include "GanymedE/Renderer/VertexArray.h"
 #include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/MeshImporter.h"

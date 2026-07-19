@@ -111,7 +111,7 @@ namespace GanymedE {
 
 		// Upsample: additively blend each smaller mip onto the next-larger one
 		RenderCommand::SetBlend(true);
-		RenderCommand::SetBlendMode(RendererAPI::BlendMode::Additive);
+		RenderCommand::SetBlendMode(RenderState::BlendMode::Additive);
 
 		m_BloomUpsampleShader->Bind();
 		m_BloomUpsampleShader->SetInt("u_Texture", 0);
@@ -130,7 +130,7 @@ namespace GanymedE {
 			m_BloomMips[i - 1]->Unbind();
 		}
 
-		RenderCommand::SetBlendMode(RendererAPI::BlendMode::Alpha);
+		RenderCommand::SetBlendMode(RenderState::BlendMode::Alpha);
 		return m_BloomMips[0];
 	}
 

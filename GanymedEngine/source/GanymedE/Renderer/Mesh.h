@@ -3,7 +3,6 @@
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Math/BoundingVolumes.h"
 #include "GanymedE/Renderer/Material.h"
-#include "GanymedE/Renderer/VertexArray.h"
 #include "GanymedE/Renderer/Buffer.h"
 
 #include <glm/glm.hpp>
@@ -52,14 +51,18 @@ namespace GanymedE {
 		const std::vector<Ref<Material>>& GetMaterials() const { return m_Materials; }
 		Ref<Material> GetMaterial(uint32_t index) const;
 
-		const Ref<VertexArray>& GetVertexArray() const { return m_VertexArray; }
+		const Geometry& GetGeometry() const { return m_Geometry; }
 		const std::string& GetPath() const { return m_Path; }
 		void SetPath(const std::string& path) { m_Path = path; }
 
 		const AABB& GetBounds() const { return m_Bounds; }
 
-		// Upload per-instance transforms/IDs for the next instanced draw of this mesh
+		// Stage per-instance transforms/IDs for the next instanced draw of this
+		// mesh. Unlike the old GL path this does not touch the GPU: bgfx wants
+		// instance data allocated from its transient pool at submit time, so the
+		// data is held CPU-side until the draw call copies it.
 		void SetInstanceData(const MeshInstanceData* data, uint32_t count);
+		const std::vector<MeshInstanceData>& GetInstanceData() const { return m_InstanceData; }
 		static constexpr uint32_t MaxInstancesPerDraw = 1024;
 
 		static Ref<Mesh> Create(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices,
@@ -74,10 +77,8 @@ namespace GanymedE {
 		std::vector<Ref<Material>> m_Materials;
 		AABB m_Bounds;
 
-		Ref<VertexArray> m_VertexArray;
-		Ref<VertexBuffer> m_VertexBuffer;
-		Ref<VertexBuffer> m_InstanceBuffer;
-		Ref<IndexBuffer> m_IndexBuffer;
+		Geometry m_Geometry;
+		std::vector<MeshInstanceData> m_InstanceData;
 
 		std::string m_Path;
 	};

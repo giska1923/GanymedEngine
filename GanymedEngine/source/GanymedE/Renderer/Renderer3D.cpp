@@ -4,7 +4,6 @@
 #include "UniformBuffer.h"
 #include "Shader.h"
 #include "RenderCommand.h"
-#include "VertexArray.h"
 #include "Buffer.h"
 #include "Framebuffer.h"
 #include "Environment.h"
@@ -85,11 +84,11 @@ namespace GanymedE {
 		std::vector<DrawCommand> DrawList;
 
 		Ref<Shader> GridShader;
-		Ref<VertexArray> GridVertexArray;
+		Geometry GridGeometry;
 
 		Ref<Shader> SkyboxShader;
 		Ref<Shader> SkyboxCubeShader;
-		Ref<VertexArray> FullscreenQuad;
+		Geometry FullscreenQuad;
 
 		// HDR image-based lighting (optional)
 		Ref<Environment> ActiveEnvironment;
@@ -112,7 +111,7 @@ namespace GanymedE {
 		};
 		std::vector<LineVertex> LineVertices;
 		Ref<Shader> LineShader;
-		Ref<VertexArray> LineVertexArray;
+		Geometry LineGeometry;
 		Ref<VertexBuffer> LineVertexBuffer;
 		static constexpr uint32_t MaxLineVertices = 20000;
 
@@ -149,12 +148,9 @@ namespace GanymedE {
 		};
 		uint32_t gridIndices[] = { 0, 1, 2, 2, 3, 0 };
 
-		s_Data.GridVertexArray = VertexArray::Create();
-		Ref<VertexBuffer> gridVB = VertexBuffer::Create(gridVertices, sizeof(gridVertices));
-		gridVB->SetLayout({ { ShaderDataType::Float3, "a_Position" } });
-		s_Data.GridVertexArray->AddVertexBuffer(gridVB);
-		Ref<IndexBuffer> gridIB = IndexBuffer::Create(gridIndices, 6);
-		s_Data.GridVertexArray->SetIndexBuffer(gridIB);
+		s_Data.GridGeometry.Vertices = VertexBuffer::Create(gridVertices, sizeof(gridVertices),
+			{ { ShaderDataType::Float3, "a_Position" } });
+		s_Data.GridGeometry.Indices = IndexBuffer::Create(gridIndices, 6);
 
 		// Fullscreen quad in NDC (used by skybox + reusable for post effects)
 		float quadVertices[] = {
@@ -165,12 +161,9 @@ namespace GanymedE {
 		};
 		uint32_t quadIndices[] = { 0, 1, 2, 2, 3, 0 };
 
-		s_Data.FullscreenQuad = VertexArray::Create();
-		Ref<VertexBuffer> quadVB = VertexBuffer::Create(quadVertices, sizeof(quadVertices));
-		quadVB->SetLayout({ { ShaderDataType::Float2, "a_Position" } });
-		s_Data.FullscreenQuad->AddVertexBuffer(quadVB);
-		Ref<IndexBuffer> quadIB = IndexBuffer::Create(quadIndices, 6);
-		s_Data.FullscreenQuad->SetIndexBuffer(quadIB);
+		s_Data.FullscreenQuad.Vertices = VertexBuffer::Create(quadVertices, sizeof(quadVertices),
+			{ { ShaderDataType::Float2, "a_Position" } });
+		s_Data.FullscreenQuad.Indices = IndexBuffer::Create(quadIndices, 6);
 
 		// Depth-only shadow map framebuffer, one per directional cascade
 		FramebufferSpecification shadowSpec;
@@ -181,31 +174,29 @@ namespace GanymedE {
 			s_Data.ShadowFramebuffers[i] = Framebuffer::Create(shadowSpec);
 
 		s_Data.LineShader = Shader::Create("assets/shaders/Line.glsl");
-		s_Data.LineVertexArray = VertexArray::Create();
-		s_Data.LineVertexBuffer = VertexBuffer::Create(s_Data.MaxLineVertices * sizeof(Renderer3DData::LineVertex));
-		s_Data.LineVertexBuffer->SetLayout({
+		s_Data.LineVertexBuffer = VertexBuffer::Create(s_Data.MaxLineVertices * sizeof(Renderer3DData::LineVertex), {
 			{ ShaderDataType::Float3, "a_Position" },
 			{ ShaderDataType::Float4, "a_Color" }
 		});
-		s_Data.LineVertexArray->AddVertexBuffer(s_Data.LineVertexBuffer);
+		s_Data.LineGeometry.Vertices = s_Data.LineVertexBuffer;
 		s_Data.LineVertices.reserve(s_Data.MaxLineVertices);
 	}
 
 	void Renderer3D::Shutdown()
 	{
 		s_Data.DrawList.clear();
-		s_Data.GridVertexArray = nullptr;
+		s_Data.GridGeometry = {};
 		s_Data.GridShader = nullptr;
 		s_Data.SkyboxShader = nullptr;
 		s_Data.SkyboxCubeShader = nullptr;
-		s_Data.FullscreenQuad = nullptr;
+		s_Data.FullscreenQuad = {};
 		s_Data.ShadowDepthShader = nullptr;
 		for (uint32_t i = 0; i < kCascadeCount; i++)
 			s_Data.ShadowFramebuffers[i] = nullptr;
 		s_Data.CameraUniformBuffer = nullptr;
 		s_Data.LightUniformBuffer = nullptr;
 		s_Data.LineShader = nullptr;
-		s_Data.LineVertexArray = nullptr;
+		s_Data.LineGeometry = {};
 		s_Data.LineVertexBuffer = nullptr;
 		s_Data.LineVertices.clear();
 	}
@@ -474,8 +465,13 @@ namespace GanymedE {
 			}
 
 			mesh->SetInstanceData(s_Instances.data(), (uint32_t)chunk);
-			RenderCommand::DrawIndexedInstanced(mesh->GetVertexArray(), submesh.IndexCount,
-				submesh.BaseIndex, (int32_t)submesh.BaseVertex, (uint32_t)chunk);
+
+			// bgfx copies instance data into its own transient buffer at submit
+			// time, so it is handed over per draw rather than pre-uploaded.
+			const auto& instances = mesh->GetInstanceData();
+			RenderCommand::DrawIndexedInstanced(mesh->GetGeometry(), submesh.IndexCount,
+				submesh.BaseIndex, (int32_t)submesh.BaseVertex,
+				instances.data(), (uint32_t)instances.size(), (uint16_t)sizeof(MeshInstanceData));
 			s_Data.Stats.DrawCalls++;
 			if (chunk > 1)
 				s_Data.Stats.InstancedDraws++;
@@ -511,7 +507,7 @@ namespace GanymedE {
 
 			// Cull front faces while rendering caster depth to curb acne / peter-panning
 			RenderCommand::SetCullFace(true);
-			RenderCommand::SetCullMode(RendererAPI::CullMode::Front);
+			RenderCommand::SetCullMode(RenderState::CullMode::Front);
 
 			s_Data.ShadowDepthShader->SetMat4("u_LightSpaceMatrix", s_Data.CascadeLightSpace[c]);
 
@@ -527,7 +523,7 @@ namespace GanymedE {
 				i = end;
 			}
 
-			RenderCommand::SetCullMode(RendererAPI::CullMode::Back);
+			RenderCommand::SetCullMode(RenderState::CullMode::Back);
 			s_Data.ShadowFramebuffers[c]->Unbind();
 		}
 	}
@@ -699,7 +695,7 @@ namespace GanymedE {
 			s_Data.LineShader->Bind();
 			RenderCommand::SetDepthTest(true);
 			RenderCommand::SetDepthWrite(false);
-			RenderCommand::DrawLines(s_Data.LineVertexArray, count);
+			RenderCommand::DrawLines(s_Data.LineGeometry, count);
 			RenderCommand::SetDepthWrite(true);
 			s_Data.Stats.DrawCalls++;
 			s_Data.LineVertices.clear();
@@ -708,7 +704,7 @@ namespace GanymedE {
 
 	void Renderer3D::DrawSkybox()
 	{
-		if (!s_Data.DrawSkyboxFlag || !s_Data.FullscreenQuad)
+		if (!s_Data.DrawSkyboxFlag || !s_Data.FullscreenQuad.IsValid())
 			return;
 
 		RenderCommand::SetDepthTest(false);
@@ -753,7 +749,7 @@ namespace GanymedE {
 
 	void Renderer3D::DrawGrid()
 	{
-		if (!s_Data.GridShader || !s_Data.GridVertexArray)
+		if (!s_Data.GridShader || !s_Data.GridGeometry.IsValid())
 			return;
 
 		RenderCommand::SetDepthTest(true);
@@ -766,7 +762,7 @@ namespace GanymedE {
 		s_Data.GridShader->SetMat4("u_Transform", transform);
 		s_Data.GridShader->SetFloat3("u_CameraPosition", s_Data.CameraBuffer.CameraPosition);
 
-		RenderCommand::DrawIndexed(s_Data.GridVertexArray);
+		RenderCommand::DrawIndexed(s_Data.GridGeometry);
 		s_Data.Stats.DrawCalls++;
 
 		RenderCommand::SetDepthWrite(true);

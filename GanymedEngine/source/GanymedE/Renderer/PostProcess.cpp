@@ -2,7 +2,6 @@
 #include "PostProcess.h"
 
 #include "Shader.h"
-#include "VertexArray.h"
 #include "Buffer.h"
 #include "RenderCommand.h"
 #include "Framebuffer.h"
@@ -12,7 +11,7 @@ namespace GanymedE {
 	struct PostProcessData
 	{
 		Ref<Shader> TonemapShader;
-		Ref<VertexArray> FullscreenQuad;
+		Geometry FullscreenQuad;
 	};
 
 	static PostProcessData s_Data;
@@ -29,23 +28,20 @@ namespace GanymedE {
 		};
 		uint32_t quadIndices[] = { 0, 1, 2, 2, 3, 0 };
 
-		s_Data.FullscreenQuad = VertexArray::Create();
-		Ref<VertexBuffer> quadVB = VertexBuffer::Create(quadVertices, sizeof(quadVertices));
-		quadVB->SetLayout({ { ShaderDataType::Float2, "a_Position" } });
-		s_Data.FullscreenQuad->AddVertexBuffer(quadVB);
-		Ref<IndexBuffer> quadIB = IndexBuffer::Create(quadIndices, 6);
-		s_Data.FullscreenQuad->SetIndexBuffer(quadIB);
+		s_Data.FullscreenQuad.Vertices = VertexBuffer::Create(quadVertices, sizeof(quadVertices),
+			{ { ShaderDataType::Float2, "a_Position" } });
+		s_Data.FullscreenQuad.Indices = IndexBuffer::Create(quadIndices, 6);
 	}
 
 	void PostProcess::Shutdown()
 	{
 		s_Data.TonemapShader = nullptr;
-		s_Data.FullscreenQuad = nullptr;
+		s_Data.FullscreenQuad = {};
 	}
 
 	void PostProcess::DrawFullscreenQuad()
 	{
-		if (!s_Data.FullscreenQuad)
+		if (!s_Data.FullscreenQuad.IsValid())
 			return;
 
 		RenderCommand::SetDepthTest(false);
@@ -62,7 +58,7 @@ namespace GanymedE {
 	void PostProcess::Tonemap(const Ref<Framebuffer>& source, float exposure,
 		const Ref<Framebuffer>& bloom, float bloomIntensity)
 	{
-		if (!source || !s_Data.TonemapShader || !s_Data.FullscreenQuad)
+		if (!source || !s_Data.TonemapShader || !s_Data.FullscreenQuad.IsValid())
 			return;
 
 		source->BindColorTexture(0, 0);

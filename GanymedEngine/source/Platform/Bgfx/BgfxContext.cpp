@@ -105,6 +105,7 @@ namespace GanymedE {
 			0x1a1a2eff, // matches the old GL clear colour
 			1.0f, 0);
 		bgfx::setViewRect(RenderPass::Backbuffer, 0, 0, uint16_t(m_Width), uint16_t(m_Height));
+
 	}
 
 	void BgfxContext::Frame()
