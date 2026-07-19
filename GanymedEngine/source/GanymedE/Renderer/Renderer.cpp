@@ -16,10 +16,10 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		// Renderer2D/3D and PostProcess build their shaders, buffers and
-		// framebuffers through OpenGL directly. There is no GL context under
-		// bgfx, so they stay dormant until Phases 2-5 port them.
-		if (IsLegacyGLPathDormant())
+		// Renderer2D/3D and PostProcess still allocate UBOs, which have no bgfx
+		// equivalent yet (§5.2). Initialising them would hand out null uniform
+		// buffers that the first frame dereferences.
+		if (IsSceneRenderPathDormant())
 			return;
 
 		RenderCommand::Init();
@@ -30,7 +30,7 @@ namespace GanymedE {
 
 	void Renderer::Shutdown()
 	{
-		if (IsLegacyGLPathDormant())
+		if (IsSceneRenderPathDormant())
 			return;
 
 		PostProcess::Shutdown();
@@ -42,7 +42,7 @@ namespace GanymedE {
 	{
 		// bgfx resizes with the swapchain (BgfxContext::Resize), and viewports
 		// are per-view state set at submit time rather than global.
-		if (IsLegacyGLPathDormant())
+		if (IsSceneRenderPathDormant())
 			return;
 
 		RenderCommand::SetViewport(0, 0, width, height);

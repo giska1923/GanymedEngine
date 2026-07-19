@@ -43,12 +43,6 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		m_LayerStack.PushLayer(layer);
-
-		// OnAttach is where layers build textures, shaders and framebuffers -
-		// all still OpenGL. Attaching is deferred until those ports land.
-		if (Renderer::IsLegacyGLPathDormant())
-			return;
-
 		layer->OnAttach();
 		layer->SetAttached(true);
 	}
@@ -58,10 +52,6 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		m_LayerStack.PushOverlay(overlay);
-
-		if (Renderer::IsLegacyGLPathDormant())
-			return;
-
 		overlay->OnAttach();
 		overlay->SetAttached(true);
 	}
@@ -139,12 +129,10 @@ namespace GanymedE {
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
-			// Layer rendering and the ImGui backend are both still OpenGL. Until
-			// they are ported (Phases 2-6) the loop does nothing but drive
-			// bgfx's frame, which clears and presents the backbuffer.
-			const bool legacyDormant = Renderer::IsLegacyGLPathDormant();
-
-			if (!m_Minimized && !legacyDormant)
+			// OnUpdate is where the scene renders, and that path is still
+			// waiting on the UBO rework - see Renderer::IsSceneRenderPathDormant.
+			// ImGui is ported, so the UI half of the loop runs normally.
+			if (!m_Minimized && !Renderer::IsSceneRenderPathDormant())
 			{
 				GE_PROFILE_SCOPE("LayerStack OnUpdate");
 
@@ -152,17 +140,14 @@ namespace GanymedE {
 					layer->OnUpdate(timestep);
 			}
 
-			if (!legacyDormant)
+			m_ImGuiLayer->Begin();
 			{
-				m_ImGuiLayer->Begin();
-				{
-					GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
+				GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
 
-					for (Layer* layer : m_LayerStack)
-						layer->OnImGuiRender();
-				}
-				m_ImGuiLayer->End();
+				for (Layer* layer : m_LayerStack)
+					layer->OnImGuiRender();
 			}
+			m_ImGuiLayer->End();
 
 			m_Window->OnUpdate();
 		}

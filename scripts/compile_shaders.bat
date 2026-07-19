@@ -50,14 +50,29 @@ set OUTDIR=%~1\%2
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 
 for %%F in ("%SRC%\vs_*.sc") do (
+	call :varyingdef "%%~nF"
 	"%SHADERC%" -f "%%F" -o "%OUTDIR%\%%~nF.bin" --type vertex --platform windows ^
-		-p %3 -i "%INCLUDE%" --varyingdef "%SRC%\varying.def.sc"
+		-p %3 -i "%INCLUDE%" --varyingdef "!VARYING!"
 	if errorlevel 1 ( echo   FAILED %2/%%~nF & set /a FAILED+=1 ) else ( set /a BUILT+=1 )
 )
 
 for %%F in ("%SRC%\fs_*.sc") do (
+	call :varyingdef "%%~nF"
 	"%SHADERC%" -f "%%F" -o "%OUTDIR%\%%~nF.bin" --type fragment --platform windows ^
-		-p %3 -i "%INCLUDE%" --varyingdef "%SRC%\varying.def.sc"
+		-p %3 -i "%INCLUDE%" --varyingdef "!VARYING!"
 	if errorlevel 1 ( echo   FAILED %2/%%~nF & set /a FAILED+=1 ) else ( set /a BUILT+=1 )
+)
+exit /b 0
+
+:varyingdef
+REM Shaders whose attributes differ from the engine's standard vertex layout
+REM (ImGui, for one) can ship varying.<name>.def.sc and it is preferred.
+REM %1 is the file stem, e.g. "vs_ImGui" -> name "ImGui".
+set STEM=%~1
+set NAME=!STEM:~3!
+if exist "%SRC%\varying.!NAME!.def.sc" (
+	set VARYING=%SRC%\varying.!NAME!.def.sc
+) else (
+	set VARYING=%SRC%\varying.def.sc
 )
 exit /b 0

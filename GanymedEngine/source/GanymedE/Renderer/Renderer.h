@@ -27,16 +27,20 @@ namespace GanymedE {
 
 		inline static RendererAPI::API GetAPI() { return RendererAPI::GetAPI(); }
 
-		// True while bgfx owns the frame but Renderer2D/3D, PostProcess,
-		// Framebuffer and the ImGui backend still speak OpenGL directly. The
-		// window is created with GLFW_NO_API, so there is no GL context and
-		// those paths would fault on their first gl* call - every one of them is
-		// guarded on this.
+		// True while Renderer2D/3D and the scene passes cannot run.
 		//
-		// Phases 2-6 port one subsystem each and drop its guard; the helper
-		// itself dies with Platform/OpenGL in Phase 7.
-		// See docs/BGFX_MIGRATION.md.
-		inline static bool IsLegacyGLPathDormant() { return GetAPI() == RendererAPI::API::Bgfx; }
+		// Buffers, shaders, textures, framebuffers and the ImGui backend are all
+		// bgfx now, but the UBO rework (§5.2) is not done: UniformBuffer::Create
+		// still returns null under bgfx, and Renderer3D dereferences it
+		// unconditionally when uploading camera/light blocks. Turning this off
+		// before that lands segfaults on the first frame.
+		//
+		// ImGui is deliberately NOT covered by this - its backend is ported, so
+		// the editor chrome draws while the scene stays dark.
+		//
+		// Clears when §5.2 and the remaining shaders land; the helper itself
+		// disappears with Platform/OpenGL in Phase 7.
+		inline static bool IsSceneRenderPathDormant() { return true; }
 	};
 
 }

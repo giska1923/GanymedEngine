@@ -2,14 +2,14 @@
 #include "ImGuiLayer.h"
 
 #include "imgui.h"
-#include "backends/imgui_impl_opengl3.h"
 #include "backends/imgui_impl_glfw.h"
 
 #include "GanymedE/main/Application.h"
 
-//TEMP
+#include <filesystem>
+#include "Platform/Bgfx/ImGuiRendererBgfx.h"
+
 #include <GLFW/glfw3.h>
-#include <glad/glad.h>
 
 namespace GanymedE {
 	ImGuiLayer::ImGuiLayer() : Layer("ImGuiLayer") {}
@@ -25,12 +25,29 @@ namespace GanymedE {
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
 		//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
+		// Multi-viewport is off under bgfx: it needs one bgfx framebuffer per OS
+		// window (§8.4), which is deferred. Enabling it without that support
+		// would spawn platform windows that never draw.
+		// io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 		//io.ConfigViewportsNoAutoMerge = true;
 		//io.ConfigViewportsNoTaskBarIcon = true;
 
-		io.Fonts->AddFontFromFileTTF("assets/fonts/montserrat/Montserrat-Bold.ttf", 18.0f);
-		io.FontDefault = io.Fonts->AddFontFromFileTTF("assets/fonts/montserrat/Montserrat-Regular.ttf", 18.0f);
+		// AddFontFromFileTTF asserts hard on a missing file, which takes the whole
+		// app down. Not every app ships the editor's fonts (Sandbox does not), so
+		// check first and fall back to ImGui's built-in font.
+		auto addFont = [&io](const char* path) -> ImFont*
+		{
+			if (!std::filesystem::exists(path))
+			{
+				GE_CORE_WARN("Font '{0}' not found; falling back to the default ImGui font", path);
+				return nullptr;
+			}
+			return io.Fonts->AddFontFromFileTTF(path, 18.0f);
+		};
+
+		addFont("assets/fonts/montserrat/Montserrat-Bold.ttf");
+		if (ImFont* regular = addFont("assets/fonts/montserrat/Montserrat-Regular.ttf"))
+			io.FontDefault = regular;
 
 		// Setup Dear ImGui style
 		ImGui::StyleColorsDark();
@@ -49,15 +66,19 @@ namespace GanymedE {
 		Application& app = Application::Get();
 		GLFWwindow* window = static_cast<GLFWwindow*>(app.GetWindow().GetNativeWindow());
 
-		// Setup Platform/Renderer bindings
-		ImGui_ImplGlfw_InitForOpenGL(window, true);
-		ImGui_ImplOpenGL3_Init("#version 410");
+		// Platform half stays GLFW; only the render half moved to bgfx.
+		// InitForOther (not InitForOpenGL) because the window is created with
+		// GLFW_NO_API - there is no GL context for ImGui to assume.
+		ImGui_ImplGlfw_InitForOther(window, true);
+
+		if (!ImGuiRendererBgfx::Init())
+			GE_CORE_ERROR("ImGui bgfx backend failed to initialise; the editor UI will not draw");
 	}
 
 	void ImGuiLayer::OnDetach() {
 		GE_PROFILE_FUNCTION();
 
-		ImGui_ImplOpenGL3_Shutdown();
+		ImGuiRendererBgfx::Shutdown();
 		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
 	}
@@ -75,7 +96,7 @@ namespace GanymedE {
 	void ImGuiLayer::Begin() {
 		GE_PROFILE_FUNCTION();
 
-		ImGui_ImplOpenGL3_NewFrame();
+		ImGuiRendererBgfx::NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 	}
@@ -89,13 +110,13 @@ namespace GanymedE {
 
 		//Rendering
 		ImGui::Render();
-		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+		ImGuiRendererBgfx::RenderDrawData(ImGui::GetDrawData());
 
+		// Multi-viewport needs one bgfx framebuffer per OS window (§8.4) and is
+		// deferred, so the platform-window pass is skipped rather than run
+		// against a renderer that cannot service it.
 		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-			GLFWwindow* backup_current_context = glfwGetCurrentContext();
 			ImGui::UpdatePlatformWindows();
-			ImGui::RenderPlatformWindowsDefault();
-			glfwMakeContextCurrent(backup_current_context);
 		}
 	}
 
