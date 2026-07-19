@@ -18,9 +18,8 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		// Renderer2D/3D and PostProcess still allocate UBOs, which have no bgfx
-		// equivalent yet (§5.2). Initialising them would hand out null uniform
-		// buffers that the first frame dereferences.
+		// Stale-guard from the migration; IsSceneRenderPathDormant() is false now
+		// that §5.2 landed. Kept as a single switch until Phase 7 removes it.
 		if (IsSceneRenderPathDormant())
 			return;
 

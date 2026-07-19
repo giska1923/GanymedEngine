@@ -176,7 +176,13 @@ namespace GanymedE {
 			const Ref<Framebuffer>& source = m_BloomMips[i];
 			const auto& sourceSpec = source->GetSpecification();
 
-			const uint16_t view = RenderPass::BloomUpsample + (uint16_t)i;
+			// View IDs must ASCEND in execution order - bgfx runs a frame's views
+			// sorted by ID, not in submission order. This loop walks i downwards
+			// (smallest mip first), so the ID has to be derived from the step
+			// index. Using `BloomUpsample + i` made the chain run backwards, with
+			// every pass reading a mip that had not been written yet this frame.
+			const uint16_t step = (uint16_t)(m_BloomMips.size() - 1 - i);
+			const uint16_t view = RenderPass::BloomUpsample + step;
 			m_BloomMips[i - 1]->BindToView(view);
 			RenderCommand::SetViewId(view);
 

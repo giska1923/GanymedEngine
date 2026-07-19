@@ -134,7 +134,19 @@ vec3 CookTorrance(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float meta
 float SampleCascade(BgfxSampler2D shadowMap, vec4 lightSpacePos, vec3 N, vec3 L)
 {
 	vec3 proj = lightSpacePos.xyz / lightSpacePos.w;
-	proj = proj * 0.5 + 0.5;
+
+	// Only XY are remapped. NDC xy is [-1,1] on every backend, but the depth
+	// range is not: this project builds projections with
+	// GLM_FORCE_DEPTH_ZERO_TO_ONE, so proj.z already arrives in [0,1]. The
+	// original GL shader remapped all three, which under [0,1] depth pushes z
+	// into [0.5,1] and makes every depth comparison wrong.
+	proj.xy = proj.xy * 0.5 + 0.5;
+
+	// The shadow map is a render target, and bgfx addresses those top-down on
+	// D3D/Vulkan/Metal while NDC +Y points up. Flip to match.
+	// TODO(§9.3): drive this from getCaps()->originBottomLeft rather than
+	// assuming, once the caps-driven projection helper exists.
+	proj.y = 1.0 - proj.y;
 
 	if (proj.z > 1.0)
 		return 0.0;
