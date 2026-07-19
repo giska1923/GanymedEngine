@@ -571,10 +571,15 @@ namespace GanymedE {
 
 		shader->SetInt("u_UseIBL", s_Data.UseIBL ? 1 : 0);
 
-		// No SetInt for the IBL sampler names: under bgfx a sampler is its own
-		// uniform type, and setting one as a vec4 is a hard type-mismatch assert.
-		// The texture unit is fixed in the shader (SAMPLERCUBE/SAMPLER2D) and the
-		// binding comes from Environment::BindIBL.
+		// IBL textures bind per-material, because a sampler uniform belongs to a
+		// shader - there is no global "bind to unit 9" under bgfx.
+		if (s_Data.UseIBL && s_Data.ActiveEnvironment && s_Data.ActiveEnvironment->IsValid())
+		{
+			const Ref<Environment>& env = s_Data.ActiveEnvironment;
+			shader->SetTexture("u_IrradianceMap", (uint8_t)kIrradianceSlot, env->GetIrradiance(), BGFX_SAMPLER_UVW_CLAMP);
+			shader->SetTexture("u_PrefilterMap",  (uint8_t)kPrefilterSlot,  env->GetPrefilter(),  BGFX_SAMPLER_UVW_CLAMP);
+			shader->SetTexture("u_BRDFLUT",       (uint8_t)kBRDFLutSlot,    env->GetBRDFLut(),    BGFX_SAMPLER_UVW_CLAMP);
+		}
 		shader->SetFloat("u_MaxReflectionLod",
 			s_Data.ActiveEnvironment ? s_Data.ActiveEnvironment->GetMaxReflectionLod() : 0.0f);
 	}
@@ -650,10 +655,6 @@ namespace GanymedE {
 		RenderCommand::SetDepthTest(true);
 		RenderCommand::SetDepthWrite(true);
 		RenderCommand::SetBlend(false);
-
-		// Bind IBL textures once for the pass (slots 9..11)
-		if (s_Data.UseIBL && s_Data.ActiveEnvironment)
-			s_Data.ActiveEnvironment->BindIBL(kIrradianceSlot, kPrefilterSlot, kBRDFLutSlot);
 
 		const Material* boundMaterial = nullptr;
 		for (size_t i = 0; i < opaque.size(); )
@@ -745,9 +746,9 @@ namespace GanymedE {
 
 		if (s_Data.UseIBL && s_Data.ActiveEnvironment && s_Data.SkyboxCubeShader)
 		{
-			s_Data.ActiveEnvironment->BindSkybox(kSkyboxCubemapSlot);
-
 			s_Data.SkyboxCubeShader->Bind();
+			s_Data.SkyboxCubeShader->SetTexture("u_EnvironmentMap", (uint8_t)kSkyboxCubemapSlot,
+				s_Data.ActiveEnvironment->GetSkybox(), BGFX_SAMPLER_UVW_CLAMP);
 			s_Data.SkyboxCubeShader->SetMat4("u_InverseViewProjection", invViewProj);
 			s_Data.SkyboxCubeShader->SetFloat("u_Intensity", s_Data.SkyIntensity);
 		}

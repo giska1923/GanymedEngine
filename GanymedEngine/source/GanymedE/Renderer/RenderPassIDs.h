@@ -40,8 +40,13 @@ namespace GanymedE {
 
 		// Transient views used only while baking an environment map on load
 		// (equirect -> cubemap, irradiance, prefilter, BRDF LUT).
+		//
+		// The bake needs one view per cubemap face per mip and runs entirely
+		// within a single frame, because bgfx guarantees views execute in ID
+		// order - which is what lets a later stage sample what an earlier one
+		// wrote. That is 6*5 + 6 + 6*5 + 1 = 67 views, so the range runs up to
+		// the ImGui view rather than a fixed small count.
 		constexpr uint16_t EnvironmentBake = 32;
-		constexpr uint16_t EnvironmentBakeCount = 8;
 
 		// Editor UI renders last, straight to the backbuffer.
 		constexpr uint16_t ImGui = 200;
