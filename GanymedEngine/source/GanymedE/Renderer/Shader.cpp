@@ -3,6 +3,7 @@
 
 #include "Renderer.h"
 #include "RenderCommand.h"
+#include "Texture.h"
 
 #include <filesystem>
 #include <fstream>
@@ -140,6 +141,24 @@ namespace GanymedE {
 		bgfx::UniformHandle handle = bgfx::createUniform(name.c_str(), type, num);
 		m_Uniforms[name] = handle;
 		return handle;
+	}
+
+	void Shader::SetTexture(const std::string& samplerName, uint8_t slot, const Ref<Texture2D>& texture)
+	{
+		if (!texture || !texture->IsValid())
+			return;
+
+		SetTexture(samplerName, slot, texture->GetHandle(), texture->GetSamplerFlags());
+	}
+
+	void Shader::SetTexture(const std::string& samplerName, uint8_t slot, bgfx::TextureHandle texture, uint32_t samplerFlags)
+	{
+		if (!bgfx::isValid(texture))
+			return;
+
+		// The sampler uniform carries no value of its own - it exists so bgfx can
+		// associate this texture unit with the sampler declared in the shader.
+		bgfx::setTexture(slot, GetUniform(samplerName, bgfx::UniformType::Sampler), texture, samplerFlags);
 	}
 
 	void Shader::SetInt(const std::string& name, int value)

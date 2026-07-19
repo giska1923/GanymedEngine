@@ -61,18 +61,15 @@ namespace GanymedE {
 		if (!source || !s_Data.TonemapShader || !s_Data.FullscreenQuad.IsValid())
 			return;
 
-		source->BindColorTexture(0, 0);
-
 		s_Data.TonemapShader->Bind();
-		s_Data.TonemapShader->SetInt("u_Texture", 0);
+		s_Data.TonemapShader->SetTexture("u_Texture", 0, source->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
 		s_Data.TonemapShader->SetFloat("u_Exposure", exposure);
 
 		bool useBloom = bloom != nullptr;
 		s_Data.TonemapShader->SetInt("u_UseBloom", useBloom ? 1 : 0);
 		if (useBloom)
 		{
-			bloom->BindColorTexture(0, 1);
-			s_Data.TonemapShader->SetInt("u_BloomTexture", 1);
+			s_Data.TonemapShader->SetTexture("u_BloomTexture", 1, bloom->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
 			s_Data.TonemapShader->SetFloat("u_BloomIntensity", bloomIntensity);
 		}
 

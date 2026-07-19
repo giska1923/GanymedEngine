@@ -8,7 +8,7 @@
 
 namespace GanymedE {
 
-	class Texture;
+	class Texture2D;
 
 	// Concrete wrapper over a bgfx program (a linked vertex + fragment shader).
 	//
@@ -35,6 +35,13 @@ namespace GanymedE {
 
 		bool IsValid() const { return bgfx::isValid(m_Program); }
 		bgfx::ProgramHandle GetProgram() const { return m_Program; }
+
+		// Replaces "texture->Bind(slot); shader->SetInt(name, slot)". Under bgfx
+		// a texture binding belongs to the draw call and must name the sampler
+		// uniform it feeds, so the texture alone cannot bind itself.
+		// Takes effect on the next submit.
+		void SetTexture(const std::string& samplerName, uint8_t slot, const Ref<Texture2D>& texture);
+		void SetTexture(const std::string& samplerName, uint8_t slot, bgfx::TextureHandle texture, uint32_t samplerFlags);
 
 		// SetInt on a sampler uniform is a no-op under bgfx - use SetTexture.
 		// It is kept so existing "SetInt(u_Texture, 0)" call sites stay valid.

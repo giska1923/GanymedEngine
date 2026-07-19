@@ -3,6 +3,7 @@
 
 #include "GanymedE/Renderer/PostProcess.h"
 #include "GanymedE/Renderer/RenderCommand.h"
+#include "GanymedE/Renderer/RenderPassIDs.h"
 
 #include <algorithm>
 
@@ -10,6 +11,17 @@ namespace GanymedE {
 
 	static constexpr uint32_t kMaxBloomMips = 6;
 	static constexpr uint32_t kMinBloomMipSize = 8;
+
+	// bgfx view clears take a packed 0xRRGGBBAA word rather than four floats.
+	static uint32_t PackRGBA(const glm::vec4& c)
+	{
+		auto channel = [](float v) -> uint32_t
+		{
+			return (uint32_t)(glm::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+		};
+
+		return (channel(c.r) << 24) | (channel(c.g) << 16) | (channel(c.b) << 8) | channel(c.a);
+	}
 
 	SceneRenderer::SceneRenderer(uint32_t width, uint32_t height)
 		: m_Width(std::max(width, 1u)), m_Height(std::max(height, 1u))
@@ -74,12 +86,19 @@ namespace GanymedE {
 
 	void SceneRenderer::BeginFrame()
 	{
-		m_SceneFramebuffer->Bind();
-		RenderCommand::SetClearColor(m_Settings.ClearColor);
-		RenderCommand::Clear();
+		// Under bgfx a pass is a view, not a bound framebuffer: point the scene
+		// view at the HDR target and everything submitted to it lands there.
+		m_SceneFramebuffer->BindToView(RenderPass::SceneHDR);
+		RenderCommand::SetViewId(RenderPass::SceneHDR);
 
-		// Clear the entity ID attachment to "no entity"
-		m_SceneFramebuffer->ClearAttachment(1, -1);
+		// The clear is view state rather than an immediate command. Clearing the
+		// entity-ID attachment to "no entity" (-1) comes along with it: bgfx
+		// clears every attachment of the view at once, so the old separate
+		// ClearAttachment call has no equivalent and is not needed.
+		const glm::vec4& c = m_Settings.ClearColor;
+		bgfx::setViewClear(RenderPass::SceneHDR,
+			BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
+			PackRGBA(c), 1.0f, 0);
 	}
 
 	Ref<Framebuffer> SceneRenderer::RenderBloom()
@@ -91,7 +110,6 @@ namespace GanymedE {
 
 		// Downsample: HDR scene -> mip0 (thresholded) -> mip1 -> ...
 		m_BloomDownsampleShader->Bind();
-		m_BloomDownsampleShader->SetInt("u_Texture", 0);
 		m_BloomDownsampleShader->SetFloat("u_Threshold", m_Settings.BloomThreshold);
 		m_BloomDownsampleShader->SetFloat("u_Knee", glm::max(m_Settings.BloomKnee, 0.01f));
 
@@ -100,13 +118,16 @@ namespace GanymedE {
 			const Ref<Framebuffer>& source = (i == 0) ? m_SceneFramebuffer : m_BloomMips[i - 1];
 			const auto& sourceSpec = source->GetSpecification();
 
-			m_BloomMips[i]->Bind();
-			source->BindColorTexture(0, 0);
+			// One view per mip so bgfx keeps the chain strictly ordered.
+			const uint16_t view = RenderPass::BloomDownsample + (uint16_t)i;
+			m_BloomMips[i]->BindToView(view);
+			RenderCommand::SetViewId(view);
+
+			m_BloomDownsampleShader->SetTexture("u_Texture", 0, source->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
 			m_BloomDownsampleShader->SetInt("u_FirstPass", i == 0 ? 1 : 0);
 			m_BloomDownsampleShader->SetFloat2("u_TexelSize",
 				glm::vec2(1.0f / (float)sourceSpec.Width, 1.0f / (float)sourceSpec.Height));
 			PostProcess::DrawFullscreenQuad();
-			m_BloomMips[i]->Unbind();
 		}
 
 		// Upsample: additively blend each smaller mip onto the next-larger one
@@ -114,7 +135,6 @@ namespace GanymedE {
 		RenderCommand::SetBlendMode(RenderState::BlendMode::Additive);
 
 		m_BloomUpsampleShader->Bind();
-		m_BloomUpsampleShader->SetInt("u_Texture", 0);
 		m_BloomUpsampleShader->SetFloat("u_FilterRadius", m_Settings.BloomFilterRadius);
 
 		for (size_t i = m_BloomMips.size() - 1; i > 0; i--)
@@ -122,12 +142,14 @@ namespace GanymedE {
 			const Ref<Framebuffer>& source = m_BloomMips[i];
 			const auto& sourceSpec = source->GetSpecification();
 
-			m_BloomMips[i - 1]->Bind();
-			source->BindColorTexture(0, 0);
+			const uint16_t view = RenderPass::BloomUpsample + (uint16_t)i;
+			m_BloomMips[i - 1]->BindToView(view);
+			RenderCommand::SetViewId(view);
+
+			m_BloomUpsampleShader->SetTexture("u_Texture", 0, source->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
 			m_BloomUpsampleShader->SetFloat2("u_TexelSize",
 				glm::vec2(1.0f / (float)sourceSpec.Width, 1.0f / (float)sourceSpec.Height));
 			PostProcess::DrawFullscreenQuad();
-			m_BloomMips[i - 1]->Unbind();
 		}
 
 		RenderCommand::SetBlendMode(RenderState::BlendMode::Alpha);
@@ -136,8 +158,6 @@ namespace GanymedE {
 
 	void SceneRenderer::EndFrame()
 	{
-		m_SceneFramebuffer->Unbind();
-
 		Ref<Framebuffer> bloom;
 		if (m_Settings.BloomEnabled)
 			bloom = RenderBloom();
@@ -146,23 +166,22 @@ namespace GanymedE {
 
 		// Tonemap HDR (+ bloom) into the FXAA input, or straight to the composite
 		const Ref<Framebuffer>& tonemapTarget = m_Settings.FXAAEnabled ? m_TonemapFramebuffer : m_CompositeFramebuffer;
-		tonemapTarget->Bind();
-		RenderCommand::Clear();
+		tonemapTarget->BindToView(RenderPass::Tonemap);
+		RenderCommand::SetViewId(RenderPass::Tonemap);
+		bgfx::setViewClear(RenderPass::Tonemap, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
 		PostProcess::Tonemap(m_SceneFramebuffer, m_Settings.Exposure, bloom, m_Settings.BloomIntensity);
-		tonemapTarget->Unbind();
 
 		if (m_Settings.FXAAEnabled && m_FXAAShader)
 		{
-			m_CompositeFramebuffer->Bind();
-			RenderCommand::Clear();
+			m_CompositeFramebuffer->BindToView(RenderPass::FXAA);
+			RenderCommand::SetViewId(RenderPass::FXAA);
+			bgfx::setViewClear(RenderPass::FXAA, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
 
-			m_TonemapFramebuffer->BindColorTexture(0, 0);
 			m_FXAAShader->Bind();
-			m_FXAAShader->SetInt("u_Texture", 0);
+			m_FXAAShader->SetTexture("u_Texture", 0, m_TonemapFramebuffer->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
 			m_FXAAShader->SetFloat2("u_TexelSize",
 				glm::vec2(1.0f / (float)m_Width, 1.0f / (float)m_Height));
 			PostProcess::DrawFullscreenQuad();
-			m_CompositeFramebuffer->Unbind();
 		}
 
 		RenderCommand::SetBlend(true);
@@ -170,7 +189,11 @@ namespace GanymedE {
 
 	int SceneRenderer::ReadEntityID(int x, int y)
 	{
-		return m_SceneFramebuffer->ReadPixel(1, x, y);
+		// bgfx cannot read a render target synchronously. Phase 5 turns this into
+		// a request/poll pair (docs/BGFX_MIGRATION.md §7); until then picking is
+		// disabled rather than silently returning a stale value.
+		(void)x; (void)y;
+		return -1;
 	}
 
 	uint32_t SceneRenderer::GetFinalImageRendererID() const

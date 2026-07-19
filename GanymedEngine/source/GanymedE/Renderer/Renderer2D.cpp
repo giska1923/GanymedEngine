@@ -182,9 +182,10 @@ namespace GanymedE {
 
 		s_Data.TextureShader->Bind();
 
-		// Bind textures
+		// bgfx has no sampler arrays, so each batch slot feeds its own sampler
+		// uniform (s_tex0..s_tex15) - see the Option A note in the migration doc.
 		for (uint32_t i = 0; i < s_Data.TextureSlotIndex; i++)
-			s_Data.TextureSlots[i]->Bind(i);
+			s_Data.TextureShader->SetTexture("s_tex" + std::to_string(i), (uint8_t)i, s_Data.TextureSlots[i]);
 
 		RenderCommand::DrawIndexed(s_Data.QuadGeometry, s_Data.QuadIndexCount);
 		s_Data.Stats.DrawCalls++;

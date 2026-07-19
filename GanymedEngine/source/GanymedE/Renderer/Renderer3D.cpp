@@ -4,6 +4,7 @@
 #include "UniformBuffer.h"
 #include "Shader.h"
 #include "RenderCommand.h"
+#include "RenderPassIDs.h"
 #include "Buffer.h"
 #include "Framebuffer.h"
 #include "Environment.h"
@@ -500,10 +501,14 @@ namespace GanymedE {
 			if (!s_Data.ShadowFramebuffers[c])
 				continue;
 
-			s_Data.ShadowFramebuffers[c]->Bind();
+			// One view per cascade, so bgfx renders them in a defined order.
+			const uint16_t view = RenderPass::Shadow + (uint16_t)c;
+			s_Data.ShadowFramebuffers[c]->BindToView(view);
+			RenderCommand::SetViewId(view);
+			bgfx::setViewClear(view, BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+
 			RenderCommand::SetDepthTest(true);
 			RenderCommand::SetDepthWrite(true);
-			RenderCommand::Clear();
 
 			// Cull front faces while rendering caster depth to curb acne / peter-panning
 			RenderCommand::SetCullFace(true);
@@ -524,7 +529,6 @@ namespace GanymedE {
 			}
 
 			RenderCommand::SetCullMode(RenderState::CullMode::Back);
-			s_Data.ShadowFramebuffers[c]->Unbind();
 		}
 	}
 
@@ -544,8 +548,17 @@ namespace GanymedE {
 		{
 			std::string idx = std::to_string(c);
 			shader->SetMat4("u_LightSpaceMatrices[" + idx + "]", s_Data.CascadeLightSpace[c]);
-			shader->SetInt("u_ShadowMaps[" + idx + "]", (int)(kShadowMapSlot0 + c));
 			shader->SetFloat("u_CascadeSplits[" + idx + "]", s_Data.CascadeSplits[c]);
+
+			// Shadow lookups must clamp: a sample off the edge of a cascade would
+			// otherwise wrap and shadow the opposite side of the scene.
+			if (s_Data.ShadowFramebuffers[c])
+			{
+				shader->SetTexture("s_shadowMap" + idx,
+					(uint8_t)(kShadowMapSlot0 + c),
+					s_Data.ShadowFramebuffers[c]->GetDepthAttachment(),
+					BGFX_SAMPLER_UVW_CLAMP);
+			}
 		}
 
 		shader->SetInt("u_UseIBL", s_Data.UseIBL ? 1 : 0);
@@ -613,13 +626,6 @@ namespace GanymedE {
 		RenderCommand::SetDepthTest(true);
 		RenderCommand::SetDepthWrite(true);
 		RenderCommand::SetBlend(false);
-
-		// Bind all cascade depth maps once for the whole pass (slots 5..8)
-		for (uint32_t c = 0; c < kCascadeCount; c++)
-		{
-			if (s_Data.ShadowFramebuffers[c])
-				s_Data.ShadowFramebuffers[c]->BindDepthTexture(kShadowMapSlot0 + c);
-		}
 
 		// Bind IBL textures once for the pass (slots 9..11)
 		if (s_Data.UseIBL && s_Data.ActiveEnvironment)
