@@ -6,6 +6,10 @@
 !vendor/premake/bin
 bin/
 
+# Assets
+GanymedEditor/assets/AssetRegistry.gr
+GanymedEditor/assets/.assets
+
 # Premake-generated makefiles (regenerate with scripts/*_GenerateProjects.sh)
 Makefile
 *.make
