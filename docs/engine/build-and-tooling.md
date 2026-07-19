@@ -12,7 +12,7 @@
 Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor` and `Sandbox`
 (console apps linking the engine), plus the dependency group built from source via their own
 premake scripts in `GanymedEngine/extern/*.lua`: GLFW, ImGui (+ImGuizmo), yaml-cpp, Jolt,
-bx/bimg/bgfx. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug renderer), `Release`,
+bx/bimg/bgfx, Lua. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug renderer), `Release`,
 `Dist` (no Jolt debug renderer). Output goes to `bin/<config>-<os>-<arch>/<project>/`,
 intermediates to `temp/`.
 
@@ -33,6 +33,15 @@ Other build facts that have bitten before (details in
 - The `JPH_*` instruction-set defines in the engine's premake **must match `Jolt.lua`**, or Jolt
   types change layout across the boundary.
 - AVX2 is assumed (`/arch:AVX2`, `-mavx2 …`).
+- The `lua/lua` submodule is the **raw source mirror**, which does not ship `lua.hpp` — that
+  header only exists in the packaged release tarballs, and sol2 includes it unconditionally.
+  `extern/lua_cxx/lua.hpp` supplies it, and `IncludeDir.lua_cxx` must be on the include path
+  alongside `IncludeDir.lua`, never instead of it. It sits outside the submodule for the same
+  reason the build scripts do.
+- The engine defines **`SOL_ALL_SAFETIES_ON=1`**: bounds and type checks on every sol2 call, so a
+  script bug surfaces as a logged Lua error instead of a crash across the C++ boundary.
+- Lua is pinned to the newest **5.4.x** (5.4.8) rather than 5.5, because sol2 does not support 5.5
+  and TypeScriptToLua's highest `luaTarget` is 5.4.
 
 ## Dependencies (vendored under `GanymedEngine/extern/`)
 
@@ -48,9 +57,11 @@ Other build facts that have bitten before (details in
 | cgltf | glTF import (header-only) |
 | stb_image | Image loading (header-only) |
 | spdlog | Logging (header-only) |
+| Lua 5.4.8 | Gameplay scripting VM (built as a C static lib) |
+| sol2 3.5.0 | C++ binding layer over Lua (header-only) |
 
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
-`extern/Jolt.lua`, `extern/bgfx.lua`).
+`extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`).
 
 Those scripts must also keep their **output** outside the submodule trees — every one of them
 uses `%{wks.location}/bin` and `%{wks.location}/temp`, same as the first-party projects. A parent

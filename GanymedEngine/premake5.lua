@@ -40,7 +40,10 @@ project "GanymedEngine"
 		"JPH_USE_LZCNT",
 		"JPH_USE_TZCNT",
 		"JPH_USE_F16C",
-		"JPH_USE_FMADD"
+		"JPH_USE_FMADD",
+		-- Bounds/type checks on every sol2 call. Costs a little perf, turns script
+		-- bugs into readable errors instead of crashes.
+		"SOL_ALL_SAFETIES_ON=1"
 	}
 
 	includedirs
@@ -57,7 +60,10 @@ project "GanymedEngine"
 		"%{IncludeDir.Jolt}",
 		"%{IncludeDir.bx}",
 		"%{IncludeDir.bimg}",
-		"%{IncludeDir.bgfx}"
+		"%{IncludeDir.bgfx}",
+		"%{IncludeDir.lua}",
+		"%{IncludeDir.lua_cxx}",
+		"%{IncludeDir.sol2}"
 	}
 
 	links
@@ -68,7 +74,8 @@ project "GanymedEngine"
 		"Jolt",
 		"bgfx",
 		"bimg",
-		"bx"
+		"bx",
+		"Lua"
 	}
 
 	filter "system:windows"
