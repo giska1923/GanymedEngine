@@ -77,6 +77,11 @@ namespace GanymedE {
 		// pending-pick queue on top - see docs/BGFX_MIGRATION.md §7.
 		uint32_t RequestPixelRead(uint16_t viewId, uint32_t attachmentIndex, int x, int y, void* dest);
 
+		// True when the attachment resolved to an integer format. The entity-ID
+		// target falls back to R32F where R32I is not renderable, and readback
+		// has to reinterpret the bytes accordingly.
+		bool IsAttachmentIntegerFormat(uint32_t index) const;
+
 		bgfx::TextureHandle GetColorAttachment(uint32_t index = 0) const;
 		bgfx::TextureHandle GetDepthAttachment() const { return m_DepthAttachment; }
 

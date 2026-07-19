@@ -34,6 +34,10 @@ namespace GanymedE {
 		constexpr uint16_t FXAA = 25;
 		constexpr uint16_t Composite = 26;
 
+		// Entity-ID readback blits. Must sort after SceneHDR so the blit copies
+		// this frame's IDs rather than the previous frame's.
+		constexpr uint16_t Picking = 27;
+
 		// Transient views used only while baking an environment map on load
 		// (equirect -> cubemap, irradiance, prefilter, BRDF LUT).
 		constexpr uint16_t EnvironmentBake = 32;

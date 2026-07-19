@@ -15,6 +15,12 @@ namespace GanymedE {
 
 		static void OnWindowResize(uint32_t width, uint32_t height);
 
+		// bgfx completes work asynchronously, so anything waiting on the GPU
+		// (currently entity-ID readback) needs to know which frame has landed.
+		// BgfxContext reports it after each bgfx::frame().
+		static void OnFrameSubmitted(uint32_t frameNumber);
+		static uint32_t GetFrameNumber();
+
 		// bgfx's built-in stats/debug-text overlay (F1 in the running app).
 		static void SetDebugStatsEnabled(bool enabled);
 		static bool IsDebugStatsEnabled();

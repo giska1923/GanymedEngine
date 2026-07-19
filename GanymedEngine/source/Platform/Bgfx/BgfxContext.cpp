@@ -2,6 +2,7 @@
 #include "Platform/Bgfx/BgfxContext.h"
 
 #include "GanymedE/Renderer/RenderPassIDs.h"
+#include "GanymedE/Renderer/Renderer.h"
 
 #if defined(GE_PLATFORM_WINDOWS)
 	#define GLFW_EXPOSE_NATIVE_WIN32
@@ -132,7 +133,8 @@ namespace GanymedE {
 		// Phase 4 hands view management to SceneRenderer.
 		bgfx::touch(RenderPass::Backbuffer);
 
-		bgfx::frame();
+		// Anything waiting on GPU results (entity-ID readback) polls against this.
+		Renderer::OnFrameSubmitted(bgfx::frame());
 	}
 
 	void BgfxContext::Resize(uint32_t width, uint32_t height)

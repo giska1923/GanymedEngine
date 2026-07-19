@@ -42,7 +42,17 @@ namespace GanymedE {
 		void EndFrame();
 
 		// Entity-ID readback from the scene target (attachment 1), viewport coords.
-		int ReadEntityID(int x, int y);
+		//
+		// bgfx cannot read a render target synchronously, so this is a
+		// request/poll pair rather than the old blocking ReadEntityID: queue a
+		// pick now, collect it a frame or two later. For hover highlighting that
+		// latency is imperceptible. See docs/BGFX_MIGRATION.md §7.
+		void RequestEntityID(int x, int y);
+
+		// Returns true and fills outEntityID when a queued pick has landed.
+		// Only the newest completed result is reported; older ones are dropped,
+		// so a stale pixel never overwrites a newer one.
+		bool PollEntityID(int& outEntityID);
 
 		uint32_t GetFinalImageRendererID() const;
 		const Ref<Framebuffer>& GetSceneFramebuffer() const { return m_SceneFramebuffer; }
@@ -69,6 +79,20 @@ namespace GanymedE {
 		Ref<Shader> m_BloomDownsampleShader;
 		Ref<Shader> m_BloomUpsampleShader;
 		Ref<Shader> m_FXAAShader;
+
+		// Picks in flight. A slot's Value is written by bgfx itself once the GPU
+		// reaches ReadyFrame, so the storage must outlive the request - hence a
+		// fixed array rather than a resizing container.
+		struct PendingPick
+		{
+			bool InFlight = false;
+			uint32_t ReadyFrame = 0;
+			// R32I gives an int; the R32F fallback gives a float in the same bytes.
+			union { int32_t AsInt; float AsFloat; } Value { -1 };
+		};
+
+		static constexpr uint32_t kMaxPicksInFlight = 4;
+		PendingPick m_Picks[kMaxPicksInFlight];
 	};
 
 }

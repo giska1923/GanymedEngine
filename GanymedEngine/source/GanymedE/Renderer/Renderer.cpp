@@ -10,6 +10,7 @@
 namespace GanymedE {
 
 	static bool s_DebugStats = false;
+	static uint32_t s_FrameNumber = 0;
 
 	void Renderer::Init()
 	{
@@ -45,6 +46,16 @@ namespace GanymedE {
 			return;
 
 		RenderCommand::SetViewport(0, 0, width, height);
+	}
+
+	void Renderer::OnFrameSubmitted(uint32_t frameNumber)
+	{
+		s_FrameNumber = frameNumber;
+	}
+
+	uint32_t Renderer::GetFrameNumber()
+	{
+		return s_FrameNumber;
 	}
 
 	void Renderer::SetDebugStatsEnabled(bool enabled)

@@ -4,6 +4,7 @@
 #include "GanymedE/Renderer/PostProcess.h"
 #include "GanymedE/Renderer/RenderCommand.h"
 #include "GanymedE/Renderer/RenderPassIDs.h"
+#include "GanymedE/Renderer/Renderer.h"
 
 #include <algorithm>
 
@@ -12,16 +13,10 @@ namespace GanymedE {
 	static constexpr uint32_t kMaxBloomMips = 6;
 	static constexpr uint32_t kMinBloomMipSize = 8;
 
-	// bgfx view clears take a packed 0xRRGGBBAA word rather than four floats.
-	static uint32_t PackRGBA(const glm::vec4& c)
-	{
-		auto channel = [](float v) -> uint32_t
-		{
-			return (uint32_t)(glm::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
-		};
-
-		return (channel(c.r) << 24) | (channel(c.g) << 16) | (channel(c.b) << 8) | channel(c.a);
-	}
+	// Clear-colour palette slots. bgfx keeps a global palette; these two indices
+	// belong to the scene pass and must not collide with any other pass's.
+	static constexpr uint8_t kSceneColourPalette = 0;
+	static constexpr uint8_t kEntityIdPalette = 1;
 
 	SceneRenderer::SceneRenderer(uint32_t width, uint32_t height)
 		: m_Width(std::max(width, 1u)), m_Height(std::max(height, 1u))
@@ -91,14 +86,25 @@ namespace GanymedE {
 		m_SceneFramebuffer->BindToView(RenderPass::SceneHDR);
 		RenderCommand::SetViewId(RenderPass::SceneHDR);
 
-		// The clear is view state rather than an immediate command. Clearing the
-		// entity-ID attachment to "no entity" (-1) comes along with it: bgfx
-		// clears every attachment of the view at once, so the old separate
-		// ClearAttachment call has no equivalent and is not needed.
+		// The clear is view state rather than an immediate command.
+		//
+		// The plain setViewClear(rgba) form applies one packed colour to every
+		// attachment, which cannot express "clear entity IDs to -1" - packing -1
+		// into an 8-bit-per-channel word is meaningless. The palette form gives
+		// each attachment its own float4 entry, which bgfx converts per format,
+		// so the R32I target genuinely receives -1.
 		const glm::vec4& c = m_Settings.ClearColor;
+		const float sceneColour[4] = { c.r, c.g, c.b, c.a };
+		const float noEntity[4] = { -1.0f, -1.0f, -1.0f, -1.0f };
+
+		bgfx::setPaletteColor(kSceneColourPalette, sceneColour);
+		bgfx::setPaletteColor(kEntityIdPalette, noEntity);
+
 		bgfx::setViewClear(RenderPass::SceneHDR,
 			BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
-			PackRGBA(c), 1.0f, 0);
+			1.0f, 0,
+			kSceneColourPalette,  // attachment 0 - HDR colour
+			kEntityIdPalette);    // attachment 1 - entity IDs
 	}
 
 	Ref<Framebuffer> SceneRenderer::RenderBloom()
@@ -187,13 +193,66 @@ namespace GanymedE {
 		RenderCommand::SetBlend(true);
 	}
 
-	int SceneRenderer::ReadEntityID(int x, int y)
+	void SceneRenderer::RequestEntityID(int x, int y)
 	{
-		// bgfx cannot read a render target synchronously. Phase 5 turns this into
-		// a request/poll pair (docs/BGFX_MIGRATION.md §7); until then picking is
-		// disabled rather than silently returning a stale value.
-		(void)x; (void)y;
-		return -1;
+		if (!m_SceneFramebuffer || !m_SceneFramebuffer->IsValid())
+			return;
+
+		if (x < 0 || y < 0 || x >= (int)m_Width || y >= (int)m_Height)
+			return;
+
+		PendingPick* slot = nullptr;
+		for (PendingPick& pick : m_Picks)
+		{
+			if (!pick.InFlight)
+			{
+				slot = &pick;
+				break;
+			}
+		}
+
+		// Every slot busy means the GPU is more than kMaxPicksInFlight frames
+		// behind. Dropping this request is correct - the next frame issues
+		// another, and a queue that grows would only add latency.
+		if (!slot)
+			return;
+
+		const uint32_t readyFrame = m_SceneFramebuffer->RequestPixelRead(
+			RenderPass::Picking, 1, x, y, &slot->Value);
+
+		if (readyFrame == 0)
+			return;
+
+		slot->InFlight = true;
+		slot->ReadyFrame = readyFrame;
+	}
+
+	bool SceneRenderer::PollEntityID(int& outEntityID)
+	{
+		const uint32_t current = Renderer::GetFrameNumber();
+		const bool isInteger = m_SceneFramebuffer && m_SceneFramebuffer->IsAttachmentIntegerFormat(1);
+
+		bool found = false;
+		uint32_t newest = 0;
+
+		for (PendingPick& pick : m_Picks)
+		{
+			if (!pick.InFlight || current < pick.ReadyFrame)
+				continue;
+
+			// Keep only the most recent landed result; retiring the older ones
+			// stops a stale pixel from winning the race.
+			if (!found || pick.ReadyFrame >= newest)
+			{
+				newest = pick.ReadyFrame;
+				outEntityID = isInteger ? pick.Value.AsInt : (int)pick.Value.AsFloat;
+				found = true;
+			}
+
+			pick.InFlight = false;
+		}
+
+		return found;
 	}
 
 	uint32_t SceneRenderer::GetFinalImageRendererID() const

@@ -191,6 +191,15 @@ namespace GanymedE {
 		return bgfx::readTexture(m_ReadBack, dest);
 	}
 
+	bool Framebuffer::IsAttachmentIntegerFormat(uint32_t index) const
+	{
+		if (index >= m_Specification.Attachments.Attachments.size())
+			return false;
+
+		return ResolveFormat(m_Specification.Attachments.Attachments[index].TextureFormat)
+			== bgfx::TextureFormat::R32I;
+	}
+
 	bgfx::TextureHandle Framebuffer::GetColorAttachment(uint32_t index) const
 	{
 		if (index >= m_ColorAttachments.size())
