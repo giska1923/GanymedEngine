@@ -57,7 +57,6 @@ project "GanymedEditor"
 		links
 		{
 			"GLFW",
-			"Glad",
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
@@ -76,7 +75,6 @@ project "GanymedEditor"
 		links
 		{
 			"GLFW",
-			"Glad",
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",

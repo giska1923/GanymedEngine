@@ -48,7 +48,6 @@ project "Sandbox"
 		links
 		{
 			"GLFW",
-			"Glad",
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
@@ -67,7 +66,6 @@ project "Sandbox"
 		links
 		{
 			"GLFW",
-			"Glad",
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
