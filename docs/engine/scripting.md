@@ -159,8 +159,18 @@ down *before* it.
 into the shared VM — and hot reload wants the path anyway. `ScriptEngine` resolves handle → relative
 path via `AssetManager::GetMetadata`, then joins `GetAssetRoot()`.
 
+## Editor & serialization
+
+`ScriptComponent` appears in the Add Component popup and gets its own inspector section showing the
+assigned asset with a Clear button; dropping a `.lua` from the Content Browser assigns it
+(extension-filtered, imported through `AssetManager::ImportAsset`). `.lua` files are typed and
+importable in the Content Browser. Details: [editor.md](../editor/editor.md).
+
+Serialization follows the handle-first, legacy-path-fallback shape every other asset-referencing
+component uses — `Script` (handle) with a `ScriptPath` fallback.
+
 ## Not done yet
 
-Editor UI and serialization for `ScriptComponent`, the TypeScript toolchain, exposed script
-properties, collision-event dispatch from `PhysicsSystem`, and physics bindings. See the plan
-document's implementation order.
+The TypeScript toolchain, exposed script properties (a `Properties` table read by the inspector and
+serialized per entity), collision-event dispatch from `PhysicsSystem`, physics bindings through
+`PhysicsScene`, and live hot reload during play. See the plan document's implementation order.

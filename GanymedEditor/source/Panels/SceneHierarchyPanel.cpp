@@ -359,6 +359,15 @@ namespace GanymedE {
 				}
 			}
 
+			if (!m_SelectionContext.HasComponent<ScriptComponent>())
+			{
+				if (ImGui::MenuItem("Script"))
+				{
+					m_SelectionContext.AddComponent<ScriptComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
 			if (!m_SelectionContext.HasComponent<RigidBodyComponent>())
 			{
 				if (ImGui::MenuItem("Rigid Body"))
@@ -556,6 +565,40 @@ namespace GanymedE {
 					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 					if (ext == ".gltf" || ext == ".glb")
 						component.Mesh = AssetManager::ImportAsset(path);
+				}
+				ImGui::EndDragDropTarget();
+			}
+		});
+
+		DrawComponent<ScriptComponent>("Script", entity, [](auto& component)
+		{
+			if (IsAssetHandleValid(component.Script))
+			{
+				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Script);
+				if (metadata)
+					ImGui::Text("Script: %s", metadata->FilePath.c_str());
+				else
+					ImGui::Text("Script handle: %llu", static_cast<uint64_t>(component.Script));
+
+				if (ImGui::Button("Clear"))
+					component.Script = InvalidAssetHandle;
+			}
+			else
+			{
+				ImGui::TextDisabled("No script assigned");
+			}
+
+			ImGui::TextDisabled("Drop a .lua file here");
+
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
+				{
+					const char* path = (const char*)payload->Data;
+					std::string ext = std::filesystem::path(path).extension().string();
+					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+					if (ext == ".lua")
+						component.Script = AssetManager::ImportAsset(path);
 				}
 				ImGui::EndDragDropTarget();
 			}

@@ -178,6 +178,18 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		if (entity.HasComponent<ScriptComponent>())
+		{
+			out << YAML::Key << "ScriptComponent";
+			out << YAML::BeginMap;
+
+			auto& sc = entity.GetComponent<ScriptComponent>();
+			if (IsAssetHandleValid(sc.Script))
+				out << YAML::Key << "Script" << YAML::Value << static_cast<uint64_t>(sc.Script);
+
+			out << YAML::EndMap;
+		}
+
 		if (entity.HasComponent<DirectionalLightComponent>())
 		{
 			out << YAML::Key << "DirectionalLightComponent";
@@ -425,6 +437,27 @@ namespace GanymedE {
 						auto meshPath = staticMeshComponent["MeshPath"];
 						if (meshPath)
 							smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
+					}
+				}
+
+				auto scriptComponent = entity["ScriptComponent"];
+				if (scriptComponent)
+				{
+					auto& sc = deserializedEntity.AddComponent<ScriptComponent>();
+
+					auto scriptHandle = scriptComponent["Script"];
+					if (scriptHandle)
+					{
+						// No GetAsset<> call to match the mesh path above: a script has no runtime
+						// object to warm, and ScriptEngine loads the chunk itself on instantiation.
+						sc.Script = scriptHandle.as<uint64_t>();
+					}
+					else
+					{
+						// Backward compatibility with path-based scenes
+						auto scriptPath = scriptComponent["ScriptPath"];
+						if (scriptPath)
+							sc.Script = AssetManager::ImportAsset(scriptPath.as<std::string>());
 					}
 				}
 

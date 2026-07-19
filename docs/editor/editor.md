@@ -101,13 +101,17 @@ API — legal because panels run outside the system update.
 ### Properties (drawn by the same panel)
 
 Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, rigid body, colliders); one collapsible section per component
+lights, sky light, script, rigid body, colliders); one collapsible section per component
 (`DrawComponent<T>` helper with a remove-component menu). Notable behaviors:
 
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons) and call
   `MarkChanged<TransformComponent>` only when a value actually changed.
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
 - Static mesh: shows the mesh asset (handle + path) — assign by dragging from the Content Browser.
+- Script: shows the `.lua` asset (handle + path) with a Clear button — assign by dragging a `.lua`
+  from the Content Browser (the drop is extension-filtered). Removing the component in edit mode is
+  safe: `LuaScriptSystem` drains its `FiniView` there and tears down any instance left from a
+  previous play session. See [scripting.md](../engine/scripting.md).
 - Sky light: environment asset, sky/ground colors, intensity, DrawSkybox.
 - Colliders: dimensions, offset, friction/restitution.
 
@@ -120,11 +124,11 @@ one of the two remaining hand-maintained per-component lists (the other is the s
 `assets/` (the `.assets/` mesh-cache directory is hidden):
 
 - Directory/file icons, tinted by asset type (mesh blue, environment orange, scene green, texture
-  pink, material purple). Double-click enters directories; the `<-` button goes up but can never
+  pink, material purple, script yellow). Double-click enters directories; the `<-` button goes up but can never
   escape the asset root (path-normalized check).
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
-- Right-click on an importable file (mesh/environment/texture/material) → **Import**, registering
+- Right-click on an importable file (mesh/environment/texture/material/script) → **Import**, registering
   it with the `AssetManager` (idempotent; persists `AssetRegistry.gr` immediately).
 
 ## Adding an editor feature — where things hook

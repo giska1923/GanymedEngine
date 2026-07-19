@@ -160,8 +160,10 @@ blocks keyed by component name. Notes:
 
 - Entity identity is the real UUID; deserialization mints a fresh UUID on `0` or collision
   (legacy scenes serialized one hardcoded ID for every entity).
-- Asset references serialize as **handles** (`uint64_t`); `MeshPath`/`EnvironmentPath` string
-  fallbacks are still read for backward compatibility and imported into the registry on load.
+- Asset references serialize as **handles** (`uint64_t`); `MeshPath`/`EnvironmentPath`/`ScriptPath`
+  string fallbacks are still read for backward compatibility and imported into the registry on load.
+  Unlike meshes, a deserialized `ScriptComponent` handle is *not* warmed through `GetAsset<>` —
+  scripts have no runtime object to cache, and `ScriptEngine` loads the chunk on instantiation.
 - `WorldTransformComponent` is intentionally not serialized (derived).
 - Adding a component type means extending both `SerializeEntity` and `Deserialize` — this is one
   of the two remaining hand-maintained per-component lists (the other is the editor UI).
