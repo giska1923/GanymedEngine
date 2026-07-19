@@ -16,6 +16,19 @@ workspace "GanymedEngine"
 		".editorconfig"
 	}
 
+	-- bgfx normalises clip space to [0,1] on D3D/Vulkan/Metal, but glm defaults to
+	-- OpenGL's [-1,1]. Left unset, everything nearer than ~2*near*far/(far+near)
+	-- maps to a negative ndc z and is clipped away - verified by capture: a probe
+	-- at 0.15 units vanished until this was defined.
+	--
+	-- Workspace scope on purpose: glm is header-only, so a project disagreeing
+	-- here would silently change the layout of shared glm types across the static
+	-- library boundary. BgfxContext asserts the live backend agrees.
+	defines
+	{
+		"GLM_FORCE_DEPTH_ZERO_TO_ONE"
+	}
+
 	-- Enable multi-processor compilation (compatible with older Premake5 versions)
 	filter "system:windows"
 		flags { "MultiProcessorCompile" }

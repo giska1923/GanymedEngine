@@ -31,6 +31,10 @@ temp/
 # Locally built bgfx tools (build with scripts/build_shader_tools.*)
 scripts/tools/
 
+# Compiled shader bytecode - derived from assets/shaders/src/*.sc.
+# Regenerate with scripts/compile_shaders.bat after any shader edit.
+**/assets/shaders/compiled/
+
 # GanymedE files
 *.log
 *.tlog

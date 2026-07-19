@@ -97,6 +97,19 @@ namespace GanymedE {
 		GE_CORE_INFO("  Homogeneous depth: {0}", caps->homogeneousDepth);
 		GE_CORE_INFO("  Origin bottom left: {0}", caps->originBottomLeft);
 
+		// The whole project is compiled with GLM_FORCE_DEPTH_ZERO_TO_ONE (see the
+		// workspace defines in premake5.lua). That is a compile-time choice, so a
+		// backend wanting OpenGL's [-1,1] clip depth would not fail loudly - it
+		// would just render with wrong near-plane clipping and half the depth
+		// precision. Say so instead.
+		if (caps->homogeneousDepth)
+		{
+			GE_CORE_ERROR("Backend '{0}' expects [-1,1] clip depth, but glm is built for [0,1]. "
+				"Near geometry will clip incorrectly - projection matrices need a caps-driven "
+				"path (see docs/BGFX_MIGRATION.md §9.3).",
+				bgfx::getRendererName(bgfx::getRendererType()));
+		}
+
 		// BGFX_DEBUG_TEXT is the baseline the stats overlay draws on top of.
 		bgfx::setDebug(BGFX_DEBUG_TEXT);
 
@@ -105,7 +118,6 @@ namespace GanymedE {
 			0x1a1a2eff, // matches the old GL clear colour
 			1.0f, 0);
 		bgfx::setViewRect(RenderPass::Backbuffer, 0, 0, uint16_t(m_Width), uint16_t(m_Height));
-
 	}
 
 	void BgfxContext::Frame()
