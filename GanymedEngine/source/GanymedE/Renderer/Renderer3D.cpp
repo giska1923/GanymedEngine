@@ -511,6 +511,12 @@ namespace GanymedE {
 			RenderCommand::SetDepthTest(true);
 			RenderCommand::SetDepthWrite(true);
 
+			// Depth-only target: it has no colour attachment, so colour writes
+			// must be off. bgfx will not service a draw whose write mask targets
+			// attachments the framebuffer does not have.
+			RenderCommand::GetState().WriteRGB = false;
+			RenderCommand::GetState().WriteAlpha = false;
+
 			// Cull front faces while rendering caster depth to curb acne / peter-panning
 			RenderCommand::SetCullFace(true);
 			RenderCommand::SetCullMode(RenderState::CullMode::Front);
@@ -530,6 +536,8 @@ namespace GanymedE {
 			}
 
 			RenderCommand::SetCullMode(RenderState::CullMode::Back);
+			RenderCommand::GetState().WriteRGB = true;
+			RenderCommand::GetState().WriteAlpha = true;
 		}
 	}
 
