@@ -42,7 +42,7 @@ kept because they record *why* things are the way they are, including verificati
 - [`3D_ROADMAP.md`](toDo&done/3D_ROADMAP.md) — the original 2D→3D plan (phases 0–8, essentially complete)
 - [`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](toDo&done/ECS_VIEWS_IMPLEMENTATION_GUIDE.md) — the file-by-file plan for the view/access-wrapper ECS (complete)
 - [`BGFX_MIGRATION.md`](toDo&done/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except some Phase 7 hardening)
-- [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — the next planned phase (not yet implemented)
+- [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — the next planned phase (revised 2026-07-19 for the post-bgfx/post-ECS engine; not yet implemented)
 
 ## Building & running
 

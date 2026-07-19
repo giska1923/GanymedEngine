@@ -2,9 +2,25 @@
 
 **Lua 5.4 + sol2 (scripting) · TypeScriptToLua (TS authoring) · RmlUi (HTML/CSS UI)**
 
-This document describes how to integrate a complete gameplay scripting and UI stack
-into GanymedEngine, following the engine's existing conventions (premake5 workspace,
-vendored source dependencies as static libs, EnTT ECS, Hazel-style scene lifecycle).
+This document describes how to integrate a complete gameplay scripting and UI stack into
+GanymedEngine, following the engine's conventions: premake5 workspace, vendored source
+dependencies as static libs, the view/access-wrapper ECS, and the bgfx renderer.
+
+> **Revised 2026-07-19.** The original version of this plan predated two engine-wide
+> refactors and was invalidated by both:
+>
+> - the **ECS views refactor** ([`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](ECS_VIEWS_IMPLEMENTATION_GUIDE.md))
+>   deleted every `Scene::OnUpdateRuntime`-era insertion point this doc used to name, moved
+>   collision dispatch into `PhysicsSystem`, made `TransformComponent` change-tracked (a script
+>   writing it directly would *silently not move anything on screen*), and made immediate
+>   structural changes illegal during system updates;
+> - the **bgfx migration** ([`BGFX_MIGRATION.md`](BGFX_MIGRATION.md)) removed OpenGL, Glad and
+>   framebuffer bind/unbind entirely, so RmlUi's reference GL3 backend cannot even initialise —
+>   a custom bgfx render backend is required (the in-tree ImGui backend is the template).
+>
+> This revision folds all of that in. Where it deviates from the original plan, the reason is
+> stated inline. The stack choice itself (Lua 5.4 + sol2, TSTL, RmlUi, one shared VM) was
+> re-evaluated and stands.
 
 ---
 
@@ -19,18 +35,25 @@ vendored source dependencies as static libs, EnTT ECS, Hazel-style scene lifecyc
 │      ▼                                                          │
 │  Lua 5.4 files  →  GanymedEditor/assets/scripts/*.lua           │
 └──────────────────────────────┬──────────────────────────────────┘
-                               │ loaded as assets
+                               │ registered as Script assets
 ┌──────────────────────────────▼──────────────────────────────────┐
 │  Engine (C++)                                                   │
 │                                                                 │
+│  LuaScriptSystem (ECS::System, registered in Scene ctor)        │
+│    • InitView  → scripts that appeared since last update        │
+│    • FiniView  → scripts that went away (incl. entity death)    │
+│    • IterView  → per-frame OnUpdate                             │
+│    • mirrors NativeScriptSystem exactly                         │
+│                                                                 │
 │  ScriptEngine (sol2 → Lua 5.4 VM)                               │
 │    • one sol::state for the whole runtime                       │
-│    • one instance table per scripted entity                     │
+│    • class tables per script asset, instance tables per entity  │
 │    • lifecycle: OnCreate / OnUpdate / OnCollisionEnter/Exit /   │
-│      OnDestroy — mirrors ScriptableEntity                       │
+│      OnDestroy — same contract as ScriptableEntity              │
 │                                                                 │
 │  UIEngine (RmlUi)                                               │
-│    • RML/RCSS documents rendered via the GL3 backend            │
+│    • RML/RCSS documents rendered via a custom bgfx backend      │
+│      (RenderPass::UI view into the composite framebuffer)       │
 │    • data bindings for C++ → UI values                          │
 │    • RmlUi Lua plugin runs on the SAME lua_State, so UI logic   │
 │      can also be written in TS → Lua                            │
@@ -43,11 +66,14 @@ Key design decisions:
    Scripts and UI can call each other; only one set of bindings to maintain.
 2. **TypeScript is a pure tooling layer.** The engine only ever sees `.lua` files.
    No JS engine, no Node at runtime.
-3. **`ScriptComponent` stays a POD** (just a path string). All `sol::` objects live
-   inside `ScriptEngine`, keyed by entity UUID — `Components.h` stays sol2-free and
-   `Scene::Copy` keeps working without changes to its copy semantics.
-4. The existing `NativeScriptComponent` stays untouched — Lua scripting is added
-   alongside it.
+3. **`ScriptComponent` stays a POD** — an `AssetHandle`, nothing else. All `sol::` objects live
+   inside `ScriptEngine`, keyed by entity UUID, so `Components.h` stays sol2-free and the
+   play-mode `Scene::Copy` needs nothing special.
+4. **Scripting is a system, not a Scene bolt-on.** A `LuaScriptSystem` registered in the `Scene`
+   constructor drives the lifecycle through the same reactive views `NativeScriptSystem` uses.
+   The original plan's hand-called `InstantiateEntity` hook ("called when an entity with a
+   ScriptComponent is created during play") had no caller — `InitView` *is* that caller.
+5. The existing `NativeScriptComponent` stays untouched — Lua scripting is added alongside it.
 
 ---
 
@@ -63,15 +89,17 @@ git submodule add https://github.com/ThePhD/sol2 GanymedEngine/extern/sol2
 cd GanymedEngine/extern/sol2 && git checkout v3.3.0 && cd -  # or newest release tag
 ```
 
-- `lua/lua` is the official read-only source mirror — plain C files, no build system
-  needed, which is perfect for the engine's "build everything as a premake static lib"
-  approach.
+- `lua/lua` is the official read-only source mirror — plain C files, no build system needed,
+  which fits the engine's "build everything as a premake static lib" approach.
 - sol2 is header-only; only an include dir is needed.
+- If script throughput ever becomes a problem, LuaJIT is a drop-in *authoring-compatible* swap
+  (TSTL can target it via `luaTarget: "JIT"`), so avoid Lua-5.4-only constructs in the binding
+  layer. Not worth doing up front.
 
 ### 2.2 Premake build script for Lua
 
-Following the `Jolt.lua` / `GLFW.lua` pattern (build script lives *outside* the
-submodule), create `GanymedEngine/extern/Lua.lua`:
+Following the `Jolt.lua` / `GLFW.lua` pattern (build script lives *outside* the submodule),
+create `GanymedEngine/extern/Lua.lua`:
 
 ```lua
 -- Build script for the Lua submodule. Lives outside the submodule because
@@ -82,8 +110,11 @@ project "Lua"
 	staticruntime "off"
 	warnings "Off"
 
-	targetdir ("lua/bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("lua/bin-int/" .. outputdir .. "/%{prj.name}")
+	-- Workspace-level output dirs, like every other extern project. Writing
+	-- bin/ inside the submodule tree makes the submodule permanently dirty in
+	-- git status - the parent repo's .gitignore does not apply inside it.
+	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
 
 	files
 	{
@@ -160,24 +191,48 @@ defines
 }
 ```
 
-> **MSVC note:** sol2 needs exceptions (on by default) and C++17 (already set).
-> `staticruntime "off"` matches the rest of the workspace — keep it consistent or
-> you'll get LNK4098/2038 runtime-mismatch errors.
+> **MSVC note:** sol2 needs exceptions (on by default for the engine project; only the bgfx
+> projects disable them locally) and C++17 (already set). `staticruntime "off"` matches the rest
+> of the workspace — keep it consistent or you'll get LNK4098/2038 runtime-mismatch errors.
 
 ### 2.4 `ScriptComponent` and the Script asset type
 
-Add to `Components.h` (POD only — no sol2 include here):
+Add to `Components.h` (POD only — no sol2 include here). **Deviation from the original plan:**
+the component holds an `AssetHandle`, not a path string. The asset system exists now; every other
+asset-referencing component (`StaticMeshComponent`, `SkyLightComponent`) uses handles, and the
+serializer already has the handle + legacy-path pattern to copy:
 
 ```cpp
 struct ScriptComponent
 {
-	// Path relative to assets/, e.g. "scripts/Player.lua"
-	std::string ScriptPath;
+	AssetHandle Script = InvalidAssetHandle;   // a .lua asset
 
 	ScriptComponent() = default;
 	ScriptComponent(const ScriptComponent&) = default;
 };
 ```
+
+Register it with the ECS — this is what replaced the original plan's hand-edits to
+`Scene::Copy`. In `ECS/ComponentTraits.h`:
+
+```cpp
+// Script lifecycle is reactive: InitView instantiates scripts that appear,
+// FiniView tears down scripts that go away (including entity destruction).
+template<> struct ComponentTraits<ScriptComponent>
+{
+	static constexpr bool TrackChanges = false;
+	static constexpr bool EnableInit   = true;
+	static constexpr bool EnableFini   = true;
+};
+
+using ComponentList = TypeList<
+	/* ...existing... */
+	ScriptComponent
+>;
+```
+
+Adding it to `ComponentList` automatically covers `Scene::Copy`, the ViewDesc bitmask space and
+the on_construct/on_destroy signal hookup. Serializer and editor UI remain manual (§2.8).
 
 Extend the asset system (`AssetTypes.h` / `.cpp`):
 
@@ -197,217 +252,174 @@ enum class AssetType : uint16_t
 if (extension == ".lua") return AssetType::Script;
 ```
 
-This makes `.lua` files show up in the ContentBrowser with proper typing, and later
-lets you drag-drop them onto a `ScriptComponent` field.
+`.lua` files then show up typed in the ContentBrowser (give them an icon tint in
+`GetAssetIconTint` and add `Script` to `IsImportableAsset`), and drag-drop onto a
+`ScriptComponent` field goes through `AssetManager::ImportAsset` exactly like meshes do.
+No `GetAsset<>` specialization is needed — `ScriptEngine` resolves handle → relative path via
+`AssetManager::GetMetadata` and loads the file itself (hot reload wants the file path anyway).
 
-### 2.5 The `ScriptEngine`
+### 2.5 `LuaScriptSystem` + `ScriptEngine`
 
-New files: `GanymedEngine/source/GanymedE/Scripting/ScriptEngine.h/.cpp`.
+Two pieces with a clean split:
 
-**Header:**
+- **`LuaScriptSystem`** (`GanymedE/Scene/Systems/LuaScriptSystem.h/.cpp`) — the per-scene driver.
+  Owns *when* things happen, via views. Contains no sol2 types, so its header stays cheap.
+- **`ScriptEngine`** (`GanymedE/Scripting/ScriptEngine.h/.cpp`) — the global VM owner. Owns *what*
+  happens: the `sol::state`, class tables per script asset, instance tables per entity UUID.
+  All `sol::` includes stay inside `Scripting/*.cpp`.
+
+The system mirrors [`NativeScriptSystem`](../../GanymedEngine/source/GanymedE/Scene/Systems/NativeScriptSystem.cpp)
+almost line for line:
 
 ```cpp
-#pragma once
+// LuaScriptSystem.h
+class LuaScriptSystem : public ECS::System<LuaScriptSystem>
+{
+public:
+	// FiniView note: ReactHas would not compile here - FiniView statically requires
+	// ReadTypes == ReactTypes ("may only access its React types"), so the react
+	// element must be ReactRO. Reading the buried component is useful for logging.
+	using ScriptInitView = ECS::InitView<ECS::EntityId, ECS::ReactRO<ScriptComponent>>;
+	using ScriptFiniView = ECS::FiniView<ECS::EntityId, ECS::ReactRO<ScriptComponent>>;
+	using ScriptView     = ECS::IterView<ECS::EntityId, ECS::RO<ScriptComponent>>;
 
-#include "GanymedE/Core/Timestep.h"
-#include "GanymedE/Core/UUID.h"
+	// Never accessed through this view - declared so ValidateOrdering knows script
+	// code writes transforms (via the bindings) and must run before TransformSystem.
+	// Same trick PhysicsSystem uses for its out-of-view transform writeback.
+	using TransformWrite = ECS::AccessView<ECS::RW<TransformComponent>>;
 
-namespace GanymedE {
+	using Views = TypeList<ScriptInitView, ScriptFiniView, ScriptView, TransformWrite>;
 
-	class Scene;
-	class Entity;
+	using ECS::System<LuaScriptSystem>::System;
 
-	class ScriptEngine
-	{
-	public:
-		static void Init();       // create sol::state, open libs, register bindings
-		static void Shutdown();
+	void OnRuntimeStart() override;   // sweep all live scripts -> ScriptEngine::Instantiate
+	void OnRuntimeStop() override;    // sweep -> ScriptEngine::DestroyAllInstances
+	void OnUpdate(Timestep ts) override;
+	void OnUpdateEditor(Timestep ts) override;
+	const char* Name() const override { return "LuaScriptSystem"; }
+};
+```
 
-		// Scene lifecycle (mirrors the NativeScriptComponent flow in Scene.cpp)
-		static void OnRuntimeStart(Scene* scene);
-		static void OnRuntimeStop();
-		static void OnUpdate(Timestep ts);
+```cpp
+// LuaScriptSystem.cpp (shape)
+void LuaScriptSystem::OnUpdate(Timestep ts)
+{
+	// Scripts that appeared since the last update. First-ever read reports every
+	// existing script, which is why Instantiate is idempotent - OnRuntimeStart has
+	// usually created them already.
+	for (auto [entity, script] : View<ScriptInitView>())
+		ScriptEngine::Instantiate(Entity{ entity, &m_Scene }, script.Script);
 
-		static void OnCollisionEnter(Entity entity, Entity other);
-		static void OnCollisionExit(Entity entity, Entity other);
+	// Scripts that went away - component removed or the whole entity destroyed.
+	// The instance lives in ScriptEngine keyed by UUID, so only the id is needed;
+	// the buried component is available for diagnostics.
+	for (auto [entity, script] : View<ScriptFiniView>())
+		ScriptEngine::DestroyInstance(entity);
 
-		// Called when an entity with a ScriptComponent is created during play
-		static void InstantiateEntity(Entity entity);
-		static void DestroyEntityInstance(UUID entityID);
+	for (auto [entity, script] : View<ScriptView>())
+		ScriptEngine::Update(entity, ts);
+}
 
-		// Returns the raw lua_State, needed to initialise the RmlUi Lua plugin
-		static void* GetLuaState();
-	};
+void LuaScriptSystem::OnUpdateEditor(Timestep ts)
+{
+	// Edit mode does not run scripts, but the reactive views MUST still be read
+	// every update or the next runtime read asserts on the skipped epoch. Teardown
+	// still runs, so removing a ScriptComponent in edit mode cleans up any instance
+	// left from a previous play session. Exactly NativeScriptSystem's pattern.
+	for (auto [entity, script] : View<ScriptInitView>()) { /* drain only */ }
+	for (auto [entity, script] : View<ScriptFiniView>())
+		ScriptEngine::DestroyInstance(entity);
+	(void)ts;
 }
 ```
 
-**Implementation** (the important parts):
+Registration, in the `Scene` constructor — order is execution order, and
+`ValidateOrdering` will hold you to it:
 
 ```cpp
-#include "gepch.h"
-#include "ScriptEngine.h"
-
-#include "GanymedE/Scene/Scene.h"
-#include "GanymedE/Scene/Entity.h"
-#include "GanymedE/Scene/Components.h"
-#include "GanymedE/Assets/AssetPaths.h"
-
-#include <sol/sol.hpp>
-
-namespace GanymedE {
-
-	struct ScriptEngineData
-	{
-		sol::state Lua;
-		Scene* SceneContext = nullptr;
-
-		// Loaded script "classes" keyed by script path (chunk executed once)
-		std::unordered_map<std::string, sol::table> ScriptClasses;
-		// Per-entity instance tables keyed by entity UUID
-		std::unordered_map<UUID, sol::table> EntityInstances;
-	};
-
-	static ScriptEngineData* s_Data = nullptr;
-
-	static void RegisterBindings(sol::state& lua);   // section 2.6
-
-	void ScriptEngine::Init()
-	{
-		s_Data = new ScriptEngineData();
-		s_Data->Lua.open_libraries(
-			sol::lib::base, sol::lib::math, sol::lib::string,
-			sol::lib::table, sol::lib::package);
-		RegisterBindings(s_Data->Lua);
-	}
-
-	void ScriptEngine::Shutdown()
-	{
-		delete s_Data;
-		s_Data = nullptr;
-	}
-
-	static sol::table LoadScriptClass(const std::string& relativePath)
-	{
-		auto it = s_Data->ScriptClasses.find(relativePath);
-		if (it != s_Data->ScriptClasses.end())
-			return it->second;
-
-		std::filesystem::path fullPath = AssetPaths::GetAssetDirectory() / relativePath;
-		sol::protected_function_result result =
-			s_Data->Lua.safe_script_file(fullPath.string(), sol::script_pass_on_error);
-
-		if (!result.valid())
-		{
-			sol::error err = result;
-			GE_CORE_ERROR("[ScriptEngine] Failed to load '{}': {}", relativePath, err.what());
-			return sol::table{};
-		}
-
-		sol::table scriptClass = result;
-
-		// TypeScriptToLua emits `export default X` as ____exports.default = X.
-		// Accept both plain `return X` (hand-written Lua) and TSTL default exports.
-		if (scriptClass["default"].valid())
-			scriptClass = scriptClass["default"];
-
-		s_Data->ScriptClasses[relativePath] = scriptClass;
-		return scriptClass;
-	}
-
-	void ScriptEngine::InstantiateEntity(Entity entity)
-	{
-		auto& sc = entity.GetComponent<ScriptComponent>();
-		if (sc.ScriptPath.empty())
-			return;
-
-		sol::table scriptClass = LoadScriptClass(sc.ScriptPath);
-		if (!scriptClass.valid())
-			return;
-
-		// Instance = fresh table delegating method lookup to the class table.
-		// TSTL classes keep methods on .prototype; object literals are the table itself.
-		sol::table indexTarget = scriptClass;
-		if (scriptClass["prototype"].valid())
-			indexTarget = scriptClass["prototype"];
-
-		sol::state& lua = s_Data->Lua;
-		sol::table instance = lua.create_table();
-		sol::table mt = lua.create_table();
-		mt["__index"] = indexTarget;
-		instance[sol::metatable_key] = mt;
-		instance["entity"] = entity;
-
-		s_Data->EntityInstances[entity.GetUUID()] = instance;
-
-		sol::protected_function onCreate = instance["OnCreate"];
-		if (onCreate.valid())
-		{
-			auto r = onCreate(instance);
-			if (!r.valid())
-			{
-				sol::error err = r;
-				GE_CORE_ERROR("[ScriptEngine] OnCreate ({}): {}", sc.ScriptPath, err.what());
-			}
-		}
-	}
-
-	void ScriptEngine::OnRuntimeStart(Scene* scene)
-	{
-		s_Data->SceneContext = scene;
-
-		auto view = scene->Reg().view<ScriptComponent>();
-		for (auto e : view)
-			InstantiateEntity(Entity{ e, scene });
-	}
-
-	void ScriptEngine::OnUpdate(Timestep ts)
-	{
-		for (auto& [uuid, instance] : s_Data->EntityInstances)
-		{
-			sol::protected_function onUpdate = instance["OnUpdate"];
-			if (!onUpdate.valid())
-				continue;
-
-			auto r = onUpdate(instance, (float)ts);
-			if (!r.valid())
-			{
-				sol::error err = r;
-				GE_CORE_ERROR("[ScriptEngine] OnUpdate: {}", err.what());
-			}
-		}
-	}
-
-	void ScriptEngine::OnRuntimeStop()
-	{
-		for (auto& [uuid, instance] : s_Data->EntityInstances)
-		{
-			sol::protected_function onDestroy = instance["OnDestroy"];
-			if (onDestroy.valid())
-				onDestroy(instance);
-		}
-		s_Data->EntityInstances.clear();
-		s_Data->ScriptClasses.clear();   // forces a fresh load on next play (free hot reload)
-		s_Data->SceneContext = nullptr;
-		s_Data->Lua.collect_garbage();
-	}
-
-	// OnCollisionEnter/Exit follow the same instance-lookup + protected-call pattern.
-}
+m_Systems->Add<PhysicsSystem>(*this);
+m_Systems->Add<NativeScriptSystem>(*this);
+m_Systems->Add<LuaScriptSystem>(*this);   // NEW: scripts move things...
+m_Systems->Add<TransformSystem>(*this);   // ...so the transform cache runs after
+m_Systems->Add<CameraSystem>(*this);
+m_Systems->Add<RenderSystem>(*this);
 ```
 
-Notes:
+`ScriptEngine` keeps the original plan's shape, minus the scene-lifecycle passthrough
+(the system owns that now):
 
-- `safe_script_file` + `protected_function` everywhere: **a script error must log,
-  never crash or throw across the C++ boundary.**
-- Clearing `ScriptClasses` in `OnRuntimeStop` means every editor Play press re-reads
-  scripts from disk — the simplest hot-reload that exists. (Section 2.9 covers
-  live-reload during play.)
-- `GetLuaState()` returns `s_Data->Lua.lua_state()` — needed later for RmlUi.
+```cpp
+// ScriptEngine.h - no sol2 types leak out
+class ScriptEngine
+{
+public:
+	static void Init();       // create sol::state, open libs, register bindings
+	static void Shutdown();
+
+	static void SetSceneContext(Scene* scene);   // set by LuaScriptSystem::OnRuntimeStart
+
+	static void Instantiate(Entity entity, AssetHandle script);   // idempotent
+	static void DestroyInstance(entt::entity entity);
+	static void DestroyAllInstances();
+	static void Update(entt::entity entity, Timestep ts);
+
+	static void OnCollisionEnter(Entity entity, Entity other);
+	static void OnCollisionExit(Entity entity, Entity other);
+
+	// Raw lua_State, needed to initialise the RmlUi Lua plugin
+	static void* GetLuaState();
+};
+```
+
+Implementation highlights (full sketch mirrors the original plan):
+
+```cpp
+struct ScriptEngineData
+{
+	sol::state Lua;
+	Scene* SceneContext = nullptr;
+
+	// Class tables keyed by asset handle (chunk executed once per load)
+	std::unordered_map<AssetHandle, sol::table> ScriptClasses;
+	// Per-entity instance tables keyed by entity UUID
+	std::unordered_map<UUID, sol::table> EntityInstances;
+};
+```
+
+- Loading: resolve `AssetHandle` → relative path via `AssetManager::GetMetadata`, then
+  `GetAssetRoot() / relativePath` (the original plan's `AssetPaths::GetAssetDirectory()` never
+  existed — the function is the free `GetAssetRoot()`).
+- `safe_script_file` + `protected_function` everywhere: **a script error must log, never crash
+  or throw across the C++ boundary.**
+- **Disable an instance on its first error.** The original sketch logged the same `OnUpdate`
+  error 60× per second forever. On a failed protected call, set a dead flag on the instance,
+  log once with the script path, and skip it from then on — that is what "a bad script disables
+  itself" actually means.
+- TSTL interop, unchanged from the original: unwrap `default` exports
+  (`if (scriptClass["default"].valid()) scriptClass = scriptClass["default"];`), and instance
+  tables delegate method lookup via `setmetatable({}, { __index = classOrPrototype })`, with a
+  `prototype` fallback for TSTL `class` output.
+- Clearing `ScriptClasses` in `DestroyAllInstances` (runtime stop) means every editor Play press
+  re-reads scripts from disk — the simplest hot reload that exists. §2.9 covers live reload
+  during play.
+- `GetLuaState()` returns `s_Data->Lua.lua_state()` — needed for RmlUi.
+
+Instance keying by UUID works across the play-mode copy for free: `Scene::Copy` preserves UUIDs,
+instances only exist while the runtime scene plays, and `SetSceneContext` points at it.
 
 ### 2.6 Bindings (sol2 usertypes)
 
-Keep all bindings in one file, e.g. `Scripting/ScriptBindings.cpp`. The minimum
-useful set:
+Keep all bindings in one file, `Scripting/ScriptBindings.cpp`.
+
+**Deviation from the original plan, and the most important change in this revision:**
+**bind component data by value, with explicit setters — never hand Lua a reference into entt
+storage.** The original plan's `GetTransform() -> TransformComponent&` had one known problem
+(the reference dangles if the pool reallocates — its own pitfall #1, "enforced by convention")
+and has since grown a second, worse one: `TransformComponent` is now **change-tracked**. A
+direct write through a bound reference is invisible to the change log, `TransformSystem` never
+refreshes the world-transform cache, and *the entity visibly does not move* even though the
+component data changed. Value + setter kills both at once, and the cost — copying 9 floats —
+is nothing at script scale.
 
 ```cpp
 static void RegisterBindings(sol::state& lua)
@@ -423,24 +435,33 @@ static void RegisterBindings(sol::state& lua)
 		sol::meta_function::multiplication, sol::overload(
 			[](const glm::vec3& v, float s) { return v * s; },
 			[](float s, const glm::vec3& v) { return s * v; }),
-		"Length",    [](const glm::vec3& v) { return glm::length(v); },
-		"Normalized",[](const glm::vec3& v) { return glm::normalize(v); }
+		"Length",     [](const glm::vec3& v) { return glm::length(v); },
+		"Normalized", [](const glm::vec3& v) { return glm::normalize(v); }
 	);
 
-	// ---- TransformComponent ----
-	lua.new_usertype<TransformComponent>("TransformComponent",
-		"Translation", &TransformComponent::Translation,
-		"Rotation",    &TransformComponent::Rotation,
-		"Scale",       &TransformComponent::Scale
-	);
-
-	// ---- Entity ----
+	// ---- Entity: value-semantics transform access ----
+	// Setters write the component AND report the write to change tracking. Without
+	// MarkChanged the world-transform cache goes silently stale (see Components.h).
 	lua.new_usertype<Entity>("Entity",
-		"GetName",      &Entity::GetName,
-		"GetUUID",      [](Entity& e) { return (uint64_t)e.GetUUID(); },
-		"GetTransform", [](Entity& e) -> TransformComponent& {
-			return e.GetComponent<TransformComponent>();
+		"GetName", &Entity::GetName,
+		"GetUUID", [](Entity& e) { return (uint64_t)e.GetUUID(); },
+
+		"GetTranslation", [](Entity& e) { return e.GetComponent<TransformComponent>().Translation; },
+		"SetTranslation", [](Entity& e, const glm::vec3& v) {
+			e.GetComponent<TransformComponent>().Translation = v;
+			ScriptEngine::GetSceneContext()->MarkChanged<TransformComponent>(e);
 		},
+		"GetRotation", [](Entity& e) { return e.GetComponent<TransformComponent>().Rotation; },   // Euler radians
+		"SetRotation", [](Entity& e, const glm::vec3& v) {
+			e.GetComponent<TransformComponent>().Rotation = v;
+			ScriptEngine::GetSceneContext()->MarkChanged<TransformComponent>(e);
+		},
+		"GetScale", [](Entity& e) { return e.GetComponent<TransformComponent>().Scale; },
+		"SetScale", [](Entity& e, const glm::vec3& v) {
+			e.GetComponent<TransformComponent>().Scale = v;
+			ScriptEngine::GetSceneContext()->MarkChanged<TransformComponent>(e);
+		},
+
 		"HasRigidBody", [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
 		sol::meta_function::equal_to, [](const Entity& a, const Entity& b) { return a == b; }
 	);
@@ -471,74 +492,47 @@ static void RegisterBindings(sol::state& lua)
 }
 ```
 
-**Important sol2/EnTT gotcha:** `GetTransform` returns a reference into EnTT's
-component storage. sol2 hands class-type members and reference returns to Lua as
-references (writes go through — `transform.Translation.x = 5` works), **but the
-reference can dangle if the registry reallocates that component pool** (i.e., if any
-entity gets a `TransformComponent` added while the script holds the reference).
-Rules for script authors, enforce by convention:
+Binding rules to hold the line on:
 
-- Fetch components fresh each frame — never store them in `self` across frames.
-- Don't create entities/components while holding a component reference.
+- **Structural changes route through the CommandQueue.** `Entity::AddComponent` /
+  `Scene::DestroyEntity` *assert* while systems run. Any future binding that spawns or destroys
+  (projectiles, pickups) must queue through `Scene::Commands()` — `CreateEntity` returns a
+  `PendingEntity` that components can be queued onto in the same frame; the change becomes
+  visible next frame. Expose that as the scripting contract from day one
+  (`Scene.Spawn(name) -> queued`), don't bind the immediate API.
+- **Writes to tracked components always pair with `MarkChanged`.** If a binding grows that
+  writes `RelationshipComponent` (re-parenting), same rule.
+- Physics-facing bindings (`SetLinearVelocity`, `ApplyImpulse`, raycasts) should go through
+  `PhysicsScene` rather than writing transforms, so kinematic vs dynamic bodies behave
+  correctly. `PhysicsSystem::GetPhysicsScene()` is reachable via
+  `scene.Systems().Get<PhysicsSystem>()`.
+- Script component access is inherently *undeclared* ECS access (identical to native scripts —
+  `ScriptableEntity::GetComponent` bypasses views too). The `TransformWrite` declaration on the
+  system keeps the dominant case visible to ordering validation; exotic script writes are on
+  the author, same as today.
 
-Later, physics-facing bindings (`SetLinearVelocity`, `ApplyImpulse`, raycasts) should
-go through `PhysicsScene` rather than writing transforms directly, so kinematic and
-dynamic bodies behave correctly.
+### 2.7 Collision events
 
-### 2.7 Scene lifecycle wiring
-
-`Application` (or `EntryPoint`): call `ScriptEngine::Init()` after logging init, and
-`ScriptEngine::Shutdown()` on exit.
-
-`Scene.cpp` — mirror the existing `NativeScriptComponent` flow:
+`PhysicsSystem::DispatchCollisionEvents` already resolves each event's UUIDs and notifies both
+sides' native script instances through an `AccessView`. Add the Lua path beside it, keeping
+dispatch **per fixed step** (inside the accumulator loop) so native and Lua scripts see identical
+timing:
 
 ```cpp
-void Scene::OnRuntimeStart()
+// PhysicsSystem.h: add to Views
+using LuaScriptAccess = ECS::AccessView<ECS::RO<ScriptComponent>>;
+
+// PhysicsSystem.cpp, inside the notify lambda:
+if (luaScripts.Has(self))
 {
-	InstantiateScripts();               // native scripts (existing)
-	ScriptEngine::OnRuntimeStart(this); // NEW: lua scripts
-
-	m_PhysicsScene = CreateScope<PhysicsScene>();
-	m_PhysicsScene->Start(this);
-	m_PhysicsAccumulator = 0.0f;
-}
-
-void Scene::OnRuntimeStop()
-{
-	// ...existing physics + native script teardown...
-	ScriptEngine::OnRuntimeStop();      // NEW
-}
-
-void Scene::OnUpdateRuntime(Timestep ts, EditorCamera* fallbackCamera)
-{
-	// ...existing fixed-step physics loop...
-
-	// Update scripts
-	{
-		// ...existing native script update...
-		ScriptEngine::OnUpdate(ts);     // NEW
-	}
-	// ...
-}
-
-void Scene::DispatchCollisionEvents()
-{
-	// inside the existing notify lambda, alongside the NativeScriptComponent path:
-	if (self.HasComponent<ScriptComponent>())
-	{
-		if (event.Entered) ScriptEngine::OnCollisionEnter(self, other);
-		else               ScriptEngine::OnCollisionExit(self, other);
-	}
+	if (event.Entered) ScriptEngine::OnCollisionEnter(self, other);
+	else               ScriptEngine::OnCollisionExit(self, other);
 }
 ```
 
-Also add `CopyComponent<ScriptComponent>(...)` to `Scene::Copy` — the editor's
-play-mode scene copy must carry script paths across (instances are per-run state and
-live in `ScriptEngine`, so nothing else to reset).
-
 ### 2.8 Serialization + editor UI
 
-**SceneSerializer** — same YAML pattern as every other component:
+**SceneSerializer** — handle first, legacy path fallback, same as `StaticMeshComponent`:
 
 ```cpp
 // Serialize
@@ -546,7 +540,8 @@ if (entity.HasComponent<ScriptComponent>())
 {
 	auto& sc = entity.GetComponent<ScriptComponent>();
 	out << YAML::Key << "ScriptComponent" << YAML::BeginMap;
-	out << YAML::Key << "ScriptPath" << YAML::Value << sc.ScriptPath;
+	if (IsAssetHandleValid(sc.Script))
+		out << YAML::Key << "Script" << YAML::Value << static_cast<uint64_t>(sc.Script);
 	out << YAML::EndMap;
 }
 
@@ -554,15 +549,24 @@ if (entity.HasComponent<ScriptComponent>())
 if (auto scriptComponent = entity["ScriptComponent"])
 {
 	auto& sc = deserializedEntity.AddComponent<ScriptComponent>();
-	sc.ScriptPath = scriptComponent["ScriptPath"].as<std::string>();
+	if (auto handle = scriptComponent["Script"])
+		sc.Script = handle.as<uint64_t>();
+	else if (auto path = scriptComponent["ScriptPath"])          // pre-handle scenes
+		sc.Script = AssetManager::ImportAsset(path.as<std::string>());
 }
 ```
 
-**SceneHierarchyPanel** — add `ScriptComponent` to the Add Component menu and a
-`DrawComponent<ScriptComponent>` block: a read-only text field showing the path plus
-a drag-drop target accepting ContentBrowser payloads whose extension is `.lua`
-(the ContentBrowser already emits path payloads for scene/mesh drops — reuse that
-payload type and filter by extension, like the `.glb` handling in `EditorLayer`).
+**SceneHierarchyPanel** — add `ScriptComponent` to the Add Component popup and a
+`DrawComponent<ScriptComponent>` block: show the asset's path (via `GetMetadata`), accept a
+`CONTENT_BROWSER_ITEM` drop filtered to `.lua`, import via `AssetManager::ImportAsset` — the
+`.glb` handling in `EditorLayer` and the mesh field in the panel are the pattern to copy. Panels
+run outside the system update, so the immediate `Entity` API is fine here, as everywhere in the
+editor.
+
+A later, worthwhile step (not required for milestone 3): exposed script *properties* — a
+`Properties` table on the class read by the panel and serialized per entity. Design it when the
+first script needs tuning without recompiling… which is immediately, so keep it near the top of
+the polish list.
 
 ### 2.9 Script conventions + example
 
@@ -578,14 +582,16 @@ function Player:OnCreate()
 end
 
 function Player:OnUpdate(ts)
-	local transform = self.entity:GetTransform()
+	local pos = self.entity:GetTranslation()
 
 	if Input.IsKeyPressed(Key.W) then
-		transform.Translation.z = transform.Translation.z - self.speed * ts
+		pos.z = pos.z - self.speed * ts
 	end
 	if Input.IsKeyPressed(Key.S) then
-		transform.Translation.z = transform.Translation.z + self.speed * ts
+		pos.z = pos.z + self.speed * ts
 	end
+
+	self.entity:SetTranslation(pos)
 end
 
 function Player:OnCollisionEnter(other)
@@ -598,19 +604,23 @@ end
 return Player
 ```
 
+(Get → mutate the copy → Set. The setter is what makes the movement visible — it routes the
+write through change tracking.)
+
 **Hot reload during play** (optional, later): store each script's
-`filesystem::last_write_time` at load; once per second, re-check; on change, re-run
-the chunk, replace the class table, and re-point each live instance's metatable
-`__index` at the new table. Instance state (fields on `self`) survives; only methods
-are swapped. Log and keep the old table if the new chunk has a syntax error.
+`filesystem::last_write_time` at load; once per second, re-check; on change, re-run the chunk,
+replace the class table, and re-point each live instance's metatable `__index` at the new table.
+Instance state (fields on `self`) survives; only methods are swapped. Log and keep the old table
+if the new chunk has a syntax error. Unlike shaders, no offline compile step is involved — Lua
+is data.
 
 ---
 
 ## 3. Part 2 — TypeScriptToLua (TS authoring layer)
 
-Nothing in this section touches C++ — it's tooling that emits `.lua` files into the
-assets folder. (One exception was already handled: the `default` export unwrap in
-`LoadScriptClass`.)
+Nothing in this section touches C++ — it's tooling that emits `.lua` files into the assets
+folder, and it was untouched by both engine refactors. (One exception was already handled: the
+`default` export unwrap in the class loader.)
 
 ### 3.1 Project layout
 
@@ -651,7 +661,9 @@ npm install --save-dev typescript typescript-to-lua lua-types
 		// Inline the TS helper lib into each file — every emitted .lua is
 		// self-contained, so the C++ loader needs no require() path setup.
 		"luaLibImport": "inline",
-		"noImplicitSelf": true
+		"noImplicitSelf": true,
+		// Lua tracebacks point at .ts lines — enable from day one.
+		"sourceMapTraceback": true
 	},
 	"include": ["**/*.ts", "types/**/*.d.ts"]
 }
@@ -668,14 +680,14 @@ npm install --save-dev typescript typescript-to-lua lua-types
 }
 ```
 
-Run `npm run watch` while working — every save recompiles to
-`assets/scripts/*.lua`. (Later, the editor can spawn this process itself when a
-project opens.)
+Run `npm run watch` while working — every save recompiles to `assets/scripts/*.lua`. (Later,
+the editor can spawn this process itself when a project opens.)
 
 ### 3.3 Engine API declarations — `types/ganymed.d.ts`
 
-This file is the TS mirror of `ScriptBindings.cpp`. Keep them in sync — it's the
-contract that gives you IntelliSense and compile errors against the real engine API.
+This file is the TS mirror of `ScriptBindings.cpp`. Keep them in sync — it's the contract that
+gives you IntelliSense and compile errors against the real engine API. Note the get/set shape
+matching §2.6:
 
 ```typescript
 /** @noSelfInFile */
@@ -688,16 +700,19 @@ declare interface Vec3 {
 	Normalized(): Vec3;
 }
 
-declare interface TransformComponent {
-	Translation: Vec3;
-	Rotation: Vec3;
-	Scale: Vec3;
-}
-
 declare interface Entity {
 	GetName(): string;
 	GetUUID(): number;
-	GetTransform(): TransformComponent;
+
+	/** Returns a copy. Mutate it, then call the setter — setters route the write
+	 *  through the engine's change tracking; nothing moves without them. */
+	GetTranslation(): Vec3;
+	SetTranslation(v: Vec3): void;
+	GetRotation(): Vec3;          // Euler radians
+	SetRotation(v: Vec3): void;
+	GetScale(): Vec3;
+	SetScale(v: Vec3): void;
+
 	HasRigidBody(): boolean;
 }
 
@@ -732,21 +747,19 @@ declare namespace Log {
 }
 ```
 
-`/** @noSelfInFile */` and `noImplicitSelf` stop TSTL from inserting `self`
-parameters on these *static* API calls (`Input.IsKeyPressed(...)` must compile to a
-`.` call, not a `:` call).
+`/** @noSelfInFile */` and `noImplicitSelf` stop TSTL from inserting `self` parameters on these
+*static* API calls (`Input.IsKeyPressed(...)` must compile to a `.` call, not a `:` call).
 
 ### 3.4 Script pattern in TS
 
 **Use object literals, not `class`.** The C++ loader instantiates via
-`setmetatable({}, {__index = ...})`, so an object literal (methods on the table
-itself) is the zero-surprise path. TSTL classes work through the `prototype`
-fallback in `LoadScriptClass`, but their constructors never run — a foot-gun better
-avoided by convention.
+`setmetatable({}, {__index = ...})`, so an object literal (methods on the table itself) is the
+zero-surprise path. TSTL classes work through the `prototype` fallback in the loader, but their
+constructors never run — a foot-gun better avoided by convention.
 
 ```typescript
 // scripts-src/Player.ts
-const Player: Script = {
+const Player: Script & { speed: number } = {
 	entity: undefined!,   // injected by ScriptEngine before OnCreate
 	speed: 5.0,
 
@@ -755,36 +768,44 @@ const Player: Script = {
 	},
 
 	OnUpdate(ts: number) {
-		const transform = this.entity.GetTransform();
-		if (Input.IsKeyPressed(Key.W)) transform.Translation.z -= this.speed * ts;
-		if (Input.IsKeyPressed(Key.S)) transform.Translation.z += this.speed * ts;
+		const pos = this.entity.GetTranslation();
+		if (Input.IsKeyPressed(Key.W)) pos.z -= this.speed * ts;
+		if (Input.IsKeyPressed(Key.S)) pos.z += this.speed * ts;
+		this.entity.SetTranslation(pos);
 	},
 
 	OnCollisionEnter(other: Entity) {
 		Log.Warn(`Hit ${other.GetName()}`);
 	},
-} as Script & { speed: number };
+};
 
 export default Player;
 ```
 
-Compiles to a self-contained `assets/scripts/Player.lua` whose exports table has a
-`default` field — exactly what `LoadScriptClass` unwraps.
+Compiles to a self-contained `assets/scripts/Player.lua` whose exports table has a `default`
+field — exactly what the loader unwraps.
 
 ### 3.5 Limitations to know
 
-- **No npm runtime packages** unless they're TSTL-compatible (pure TS compiled by
-  tstl, or Lua packages with declaration files). No Node APIs, no DOM.
-- Debugging happens at the Lua level. tstl can emit inline source maps
-  (`"sourceMapTraceback": true`) so Lua error tracebacks point at `.ts` lines —
-  worth enabling from day one.
+- **No npm runtime packages** unless they're TSTL-compatible (pure TS compiled by tstl, or Lua
+  packages with declaration files). No Node APIs, no DOM.
+- Debugging happens at the Lua level; `sourceMapTraceback` (enabled above) maps tracebacks to
+  `.ts` lines.
 - `LuaMultiReturn`, `$range`, and other TSTL language extensions are documented at
-  typescripttolua.github.io — needed occasionally when a binding returns multiple
-  values.
+  typescripttolua.github.io — needed occasionally when a binding returns multiple values.
 
 ---
 
 ## 4. Part 3 — RmlUi (HTML/CSS UI)
+
+> **This part diverges most from the original plan.** The engine has no OpenGL, no Glad, and no
+> framebuffer bind/unbind — the reference `RmlUi_Renderer_GL3` backend cannot initialise at all
+> (the window is `GLFW_NO_API`; there is no GL context). A custom **bgfx render backend** is
+> required. That sounds worse than it is: the in-tree
+> [`ImGuiRendererBgfx`](../../GanymedEngine/source/Platform/Bgfx/ImGuiRendererBgfx.cpp) already
+> solves ~90% of the same problem and is the template to copy. In exchange, two whole pitfall
+> classes from the original plan (GL state leakage, duplicate GL loaders) vanish — bgfx state is
+> per-submit, nothing leaks.
 
 ### 4.1 Add submodules
 
@@ -796,10 +817,18 @@ git submodule add https://gitlab.freedesktop.org/freetype/freetype GanymedEngine
 cd GanymedEngine/extern/freetype && git checkout VER-2-13-3 && cd -
 ```
 
-FreeType is RmlUi's one hard dependency (its default font engine). It builds cleanly
-as a static lib from a known minimal file list (below).
+FreeType is RmlUi's one hard dependency (its default font engine). It builds cleanly as a static
+lib from a known minimal file list (below).
+
+> **RmlUi 6.x note:** the `RenderInterface` was overhauled in 6.0 (compiled-geometry handles and
+> spans replaced the old immediate-mode calls). Implement against the header of the tag you pin,
+> not against pre-6.0 tutorials or backends.
 
 ### 4.2 Premake build scripts
+
+Both scripts follow the workspace conventions: build script outside the submodule, **output
+outside the submodule** (`%{wks.location}/bin|temp` — anything written inside the submodule tree
+shows the submodule as permanently dirty in git).
 
 `GanymedEngine/extern/FreeType.lua`:
 
@@ -810,8 +839,8 @@ project "FreeType"
 	staticruntime "off"
 	warnings "Off"
 
-	targetdir ("freetype/bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("freetype/bin-int/" .. outputdir .. "/%{prj.name}")
+	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
 
 	-- Canonical minimal FreeType build (one .c per module; each includes the rest)
 	files
@@ -888,15 +917,13 @@ project "RmlUi"
 	staticruntime "off"
 	warnings "Off"
 
-	targetdir ("RmlUi/bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("RmlUi/bin-int/" .. outputdir .. "/%{prj.name}")
+	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
 
 	files
 	{
 		"RmlUi/Source/Core/**.cpp",
 		"RmlUi/Source/Core/**.h",
-		-- Visual document inspector (Ctrl+Shift toggle); worth having in Debug
-		"RmlUi/Source/Debugger/**.cpp",
 		-- Lua plugin — runs UI logic on the shared Lua state
 		"RmlUi/Source/Lua/**.cpp",
 		"RmlUi/Include/RmlUi/**.h"
@@ -925,8 +952,11 @@ project "RmlUi"
 		systemversion "latest"
 
 	filter "configurations:Debug"
-		runtime "Debug"
 		symbols "on"
+		runtime "Debug"
+		-- Visual document inspector (element tree, computed properties).
+		-- Debug-only so Dist doesn't carry it.
+		files { "RmlUi/Source/Debugger/**.cpp" }
 
 	filter "configurations:Release or configurations:Dist"
 		runtime "Release"
@@ -934,40 +964,68 @@ project "RmlUi"
 		defines { "NDEBUG" }
 ```
 
-Wire both into the root `premake5.lua` (`IncludeDir["RmlUi"]`, dependency group
-includes) and add `"RmlUi"`, `"FreeType"` to GanymedEngine's `links`, plus
-`RMLUI_STATIC_LIB` to its `defines` (consumers need it too, like the Jolt defines).
+Wire both into the root `premake5.lua` (`IncludeDir["RmlUi"]`, dependency group includes) and
+add `"RmlUi"`, `"FreeType"` to GanymedEngine's `links`, plus `RMLUI_STATIC_LIB` to its `defines`
+(consumers need it too, like the Jolt defines).
 
 > If the exact file list drifts on a newer RmlUi/FreeType tag, trust the compiler:
-> missing-symbol link errors name the module to add. Check each tag's CMakeLists for
-> the authoritative list.
+> missing-symbol link errors name the module to add. Check each tag's CMakeLists for the
+> authoritative list.
 
 ### 4.3 Backend files (renderer + platform glue)
 
-RmlUi deliberately doesn't render or read input itself — you provide a
-`RenderInterface` and `SystemInterface`. The repo ships MIT-licensed reference
-backends **designed to be copied into your project**:
+RmlUi deliberately doesn't render or read input itself — you provide a `RenderInterface` and
+`SystemInterface`.
 
-Copy from `GanymedEngine/extern/RmlUi/Backends/` into
-`GanymedEngine/source/Platform/RmlUi/`:
+**SystemInterface**: copy `RmlUi_Platform_GLFW.h/.cpp` from `extern/RmlUi/Backends/` into
+`GanymedEngine/source/Platform/RmlUi/` — it's clipboard/cursor/time glue with no graphics
+dependency, and its key-mapping table is reusable for event translation (the engine's
+`KeyCodes.h` uses GLFW values, so it maps 1:1).
 
-- `RmlUi_Renderer_GL3.h/.cpp` — OpenGL 3.3+ renderer (your GL 4.1 core context is fine)
-- `RmlUi_Platform_GLFW.h/.cpp` — GLFW input translation + system interface
+**RenderInterface**: write `Platform/RmlUi/RmlUiRendererBgfx.h/.cpp`, modeled directly on
+`ImGuiRendererBgfx`. The job, per RmlUi 6.x's interface:
 
-The GL3 backend bundles its own GL loader by default, which would collide with your
-Glad. It supports an override — add to GanymedEngine's `defines`:
+| RmlUi callback | bgfx implementation |
+|---|---|
+| `CompileGeometry(vertices, indices)` | Create static VB/IB (RmlUi geometry is reused across frames — that's the point of compiling); `Rml::Vertex` is pos(vec2) + color(u8×4) + texcoord(vec2), one small `bgfx::VertexLayout` |
+| `RenderGeometry(handle, translation, texture)` | Set buffers + texture (or a white fallback), translation via a transform matrix, submit to the UI view |
+| `ReleaseGeometry` / `ReleaseTexture` | `bgfx::destroy` — guarded by `Renderer::IsGpuAlive()` like every other resource destructor |
+| `EnableScissorRegion` / `SetScissorRegion` | `bgfx::setScissor` per submit (cache the current rect) |
+| `LoadTexture` | Decode with stb_image (already vendored) → `bgfx::createTexture2D`. Don't rely on RmlUi decoding for you — the reference backends only handle TGA |
+| `GenerateTexture` | `createTexture2D` from the raw RGBA bytes (font glyph atlases arrive here) |
+| `SetTransform` | Optional (CSS `transform` support). Skip in the first pass; store and pre-multiply into the submit transform when needed |
 
-```lua
-'RMLUI_GL3_CUSTOM_LOADER=<glad/glad.h>'
+Rendering details that carry over from the ImGui backend verbatim:
+
+- One dedicated view in **`Sequential` mode** (UI paints back-to-front; bgfx must not reorder).
+- The ortho projection is built from `bgfx::getCaps()->homogeneousDepth` by hand — the
+  compile-time `GLM_FORCE_DEPTH_ZERO_TO_ONE` cannot adapt per backend.
+- Blending on (`BGFX_STATE_BLEND_ALPHA`), depth test off.
+- Submit with an **explicit view id parameter** on every `bgfx::submit` — do not go through
+  `RenderCommand::SetViewId`, whose sticky current-view state would then need restoring
+  (the class of bug that once sent the whole scene into a shadow cascade).
+- One `.sc` shader pair (`vs_RmlUi`/`fs_RmlUi` + its own `varying.RmlUi.def.sc`, since the
+  vertex layout differs from the engine's) — effectively the ImGui shader with RmlUi's layout.
+  `compile_shaders` already supports per-shader varying files.
+
+Add the pass to [`RenderPassIDs.h`](../../GanymedEngine/source/GanymedE/Renderer/RenderPassIDs.h):
+
+```cpp
+// Game UI (RmlUi), composited into the final LDR image after post-processing.
+constexpr uint16_t UI = 28;   // after Composite (26) and Picking (27), before ImGui (200)
 ```
 
-(Verify the macro spelling in the `RmlUi_Renderer_GL3.h` you copy — it's documented
-at the top of the file.)
+Because **bgfx executes views in ID order**, this one constant replaces the original plan's
+"call OnRender after tonemapping with the framebuffer still bound" choreography: target the view
+at the composite framebuffer (`Framebuffer::BindToView(RenderPass::UI)`), and the UI lands after
+tonemap/FXAA — in LDR display space, never tonemapped — no matter where in the frame the submit
+calls happen. It also appears inside the editor's viewport ImGui image automatically, since that
+image *is* the composite attachment.
 
 ### 4.4 `UIEngine`
 
-New files: `GanymedEngine/source/GanymedE/UI/UIEngine.h/.cpp`. Same singleton shape
-as `ScriptEngine`:
+New files: `GanymedEngine/source/GanymedE/UI/UIEngine.h/.cpp`. Same singleton shape as
+`ScriptEngine`:
 
 ```cpp
 #pragma once
@@ -981,18 +1039,27 @@ namespace Rml { class Context; class ElementDocument; }
 
 namespace GanymedE {
 
+	class Framebuffer;
+
 	class UIEngine
 	{
 	public:
-		static void Init(uint32_t width, uint32_t height); // after renderer init
+		// After Renderer::Init (needs bgfx alive + compiled shaders) and after
+		// ScriptEngine::Init (shares its lua_State).
+		static void Init(uint32_t width, uint32_t height);
 		static void Shutdown();
 
 		static Rml::ElementDocument* LoadDocument(const std::filesystem::path& rmlPath);
 		static void CloseAllDocuments();
 
-		static void OnUpdate(Timestep ts);
-		static void OnRender();                     // call with target framebuffer bound
-		static void OnEvent(Event& e);              // engine events → Rml input
+		// The framebuffer the UI view composites into (the editor passes the
+		// SceneRenderer's composite target; a shipped game passes nullptr for the
+		// backbuffer).
+		static void SetTarget(const Ref<Framebuffer>& target);
+
+		static void OnUpdate(Timestep ts);      // Context::Update — layout/animation
+		static void OnRender();                 // submit draw lists to RenderPass::UI
+		static void OnEvent(Event& e);          // engine events → Rml input
 		static void SetViewport(uint32_t width, uint32_t height);
 
 		static Rml::Context* GetContext();
@@ -1007,98 +1074,88 @@ Implementation sketch:
 #include <RmlUi/Debugger.h>
 #include <RmlUi/Lua.h>
 
-#include "Platform/RmlUi/RmlUi_Renderer_GL3.h"
+#include "Platform/RmlUi/RmlUiRendererBgfx.h"
 #include "Platform/RmlUi/RmlUi_Platform_GLFW.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 
-namespace GanymedE {
+void UIEngine::Init(uint32_t width, uint32_t height)
+{
+	s_Data = new UIEngineData();
 
-	struct UIEngineData
-	{
-		SystemInterface_GLFW SystemInterface;
-		RenderInterface_GL3  RenderInterface;
-		Rml::Context* Context = nullptr;
-	};
-	static UIEngineData* s_Data = nullptr;
+	Rml::SetSystemInterface(&s_Data->SystemInterface);   // the copied GLFW one
+	Rml::SetRenderInterface(&s_Data->RenderInterface);   // RmlUiRendererBgfx
+	Rml::Initialise();
 
-	void UIEngine::Init(uint32_t width, uint32_t height)
-	{
-		s_Data = new UIEngineData();
+	// Share the gameplay VM — UI scripts and gameplay scripts see the same globals
+	Rml::Lua::Initialise((lua_State*)ScriptEngine::GetLuaState());
 
-		Rml::SetSystemInterface(&s_Data->SystemInterface);
-		Rml::SetRenderInterface(&s_Data->RenderInterface);
-		Rml::Initialise();
+	s_Data->Context = Rml::CreateContext("main", Rml::Vector2i(width, height));
 
-		// Share the gameplay VM — UI scripts and gameplay scripts see the same globals
-		Rml::Lua::Initialise((lua_State*)ScriptEngine::GetLuaState());
+#ifdef GE_DEBUG
+	Rml::Debugger::Initialise(s_Data->Context);   // toggle with Rml::Debugger::SetVisible
+#endif
 
-		s_Data->Context = Rml::CreateContext("main", Rml::Vector2i(width, height));
+	// Present in GanymedEditor/assets/fonts/montserrat/ (verified)
+	Rml::LoadFontFace("assets/fonts/montserrat/Montserrat-Regular.ttf");
+	Rml::LoadFontFace("assets/fonts/montserrat/Montserrat-Bold.ttf");
+}
 
-	#ifdef GE_DEBUG
-		Rml::Debugger::Initialise(s_Data->Context);   // toggle with Rml::Debugger::SetVisible
-	#endif
+void UIEngine::OnUpdate(Timestep) { s_Data->Context->Update(); }
 
-		// The editor assets dir already has Montserrat — perfect UI font
-		Rml::LoadFontFace("assets/fonts/montserrat/Montserrat-Regular.ttf");
-		Rml::LoadFontFace("assets/fonts/montserrat/Montserrat-Bold.ttf");
-	}
+void UIEngine::OnRender()
+{
+	// Target + rect for the UI view, then Context::Render drives the backend's
+	// RenderGeometry calls, each submitting to RenderPass::UI.
+	s_Data->RenderInterface.BeginFrame(s_Data->Target);
+	s_Data->Context->Render();
+	s_Data->RenderInterface.EndFrame();
+}
 
-	void UIEngine::OnUpdate(Timestep) { s_Data->Context->Update(); }
-
-	void UIEngine::OnRender()
-	{
-		s_Data->RenderInterface.BeginFrame();
-		s_Data->Context->Render();
-		s_Data->RenderInterface.EndFrame();
-		// NOTE: GL3 backend changes blend/scissor/program state.
-		// Re-assert engine GL state here if the next pass assumes it.
-	}
-
-	void UIEngine::Shutdown()
-	{
-		Rml::Shutdown();          // must run BEFORE ScriptEngine::Shutdown()
-		delete s_Data; s_Data = nullptr;
-	}
+void UIEngine::Shutdown()
+{
+	// TWO ordering constraints:
+	//  1. before ScriptEngine::Shutdown — the Lua plugin holds refs into the VM;
+	//  2. while Renderer::IsGpuAlive() — Rml::Shutdown releases its textures, and
+	//     after bgfx::shutdown those destroys would touch a dead context.
+	// In practice: run this from the same teardown path as Renderer::Shutdown.
+	Rml::Shutdown();
+	delete s_Data; s_Data = nullptr;
 }
 ```
 
-**Init/shutdown order matters:**
-`ScriptEngine::Init` → `UIEngine::Init` … `UIEngine::Shutdown` → `ScriptEngine::Shutdown`
-(RmlUi's Lua plugin holds references into the shared `lua_State`).
+**Init/shutdown order:**
+`Renderer::Init` → `ScriptEngine::Init` → `UIEngine::Init` … `UIEngine::Shutdown` →
+`ScriptEngine::Shutdown` (→ bgfx dies with the window afterwards).
 
 ### 4.5 Frame-loop and editor integration
 
-Where things go each frame (Play state):
+Per frame in Play state (call order is now mostly irrelevant on the render side — view IDs are
+the schedule — but Update ordering still matters):
 
-1. `Scene::OnUpdateRuntime` — gameplay scripts may show/hide documents, set data-model values
-2. `UIEngine::OnUpdate` — RmlUi layouts/animates
-3. Scene 3D render + post-processing (tonemap/FXAA) into the viewport framebuffer
-4. `UIEngine::OnRender` — **after** tonemapping with the same framebuffer still
-   bound, so UI is composited in final display space (not tonemapped as if it were
-   scene HDR), and it appears inside the editor's viewport ImGui image automatically
-5. ImGui (editor chrome) renders on top as before
+1. `Scene::OnUpdateRuntime` — gameplay scripts show/hide documents, set data-model values
+2. `UIEngine::OnUpdate` — RmlUi layouts/animates with this frame's values
+3. `UIEngine::OnRender` — submits to `RenderPass::UI`; bgfx composites it after the post stack
 
 In `EditorLayer`:
 
-- `OnScenePlay` → load the scene's UI documents (start with a hard-coded
-  `assets/ui/hud.rml`; later make it a scene property); `OnSceneStop` →
-  `UIEngine::CloseAllDocuments()`.
-- Viewport resize → `UIEngine::SetViewport(w, h)` alongside the existing
-  `OnViewportResize`.
-- `OnEvent` in Play state → forward to `UIEngine::OnEvent` **before** the camera/
-  ImGui handlers, and only when the viewport is hovered/focused. Mouse coordinates
-  must be translated to viewport space first:
-  `mouse - m_ViewportBounds[0]` (the same math the pixel-picking / gizmo code uses).
-- The event translation itself is a `switch` mapping your `MouseMovedEvent`,
-  `MouseButtonPressed/ReleasedEvent`, `MouseScrolledEvent`, `KeyPressed/Released`,
-  `KeyTyped` events to `Context::ProcessMouseMove / ProcessMouseButtonDown / ...`.
-  Copy the key mapping table from `RmlUi_Platform_GLFW.cpp` (your `KeyCodes.h` uses
-  GLFW keycodes, so it maps 1:1).
-- If an element consumed the event (`Context::Process*` returns false when RmlUi
-  wants it), mark the engine event `Handled` so gameplay input doesn't also fire.
+- `OnAttach` → `UIEngine::SetTarget(m_SceneRenderer->GetCompositeFramebuffer())` (expose the
+  composite target from `SceneRenderer`; today only its texture ID is exposed).
+- `OnScenePlay` → load the scene's UI documents (start with a hard-coded `assets/ui/hud.rml`;
+  later make it a scene property); `OnSceneStop` → `UIEngine::CloseAllDocuments()`.
+- Viewport resize → `UIEngine::SetViewport(w, h)` alongside the existing resize handling.
+- `OnEvent` in Play state → forward to `UIEngine::OnEvent` **before** the camera handlers, only
+  while the viewport is hovered/focused. Translate mouse coordinates to viewport space first:
+  `mouse - m_ViewportBounds[0]` — the same math the picking code uses (and like picking, no
+  extra Y-flip: RmlUi and the pick request both work in top-left viewport coordinates).
+- The event translation itself is a `switch` mapping `MouseMovedEvent`,
+  `MouseButtonPressed/ReleasedEvent`, `MouseScrolledEvent`, `KeyPressed/Released`, `KeyTyped` to
+  `Context::ProcessMouseMove / ProcessMouseButtonDown / ...`. Reuse the key table from the
+  copied `RmlUi_Platform_GLFW.cpp`.
+- `Context::Process*` returns **true when the event should propagate** — on false, mark the
+  engine event `Handled` so gameplay input doesn't also fire.
 
-In a shipped game (Sandbox app), the same calls run against the default framebuffer —
-no coordinate translation needed.
+In a shipped game (Sandbox-style app), the same calls run with a null target (backbuffer) and
+window-space mouse coordinates — no translation.
 
 ### 4.6 Example HUD
 
@@ -1161,11 +1218,11 @@ ctor.Bind("score",  &s_HudData.Score);    // int
 // After changing values: s_HudModel.DirtyVariable("health");
 ```
 
-Because the Lua plugin shares the gameplay VM, a gameplay script (written in TS,
-compiled to Lua) can also drive the UI directly — RmlUi exposes `rmlui.contexts`,
-document lookup, element manipulation, and event listeners to Lua, and `<script>`
-blocks inside `.rml` documents execute on the shared state. Declare the small part
-of that API you use in `ganymed.d.ts` and your UI logic gets type-checked too.
+Because the Lua plugin shares the gameplay VM, a gameplay script (written in TS, compiled to
+Lua) can also drive the UI directly — RmlUi exposes `rmlui.contexts`, document lookup, element
+manipulation, and event listeners to Lua, and `<script>` blocks inside `.rml` documents execute
+on the shared state. Declare the small part of that API you use in `ganymed.d.ts` and your UI
+logic gets type-checked too.
 
 ---
 
@@ -1173,23 +1230,32 @@ of that API you use in `ganymed.d.ts` and your UI logic gets type-checked too.
 
 Each milestone compiles, runs, and is independently verifiable:
 
-1. **Lua static lib builds.** Submodules added, `Lua.lua` written, workspace links.
-   Smoke test: `lua.script("print('hello')")` in `Application` startup, then delete.
-2. **ScriptEngine + ScriptComponent, no editor UI.** Bindings for Vec3/Transform/
-   Entity/Input/Log. Hand-add a `ScriptComponent` in `Scene` setup code, press Play
-   in the editor, watch a cube move via `Player.lua`.
-3. **Editor + serialization.** SceneHierarchyPanel add/inspect, SceneSerializer,
-   ContentBrowser drag-drop, `Scene::Copy`. Script assignment survives save/load.
+1. **Lua static lib builds.** Submodules added, `Lua.lua` written (workspace-level output
+   dirs!), workspace links. Smoke test: `lua.script("print('hello')")` in `Application`
+   startup, then delete.
+2. **ScriptEngine + LuaScriptSystem + ScriptComponent, no editor UI.** `ComponentList` +
+   traits registration, bindings for Vec3/Entity/Input/Log with the get/set-`MarkChanged`
+   shape, system registered before `TransformSystem` (`ValidateOrdering` must stay quiet).
+   Hand-add a `ScriptComponent` in scene-setup code, press Play, watch a cube move via
+   `Player.lua` — *the cube moving at all proves the MarkChanged path works*. Verify the
+   reactive-view discipline: add/remove a script component in edit mode, then play — no
+   epoch asserts, no leaked instances.
+3. **Editor + serialization.** SceneHierarchyPanel add/inspect + drag-drop, SceneSerializer
+   (handle + legacy path), ContentBrowser `.lua` typing. Script assignment survives
+   save/load and the play-mode copy.
 4. **TSTL toolchain.** `scripts-src/` project, `ganymed.d.ts`, port `Player.lua` to
    `Player.ts`, confirm the compiled output behaves identically.
-5. **RmlUi builds + renders.** FreeType/RmlUi libs, backends copied, `UIEngine`,
-   static `hud.rml` visible in the Play-state viewport. Debugger toggle works.
-6. **UI input + data binding.** Event routing with viewport coordinate translation;
-   health bar driven from a gameplay script.
-7. **Polish.** Lua plugin UI scripting from TS, hot reload during play, collision
-   callbacks, physics bindings.
+5. **RmlUi builds + renders.** FreeType/RmlUi libs, `RmlUiRendererBgfx` + shader pair +
+   `RenderPass::UI`, `UIEngine`, static `hud.rml` visible in the Play-state viewport.
+   Debugger toggle works.
+6. **UI input + data binding.** Event routing with viewport coordinate translation; health
+   bar driven from a gameplay script.
+7. **Polish.** Script properties exposed to the editor, Lua-side UI scripting from TS, hot
+   reload during play, collision callbacks, physics bindings (through `PhysicsScene`).
 
-Milestones 1–3 are the core value; 4–7 can each ship independently.
+Milestones 1–3 are the core value; 4–7 can each ship independently. Documentation rule: each
+milestone that lands engine code also lands its docs — propose `docs/engine/scripting.md` with
+milestone 2 and `docs/engine/ui.md` with milestone 5, plus index entries in `docs/README.md`.
 
 ---
 
@@ -1197,18 +1263,26 @@ Milestones 1–3 are the core value; 4–7 can each ship independently.
 
 | # | Pitfall | Mitigation |
 |---|---------|------------|
-| 1 | **EnTT reference invalidation** — component refs held in Lua dangle if a pool reallocates | Convention: fetch components each frame; never cache in `self`. Long-term: bind by UUID + lookup |
-| 2 | **sol2 compile times** — heavy templates | Keep ALL sol2 includes inside `Scripting/*.cpp`; never include `sol.hpp` in a header |
-| 3 | **Errors crossing the C++ boundary** | `SOL_ALL_SAFETIES_ON=1`, `safe_script_file`, `protected_function` everywhere. A bad script logs and disables itself, never crashes the editor |
-| 4 | **Runtime library mismatch** (LNK2038) | Every new premake project uses `staticruntime "off"` like the rest of the workspace |
-| 5 | **GL state leakage** — RmlUi's GL3 backend changes blend/scissor/shader state | Re-assert engine GL state after `UIEngine::OnRender`; keep the call between well-defined passes |
-| 6 | **Two GL loaders** — RmlUi GL3 backend bundles its own | `RMLUI_GL3_CUSTOM_LOADER=<glad/glad.h>` define; verify macro name in the copied header |
-| 7 | **UI rendered in HDR space** — tonemap washing out UI colors | Render UI after tonemapping, into the final LDR target |
-| 8 | **Editor mouse coordinates** — RmlUi expects viewport-local pixels | Translate with `m_ViewportBounds[0]` exactly like existing picking code |
-| 9 | **Shutdown order** — Rml Lua plugin refs into shared `lua_State` | `Rml::Shutdown()` strictly before `ScriptEngine::Shutdown()` |
-| 10 | **TSTL classes** — methods live on `.prototype`, constructors don't run | Prefer object-literal scripts; the loader's `prototype` fallback covers stragglers |
-| 11 | **Scene::Copy** — play-mode copy must carry `ScriptComponent` | Add `CopyComponent<ScriptComponent>`; instances live in ScriptEngine and reset on stop |
-| 12 | **RmlUi is not a browser** — ~XHTML + CSS2 with much of CSS3 (flexbox, animations, transforms, transitions) | Check the RCSS docs before assuming a CSS feature exists; the Debugger shows computed properties |
+| 1 | **Invisible writes to tracked components** — a script write that skips `MarkChanged` leaves the world-transform cache stale; the entity *visibly does not move* | Value-semantics bindings whose setters call `Scene::MarkChanged<T>()`; never bind a mutable component reference |
+| 2 | **EnTT reference invalidation** — component refs held in Lua dangle if a pool reallocates | Same fix as #1: bindings return copies, setters re-fetch. No references cross into Lua |
+| 3 | **Structural changes during update assert** — `Entity::AddComponent` / `Scene::DestroyEntity` are illegal while systems run | Spawning/destroying bindings go through `Scene::Commands()` (`PendingEntity` for create-plus-components); visible next frame, and say so in the script API docs |
+| 4 | **Reactive views must be drained every update** — a skipped `InitView`/`FiniView` read asserts on the epoch gap | `LuaScriptSystem::OnUpdateEditor` drains without instantiating, exactly like `NativeScriptSystem` |
+| 5 | **Errors crossing the C++ boundary** | `SOL_ALL_SAFETIES_ON=1`, `safe_script_file`, `protected_function` everywhere; an instance is disabled after its first error (log once, not 60×/s) |
+| 6 | **sol2 compile times** — heavy templates | Keep ALL sol2 includes inside `Scripting/*.cpp`; never include `sol.hpp` in a header (`LuaScriptSystem`'s header must stay sol2-free) |
+| 7 | **Runtime library mismatch** (LNK2038) | Every new premake project uses `staticruntime "off"` like the rest of the workspace |
+| 8 | **Submodule shows dirty forever** | All three new extern build scripts output to `%{wks.location}/bin` / `temp`, never inside the submodule tree |
+| 9 | **Sticky view ID** — a backend that mutates `RenderCommand::SetViewId` re-routes every draw after it | `RmlUiRendererBgfx` passes its view id explicitly on each submit, like `ImGuiRendererBgfx` |
+| 10 | **UI rendered in HDR space** — tonemap washing out UI colors | Solved structurally: `RenderPass::UI` (28) executes after Tonemap/FXAA/Composite because bgfx runs views in ID order |
+| 11 | **RmlUi 6.x interface drift** — pre-6.0 tutorials/backends show a different `RenderInterface` | Implement against the pinned tag's header; compiled-geometry model, spans |
+| 12 | **GPU teardown order** — RmlUi holds textures; releasing them after `bgfx::shutdown` faults | `UIEngine::Shutdown` runs while `Renderer::IsGpuAlive()`; backend destructors carry the same guard as every engine resource |
+| 13 | **Lua/RmlUi shutdown order** — the Rml Lua plugin holds refs into the shared `lua_State` | `Rml::Shutdown()` strictly before `ScriptEngine::Shutdown()` |
+| 14 | **Editor mouse coordinates** — RmlUi expects viewport-local pixels | Translate with `m_ViewportBounds[0]` exactly like the existing picking code |
+| 15 | **TSTL classes** — methods live on `.prototype`, constructors don't run | Prefer object-literal scripts; the loader's `prototype` fallback covers stragglers |
+| 16 | **RmlUi is not a browser** — ~XHTML + CSS2 with much of CSS3 (flexbox, animations, transforms, transitions) | Check the RCSS docs before assuming a CSS feature exists; the Debugger shows computed properties |
+
+Retired from the original plan's table (no longer applicable): GL state leakage and the
+duplicate-GL-loader collision — there is no GL state to leak and no loader to collide with; and
+"`Scene::Copy` must be extended per component" — `ComponentList` registration covers it.
 
 ---
 
@@ -1222,3 +1296,7 @@ Milestones 1–3 are the core value; 4–7 can each ship independently.
 - RmlUi docs — https://mikke89.github.io/RmlUiDoc/ (RML/RCSS reference, data bindings, Lua plugin, C++ integration)
 - RmlUi repo & backends — https://github.com/mikke89/RmlUi
 - FreeType — https://freetype.org/
+- In-tree templates: [`ImGuiRendererBgfx`](../../GanymedEngine/source/Platform/Bgfx/ImGuiRendererBgfx.cpp)
+  (bgfx UI backend shape), [`NativeScriptSystem`](../../GanymedEngine/source/GanymedE/Scene/Systems/NativeScriptSystem.cpp)
+  (script lifecycle via reactive views), [`docs/engine/ecs.md`](../engine/ecs.md) (the rules the
+  bindings must respect)
