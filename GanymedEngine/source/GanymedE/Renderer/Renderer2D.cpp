@@ -2,7 +2,8 @@
 #include "Renderer2D.h"
 
 #include "Shader.h"
-#include "UniformBuffer.h"
+#include "FrameUniforms.h"
+#include "RenderPassIDs.h"
 #include "RenderCommand.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -49,7 +50,6 @@ namespace GanymedE {
 		glm::vec4 QuadVertexPositions[4];
 
 		CameraData CameraBuffer;
-		Ref<UniformBuffer> CameraUniformBuffer;
 
 		Renderer2D::Statistics Stats;
 	};
@@ -106,7 +106,6 @@ namespace GanymedE {
 		// Set first texture slot to 0
 		s_Data.TextureSlots[0] = s_Data.WhiteTexture;
 
-		s_Data.CameraUniformBuffer = UniformBuffer::Create(sizeof(CameraData), 0);
 
 		s_Data.QuadVertexPositions[0] = { -0.5f, -0.5f, 0.0f, 1.0f };
 		s_Data.QuadVertexPositions[1] = { 0.5f, -0.5f, 0.0f, 1.0f };
@@ -119,14 +118,32 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		delete[] s_Data.QuadVertexBufferBase;
+		s_Data.QuadVertexBufferBase = nullptr;
+		s_Data.QuadVertexBufferPtr = nullptr;
+
+		// s_Data is a file-scope static, so anything still holding a bgfx handle
+		// here would be destroyed after main returns - long after bgfx::shutdown -
+		// and take the process down with an access violation. Release every GPU
+		// resource explicitly while bgfx is still alive.
+		s_Data.QuadGeometry = {};
+		s_Data.QuadVertexBuffer = nullptr;
+		s_Data.TextureShader = nullptr;
+		s_Data.WhiteTexture = nullptr;
+
+		for (auto& slot : s_Data.TextureSlots)
+			slot = nullptr;
+		s_Data.TextureSlotIndex = 1;
 	}
 
 	void Renderer2D::BeginScene(const Camera& camera, const glm::mat4& transform)
 	{
 		GE_PROFILE_FUNCTION();
 
+		// 2D has no separate view matrix; the whole transform is the projection
+		// as far as bgfx's view is concerned.
 		s_Data.CameraBuffer.ViewProjection = camera.GetProjection() * glm::inverse(transform);
-		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
+		FrameUniforms::SetCamera(RenderPass::SceneHDR, glm::mat4(1.0f),
+			s_Data.CameraBuffer.ViewProjection, glm::vec3(transform[3]));
 
 		s_Data.TextureShader->Bind();
 		StartBatch();
@@ -137,7 +154,8 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		s_Data.CameraBuffer.ViewProjection = camera.GetViewProjection();
-		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
+		FrameUniforms::SetCamera(RenderPass::SceneHDR, glm::mat4(1.0f),
+			s_Data.CameraBuffer.ViewProjection, glm::vec3(0.0f));
 
 		s_Data.TextureShader->Bind();
 		StartBatch();
@@ -148,7 +166,8 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		s_Data.CameraBuffer.ViewProjection = camera.GetViewProjectionMatrix();
-		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
+		FrameUniforms::SetCamera(RenderPass::SceneHDR, glm::mat4(1.0f),
+			s_Data.CameraBuffer.ViewProjection, glm::vec3(0.0f));
 
 		s_Data.TextureShader->Bind();
 		StartBatch();

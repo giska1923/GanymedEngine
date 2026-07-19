@@ -1,5 +1,6 @@
 #include "gepch.h"
 #include "Buffer.h"
+#include "Renderer.h"
 
 namespace GanymedE {
 
@@ -29,6 +30,10 @@ namespace GanymedE {
 
 	VertexBuffer::~VertexBuffer()
 	{
+		// See Renderer::IsGpuAlive - this object may outlive bgfx.
+		if (!Renderer::IsGpuAlive())
+			return;
+
 		if (m_IsDynamic)
 		{
 			if (bgfx::isValid(m_DynamicHandle))
@@ -79,6 +84,10 @@ namespace GanymedE {
 
 	IndexBuffer::~IndexBuffer()
 	{
+		// See Renderer::IsGpuAlive - this object may outlive bgfx.
+		if (!Renderer::IsGpuAlive())
+			return;
+
 		if (bgfx::isValid(m_Handle))
 			bgfx::destroy(m_Handle);
 	}

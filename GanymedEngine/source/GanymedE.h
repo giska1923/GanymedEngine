@@ -34,7 +34,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 #include "GanymedE/Renderer/RenderCommand.h"
 
 #include "GanymedE/Renderer/Buffer.h"
-#include "GanymedE/Renderer/UniformBuffer.h"
+#include "GanymedE/Renderer/FrameUniforms.h"
 #include "GanymedE/Renderer/Shader.h"
 #include "GanymedE/Renderer/Framebuffer.h"
 #include "GanymedE/Renderer/SceneRenderer.h"

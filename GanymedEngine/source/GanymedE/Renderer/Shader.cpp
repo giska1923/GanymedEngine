@@ -110,6 +110,10 @@ namespace GanymedE {
 
 	Shader::~Shader()
 	{
+		// See Renderer::IsGpuAlive - this object may outlive bgfx.
+		if (!Renderer::IsGpuAlive())
+			return;
+
 		for (auto& entry : m_Uniforms)
 		{
 			if (bgfx::isValid(entry.second))
@@ -206,6 +210,24 @@ namespace GanymedE {
 	void Shader::SetMat4(const std::string& name, const glm::mat4& value)
 	{
 		bgfx::setUniform(GetUniform(name, bgfx::UniformType::Mat4), &value[0][0]);
+	}
+
+	void Shader::SetFloat4Array(const std::string& name, const glm::vec4* values, uint32_t count)
+	{
+		if (count == 0)
+			return;
+
+		bgfx::setUniform(GetUniform(name, bgfx::UniformType::Vec4, (uint16_t)count),
+			values, (uint16_t)count);
+	}
+
+	void Shader::SetMat4Array(const std::string& name, const glm::mat4* values, uint32_t count)
+	{
+		if (count == 0)
+			return;
+
+		bgfx::setUniform(GetUniform(name, bgfx::UniformType::Mat4, (uint16_t)count),
+			values, (uint16_t)count);
 	}
 
 	Ref<Shader> Shader::Create(const std::string& filepath)

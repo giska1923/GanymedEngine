@@ -1,5 +1,6 @@
 #include "gepch.h"
 #include "RenderCommand.h"
+#include "FrameUniforms.h"
 
 #include "GanymedE/Renderer/RenderPassIDs.h"
 
@@ -13,10 +14,18 @@ namespace GanymedE {
 
 		// Applies the shared per-draw setup. Returns false when the draw cannot
 		// go through, which is the normal case until Phase 3 supplies programs.
+		//
+		// Bailing out has to DISCARD, not just return: uniforms, textures and
+		// buffers set by the caller are pending draw-call state that only a
+		// submit consumes. Leaving them queued makes the next setUniform of the
+		// same name assert with "was already set for this draw call".
 		bool BeginSubmit(const Geometry& geometry)
 		{
 			if (!geometry.IsValid() || !bgfx::isValid(s_Program))
+			{
+				bgfx::discard();
 				return false;
+			}
 
 			if (geometry.Vertices->IsDynamic())
 				bgfx::setVertexBuffer(0, geometry.Vertices->GetDynamicHandle());
@@ -83,6 +92,7 @@ namespace GanymedE {
 
 		bgfx::setIndexBuffer(geometry.Indices->GetHandle(), 0, count);
 		bgfx::setState(s_State.ToBgfx());
+		FrameUniforms::Apply();
 		bgfx::submit(s_ViewId, s_Program);
 	}
 
@@ -100,6 +110,7 @@ namespace GanymedE {
 
 		bgfx::setIndexBuffer(geometry.Indices->GetHandle(), baseIndex, indexCount);
 		bgfx::setState(s_State.ToBgfx());
+		FrameUniforms::Apply();
 		bgfx::submit(s_ViewId, s_Program);
 	}
 
@@ -112,7 +123,12 @@ namespace GanymedE {
 		// bgfx has no attribute divisor: per-instance data goes through a
 		// dedicated buffer the shader reads as i_data0..4.
 		if (bgfx::getAvailInstanceDataBuffer(instanceCount, instanceStride) < instanceCount)
+		{
+			// BeginSubmit already bound buffers for this draw; discard so the
+			// pending state does not leak into the next one.
+			bgfx::discard();
 			return;
+		}
 
 		bgfx::InstanceDataBuffer idb;
 		bgfx::allocInstanceDataBuffer(&idb, instanceCount, instanceStride);
@@ -126,13 +142,17 @@ namespace GanymedE {
 
 		bgfx::setIndexBuffer(geometry.Indices->GetHandle(), baseIndex, indexCount);
 		bgfx::setState(s_State.ToBgfx());
+		FrameUniforms::Apply();
 		bgfx::submit(s_ViewId, s_Program);
 	}
 
 	void RenderCommand::DrawLines(const Geometry& geometry, uint32_t vertexCount)
 	{
 		if (!geometry.Vertices || !geometry.Vertices->IsValid() || !bgfx::isValid(s_Program))
+		{
+			bgfx::discard();
 			return;
+		}
 
 		if (geometry.Vertices->IsDynamic())
 			bgfx::setVertexBuffer(0, geometry.Vertices->GetDynamicHandle(), 0, vertexCount);
@@ -143,6 +163,7 @@ namespace GanymedE {
 		lineState.Primitive = RenderState::Topology::Lines;
 
 		bgfx::setState(lineState.ToBgfx());
+		FrameUniforms::Apply();
 		bgfx::submit(s_ViewId, s_Program);
 	}
 

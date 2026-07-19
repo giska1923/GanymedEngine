@@ -1,7 +1,7 @@
 #include "gepch.h"
 #include "Renderer3D.h"
 
-#include "UniformBuffer.h"
+#include "FrameUniforms.h"
 #include "Shader.h"
 #include "RenderCommand.h"
 #include "RenderPassIDs.h"
@@ -76,11 +76,9 @@ namespace GanymedE {
 	struct Renderer3DData
 	{
 		CameraUBO CameraBuffer{};
-		Ref<UniformBuffer> CameraUniformBuffer;
 		Frustum CameraFrustum;
 
 		LightsUBO LightBuffer{};
-		Ref<UniformBuffer> LightUniformBuffer;
 
 		std::vector<DrawCommand> DrawList;
 
@@ -132,8 +130,7 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		s_Data.CameraUniformBuffer = UniformBuffer::Create(sizeof(CameraUBO), 0);
-		s_Data.LightUniformBuffer = UniformBuffer::Create(sizeof(LightsUBO), 1);
+		FrameUniforms::Init();
 
 		s_Data.GridShader = Shader::Create("assets/shaders/Grid.glsl");
 		s_Data.SkyboxShader = Shader::Create("assets/shaders/Skybox.glsl");
@@ -194,8 +191,7 @@ namespace GanymedE {
 		s_Data.ShadowDepthShader = nullptr;
 		for (uint32_t i = 0; i < kCascadeCount; i++)
 			s_Data.ShadowFramebuffers[i] = nullptr;
-		s_Data.CameraUniformBuffer = nullptr;
-		s_Data.LightUniformBuffer = nullptr;
+		FrameUniforms::Shutdown();
 		s_Data.LineShader = nullptr;
 		s_Data.LineGeometry = {};
 		s_Data.LineVertexBuffer = nullptr;
@@ -222,7 +218,12 @@ namespace GanymedE {
 		s_Data.CameraBuffer.View = view;
 		s_Data.CameraBuffer.Projection = projection;
 		s_Data.CameraBuffer.CameraPosition = cameraPos;
-		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraUBO));
+
+		// The matrices ride on the view rather than in a uniform block; only the
+		// camera position still needs uploading. Culling keeps using the CPU-side
+		// copy, which is why CameraBuffer survives the UBO removal.
+		FrameUniforms::SetCamera(RenderPass::SceneHDR, view, projection, cameraPos);
+
 		s_Data.CameraFrustum = Frustum::FromViewProjection(s_Data.CameraBuffer.ViewProjection);
 	}
 
@@ -544,11 +545,18 @@ namespace GanymedE {
 		shader->SetInt("u_UseShadows", s_Data.HasShadowLight ? 1 : 0);
 		shader->SetInt("u_CascadeCount", (int)kCascadeCount);
 		shader->SetFloat("u_ShadowTexelSize", shadowTexelSize);
+
+		// bgfx addresses an array uniform as a whole; "u_Name[i]" is not a name it
+		// knows. The four cascade matrices go up as one mat4[4], and the four
+		// split distances fit in a single vec4.
+		shader->SetMat4Array("u_LightSpaceMatrices", s_Data.CascadeLightSpace, kCascadeCount);
+		shader->SetFloat4("u_CascadeSplits", glm::vec4(
+			s_Data.CascadeSplits[0], s_Data.CascadeSplits[1],
+			s_Data.CascadeSplits[2], s_Data.CascadeSplits[3]));
+
 		for (uint32_t c = 0; c < kCascadeCount; c++)
 		{
 			std::string idx = std::to_string(c);
-			shader->SetMat4("u_LightSpaceMatrices[" + idx + "]", s_Data.CascadeLightSpace[c]);
-			shader->SetFloat("u_CascadeSplits[" + idx + "]", s_Data.CascadeSplits[c]);
 
 			// Shadow lookups must clamp: a sample off the edge of a cascade would
 			// otherwise wrap and shadow the opposite side of the scene.
@@ -573,8 +581,17 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		// Push all shared frame data to the GPU
-		s_Data.LightUniformBuffer->SetData(&s_Data.LightBuffer, sizeof(LightsUBO));
+		// Push all shared frame data to the GPU. The old LightsUBO was already
+		// vec4-shaped, so its members map straight onto vec4 uniforms and the
+		// GPULight array uploads as one flat vec4[] - no repacking needed.
+		FrameUniforms::SetDirectionalLight(s_Data.LightBuffer.DirLightDirection,
+			s_Data.LightBuffer.DirLightColor);
+		FrameUniforms::SetAmbient(s_Data.LightBuffer.AmbientSky,
+			s_Data.LightBuffer.AmbientGround);
+		FrameUniforms::SetLights(
+			reinterpret_cast<const glm::vec4*>(s_Data.LightBuffer.Lights),
+			(uint32_t)s_Data.LightBuffer.Counts.x,
+			kMaxLights);
 
 		// Partition the draw list: shadow casters skip camera culling (an off-screen
 		// mesh still casts a visible shadow); the color passes are frustum-culled.

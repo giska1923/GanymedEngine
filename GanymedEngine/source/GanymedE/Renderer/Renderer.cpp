@@ -11,6 +11,7 @@ namespace GanymedE {
 
 	static bool s_DebugStats = false;
 	static uint32_t s_FrameNumber = 0;
+	static bool s_GpuAlive = false;
 
 	void Renderer::Init()
 	{
@@ -47,6 +48,9 @@ namespace GanymedE {
 
 		RenderCommand::SetViewport(0, 0, width, height);
 	}
+
+	bool Renderer::IsGpuAlive() { return s_GpuAlive; }
+	void Renderer::SetGpuAlive(bool alive) { s_GpuAlive = alive; }
 
 	void Renderer::OnFrameSubmitted(uint32_t frameNumber)
 	{

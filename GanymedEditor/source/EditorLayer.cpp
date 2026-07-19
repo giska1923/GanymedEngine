@@ -317,7 +317,15 @@ namespace GanymedE {
 		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
 
 		uint32_t textureID = m_SceneRenderer->GetFinalImageRendererID();
-		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		// Render targets are addressed bottom-up on OpenGL and top-down on
+		// D3D/Vulkan/Metal, so the V axis has to follow the backend. The old
+		// hard-coded {0,1}-{1,0} flip was a GL-only assumption.
+		const bool flipV = bgfx::getCaps()->originBottomLeft;
+		const ImVec2 uv0 = flipV ? ImVec2{ 0, 1 } : ImVec2{ 0, 0 };
+		const ImVec2 uv1 = flipV ? ImVec2{ 1, 0 } : ImVec2{ 1, 1 };
+
+		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
+			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
 
 		if (ImGui::BeginDragDropTarget())
 		{
@@ -428,7 +436,10 @@ namespace GanymedE {
 			size = 16.0f;
 		Ref<Texture2D> icon = m_SceneState == SceneState::Edit ? m_IconPlay : m_IconStop;
 		ImGui::SetCursorPosX((ImGui::GetWindowSize().x - size) * 0.5f);
-		if (ImGui::ImageButton("##playstop", (ImTextureID)(uintptr_t)icon->GetRendererID(), ImVec2(size, size), ImVec2(0, 1), ImVec2(1, 0)))
+		// Plain textures need no flip: Texture2D loads them in bgfx's top-left
+		// origin already. The {0,1}-{1,0} UVs here were compensating for the GL
+		// loader's vertical flip, which is gone.
+		if (ImGui::ImageButton("##playstop", (ImTextureID)(uintptr_t)icon->GetRendererID(), ImVec2(size, size)))
 		{
 			if (m_SceneState == SceneState::Edit)
 				OnScenePlay();

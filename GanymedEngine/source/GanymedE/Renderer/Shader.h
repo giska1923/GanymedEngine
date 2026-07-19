@@ -53,6 +53,12 @@ namespace GanymedE {
 		void SetFloat4(const std::string& name, const glm::vec4& value);
 		void SetMat4(const std::string& name, const glm::mat4& value);
 
+		// Array uniforms. bgfx sizes an array at creation, so the count must be
+		// the same on every call for a given name - pass the full array even when
+		// only part of it is live (light blocks do exactly this).
+		void SetFloat4Array(const std::string& name, const glm::vec4* values, uint32_t count);
+		void SetMat4Array(const std::string& name, const glm::mat4* values, uint32_t count);
+
 		const std::string& GetName() const { return m_Name; }
 
 		static Ref<Shader> Create(const std::string& filepath);

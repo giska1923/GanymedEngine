@@ -105,6 +105,12 @@ namespace GanymedE {
 			1.0f, 0,
 			kSceneColourPalette,  // attachment 0 - HDR colour
 			kEntityIdPalette);    // attachment 1 - entity IDs
+
+		// bgfx skips a view that receives no draw calls, and its clear with it.
+		// Without this the scene target keeps last frame's contents whenever
+		// nothing is submitted - which is every frame while the scene shaders
+		// are still unported.
+		bgfx::touch(RenderPass::SceneHDR);
 	}
 
 	Ref<Framebuffer> SceneRenderer::RenderBloom()
@@ -175,6 +181,7 @@ namespace GanymedE {
 		tonemapTarget->BindToView(RenderPass::Tonemap);
 		RenderCommand::SetViewId(RenderPass::Tonemap);
 		bgfx::setViewClear(RenderPass::Tonemap, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+		bgfx::touch(RenderPass::Tonemap); // force the clear even with nothing submitted
 		PostProcess::Tonemap(m_SceneFramebuffer, m_Settings.Exposure, bloom, m_Settings.BloomIntensity);
 
 		if (m_Settings.FXAAEnabled && m_FXAAShader)
@@ -182,6 +189,7 @@ namespace GanymedE {
 			m_CompositeFramebuffer->BindToView(RenderPass::FXAA);
 			RenderCommand::SetViewId(RenderPass::FXAA);
 			bgfx::setViewClear(RenderPass::FXAA, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+			bgfx::touch(RenderPass::FXAA);
 
 			m_FXAAShader->Bind();
 			m_FXAAShader->SetTexture("u_Texture", 0, m_TonemapFramebuffer->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);

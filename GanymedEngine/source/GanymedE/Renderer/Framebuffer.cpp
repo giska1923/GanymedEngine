@@ -1,4 +1,5 @@
 #include "gepch.h"
+#include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Renderer/Framebuffer.h"
 
 namespace GanymedE {
@@ -64,6 +65,10 @@ namespace GanymedE {
 
 	Framebuffer::~Framebuffer()
 	{
+		// See Renderer::IsGpuAlive - this object may outlive bgfx.
+		if (!Renderer::IsGpuAlive())
+			return;
+
 		Destroy();
 
 		if (bgfx::isValid(m_ReadBack))

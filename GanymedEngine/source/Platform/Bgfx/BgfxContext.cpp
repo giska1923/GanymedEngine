@@ -57,8 +57,13 @@ namespace GanymedE {
 
 	BgfxContext::~BgfxContext()
 	{
-		if (m_Initialized)
-			bgfx::shutdown();
+		if (!m_Initialized)
+			return;
+
+		// Lower this BEFORE shutting bgfx down: any resource destroyed from here
+		// on (including statics torn down after main) must not touch bgfx.
+		Renderer::SetGpuAlive(false);
+		bgfx::shutdown();
 	}
 
 	void BgfxContext::Init(uint32_t width, uint32_t height)
@@ -89,6 +94,7 @@ namespace GanymedE {
 		}
 
 		m_Initialized = true;
+		Renderer::SetGpuAlive(true);
 
 		const bgfx::Caps* caps = bgfx::getCaps();
 		GE_CORE_INFO("bgfx Info:");

@@ -1,4 +1,5 @@
 #include "gepch.h"
+#include "GanymedE/Renderer/Renderer.h"
 #include "Texture.h"
 
 #include "stb_image.h"
@@ -72,6 +73,10 @@ namespace GanymedE {
 	Texture2D::~Texture2D()
 	{
 		GE_PROFILE_FUNCTION();
+
+		// See Renderer::IsGpuAlive - this object may outlive bgfx.
+		if (!Renderer::IsGpuAlive())
+			return;
 
 		if (bgfx::isValid(m_Handle))
 			bgfx::destroy(m_Handle);
