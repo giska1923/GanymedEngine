@@ -1,4 +1,5 @@
 #include "gepch.h"
+#include "GanymedE/Renderer/MeshShader.h"
 #include "MeshCache.h"
 
 #include "GanymedE/Assets/AssetPaths.h"
@@ -17,12 +18,6 @@ namespace GanymedE {
 
 		constexpr uint32_t MESH_CACHE_MAGIC = 0x48434D47; // 'GMCH'
 		constexpr uint32_t MESH_CACHE_VERSION = 3; // v3: embedded texture bytes for pathless maps
-
-		Ref<Shader> GetMeshShader()
-		{
-			static Ref<Shader> s_Shader = Shader::Create("assets/shaders/Phong.glsl");
-			return s_Shader;
-		}
 
 		void WriteString(std::ostream& out, const std::string& str)
 		{
@@ -197,7 +192,7 @@ namespace GanymedE {
 			uint32_t count = 0;
 			ReadValue(in, count);
 
-			Ref<Shader> shader = GetMeshShader();
+			Ref<Shader> shader = MeshShader::Get();
 			std::vector<Ref<Material>> materials;
 			materials.reserve(count);
 

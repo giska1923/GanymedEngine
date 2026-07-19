@@ -86,6 +86,16 @@ namespace GanymedE {
 		m_SceneFramebuffer->BindToView(RenderPass::SceneHDR);
 		RenderCommand::SetViewId(RenderPass::SceneHDR);
 
+		// Sequential, NOT bgfx's default sort.
+		//
+		// By default bgfx reorders draws within a view to minimise state changes,
+		// which silently breaks anything that depends on submission order - and
+		// this renderer depends on it heavily: the skybox draws with depth-test
+		// off (it would paint over opaque geometry if it moved after it), and
+		// transparents are sorted back-to-front on the CPU. Sequential keeps the
+		// order the engine already establishes.
+		bgfx::setViewMode(RenderPass::SceneHDR, bgfx::ViewMode::Sequential);
+
 		// The clear is view state rather than an immediate command.
 		//
 		// The plain setViewClear(rgba) form applies one packed colour to every
@@ -111,6 +121,18 @@ namespace GanymedE {
 		// nothing is submitted - which is every frame while the scene shaders
 		// are still unported.
 		bgfx::touch(RenderPass::SceneHDR);
+
+		// Renderer2D draws into the same target but needs its OWN view.
+		//
+		// A view transform is per-view-per-frame, not per-draw: the last
+		// setViewTransform before bgfx::frame() applies to every draw in that
+		// view. With 2D sharing SceneHDR, Renderer2D::BeginScene (which runs
+		// after Renderer3D::EndScene) retroactively re-projected all the 3D
+		// geometry with the 2D camera. Separate views keep separate transforms.
+		m_SceneFramebuffer->BindToView(RenderPass::SceneTransparent);
+		bgfx::setViewMode(RenderPass::SceneTransparent, bgfx::ViewMode::Sequential);
+		// No clear: this view composites on top of the 3D pass.
+		bgfx::setViewClear(RenderPass::SceneTransparent, BGFX_CLEAR_NONE, 0, 1.0f, 0);
 	}
 
 	Ref<Framebuffer> SceneRenderer::RenderBloom()

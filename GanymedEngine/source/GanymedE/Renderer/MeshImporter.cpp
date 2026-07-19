@@ -1,4 +1,5 @@
 #include "gepch.h"
+#include "GanymedE/Renderer/MeshShader.h"
 #include "MeshImporter.h"
 
 #include "Material.h"
@@ -20,12 +21,6 @@
 namespace GanymedE {
 
 	namespace {
-
-		Ref<Shader> GetMeshShader()
-		{
-			static Ref<Shader> s_Shader = Shader::Create("assets/shaders/Phong.glsl");
-			return s_Shader;
-		}
 
 		Ref<Texture2D> CreateTextureFromImage(const cgltf_image* image, const std::filesystem::path& basePath,
 			std::string* outRelativePath = nullptr, std::vector<uint8_t>* outEmbeddedData = nullptr)
@@ -137,7 +132,7 @@ namespace GanymedE {
 		}
 
 		std::filesystem::path basePath = path.parent_path();
-		Ref<Shader> shader = GetMeshShader();
+		Ref<Shader> shader = MeshShader::Get();
 
 		// Materials
 		std::vector<Ref<Material>> materials;

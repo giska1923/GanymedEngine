@@ -4,6 +4,7 @@
 #include "Renderer2D.h"
 #include "Renderer3D.h"
 #include "PostProcess.h"
+#include "MeshShader.h"
 
 #include <bgfx/bgfx.h>
 
@@ -37,6 +38,9 @@ namespace GanymedE {
 		PostProcess::Shutdown();
 		Renderer3D::Shutdown();
 		Renderer2D::Shutdown();
+
+		// Released here, while bgfx is still alive - see MeshShader.h.
+		MeshShader::Release();
 	}
 
 	void Renderer::OnWindowResize(uint32_t width, uint32_t height)

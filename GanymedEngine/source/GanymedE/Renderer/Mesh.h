@@ -31,12 +31,21 @@ namespace GanymedE {
 		AABB Bounds; // local-space bounds (before LocalTransform), rebuilt on load
 	};
 
-	// Per-instance vertex data for instanced mesh draws (VAO locations 4..8)
+	// Per-instance data for instanced mesh draws. bgfx reads this as i_data0..4:
+	// four vec4s of transform plus one for the entity ID.
+	//
+	// EntityID occupies a whole vec4 rather than a bare int for two reasons:
+	// bgfx requires the instance stride to be a multiple of 16 bytes (mat4 + int
+	// would be 68), and instance data is delivered to the shader as vec4s, so it
+	// has to be float anyway.
 	struct MeshInstanceData
 	{
 		glm::mat4 Transform{ 1.0f };
-		int EntityID = -1;
+		glm::vec4 EntityID{ -1.0f };
 	};
+
+	static_assert(sizeof(MeshInstanceData) % 16 == 0,
+		"bgfx instance data stride must be a multiple of 16 bytes");
 
 	class Mesh
 	{

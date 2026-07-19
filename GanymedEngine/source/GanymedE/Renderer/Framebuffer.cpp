@@ -23,17 +23,13 @@ namespace GanymedE {
 				case FramebufferTextureFormat::RGBA16F: return bgfx::TextureFormat::RGBA16F;
 
 				case FramebufferTextureFormat::RED_INTEGER:
-				{
-					if (bgfx::isTextureValid(0, false, 1, bgfx::TextureFormat::R32I, BGFX_TEXTURE_RT))
-						return bgfx::TextureFormat::R32I;
-
-					// Documented fallback (§6.2). Float32 holds entity IDs
-					// exactly up to 2^24, same trade-off as the vertex attribute.
-					GE_CORE_WARN("R32I is not a valid render target on '{0}'; "
-						"falling back to R32F for the entity-ID attachment",
-						bgfx::getRendererName(bgfx::getRendererType()));
+					// R32F, not R32I, even though the attachment is renderable as
+					// R32I here. bgfx fragment shaders always emit float4, so
+					// writing IDs into an integer target has no well-defined
+					// conversion. Float32 is exact to 2^24 - far past any entity
+					// count - and keeps the whole chain float: the a_EntityID
+					// vertex attribute, the shader output, and the readback.
 					return bgfx::TextureFormat::R32F;
-				}
 
 				case FramebufferTextureFormat::DEPTH24STENCIL8: return bgfx::TextureFormat::D24S8;
 				case FramebufferTextureFormat::DEPTH32F:        return bgfx::TextureFormat::D32F;

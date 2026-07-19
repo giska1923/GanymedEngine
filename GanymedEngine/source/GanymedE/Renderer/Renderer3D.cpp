@@ -463,7 +463,7 @@ namespace GanymedE {
 			for (size_t i = 0; i < chunk; i++)
 			{
 				s_Instances[i].Transform = cmds[offset + i]->Transform;
-				s_Instances[i].EntityID = cmds[offset + i]->EntityID;
+				s_Instances[i].EntityID = glm::vec4((float)cmds[offset + i]->EntityID);
 			}
 
 			mesh->SetInstanceData(s_Instances.data(), (uint32_t)chunk);
@@ -570,9 +570,11 @@ namespace GanymedE {
 		}
 
 		shader->SetInt("u_UseIBL", s_Data.UseIBL ? 1 : 0);
-		shader->SetInt("u_IrradianceMap", (int)kIrradianceSlot);
-		shader->SetInt("u_PrefilterMap", (int)kPrefilterSlot);
-		shader->SetInt("u_BRDFLUT", (int)kBRDFLutSlot);
+
+		// No SetInt for the IBL sampler names: under bgfx a sampler is its own
+		// uniform type, and setting one as a vec4 is a hard type-mismatch assert.
+		// The texture unit is fixed in the shader (SAMPLERCUBE/SAMPLER2D) and the
+		// binding comes from Environment::BindIBL.
 		shader->SetFloat("u_MaxReflectionLod",
 			s_Data.ActiveEnvironment ? s_Data.ActiveEnvironment->GetMaxReflectionLod() : 0.0f);
 	}
@@ -626,6 +628,11 @@ namespace GanymedE {
 
 		// Shadow depth pass (re-renders the caster list from the light's POV)
 		RenderShadowPass(shadowCasters);
+
+		// RenderShadowPass leaves the current view pointing at the last cascade.
+		// Every colour draw below belongs to the scene view - without this they
+		// are submitted into the shadow framebuffer and simply never appear.
+		RenderCommand::SetViewId(RenderPass::SceneHDR);
 
 		// Opaque: group by material -> mesh -> submesh (instancing batches within a
 		// group), front-to-back inside each group for early-z
@@ -742,7 +749,6 @@ namespace GanymedE {
 
 			s_Data.SkyboxCubeShader->Bind();
 			s_Data.SkyboxCubeShader->SetMat4("u_InverseViewProjection", invViewProj);
-			s_Data.SkyboxCubeShader->SetInt("u_EnvironmentMap", (int)kSkyboxCubemapSlot);
 			s_Data.SkyboxCubeShader->SetFloat("u_Intensity", s_Data.SkyIntensity);
 		}
 		else if (s_Data.SkyboxShader)
@@ -780,10 +786,16 @@ namespace GanymedE {
 		RenderCommand::SetCullFace(false);
 
 		s_Data.GridShader->Bind();
-		// Scale grid quad so the shader's world-XZ fade covers a large area
+
+		// Scale grid quad so the shader's world-XZ fade covers a large area.
+		// This goes on bgfx's transform stack rather than a u_Transform uniform,
+		// which is what makes the predefined u_model / u_modelViewProj correct.
 		glm::mat4 transform = glm::scale(glm::mat4(1.0f), glm::vec3(100.0f));
-		s_Data.GridShader->SetMat4("u_Transform", transform);
-		s_Data.GridShader->SetFloat3("u_CameraPosition", s_Data.CameraBuffer.CameraPosition);
+		bgfx::setTransform(&transform[0][0]);
+
+		// u_CameraPosition deliberately NOT set here: FrameUniforms already
+		// supplies it every draw, and bgfx asserts if one uniform is set twice
+		// before a submit.
 
 		RenderCommand::DrawIndexed(s_Data.GridGeometry);
 		s_Data.Stats.DrawCalls++;

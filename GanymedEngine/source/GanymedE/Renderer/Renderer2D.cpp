@@ -142,9 +142,10 @@ namespace GanymedE {
 		// 2D has no separate view matrix; the whole transform is the projection
 		// as far as bgfx's view is concerned.
 		s_Data.CameraBuffer.ViewProjection = camera.GetProjection() * glm::inverse(transform);
-		FrameUniforms::SetCamera(RenderPass::SceneHDR, glm::mat4(1.0f),
+		FrameUniforms::SetCamera(RenderPass::SceneTransparent, glm::mat4(1.0f),
 			s_Data.CameraBuffer.ViewProjection, glm::vec3(transform[3]));
 
+		RenderCommand::SetViewId(RenderPass::SceneTransparent);
 		s_Data.TextureShader->Bind();
 		StartBatch();
 	}
@@ -154,9 +155,10 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		s_Data.CameraBuffer.ViewProjection = camera.GetViewProjection();
-		FrameUniforms::SetCamera(RenderPass::SceneHDR, glm::mat4(1.0f),
+		FrameUniforms::SetCamera(RenderPass::SceneTransparent, glm::mat4(1.0f),
 			s_Data.CameraBuffer.ViewProjection, glm::vec3(0.0f));
 
+		RenderCommand::SetViewId(RenderPass::SceneTransparent);
 		s_Data.TextureShader->Bind();
 		StartBatch();
 	}
@@ -166,9 +168,10 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		s_Data.CameraBuffer.ViewProjection = camera.GetViewProjectionMatrix();
-		FrameUniforms::SetCamera(RenderPass::SceneHDR, glm::mat4(1.0f),
+		FrameUniforms::SetCamera(RenderPass::SceneTransparent, glm::mat4(1.0f),
 			s_Data.CameraBuffer.ViewProjection, glm::vec3(0.0f));
 
+		RenderCommand::SetViewId(RenderPass::SceneTransparent);
 		s_Data.TextureShader->Bind();
 		StartBatch();
 	}
