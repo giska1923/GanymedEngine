@@ -11,7 +11,7 @@ namespace GanymedE {
 	// Deliberately not a GraphicsContext subclass: with bgfx there is only ever
 	// one backend, so the virtual indirection buys nothing. GraphicsContext and
 	// OpenGLContext are removed together in Phase 7.
-	// See docs/BGFX_MIGRATION.md.
+	// See docs/toDo&done/BGFX_MIGRATION.md.
 	class BgfxContext
 	{
 	public:

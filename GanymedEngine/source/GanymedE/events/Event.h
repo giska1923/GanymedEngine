@@ -8,7 +8,7 @@
 namespace GanymedE {
 	enum class EventType {
 		None = 0,
-		WindowClose, WindowResize, WIndowGotFocus, WindowLostFocus, WindowMoved,
+		WindowClose, WindowResize, WindowGotFocus, WindowLostFocus, WindowMoved,
 		AppTick, AppUpdate, AppRender,
 		KeyPressed, KeyReleased, KeyTyped,
 		MouseButtonPressed, MouseButtonReleased, MouseMoved, MouseScrolled

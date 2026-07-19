@@ -70,8 +70,8 @@ namespace GanymedE {
 	// lossless for entity IDs up to 2^24 - far past any realistic entity count.
 	//
 	// NOTE: the CPU-side vertex data must be written as float for these, not as
-	// int32 reinterpreted. Call sites still storing raw int are flagged in
-	// docs/BGFX_MIGRATION.md and get fixed with their shaders in Phase 3.
+	// int32 reinterpreted - the GPU reads the bytes as float. QuadVertex and
+	// MeshInstanceData both store float for exactly this reason.
 	inline bgfx::AttribType::Enum AttribTypeFromShaderType(ShaderDataType type)
 	{
 		switch (type)

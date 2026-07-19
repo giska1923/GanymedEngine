@@ -18,8 +18,11 @@ namespace GanymedE {
 		float TexIndex;
 		float TilingFactor;
 
-		// Editor-only: written to a RED_INTEGER attachment for mouse picking
-		int EntityID;
+		// Editor-only: written to the entity-ID attachment for mouse picking.
+		// Float, not int: bgfx has no 32-bit integer vertex attribute, so the
+		// a_EntityID attribute is declared float and the GPU reads these four
+		// bytes as float. Exact up to 2^24, same convention as MeshInstanceData.
+		float EntityID;
 	};
 
 	struct CameraData
@@ -249,7 +252,7 @@ namespace GanymedE {
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
-			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr->EntityID = (float)entityID;
 			s_Data.QuadVertexBufferPtr++;
 		}
 
@@ -308,7 +311,7 @@ namespace GanymedE {
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
-			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr->EntityID = (float)entityID;
 			s_Data.QuadVertexBufferPtr++;
 		}
 
@@ -368,7 +371,7 @@ namespace GanymedE {
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
-			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr->EntityID = (float)entityID;
 			s_Data.QuadVertexBufferPtr++;
 		}
 
@@ -398,7 +401,7 @@ namespace GanymedE {
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
-			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr->EntityID = (float)entityID;
 			s_Data.QuadVertexBufferPtr++;
 		}
 		s_Data.QuadIndexCount += 6;
@@ -444,7 +447,7 @@ namespace GanymedE {
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
-			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr->EntityID = (float)entityID;
 			s_Data.QuadVertexBufferPtr++;
 		}
 		s_Data.QuadIndexCount += 6;
@@ -482,7 +485,7 @@ namespace GanymedE {
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
-			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr->EntityID = (float)entityID;
 			s_Data.QuadVertexBufferPtr++;
 		}
 
@@ -542,7 +545,7 @@ namespace GanymedE {
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
-			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr->EntityID = (float)entityID;
 			s_Data.QuadVertexBufferPtr++;
 		}
 
@@ -603,7 +606,7 @@ namespace GanymedE {
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
-			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr->EntityID = (float)entityID;
 			s_Data.QuadVertexBufferPtr++;
 		}
 

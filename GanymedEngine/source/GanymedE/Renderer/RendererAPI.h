@@ -16,7 +16,7 @@ namespace GanymedE {
 			// Under bgfx this stops being a dispatch mechanism: there is one
 			// backend, and the concrete GPU API is chosen via bgfx::Init::type.
 			// It survives only as the migration switch until Platform/OpenGL is
-			// deleted in Phase 7. See docs/BGFX_MIGRATION.md.
+			// deleted in Phase 7. See docs/toDo&done/BGFX_MIGRATION.md.
 			Bgfx = 2
 		};
 

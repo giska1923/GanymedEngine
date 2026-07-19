@@ -6,7 +6,7 @@ $input v_color0, v_texcoord0, v_texindex, v_tiling, v_entityid
 //
 // bgfx has no sampler arrays, so the old `sampler2D u_Textures[16]` becomes 16
 // individually declared samplers and the switch stays. See the Option A note in
-// docs/BGFX_MIGRATION.md - a texture array or atlas would have changed what
+// docs/toDo&done/BGFX_MIGRATION.md - a texture array or atlas would have changed what
 // Renderer2D can batch (tiling/repeat in particular).
 
 SAMPLER2D(s_tex0, 0);

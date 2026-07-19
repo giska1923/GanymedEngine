@@ -46,7 +46,7 @@ namespace GanymedE {
 		// bgfx cannot read a render target synchronously, so this is a
 		// request/poll pair rather than the old blocking ReadEntityID: queue a
 		// pick now, collect it a frame or two later. For hover highlighting that
-		// latency is imperceptible. See docs/BGFX_MIGRATION.md §7.
+		// latency is imperceptible. See docs/toDo&done/BGFX_MIGRATION.md §7.
 		void RequestEntityID(int x, int y);
 
 		// Returns true and fills outEntityID when a queued pick has landed.

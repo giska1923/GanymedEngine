@@ -2,6 +2,8 @@
 
 GanymedEngine is C++ game engine.
 
+Documentation for the engine and the editor lives in [docs/](docs/README.md).
+
 # Linux (prerequisites)
 
 sudo apt install libglfw3-dev libwayland-dev libxkbcommon-dev xorg-dev

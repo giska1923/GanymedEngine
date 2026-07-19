@@ -129,9 +129,9 @@ namespace GanymedE {
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
-			// OnUpdate is where the scene renders, and that path is still
-			// waiting on the UBO rework - see Renderer::IsSceneRenderPathDormant.
-			// ImGui is ported, so the UI half of the loop runs normally.
+			// The dormancy gate is a leftover migration kill-switch and is
+			// hard-false now that the scene path runs fully on bgfx; it goes
+			// away with Renderer::IsSceneRenderPathDormant in Phase 7.
 			if (!m_Minimized && !Renderer::IsSceneRenderPathDormant())
 			{
 				GE_PROFILE_SCOPE("LayerStack OnUpdate");

@@ -113,7 +113,7 @@ namespace GanymedE {
 		{
 			GE_CORE_ERROR("Backend '{0}' expects [-1,1] clip depth, but glm is built for [0,1]. "
 				"Near geometry will clip incorrectly - projection matrices need a caps-driven "
-				"path (see docs/BGFX_MIGRATION.md §9.3).",
+				"path (see docs/toDo&done/BGFX_MIGRATION.md §9.3).",
 				bgfx::getRendererName(bgfx::getRendererType()));
 		}
 

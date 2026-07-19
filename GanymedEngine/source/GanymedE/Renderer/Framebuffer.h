@@ -74,7 +74,7 @@ namespace GanymedE {
 
 		// Asynchronous under bgfx: queues a blit + read and returns the frame
 		// number at which the result becomes valid. Phase 5 builds the
-		// pending-pick queue on top - see docs/BGFX_MIGRATION.md §7.
+		// pending-pick queue on top - see docs/toDo&done/BGFX_MIGRATION.md §7.
 		uint32_t RequestPixelRead(uint16_t viewId, uint32_t attachmentIndex, int x, int y, void* dest);
 
 		// True when the attachment resolved to an integer format. The entity-ID

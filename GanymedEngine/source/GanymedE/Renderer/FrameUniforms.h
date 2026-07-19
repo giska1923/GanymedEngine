@@ -5,7 +5,7 @@
 namespace GanymedE {
 
 	// Replaces the std140 uniform blocks (CameraUBO / LightsUBO) that bgfx has no
-	// equivalent for. See docs/BGFX_MIGRATION.md §5.2.
+	// equivalent for. See docs/toDo&done/BGFX_MIGRATION.md §5.2.
 	//
 	// IMPORTANT - bgfx uniforms are per-DRAW, not per-frame.
 	//

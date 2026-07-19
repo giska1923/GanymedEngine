@@ -8,7 +8,7 @@ namespace GanymedE {
 
 	// The render half of the ImGui integration, replacing ImGui_ImplOpenGL3.
 	// ImGui_ImplGlfw still handles input and platform windows - only drawing
-	// changes. See docs/BGFX_MIGRATION.md §8.
+	// changes. See docs/toDo&done/BGFX_MIGRATION.md §8.
 	//
 	// Draw data is submitted to one high view ID (RenderPass::ImGui) targeting
 	// the backbuffer, so the UI always sorts after every scene and post pass.
