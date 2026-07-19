@@ -47,6 +47,16 @@ scripts/tools/
 *.tlog
 *.json
 
+# The blanket *.json above would swallow the TypeScript authoring project's config, which is
+# build configuration and must be tracked. Negations must be file-by-file: a re-include cannot
+# resurrect a path whose parent directory was excluded, so keep these narrow and explicit.
+!GanymedEditor/scripts-src/package.json
+!GanymedEditor/scripts-src/package-lock.json
+!GanymedEditor/scripts-src/tsconfig.json
+
+# npm dependencies for the TypeScript -> Lua toolchain (restore with `npm install`)
+node_modules/
+
 # Visual Studio files and folder
 .vs/
 **.sln

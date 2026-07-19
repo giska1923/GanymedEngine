@@ -1,0 +1,15 @@
+{
+	"name": "ganymed-scripts",
+	"version": "1.0.0",
+	"private": true,
+	"description": "TypeScript authoring layer for GanymedEditor gameplay scripts. Compiles to Lua 5.4 via TypeScriptToLua; the engine only ever loads the emitted .lua.",
+	"scripts": {
+		"build": "tstl",
+		"watch": "tstl --watch"
+	},
+	"devDependencies": {
+		"lua-types": "^2.14.1",
+		"typescript": "^6.0.2",
+		"typescript-to-lua": "^1.37.1"
+	}
+}

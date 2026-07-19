@@ -90,6 +90,28 @@ restart the app** (a failed/missing program logs and skips its draws rather than
 It is deliberately not a premake prebuild step — that would hard-fail builds on machines that
 haven't built shaderc yet.
 
+## Script toolchain (optional)
+
+Gameplay scripts may be authored in TypeScript and compiled to Lua by
+[TypeScriptToLua](https://typescripttolua.github.io/). Entirely optional — the engine loads `.lua`,
+and hand-written Lua is a first-class path.
+
+```
+cd GanymedEditor/scripts-src
+npm install        # once; needs Node + npm, nothing else in the C++ build depends on it
+npm run watch      # recompiles into ../assets/scripts on every save
+```
+
+Unlike shader bytecode, the emitted `assets/scripts/*.lua` **is tracked in git** — the folder also
+holds hand-written scripts, so it cannot be ignored wholesale. `scripts-src/node_modules/` is
+ignored; `package.json`, `package-lock.json` and `tsconfig.json` need explicit `!` negations in
+`.gitignore` because a blanket `*.json` rule would otherwise swallow them.
+
+Pinning note: `typescript-to-lua` declares an **exact** `typescript` peer version (1.37.1 ↔ 6.0.2).
+Take the pair the lockfile records rather than upgrading TypeScript on its own. Config rationale
+(`luaLibImport`, `noImplicitSelf`, why `sourceMapTraceback` is off) is in
+[scripting.md](scripting.md#typescript-authoring-typescripttolua).
+
 ## Assets
 
 Each app resolves `assets/` **relative to its working directory** — run the editor from

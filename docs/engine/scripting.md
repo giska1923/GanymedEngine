@@ -169,8 +169,59 @@ importable in the Content Browser. Details: [editor.md](../editor/editor.md).
 Serialization follows the handle-first, legacy-path-fallback shape every other asset-referencing
 component uses — `Script` (handle) with a `ScriptPath` fallback.
 
+## TypeScript authoring (TypeScriptToLua)
+
+Optional layer. The engine only ever loads `.lua`; hand-written Lua remains fully supported.
+
+```
+GanymedEditor/
+├── assets/scripts/       ← emitted .lua — what the engine loads (tracked in git)
+└── scripts-src/          ← the TS project (not scanned by AssetManager)
+    ├── package.json / tsconfig.json / package-lock.json
+    ├── types/ganymed.d.ts
+    └── Player.ts
+```
+
+```
+cd GanymedEditor/scripts-src
+npm install        # once
+npm run watch      # recompiles into ../assets/scripts on every save
+```
+
+[`types/ganymed.d.ts`](../../GanymedEditor/scripts-src/types/ganymed.d.ts) is the hand-written TS
+mirror of `ScriptBindings.cpp`. **Nothing enforces that they agree** — it is the contract giving you
+IntelliSense and compile errors against the real engine API, so a binding change edits both files or
+the types quietly lie.
+
+Config decisions worth knowing:
+
+- **`luaLibImport: "inline"`** — every emitted `.lua` is self-contained. Required, not stylistic:
+  `ScriptEngine` does not open the `package` library, so a non-inlined build could not resolve its
+  helper imports at runtime.
+- **`noImplicitSelf`**, paired with the `@noSelfInFile` annotation at the top of `ganymed.d.ts` —
+  makes static API calls emit as `Input.IsKeyPressed(...)` (a `.` call) rather than a `:` call.
+- **`moduleResolution: "bundler"`** — the `"node"` (node10) mode the older TSTL guides show is a
+  hard error in TypeScript 6 and gone in 7. TSTL resolves modules through its own pass regardless.
+- **`sourceMapTraceback: false`**, deviating from the integration plan. It emits a preamble calling
+  `debug.getinfo`, which hard-requires the `debug` library — and `debug` defeats metatables, reads
+  locals and upvalues, and can hook the VM, so it stays out of the sandbox. It would also buy
+  nothing: sol2 builds tracebacks with `luaL_traceback` (the C API), which never reads the
+  Lua-level `debug` table, so the rewritten `debug.traceback` is not on the path any engine-reported
+  script error takes. Errors cite `.lua` lines; the emitted Lua tracks the TypeScript closely.
+
+**Write scripts as object literals, not `class`.** `ScriptEngine` instantiates via
+`setmetatable({}, { __index = ... })`, so a literal is the zero-surprise path. TSTL classes resolve
+through the loader's `prototype` fallback, but their constructors never run.
+
+`export default` is the expected shape — the loader unwraps `exports.default`.
+
+> `assets/scripts/*.lua` is **generated output committed to git**, unlike compiled shader bytecode.
+> Hand-written Lua is a supported authoring path, so the folder cannot be ignored wholesale. The
+> consequence: if a file there has a `.ts` counterpart, editing the `.lua` directly is pointless —
+> the next `tstl` run overwrites it silently.
+
 ## Not done yet
 
-The TypeScript toolchain, exposed script properties (a `Properties` table read by the inspector and
+Exposed script properties (a `Properties` table read by the inspector and
 serialized per entity), collision-event dispatch from `PhysicsSystem`, physics bindings through
 `PhysicsScene`, and live hot reload during play. See the plan document's implementation order.
