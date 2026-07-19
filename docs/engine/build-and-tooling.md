@@ -52,6 +52,13 @@ Other build facts that have bitten before (details in
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
 `extern/Jolt.lua`, `extern/bgfx.lua`).
 
+Those scripts must also keep their **output** outside the submodule trees — every one of them
+uses `%{wks.location}/bin` and `%{wks.location}/temp`, same as the first-party projects. A parent
+repo never applies its own `.gitignore` inside a nested repo; it only tracks the submodule's
+commit SHA. So build artifacts written under `extern/<dep>/` show up as untracked files *in that
+submodule*, which reports the submodule as dirty in `git status` and in GUI clients, and the root
+`.gitignore` cannot suppress it.
+
 ## Shader toolchain
 
 Shaders are **compiled offline**; the compiled `.bin` files are gitignored. On a fresh clone:

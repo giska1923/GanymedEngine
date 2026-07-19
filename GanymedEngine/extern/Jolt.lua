@@ -8,8 +8,8 @@ project "Jolt"
 	staticruntime "off"
 	warnings "Off"
 
-	targetdir ("JoltPhysics/bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("JoltPhysics/bin-int/" .. outputdir .. "/%{prj.name}")
+	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
 
 	files
 	{

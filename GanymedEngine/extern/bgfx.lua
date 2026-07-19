@@ -75,8 +75,8 @@ project "bx"
 	warnings "Off"
 	floatingpoint "Fast"
 
-	targetdir ("bx/bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("bx/bin-int/" .. outputdir .. "/%{prj.name}")
+	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
 
 	files
 	{
@@ -105,8 +105,8 @@ project "bimg"
 	warnings "Off"
 	-- astc-encoder produces wrong output under fast math, so no floatingpoint "Fast" here.
 
-	targetdir ("bimg/bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("bimg/bin-int/" .. outputdir .. "/%{prj.name}")
+	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
 
 	files
 	{
@@ -144,8 +144,8 @@ project "bgfx"
 	warnings "Off"
 	floatingpoint "Fast"
 
-	targetdir ("bgfx/bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("bgfx/bin-int/" .. outputdir .. "/%{prj.name}")
+	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
 
 	files
 	{
