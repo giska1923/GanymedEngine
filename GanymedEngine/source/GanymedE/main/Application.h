@@ -5,6 +5,7 @@
 #include "GanymedE/Core/LayerStack.h"
 #include "GanymedE/events/Event.h"
 #include "GanymedE/events/ApplicationEvent.h"
+#include "GanymedE/events/KeyEvent.h"
 
 #include "GanymedE/Core/Timestep.h"
 
@@ -50,6 +51,7 @@ namespace GanymedE {
 	private:
 		bool OnWindowClose(WindowCloseEvent& e);
 		bool OnWindowResize(WindowResizeEvent& e);
+		bool OnKeyPressed(KeyPressedEvent& e);
 	private:
 		std::unique_ptr<GanymedE::Window> m_Window;
 		ImGuiLayer* m_ImGuiLayer;

@@ -89,8 +89,10 @@ namespace GanymedE {
 			ImVec4 iconTint = GetAssetIconTint(path, isDirectory);
 
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+			// Default UVs: Texture2D already loads in bgfx's top-left origin, so
+			// the old {0,1}-{1,0} flip (a GL loader compensation) would invert these.
 			ImGui::ImageButton("##thumbnail", (ImTextureID)(uintptr_t)icon->GetRendererID(),
-				{ thumbnailSize, thumbnailSize }, { 0, 1 }, { 1, 0 }, ImVec4(0, 0, 0, 0), iconTint);
+				{ thumbnailSize, thumbnailSize }, { 0, 0 }, { 1, 1 }, ImVec4(0, 0, 0, 0), iconTint);
 
 			if (ImGui::BeginDragDropSource())
 			{

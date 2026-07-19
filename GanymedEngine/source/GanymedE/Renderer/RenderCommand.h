@@ -1,88 +1,52 @@
 #pragma once
 
-#include "RendererAPI.h"
+#include "GanymedE/Renderer/Buffer.h"
+#include "GanymedE/Renderer/RenderState.h"
+
+#include <glm/glm.hpp>
 
 namespace GanymedE {
 
+	// Thin namespace over bgfx, kept in place of the old virtual RendererAPI so
+	// the existing call sites keep their shape.
+	//
+	// The setters no longer touch the GPU: they mutate one RenderState that the
+	// next Draw* call packs into bgfx::setState. Draws also need a program,
+	// which Shader::Bind will supply via SetProgram once Phase 3 lands - until
+	// then the program handle is invalid and draws are skipped.
 	class RenderCommand
 	{
 	public:
-		inline static void Init()
-		{
-			s_RendererAPI->Init();
-		}
+		static void Init();
 
-		inline static void SetViewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
-		{
-			s_RendererAPI->SetViewport(x, y, width, height);
-		}
+		// The view a submit lands in. bgfx orders the frame by view ID, so this
+		// replaces "whichever framebuffer happens to be bound".
+		static void SetViewId(uint16_t viewId);
+		static uint16_t GetViewId();
 
-		inline static void SetClearColor(const glm::vec4& color)
-		{
-			s_RendererAPI->SetClearColor(color);
-		}
+		static void SetViewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+		static void SetClearColor(const glm::vec4& color);
+		static void Clear();
 
-		inline static void Clear()
-		{
-			s_RendererAPI->Clear();
-		}
+		static void SetProgram(bgfx::ProgramHandle program);
+		static bgfx::ProgramHandle GetProgram();
 
-		inline static void SetDepthTest(bool enabled)
-		{
-			s_RendererAPI->SetDepthTest(enabled);
-		}
+		static void SetDepthTest(bool enabled);
+		static void SetDepthWrite(bool enabled);
+		static void SetDepthFunc(RenderState::DepthFunc func);
+		static void SetCullFace(bool enabled);
+		static void SetCullMode(RenderState::CullMode mode);
+		static void SetBlend(bool enabled);
+		static void SetBlendMode(RenderState::BlendMode mode);
 
-		inline static void SetDepthWrite(bool enabled)
-		{
-			s_RendererAPI->SetDepthWrite(enabled);
-		}
+		static RenderState& GetState();
 
-		inline static void SetDepthFunc(RendererAPI::DepthFunc func)
-		{
-			s_RendererAPI->SetDepthFunc(func);
-		}
-
-		inline static void SetCullFace(bool enabled)
-		{
-			s_RendererAPI->SetCullFace(enabled);
-		}
-
-		inline static void SetCullMode(RendererAPI::CullMode mode)
-		{
-			s_RendererAPI->SetCullMode(mode);
-		}
-
-		inline static void SetBlend(bool enabled)
-		{
-			s_RendererAPI->SetBlend(enabled);
-		}
-
-		inline static void SetBlendMode(RendererAPI::BlendMode mode)
-		{
-			s_RendererAPI->SetBlendMode(mode);
-		}
-
-		inline static void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t count = 0)
-		{
-			s_RendererAPI->DrawIndexed(vertexArray, count);
-		}
-
-		inline static void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex)
-		{
-			s_RendererAPI->DrawIndexed(vertexArray, indexCount, baseIndex, baseVertex);
-		}
-
-		inline static void DrawIndexedInstanced(const Ref<VertexArray>& vertexArray, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex, uint32_t instanceCount)
-		{
-			s_RendererAPI->DrawIndexedInstanced(vertexArray, indexCount, baseIndex, baseVertex, instanceCount);
-		}
-
-		inline static void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)
-		{
-			s_RendererAPI->DrawLines(vertexArray, vertexCount);
-		}
-	private:
-		static Scope<RendererAPI> s_RendererAPI;
+		// indexCount 0 means "all of them".
+		static void DrawIndexed(const Geometry& geometry, uint32_t indexCount = 0);
+		static void DrawIndexed(const Geometry& geometry, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex);
+		static void DrawIndexedInstanced(const Geometry& geometry, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex,
+			const void* instanceData, uint32_t instanceCount, uint16_t instanceStride);
+		static void DrawLines(const Geometry& geometry, uint32_t vertexCount);
 	};
 
 }

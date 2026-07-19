@@ -47,7 +47,6 @@ project "GanymedEngine"
 	{
 		"source",
 		"extern/spdlog/include",
-		"%{IncludeDir.Glad}",
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.ImGui}",
 		"%{IncludeDir.glm}",
@@ -55,16 +54,21 @@ project "GanymedEngine"
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.yaml_cpp}",
 		"%{IncludeDir.cgltf}",
-		"%{IncludeDir.Jolt}"
+		"%{IncludeDir.Jolt}",
+		"%{IncludeDir.bx}",
+		"%{IncludeDir.bimg}",
+		"%{IncludeDir.bgfx}"
 	}
 
 	links
 	{
 		"GLFW",
-		"Glad",
 		"ImGui",
 		"yaml-cpp",
-		"Jolt"
+		"Jolt",
+		"bgfx",
+		"bimg",
+		"bx"
 	}
 
 	filter "system:windows"
@@ -73,7 +77,13 @@ project "GanymedEngine"
 
 		links
 		{
-			"opengl32.lib"
+			-- Required by bgfx's static lib (window/monitor queries, D3D device
+			-- GUIDs). opengl32 is deliberately absent: bgfx resolves the GL entry
+			-- points itself when the GL backend is selected, so nothing here
+			-- links against OpenGL statically any more.
+			"gdi32.lib",
+			"psapi.lib",
+			"uuid.lib"
 		}
 
 	filter "system:linux"

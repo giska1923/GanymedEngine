@@ -75,6 +75,27 @@ else
     echo "✅ ImGui dependency ready"
 fi
 
+if [ ! -f "GanymedEngine/extern/bx/src/amalgamated.cpp" ]; then
+    echo "❌ bx sources missing"
+    deps_ok=false
+else
+    echo "✅ bx dependency ready"
+fi
+
+if [ ! -f "GanymedEngine/extern/bimg/src/image.cpp" ]; then
+    echo "❌ bimg sources missing"
+    deps_ok=false
+else
+    echo "✅ bimg dependency ready"
+fi
+
+if [ ! -f "GanymedEngine/extern/bgfx/src/amalgamated.cpp" ]; then
+    echo "❌ bgfx sources missing"
+    deps_ok=false
+else
+    echo "✅ bgfx dependency ready"
+fi
+
 if [ ! -d "GanymedEngine/extern/glm/glm" ]; then
     echo "❌ GLM headers missing"
     deps_ok=false

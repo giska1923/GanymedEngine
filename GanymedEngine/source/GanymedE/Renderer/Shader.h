@@ -4,28 +4,73 @@
 #include <unordered_map>
 
 #include <glm/glm.hpp>
+#include <bgfx/bgfx.h>
 
 namespace GanymedE {
+
+	class Texture2D;
+
+	// Concrete wrapper over a bgfx program (a linked vertex + fragment shader).
+	//
+	// Shaders are no longer compiled at runtime: shaderc produces bytecode
+	// offline (scripts/compile_shaders.bat) and this loads the blob matching the
+	// active backend. Editing a shader now means re-running that script.
+	//
+	// Uniforms differ from GL in two ways that leak into this API:
+	//   - bgfx uniforms are vec4/mat4 only, so scalars are padded into a vec4.
+	//   - "binding a texture to a slot" is a property of the draw call, not of
+	//     the shader, so SetTexture records it and the next submit applies it.
 	class Shader
 	{
 	public:
-		virtual ~Shader() = default;
+		Shader(const std::string& name);
+		~Shader();
 
-		virtual void Bind() const = 0;
-		virtual void Unbind() const = 0;
+		Shader(const Shader&) = delete;
+		Shader& operator=(const Shader&) = delete;
 
-		virtual void SetInt(const std::string& name, int value) = 0;
-		virtual void SetIntArray(const std::string& name, int* values, uint32_t count) = 0;
-		virtual void SetFloat(const std::string& name, float value) = 0;
-		virtual void SetFloat2(const std::string& name, const glm::vec2& value) = 0;
-		virtual void SetFloat3(const std::string& name, const glm::vec3& value) = 0;
-		virtual void SetFloat4(const std::string& name, const glm::vec4& value) = 0;
-		virtual void SetMat4(const std::string& name, const glm::mat4& value) = 0;
+		// Makes this the program the next RenderCommand draw submits with.
+		void Bind() const;
+		void Unbind() const;
 
-		virtual const std::string& GetName() const = 0;
+		bool IsValid() const { return bgfx::isValid(m_Program); }
+		bgfx::ProgramHandle GetProgram() const { return m_Program; }
+
+		// Replaces "texture->Bind(slot); shader->SetInt(name, slot)". Under bgfx
+		// a texture binding belongs to the draw call and must name the sampler
+		// uniform it feeds, so the texture alone cannot bind itself.
+		// Takes effect on the next submit.
+		void SetTexture(const std::string& samplerName, uint8_t slot, const Ref<Texture2D>& texture);
+		void SetTexture(const std::string& samplerName, uint8_t slot, bgfx::TextureHandle texture, uint32_t samplerFlags);
+
+		// SetInt on a sampler uniform is a no-op under bgfx - use SetTexture.
+		// It is kept so existing "SetInt(u_Texture, 0)" call sites stay valid.
+		void SetInt(const std::string& name, int value);
+		void SetIntArray(const std::string& name, int* values, uint32_t count);
+		void SetFloat(const std::string& name, float value);
+		void SetFloat2(const std::string& name, const glm::vec2& value);
+		void SetFloat3(const std::string& name, const glm::vec3& value);
+		void SetFloat4(const std::string& name, const glm::vec4& value);
+		void SetMat4(const std::string& name, const glm::mat4& value);
+
+		// Array uniforms. bgfx sizes an array at creation, so the count must be
+		// the same on every call for a given name - pass the full array even when
+		// only part of it is live (light blocks do exactly this).
+		void SetFloat4Array(const std::string& name, const glm::vec4* values, uint32_t count);
+		void SetMat4Array(const std::string& name, const glm::mat4* values, uint32_t count);
+
+		const std::string& GetName() const { return m_Name; }
 
 		static Ref<Shader> Create(const std::string& filepath);
 		static Ref<Shader> Create(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc);
+	private:
+		// Uniform handles are created on first use and live for the program's
+		// lifetime; bgfx dedupes by name internally but this avoids the lookup.
+		bgfx::UniformHandle GetUniform(const std::string& name, bgfx::UniformType::Enum type, uint16_t num = 1);
+	private:
+		std::string m_Name;
+		bgfx::ProgramHandle m_Program = BGFX_INVALID_HANDLE;
+		std::unordered_map<std::string, bgfx::UniformHandle> m_Uniforms;
 	};
 
 	class ShaderLibrary

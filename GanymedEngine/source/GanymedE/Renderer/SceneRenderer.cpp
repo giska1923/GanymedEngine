@@ -3,6 +3,8 @@
 
 #include "GanymedE/Renderer/PostProcess.h"
 #include "GanymedE/Renderer/RenderCommand.h"
+#include "GanymedE/Renderer/RenderPassIDs.h"
+#include "GanymedE/Renderer/Renderer.h"
 
 #include <algorithm>
 
@@ -10,6 +12,11 @@ namespace GanymedE {
 
 	static constexpr uint32_t kMaxBloomMips = 6;
 	static constexpr uint32_t kMinBloomMipSize = 8;
+
+	// Clear-colour palette slots. bgfx keeps a global palette; these two indices
+	// belong to the scene pass and must not collide with any other pass's.
+	static constexpr uint8_t kSceneColourPalette = 0;
+	static constexpr uint8_t kEntityIdPalette = 1;
 
 	SceneRenderer::SceneRenderer(uint32_t width, uint32_t height)
 		: m_Width(std::max(width, 1u)), m_Height(std::max(height, 1u))
@@ -74,12 +81,58 @@ namespace GanymedE {
 
 	void SceneRenderer::BeginFrame()
 	{
-		m_SceneFramebuffer->Bind();
-		RenderCommand::SetClearColor(m_Settings.ClearColor);
-		RenderCommand::Clear();
+		// Under bgfx a pass is a view, not a bound framebuffer: point the scene
+		// view at the HDR target and everything submitted to it lands there.
+		m_SceneFramebuffer->BindToView(RenderPass::SceneHDR);
+		RenderCommand::SetViewId(RenderPass::SceneHDR);
 
-		// Clear the entity ID attachment to "no entity"
-		m_SceneFramebuffer->ClearAttachment(1, -1);
+		// Sequential, NOT bgfx's default sort.
+		//
+		// By default bgfx reorders draws within a view to minimise state changes,
+		// which silently breaks anything that depends on submission order - and
+		// this renderer depends on it heavily: the skybox draws with depth-test
+		// off (it would paint over opaque geometry if it moved after it), and
+		// transparents are sorted back-to-front on the CPU. Sequential keeps the
+		// order the engine already establishes.
+		bgfx::setViewMode(RenderPass::SceneHDR, bgfx::ViewMode::Sequential);
+
+		// The clear is view state rather than an immediate command.
+		//
+		// The plain setViewClear(rgba) form applies one packed colour to every
+		// attachment, which cannot express "clear entity IDs to -1" - packing -1
+		// into an 8-bit-per-channel word is meaningless. The palette form gives
+		// each attachment its own float4 entry, which bgfx converts per format,
+		// so the R32I target genuinely receives -1.
+		const glm::vec4& c = m_Settings.ClearColor;
+		const float sceneColour[4] = { c.r, c.g, c.b, c.a };
+		const float noEntity[4] = { -1.0f, -1.0f, -1.0f, -1.0f };
+
+		bgfx::setPaletteColor(kSceneColourPalette, sceneColour);
+		bgfx::setPaletteColor(kEntityIdPalette, noEntity);
+
+		bgfx::setViewClear(RenderPass::SceneHDR,
+			BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
+			1.0f, 0,
+			kSceneColourPalette,  // attachment 0 - HDR colour
+			kEntityIdPalette);    // attachment 1 - entity IDs
+
+		// bgfx skips a view that receives no draw calls, and its clear with it.
+		// Without this the scene target keeps last frame's contents whenever
+		// nothing is submitted - which is every frame while the scene shaders
+		// are still unported.
+		bgfx::touch(RenderPass::SceneHDR);
+
+		// Renderer2D draws into the same target but needs its OWN view.
+		//
+		// A view transform is per-view-per-frame, not per-draw: the last
+		// setViewTransform before bgfx::frame() applies to every draw in that
+		// view. With 2D sharing SceneHDR, Renderer2D::BeginScene (which runs
+		// after Renderer3D::EndScene) retroactively re-projected all the 3D
+		// geometry with the 2D camera. Separate views keep separate transforms.
+		m_SceneFramebuffer->BindToView(RenderPass::SceneTransparent);
+		bgfx::setViewMode(RenderPass::SceneTransparent, bgfx::ViewMode::Sequential);
+		// No clear: this view composites on top of the 3D pass.
+		bgfx::setViewClear(RenderPass::SceneTransparent, BGFX_CLEAR_NONE, 0, 1.0f, 0);
 	}
 
 	Ref<Framebuffer> SceneRenderer::RenderBloom()
@@ -91,7 +144,6 @@ namespace GanymedE {
 
 		// Downsample: HDR scene -> mip0 (thresholded) -> mip1 -> ...
 		m_BloomDownsampleShader->Bind();
-		m_BloomDownsampleShader->SetInt("u_Texture", 0);
 		m_BloomDownsampleShader->SetFloat("u_Threshold", m_Settings.BloomThreshold);
 		m_BloomDownsampleShader->SetFloat("u_Knee", glm::max(m_Settings.BloomKnee, 0.01f));
 
@@ -100,21 +152,23 @@ namespace GanymedE {
 			const Ref<Framebuffer>& source = (i == 0) ? m_SceneFramebuffer : m_BloomMips[i - 1];
 			const auto& sourceSpec = source->GetSpecification();
 
-			m_BloomMips[i]->Bind();
-			source->BindColorTexture(0, 0);
+			// One view per mip so bgfx keeps the chain strictly ordered.
+			const uint16_t view = RenderPass::BloomDownsample + (uint16_t)i;
+			m_BloomMips[i]->BindToView(view);
+			RenderCommand::SetViewId(view);
+
+			m_BloomDownsampleShader->SetTexture("u_Texture", 0, source->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
 			m_BloomDownsampleShader->SetInt("u_FirstPass", i == 0 ? 1 : 0);
 			m_BloomDownsampleShader->SetFloat2("u_TexelSize",
 				glm::vec2(1.0f / (float)sourceSpec.Width, 1.0f / (float)sourceSpec.Height));
 			PostProcess::DrawFullscreenQuad();
-			m_BloomMips[i]->Unbind();
 		}
 
 		// Upsample: additively blend each smaller mip onto the next-larger one
 		RenderCommand::SetBlend(true);
-		RenderCommand::SetBlendMode(RendererAPI::BlendMode::Additive);
+		RenderCommand::SetBlendMode(RenderState::BlendMode::Additive);
 
 		m_BloomUpsampleShader->Bind();
-		m_BloomUpsampleShader->SetInt("u_Texture", 0);
 		m_BloomUpsampleShader->SetFloat("u_FilterRadius", m_Settings.BloomFilterRadius);
 
 		for (size_t i = m_BloomMips.size() - 1; i > 0; i--)
@@ -122,22 +176,28 @@ namespace GanymedE {
 			const Ref<Framebuffer>& source = m_BloomMips[i];
 			const auto& sourceSpec = source->GetSpecification();
 
-			m_BloomMips[i - 1]->Bind();
-			source->BindColorTexture(0, 0);
+			// View IDs must ASCEND in execution order - bgfx runs a frame's views
+			// sorted by ID, not in submission order. This loop walks i downwards
+			// (smallest mip first), so the ID has to be derived from the step
+			// index. Using `BloomUpsample + i` made the chain run backwards, with
+			// every pass reading a mip that had not been written yet this frame.
+			const uint16_t step = (uint16_t)(m_BloomMips.size() - 1 - i);
+			const uint16_t view = RenderPass::BloomUpsample + step;
+			m_BloomMips[i - 1]->BindToView(view);
+			RenderCommand::SetViewId(view);
+
+			m_BloomUpsampleShader->SetTexture("u_Texture", 0, source->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
 			m_BloomUpsampleShader->SetFloat2("u_TexelSize",
 				glm::vec2(1.0f / (float)sourceSpec.Width, 1.0f / (float)sourceSpec.Height));
 			PostProcess::DrawFullscreenQuad();
-			m_BloomMips[i - 1]->Unbind();
 		}
 
-		RenderCommand::SetBlendMode(RendererAPI::BlendMode::Alpha);
+		RenderCommand::SetBlendMode(RenderState::BlendMode::Alpha);
 		return m_BloomMips[0];
 	}
 
 	void SceneRenderer::EndFrame()
 	{
-		m_SceneFramebuffer->Unbind();
-
 		Ref<Framebuffer> bloom;
 		if (m_Settings.BloomEnabled)
 			bloom = RenderBloom();
@@ -146,31 +206,89 @@ namespace GanymedE {
 
 		// Tonemap HDR (+ bloom) into the FXAA input, or straight to the composite
 		const Ref<Framebuffer>& tonemapTarget = m_Settings.FXAAEnabled ? m_TonemapFramebuffer : m_CompositeFramebuffer;
-		tonemapTarget->Bind();
-		RenderCommand::Clear();
+		tonemapTarget->BindToView(RenderPass::Tonemap);
+		RenderCommand::SetViewId(RenderPass::Tonemap);
+		bgfx::setViewClear(RenderPass::Tonemap, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+		bgfx::touch(RenderPass::Tonemap); // force the clear even with nothing submitted
 		PostProcess::Tonemap(m_SceneFramebuffer, m_Settings.Exposure, bloom, m_Settings.BloomIntensity);
-		tonemapTarget->Unbind();
 
 		if (m_Settings.FXAAEnabled && m_FXAAShader)
 		{
-			m_CompositeFramebuffer->Bind();
-			RenderCommand::Clear();
+			m_CompositeFramebuffer->BindToView(RenderPass::FXAA);
+			RenderCommand::SetViewId(RenderPass::FXAA);
+			bgfx::setViewClear(RenderPass::FXAA, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+			bgfx::touch(RenderPass::FXAA);
 
-			m_TonemapFramebuffer->BindColorTexture(0, 0);
 			m_FXAAShader->Bind();
-			m_FXAAShader->SetInt("u_Texture", 0);
+			m_FXAAShader->SetTexture("u_Texture", 0, m_TonemapFramebuffer->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
 			m_FXAAShader->SetFloat2("u_TexelSize",
 				glm::vec2(1.0f / (float)m_Width, 1.0f / (float)m_Height));
 			PostProcess::DrawFullscreenQuad();
-			m_CompositeFramebuffer->Unbind();
 		}
 
 		RenderCommand::SetBlend(true);
 	}
 
-	int SceneRenderer::ReadEntityID(int x, int y)
+	void SceneRenderer::RequestEntityID(int x, int y)
 	{
-		return m_SceneFramebuffer->ReadPixel(1, x, y);
+		if (!m_SceneFramebuffer || !m_SceneFramebuffer->IsValid())
+			return;
+
+		if (x < 0 || y < 0 || x >= (int)m_Width || y >= (int)m_Height)
+			return;
+
+		PendingPick* slot = nullptr;
+		for (PendingPick& pick : m_Picks)
+		{
+			if (!pick.InFlight)
+			{
+				slot = &pick;
+				break;
+			}
+		}
+
+		// Every slot busy means the GPU is more than kMaxPicksInFlight frames
+		// behind. Dropping this request is correct - the next frame issues
+		// another, and a queue that grows would only add latency.
+		if (!slot)
+			return;
+
+		const uint32_t readyFrame = m_SceneFramebuffer->RequestPixelRead(
+			RenderPass::Picking, 1, x, y, &slot->Value);
+
+		if (readyFrame == 0)
+			return;
+
+		slot->InFlight = true;
+		slot->ReadyFrame = readyFrame;
+	}
+
+	bool SceneRenderer::PollEntityID(int& outEntityID)
+	{
+		const uint32_t current = Renderer::GetFrameNumber();
+		const bool isInteger = m_SceneFramebuffer && m_SceneFramebuffer->IsAttachmentIntegerFormat(1);
+
+		bool found = false;
+		uint32_t newest = 0;
+
+		for (PendingPick& pick : m_Picks)
+		{
+			if (!pick.InFlight || current < pick.ReadyFrame)
+				continue;
+
+			// Keep only the most recent landed result; retiring the older ones
+			// stops a stale pixel from winning the race.
+			if (!found || pick.ReadyFrame >= newest)
+			{
+				newest = pick.ReadyFrame;
+				outEntityID = isInteger ? pick.Value.AsInt : (int)pick.Value.AsFloat;
+				found = true;
+			}
+
+			pick.InFlight = false;
+		}
+
+		return found;
 	}
 
 	uint32_t SceneRenderer::GetFinalImageRendererID() const

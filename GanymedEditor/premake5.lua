@@ -23,7 +23,9 @@ project "GanymedEditor"
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.ImGui}",
-		"%{IncludeDir.ImGuizmo}"
+		"%{IncludeDir.ImGuizmo}",
+		-- Buffer.h now exposes bgfx types, so anything including GanymedE.h needs this
+		"%{IncludeDir.bgfx}"
 	}
 
 	links
@@ -55,10 +57,12 @@ project "GanymedEditor"
 		links
 		{
 			"GLFW",
-			"Glad",
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			"bgfx",
+			"bimg",
+			"bx",
 			"GL",
 			"X11",
 			"dl",
@@ -71,16 +75,20 @@ project "GanymedEditor"
 		links
 		{
 			"GLFW",
-			"Glad",
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			"bgfx",
+			"bimg",
+			"bx",
 			"Cocoa.framework",
 			"OpenGL.framework",
 			"IOKit.framework",
 			"CoreFoundation.framework",
 			"CoreVideo.framework",
-			"QuartzCore.framework"
+			"QuartzCore.framework",
+			"Metal.framework",
+			"MetalKit.framework"
 		}
 
 	filter "configurations:Debug"

@@ -15,6 +15,7 @@
 #include "GanymedE/Renderer/Renderer3D.h"
 
 #include <ImGuizmo.h>
+#include <bgfx/bgfx.h>
 
 #include <algorithm>
 #include <cctype>
@@ -110,14 +111,26 @@ namespace GanymedE {
 		mx -= m_ViewportBounds[0].x;
 		my -= m_ViewportBounds[0].y;
 		glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
-		my = viewportSize.y - my; // framebuffer origin is bottom-left
+
+		// Render-target origin differs per backend: GL addresses from the bottom
+		// left, D3D/Vulkan/Metal from the top left. Ask bgfx rather than assume,
+		// or picking is vertically mirrored on half the backends.
+		if (bgfx::getCaps()->originBottomLeft)
+			my = viewportSize.y - my;
+
 		int mouseX = (int)mx;
 		int mouseY = (int)my;
 
+		// Picking is asynchronous now: queue this frame's pick and take whatever
+		// has landed. The result trails the cursor by a frame or two, which is
+		// invisible for hover highlighting.
 		if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
 		{
-			int pixelData = m_SceneRenderer->ReadEntityID(mouseX, mouseY);
-			m_HoveredEntity = pixelData == -1 ? Entity() : Entity((entt::entity)pixelData, m_ActiveScene.get());
+			m_SceneRenderer->RequestEntityID(mouseX, mouseY);
+
+			int pixelData = -1;
+			if (m_SceneRenderer->PollEntityID(pixelData))
+				m_HoveredEntity = pixelData == -1 ? Entity() : Entity((entt::entity)pixelData, m_ActiveScene.get());
 		}
 		else
 		{
@@ -304,7 +317,15 @@ namespace GanymedE {
 		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
 
 		uint32_t textureID = m_SceneRenderer->GetFinalImageRendererID();
-		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		// Render targets are addressed bottom-up on OpenGL and top-down on
+		// D3D/Vulkan/Metal, so the V axis has to follow the backend. The old
+		// hard-coded {0,1}-{1,0} flip was a GL-only assumption.
+		const bool flipV = bgfx::getCaps()->originBottomLeft;
+		const ImVec2 uv0 = flipV ? ImVec2{ 0, 1 } : ImVec2{ 0, 0 };
+		const ImVec2 uv1 = flipV ? ImVec2{ 1, 0 } : ImVec2{ 1, 1 };
+
+		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
+			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
 
 		if (ImGui::BeginDragDropTarget())
 		{
@@ -415,7 +436,10 @@ namespace GanymedE {
 			size = 16.0f;
 		Ref<Texture2D> icon = m_SceneState == SceneState::Edit ? m_IconPlay : m_IconStop;
 		ImGui::SetCursorPosX((ImGui::GetWindowSize().x - size) * 0.5f);
-		if (ImGui::ImageButton("##playstop", (ImTextureID)(uintptr_t)icon->GetRendererID(), ImVec2(size, size), ImVec2(0, 1), ImVec2(1, 0)))
+		// Plain textures need no flip: Texture2D loads them in bgfx's top-left
+		// origin already. The {0,1}-{1,0} UVs here were compensating for the GL
+		// loader's vertical flip, which is gone.
+		if (ImGui::ImageButton("##playstop", (ImTextureID)(uintptr_t)icon->GetRendererID(), ImVec2(size, size)))
 		{
 			if (m_SceneState == SceneState::Edit)
 				OnScenePlay();

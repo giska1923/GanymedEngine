@@ -26,24 +26,21 @@ namespace GanymedE {
 		m_Shader->SetInt("u_UseAlbedoMap", useAlbedoMap ? 1 : 0);
 		if (useAlbedoMap)
 		{
-			m_AlbedoMap->Bind(0);
-			m_Shader->SetInt("u_AlbedoMap", 0);
+			m_Shader->SetTexture("u_AlbedoMap", 0, m_AlbedoMap);
 		}
 
 		bool useNormalMap = m_NormalMap != nullptr;
 		m_Shader->SetInt("u_UseNormalMap", useNormalMap ? 1 : 0);
 		if (useNormalMap)
 		{
-			m_NormalMap->Bind(1);
-			m_Shader->SetInt("u_NormalMap", 1);
+			m_Shader->SetTexture("u_NormalMap", 1, m_NormalMap);
 		}
 
 		bool useMRMap = m_MetallicRoughnessMap != nullptr;
 		m_Shader->SetInt("u_UseMetallicRoughnessMap", useMRMap ? 1 : 0);
 		if (useMRMap)
 		{
-			m_MetallicRoughnessMap->Bind(2);
-			m_Shader->SetInt("u_MetallicRoughnessMap", 2);
+			m_Shader->SetTexture("u_MetallicRoughnessMap", 2, m_MetallicRoughnessMap);
 		}
 	}
 

@@ -1,10 +1,12 @@
 #include "gepch.h"
 #include "Application.h"
 #include "GanymedE/events/ApplicationEvent.h"
+#include "GanymedE/events/KeyEvent.h"
 
 #include "GanymedE/Renderer/Renderer.h"
 
 #include "GanymedE/Core/Input.h"
+#include "GanymedE/Core/KeyCodes.h"
 
 #include <GLFW/glfw3.h>
 
@@ -42,6 +44,7 @@ namespace GanymedE {
 
 		m_LayerStack.PushLayer(layer);
 		layer->OnAttach();
+		layer->SetAttached(true);
 	}
 
 	void Application::PushOverlay(Layer* overlay)
@@ -50,6 +53,7 @@ namespace GanymedE {
 
 		m_LayerStack.PushOverlay(overlay);
 		overlay->OnAttach();
+		overlay->SetAttached(true);
 	}
 
 	void Application::Close()
@@ -64,11 +68,18 @@ namespace GanymedE {
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowCloseEvent>(BIND_CALLBACK_FN(Application::OnWindowClose, this));
 		dispatcher.Dispatch<WindowResizeEvent>(BIND_CALLBACK_FN(Application::OnWindowResize, this));
+		dispatcher.Dispatch<KeyPressedEvent>(BIND_CALLBACK_FN(Application::OnKeyPressed, this));
 
 		for (auto it = m_LayerStack.rbegin(); it != m_LayerStack.rend(); ++it)
 		{
 			if (e.IsHandled())
 				break;
+
+			// A layer that never attached has no state to handle events with -
+			// ImGuiLayer, for one, dereferences a context OnAttach creates.
+			if (!(*it)->IsAttached())
+				continue;
+
 			(*it)->OnEvent(e);
 		}
 	}
@@ -77,6 +88,17 @@ namespace GanymedE {
 	{
 		m_Running = false;
 		return true;
+	}
+
+	bool Application::OnKeyPressed(KeyPressedEvent& e)
+	{
+		if (e.GetKeyCode() == Key::F1)
+		{
+			Renderer::SetDebugStatsEnabled(!Renderer::IsDebugStatsEnabled());
+			return true;
+		}
+
+		return false;
 	}
 
 	bool Application::OnWindowResize(WindowResizeEvent& e)
@@ -107,7 +129,10 @@ namespace GanymedE {
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
-			if (!m_Minimized)
+			// OnUpdate is where the scene renders, and that path is still
+			// waiting on the UBO rework - see Renderer::IsSceneRenderPathDormant.
+			// ImGui is ported, so the UI half of the loop runs normally.
+			if (!m_Minimized && !Renderer::IsSceneRenderPathDormant())
 			{
 				GE_PROFILE_SCOPE("LayerStack OnUpdate");
 

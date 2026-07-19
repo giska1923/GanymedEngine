@@ -17,7 +17,6 @@ public:
 private:
 	GanymedE::OrthographicCameraController m_CameraController;
 
-	GanymedE::Ref<GanymedE::VertexArray> m_SquareVA;
 	GanymedE::Ref<GanymedE::Shader> m_FlatColorShader;
 
 	GanymedE::Ref<GanymedE::Texture2D> m_CheckerboardTexture;

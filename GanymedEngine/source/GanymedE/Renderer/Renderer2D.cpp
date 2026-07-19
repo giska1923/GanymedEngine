@@ -1,9 +1,9 @@
 #include "gepch.h"
 #include "Renderer2D.h"
 
-#include "VertexArray.h"
 #include "Shader.h"
-#include "UniformBuffer.h"
+#include "FrameUniforms.h"
+#include "RenderPassIDs.h"
 #include "RenderCommand.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -35,7 +35,7 @@ namespace GanymedE {
 		// GL 4.1 (macOS) only guarantees 16 fragment texture units
 		static const uint32_t MaxTextureSlots = 16; // TODO: RenderCaps
 
-		Ref<VertexArray> QuadVertexArray;
+		Geometry QuadGeometry;
 		Ref<VertexBuffer> QuadVertexBuffer;
 		Ref<Shader> TextureShader;
 		Ref<Texture2D> WhiteTexture;
@@ -50,7 +50,6 @@ namespace GanymedE {
 		glm::vec4 QuadVertexPositions[4];
 
 		CameraData CameraBuffer;
-		Ref<UniformBuffer> CameraUniformBuffer;
 
 		Renderer2D::Statistics Stats;
 	};
@@ -61,10 +60,7 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		s_Data.QuadVertexArray = VertexArray::Create();
-
-		s_Data.QuadVertexBuffer = VertexBuffer::Create(s_Data.MaxVertices * sizeof(QuadVertex));
-		s_Data.QuadVertexBuffer->SetLayout({
+		s_Data.QuadVertexBuffer = VertexBuffer::Create(s_Data.MaxVertices * sizeof(QuadVertex), {
 			{ ShaderDataType::Float3, "a_Position" },
 			{ ShaderDataType::Float4, "a_Color" },
 			{ ShaderDataType::Float2, "a_TexCoord" },
@@ -72,7 +68,7 @@ namespace GanymedE {
 			{ ShaderDataType::Float, "a_TilingFactor" },
 			{ ShaderDataType::Int, "a_EntityID" }
 			});
-		s_Data.QuadVertexArray->AddVertexBuffer(s_Data.QuadVertexBuffer);
+		s_Data.QuadGeometry.Vertices = s_Data.QuadVertexBuffer;
 
 		s_Data.QuadVertexBufferBase = new QuadVertex[s_Data.MaxVertices];
 
@@ -92,8 +88,7 @@ namespace GanymedE {
 			offset += 4;
 		}
 
-		Ref<IndexBuffer> quadIB = IndexBuffer::Create(quadIndices, s_Data.MaxIndices);
-		s_Data.QuadVertexArray->SetIndexBuffer(quadIB);
+		s_Data.QuadGeometry.Indices = IndexBuffer::Create(quadIndices, s_Data.MaxIndices);
 		delete[] quadIndices;
 
 		s_Data.WhiteTexture = Texture2D::Create(1, 1);
@@ -111,7 +106,6 @@ namespace GanymedE {
 		// Set first texture slot to 0
 		s_Data.TextureSlots[0] = s_Data.WhiteTexture;
 
-		s_Data.CameraUniformBuffer = UniformBuffer::Create(sizeof(CameraData), 0);
 
 		s_Data.QuadVertexPositions[0] = { -0.5f, -0.5f, 0.0f, 1.0f };
 		s_Data.QuadVertexPositions[1] = { 0.5f, -0.5f, 0.0f, 1.0f };
@@ -124,15 +118,34 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		delete[] s_Data.QuadVertexBufferBase;
+		s_Data.QuadVertexBufferBase = nullptr;
+		s_Data.QuadVertexBufferPtr = nullptr;
+
+		// s_Data is a file-scope static, so anything still holding a bgfx handle
+		// here would be destroyed after main returns - long after bgfx::shutdown -
+		// and take the process down with an access violation. Release every GPU
+		// resource explicitly while bgfx is still alive.
+		s_Data.QuadGeometry = {};
+		s_Data.QuadVertexBuffer = nullptr;
+		s_Data.TextureShader = nullptr;
+		s_Data.WhiteTexture = nullptr;
+
+		for (auto& slot : s_Data.TextureSlots)
+			slot = nullptr;
+		s_Data.TextureSlotIndex = 1;
 	}
 
 	void Renderer2D::BeginScene(const Camera& camera, const glm::mat4& transform)
 	{
 		GE_PROFILE_FUNCTION();
 
+		// 2D has no separate view matrix; the whole transform is the projection
+		// as far as bgfx's view is concerned.
 		s_Data.CameraBuffer.ViewProjection = camera.GetProjection() * glm::inverse(transform);
-		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
+		FrameUniforms::SetCamera(RenderPass::SceneTransparent, glm::mat4(1.0f),
+			s_Data.CameraBuffer.ViewProjection, glm::vec3(transform[3]));
 
+		RenderCommand::SetViewId(RenderPass::SceneTransparent);
 		s_Data.TextureShader->Bind();
 		StartBatch();
 	}
@@ -142,8 +155,10 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		s_Data.CameraBuffer.ViewProjection = camera.GetViewProjection();
-		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
+		FrameUniforms::SetCamera(RenderPass::SceneTransparent, glm::mat4(1.0f),
+			s_Data.CameraBuffer.ViewProjection, glm::vec3(0.0f));
 
+		RenderCommand::SetViewId(RenderPass::SceneTransparent);
 		s_Data.TextureShader->Bind();
 		StartBatch();
 	}
@@ -153,8 +168,10 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		s_Data.CameraBuffer.ViewProjection = camera.GetViewProjectionMatrix();
-		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraData));
+		FrameUniforms::SetCamera(RenderPass::SceneTransparent, glm::mat4(1.0f),
+			s_Data.CameraBuffer.ViewProjection, glm::vec3(0.0f));
 
+		RenderCommand::SetViewId(RenderPass::SceneTransparent);
 		s_Data.TextureShader->Bind();
 		StartBatch();
 	}
@@ -187,12 +204,12 @@ namespace GanymedE {
 
 		s_Data.TextureShader->Bind();
 
-		// Bind textures
+		// bgfx has no sampler arrays, so each batch slot feeds its own sampler
+		// uniform (s_tex0..s_tex15) - see the Option A note in the migration doc.
 		for (uint32_t i = 0; i < s_Data.TextureSlotIndex; i++)
-			s_Data.TextureSlots[i]->Bind(i);
+			s_Data.TextureShader->SetTexture("s_tex" + std::to_string(i), (uint8_t)i, s_Data.TextureSlots[i]);
 
-		s_Data.QuadVertexArray->Bind();
-		RenderCommand::DrawIndexed(s_Data.QuadVertexArray, s_Data.QuadIndexCount);
+		RenderCommand::DrawIndexed(s_Data.QuadGeometry, s_Data.QuadIndexCount);
 		s_Data.Stats.DrawCalls++;
 	}
 

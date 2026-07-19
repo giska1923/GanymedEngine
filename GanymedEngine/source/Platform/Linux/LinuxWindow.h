@@ -1,7 +1,7 @@
 #pragma once
 
 #include "GanymedE/Core/Window.h"
-#include "GanymedE/Renderer/GraphicsContext.h"
+#include "Platform/Bgfx/BgfxContext.h"
 
 #include <GLFW/glfw3.h>
 
@@ -29,7 +29,7 @@ namespace GanymedE {
 		virtual void Shutdown();
 	private:
 		GLFWwindow* m_Window;
-		Scope<GraphicsContext> m_Context;
+		Scope<BgfxContext> m_Context;
 
 		struct WindowData
 		{

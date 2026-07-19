@@ -25,27 +25,22 @@ namespace GanymedE {
 
 	void Mesh::Build()
 	{
-		m_VertexArray = VertexArray::Create();
+		m_Geometry.Vertices = VertexBuffer::Create(
+			m_Vertices.data(),
+			(uint32_t)(m_Vertices.size() * sizeof(MeshVertex)),
+			{
+				{ ShaderDataType::Float3, "a_Position" },
+				{ ShaderDataType::Float3, "a_Normal" },
+				{ ShaderDataType::Float3, "a_Tangent" },
+				{ ShaderDataType::Float2, "a_TexCoord" }
+			});
 
-		m_VertexBuffer = VertexBuffer::Create((float*)m_Vertices.data(), (uint32_t)(m_Vertices.size() * sizeof(MeshVertex)));
-		m_VertexBuffer->SetLayout({
-			{ ShaderDataType::Float3, "a_Position" },
-			{ ShaderDataType::Float3, "a_Normal" },
-			{ ShaderDataType::Float3, "a_Tangent" },
-			{ ShaderDataType::Float2, "a_TexCoord" }
-		});
-		m_VertexArray->AddVertexBuffer(m_VertexBuffer);
+		// The per-instance transform/ID buffer is gone: bgfx allocates instance
+		// data from a transient pool at submit time instead of keeping a
+		// divisor-1 vertex buffer around.
+		m_InstanceData.reserve(MaxInstancesPerDraw);
 
-		// Per-instance transform + entity ID (attribute locations 4..8, divisor 1)
-		m_InstanceBuffer = VertexBuffer::Create(MaxInstancesPerDraw * sizeof(MeshInstanceData));
-		m_InstanceBuffer->SetLayout({
-			{ ShaderDataType::Mat4, "a_InstanceTransform", false, true },
-			{ ShaderDataType::Int,  "a_InstanceEntityID",  false, true }
-		});
-		m_VertexArray->AddVertexBuffer(m_InstanceBuffer);
-
-		m_IndexBuffer = IndexBuffer::Create(m_Indices.data(), (uint32_t)m_Indices.size());
-		m_VertexArray->SetIndexBuffer(m_IndexBuffer);
+		m_Geometry.Indices = IndexBuffer::Create(m_Indices.data(), (uint32_t)m_Indices.size());
 
 		ComputeBounds();
 	}
@@ -91,12 +86,15 @@ namespace GanymedE {
 
 	void Mesh::SetInstanceData(const MeshInstanceData* data, uint32_t count)
 	{
-		if (!m_InstanceBuffer || !data || count == 0)
+		m_InstanceData.clear();
+
+		if (!data || count == 0)
 			return;
 
 		if (count > MaxInstancesPerDraw)
 			count = MaxInstancesPerDraw;
-		m_InstanceBuffer->SetData(data, count * sizeof(MeshInstanceData));
+
+		m_InstanceData.assign(data, data + count);
 	}
 
 }

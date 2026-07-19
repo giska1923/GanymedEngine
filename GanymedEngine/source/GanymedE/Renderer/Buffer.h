@@ -1,5 +1,7 @@
 #pragma once
 
+#include <bgfx/bgfx.h>
+
 namespace GanymedE {
 	enum class ShaderDataType
 	{
@@ -38,6 +40,60 @@ namespace GanymedE {
 		return 0;
 	}
 
+	// bgfx vertex attributes are *semantic slots*, not free-form names, so every
+	// attribute the engine uses has to be assigned one. Data with no natural
+	// semantic (entity IDs, per-vertex texture indices) rides in a spare
+	// TexCoordN. This table is the single source of truth - it must stay in sync
+	// with the varying.def.sc the shaders are compiled against (Phase 3).
+	//
+	// Per-instance attributes are deliberately absent: bgfx has no
+	// attribute-divisor concept and feeds instance data through
+	// setInstanceDataBuffer / i_data0..4 instead.
+	inline bgfx::Attrib::Enum AttribFromName(const std::string& name)
+	{
+		if (name == "a_Position")     return bgfx::Attrib::Position;
+		if (name == "a_Normal")       return bgfx::Attrib::Normal;
+		if (name == "a_Tangent")      return bgfx::Attrib::Tangent;
+		if (name == "a_Color")        return bgfx::Attrib::Color0;
+		if (name == "a_TexCoord")     return bgfx::Attrib::TexCoord0;
+		if (name == "a_TexIndex")     return bgfx::Attrib::TexCoord1;
+		if (name == "a_TilingFactor") return bgfx::Attrib::TexCoord2;
+		if (name == "a_EntityID")     return bgfx::Attrib::TexCoord3;
+
+		GE_CORE_ASSERT(false, "Unmapped vertex attribute - add it to AttribFromName, "
+			"or route it through an instance data buffer if it is per-instance.");
+		return bgfx::Attrib::Count;
+	}
+
+	// bgfx offers no 32-bit integer vertex attribute (only Uint8, Uint10, Int16,
+	// Half and Float). Integer attributes therefore travel as floats, which is
+	// lossless for entity IDs up to 2^24 - far past any realistic entity count.
+	//
+	// NOTE: the CPU-side vertex data must be written as float for these, not as
+	// int32 reinterpreted. Call sites still storing raw int are flagged in
+	// docs/BGFX_MIGRATION.md and get fixed with their shaders in Phase 3.
+	inline bgfx::AttribType::Enum AttribTypeFromShaderType(ShaderDataType type)
+	{
+		switch (type)
+		{
+			case ShaderDataType::Float:
+			case ShaderDataType::Float2:
+			case ShaderDataType::Float3:
+			case ShaderDataType::Float4:
+			case ShaderDataType::Mat3:
+			case ShaderDataType::Mat4:
+			case ShaderDataType::Int:
+			case ShaderDataType::Int2:
+			case ShaderDataType::Int3:
+			case ShaderDataType::Int4:
+			case ShaderDataType::Bool:
+				return bgfx::AttribType::Float;
+		}
+
+		GE_CORE_ASSERT(false, "Unknown shader data type!");
+		return bgfx::AttribType::Float;
+	}
+
 	struct BufferElement
 	{
 		ShaderDataType Type;
@@ -45,7 +101,7 @@ namespace GanymedE {
 		uint32_t Size;
 		uint32_t Offset;
 		bool Normalized;
-		bool Instanced; // advance per instance (attribute divisor 1) instead of per vertex
+		bool Instanced; // fed through bgfx::setInstanceDataBuffer, not the vertex layout
 
 		BufferElement() {}
 
@@ -89,6 +145,29 @@ namespace GanymedE {
 		inline uint32_t GetStride() const { return m_Stride; }
 		inline const std::vector<BufferElement>& GetElements() const { return m_Elements; }
 
+		// Translates into the bgfx description used at buffer creation. Only
+		// per-vertex elements take part; instanced ones are skipped.
+		bgfx::VertexLayout ToBgfx() const
+		{
+			bgfx::VertexLayout layout;
+			layout.begin();
+
+			for (const BufferElement& element : m_Elements)
+			{
+				if (element.Instanced)
+					continue;
+
+				layout.add(
+					AttribFromName(element.Name),
+					(uint8_t)element.GetComponentCount(),
+					AttribTypeFromShaderType(element.Type),
+					element.Normalized);
+			}
+
+			layout.end();
+			return layout;
+		}
+
 		std::vector<BufferElement>::iterator begin() { return m_Elements.begin(); }
 		std::vector<BufferElement>::iterator end() { return m_Elements.end(); }
 		std::vector<BufferElement>::const_iterator begin() const { return m_Elements.begin(); }
@@ -111,33 +190,74 @@ namespace GanymedE {
 		uint32_t m_Stride = 0;
 	};
 
+	// Concrete wrapper over a bgfx vertex buffer. Static when constructed with
+	// data, dynamic when constructed with just a size (the SetData path).
+	//
+	// There is no Bind(): bgfx binds buffers at submit time, so binding is the
+	// draw call's job (see RenderCommand).
 	class VertexBuffer
 	{
 	public:
-		virtual ~VertexBuffer() {}
+		VertexBuffer(const void* data, uint32_t size, const BufferLayout& layout);
+		VertexBuffer(uint32_t size, const BufferLayout& layout);
+		~VertexBuffer();
 
-		virtual void Bind() const = 0;
-		virtual void Unbind() const = 0;
+		VertexBuffer(const VertexBuffer&) = delete;
+		VertexBuffer& operator=(const VertexBuffer&) = delete;
 
-		virtual void SetData(const void* data, uint32_t size) = 0;
+		// Dynamic buffers only.
+		void SetData(const void* data, uint32_t size);
 
-		virtual const BufferLayout& GetLayout() const = 0;
-		virtual void SetLayout(const BufferLayout& layout) = 0;
+		const BufferLayout& GetLayout() const { return m_Layout; }
+		const bgfx::VertexLayout& GetVertexLayout() const { return m_VertexLayout; }
 
-		static Ref<VertexBuffer> Create(uint32_t size);
-		static Ref<VertexBuffer> Create(float* vertices, uint32_t size);
+		bool IsDynamic() const { return m_IsDynamic; }
+		bool IsValid() const;
+
+		bgfx::VertexBufferHandle GetStaticHandle() const { return m_StaticHandle; }
+		bgfx::DynamicVertexBufferHandle GetDynamicHandle() const { return m_DynamicHandle; }
+
+		static Ref<VertexBuffer> Create(uint32_t size, const BufferLayout& layout);
+		static Ref<VertexBuffer> Create(const void* data, uint32_t size, const BufferLayout& layout);
+	private:
+		BufferLayout m_Layout;
+		bgfx::VertexLayout m_VertexLayout;
+
+		bool m_IsDynamic = false;
+		bgfx::VertexBufferHandle m_StaticHandle = BGFX_INVALID_HANDLE;
+		bgfx::DynamicVertexBufferHandle m_DynamicHandle = BGFX_INVALID_HANDLE;
 	};
 
 	class IndexBuffer
 	{
 	public:
-		virtual ~IndexBuffer() {}
+		IndexBuffer(const uint32_t* indices, uint32_t count);
+		~IndexBuffer();
 
-		virtual void Bind() const = 0;
-		virtual void Unbind() const = 0;
+		IndexBuffer(const IndexBuffer&) = delete;
+		IndexBuffer& operator=(const IndexBuffer&) = delete;
 
-		virtual uint32_t GetCount() const = 0;
+		uint32_t GetCount() const { return m_Count; }
+		bool IsValid() const;
 
-		static Ref<IndexBuffer> Create(uint32_t* indices, uint32_t count);
+		bgfx::IndexBufferHandle GetHandle() const { return m_Handle; }
+
+		static Ref<IndexBuffer> Create(const uint32_t* indices, uint32_t count);
+	private:
+		uint32_t m_Count = 0;
+		bgfx::IndexBufferHandle m_Handle = BGFX_INVALID_HANDLE;
+	};
+
+	// Replaces VertexArray: bgfx has no VAO concept, so the only thing worth
+	// keeping was the vertex+index buffer pairing.
+	struct Geometry
+	{
+		Ref<VertexBuffer> Vertices;
+		Ref<IndexBuffer> Indices;
+
+		bool IsValid() const
+		{
+			return Vertices && Vertices->IsValid() && Indices && Indices->IsValid();
+		}
 	};
 }

@@ -1,10 +1,10 @@
 #include "gepch.h"
 #include "Renderer3D.h"
 
-#include "UniformBuffer.h"
+#include "FrameUniforms.h"
 #include "Shader.h"
 #include "RenderCommand.h"
-#include "VertexArray.h"
+#include "RenderPassIDs.h"
 #include "Buffer.h"
 #include "Framebuffer.h"
 #include "Environment.h"
@@ -76,20 +76,18 @@ namespace GanymedE {
 	struct Renderer3DData
 	{
 		CameraUBO CameraBuffer{};
-		Ref<UniformBuffer> CameraUniformBuffer;
 		Frustum CameraFrustum;
 
 		LightsUBO LightBuffer{};
-		Ref<UniformBuffer> LightUniformBuffer;
 
 		std::vector<DrawCommand> DrawList;
 
 		Ref<Shader> GridShader;
-		Ref<VertexArray> GridVertexArray;
+		Geometry GridGeometry;
 
 		Ref<Shader> SkyboxShader;
 		Ref<Shader> SkyboxCubeShader;
-		Ref<VertexArray> FullscreenQuad;
+		Geometry FullscreenQuad;
 
 		// HDR image-based lighting (optional)
 		Ref<Environment> ActiveEnvironment;
@@ -112,7 +110,7 @@ namespace GanymedE {
 		};
 		std::vector<LineVertex> LineVertices;
 		Ref<Shader> LineShader;
-		Ref<VertexArray> LineVertexArray;
+		Geometry LineGeometry;
 		Ref<VertexBuffer> LineVertexBuffer;
 		static constexpr uint32_t MaxLineVertices = 20000;
 
@@ -132,8 +130,7 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		s_Data.CameraUniformBuffer = UniformBuffer::Create(sizeof(CameraUBO), 0);
-		s_Data.LightUniformBuffer = UniformBuffer::Create(sizeof(LightsUBO), 1);
+		FrameUniforms::Init();
 
 		s_Data.GridShader = Shader::Create("assets/shaders/Grid.glsl");
 		s_Data.SkyboxShader = Shader::Create("assets/shaders/Skybox.glsl");
@@ -149,12 +146,9 @@ namespace GanymedE {
 		};
 		uint32_t gridIndices[] = { 0, 1, 2, 2, 3, 0 };
 
-		s_Data.GridVertexArray = VertexArray::Create();
-		Ref<VertexBuffer> gridVB = VertexBuffer::Create(gridVertices, sizeof(gridVertices));
-		gridVB->SetLayout({ { ShaderDataType::Float3, "a_Position" } });
-		s_Data.GridVertexArray->AddVertexBuffer(gridVB);
-		Ref<IndexBuffer> gridIB = IndexBuffer::Create(gridIndices, 6);
-		s_Data.GridVertexArray->SetIndexBuffer(gridIB);
+		s_Data.GridGeometry.Vertices = VertexBuffer::Create(gridVertices, sizeof(gridVertices),
+			{ { ShaderDataType::Float3, "a_Position" } });
+		s_Data.GridGeometry.Indices = IndexBuffer::Create(gridIndices, 6);
 
 		// Fullscreen quad in NDC (used by skybox + reusable for post effects)
 		float quadVertices[] = {
@@ -165,12 +159,9 @@ namespace GanymedE {
 		};
 		uint32_t quadIndices[] = { 0, 1, 2, 2, 3, 0 };
 
-		s_Data.FullscreenQuad = VertexArray::Create();
-		Ref<VertexBuffer> quadVB = VertexBuffer::Create(quadVertices, sizeof(quadVertices));
-		quadVB->SetLayout({ { ShaderDataType::Float2, "a_Position" } });
-		s_Data.FullscreenQuad->AddVertexBuffer(quadVB);
-		Ref<IndexBuffer> quadIB = IndexBuffer::Create(quadIndices, 6);
-		s_Data.FullscreenQuad->SetIndexBuffer(quadIB);
+		s_Data.FullscreenQuad.Vertices = VertexBuffer::Create(quadVertices, sizeof(quadVertices),
+			{ { ShaderDataType::Float2, "a_Position" } });
+		s_Data.FullscreenQuad.Indices = IndexBuffer::Create(quadIndices, 6);
 
 		// Depth-only shadow map framebuffer, one per directional cascade
 		FramebufferSpecification shadowSpec;
@@ -181,31 +172,28 @@ namespace GanymedE {
 			s_Data.ShadowFramebuffers[i] = Framebuffer::Create(shadowSpec);
 
 		s_Data.LineShader = Shader::Create("assets/shaders/Line.glsl");
-		s_Data.LineVertexArray = VertexArray::Create();
-		s_Data.LineVertexBuffer = VertexBuffer::Create(s_Data.MaxLineVertices * sizeof(Renderer3DData::LineVertex));
-		s_Data.LineVertexBuffer->SetLayout({
+		s_Data.LineVertexBuffer = VertexBuffer::Create(s_Data.MaxLineVertices * sizeof(Renderer3DData::LineVertex), {
 			{ ShaderDataType::Float3, "a_Position" },
 			{ ShaderDataType::Float4, "a_Color" }
 		});
-		s_Data.LineVertexArray->AddVertexBuffer(s_Data.LineVertexBuffer);
+		s_Data.LineGeometry.Vertices = s_Data.LineVertexBuffer;
 		s_Data.LineVertices.reserve(s_Data.MaxLineVertices);
 	}
 
 	void Renderer3D::Shutdown()
 	{
 		s_Data.DrawList.clear();
-		s_Data.GridVertexArray = nullptr;
+		s_Data.GridGeometry = {};
 		s_Data.GridShader = nullptr;
 		s_Data.SkyboxShader = nullptr;
 		s_Data.SkyboxCubeShader = nullptr;
-		s_Data.FullscreenQuad = nullptr;
+		s_Data.FullscreenQuad = {};
 		s_Data.ShadowDepthShader = nullptr;
 		for (uint32_t i = 0; i < kCascadeCount; i++)
 			s_Data.ShadowFramebuffers[i] = nullptr;
-		s_Data.CameraUniformBuffer = nullptr;
-		s_Data.LightUniformBuffer = nullptr;
+		FrameUniforms::Shutdown();
 		s_Data.LineShader = nullptr;
-		s_Data.LineVertexArray = nullptr;
+		s_Data.LineGeometry = {};
 		s_Data.LineVertexBuffer = nullptr;
 		s_Data.LineVertices.clear();
 	}
@@ -230,7 +218,12 @@ namespace GanymedE {
 		s_Data.CameraBuffer.View = view;
 		s_Data.CameraBuffer.Projection = projection;
 		s_Data.CameraBuffer.CameraPosition = cameraPos;
-		s_Data.CameraUniformBuffer->SetData(&s_Data.CameraBuffer, sizeof(CameraUBO));
+
+		// The matrices ride on the view rather than in a uniform block; only the
+		// camera position still needs uploading. Culling keeps using the CPU-side
+		// copy, which is why CameraBuffer survives the UBO removal.
+		FrameUniforms::SetCamera(RenderPass::SceneHDR, view, projection, cameraPos);
+
 		s_Data.CameraFrustum = Frustum::FromViewProjection(s_Data.CameraBuffer.ViewProjection);
 	}
 
@@ -470,12 +463,17 @@ namespace GanymedE {
 			for (size_t i = 0; i < chunk; i++)
 			{
 				s_Instances[i].Transform = cmds[offset + i]->Transform;
-				s_Instances[i].EntityID = cmds[offset + i]->EntityID;
+				s_Instances[i].EntityID = glm::vec4((float)cmds[offset + i]->EntityID);
 			}
 
 			mesh->SetInstanceData(s_Instances.data(), (uint32_t)chunk);
-			RenderCommand::DrawIndexedInstanced(mesh->GetVertexArray(), submesh.IndexCount,
-				submesh.BaseIndex, (int32_t)submesh.BaseVertex, (uint32_t)chunk);
+
+			// bgfx copies instance data into its own transient buffer at submit
+			// time, so it is handed over per draw rather than pre-uploaded.
+			const auto& instances = mesh->GetInstanceData();
+			RenderCommand::DrawIndexedInstanced(mesh->GetGeometry(), submesh.IndexCount,
+				submesh.BaseIndex, (int32_t)submesh.BaseVertex,
+				instances.data(), (uint32_t)instances.size(), (uint16_t)sizeof(MeshInstanceData));
 			s_Data.Stats.DrawCalls++;
 			if (chunk > 1)
 				s_Data.Stats.InstancedDraws++;
@@ -504,14 +502,24 @@ namespace GanymedE {
 			if (!s_Data.ShadowFramebuffers[c])
 				continue;
 
-			s_Data.ShadowFramebuffers[c]->Bind();
+			// One view per cascade, so bgfx renders them in a defined order.
+			const uint16_t view = RenderPass::Shadow + (uint16_t)c;
+			s_Data.ShadowFramebuffers[c]->BindToView(view);
+			RenderCommand::SetViewId(view);
+			bgfx::setViewClear(view, BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+
 			RenderCommand::SetDepthTest(true);
 			RenderCommand::SetDepthWrite(true);
-			RenderCommand::Clear();
+
+			// Depth-only target: it has no colour attachment, so colour writes
+			// must be off. bgfx will not service a draw whose write mask targets
+			// attachments the framebuffer does not have.
+			RenderCommand::GetState().WriteRGB = false;
+			RenderCommand::GetState().WriteAlpha = false;
 
 			// Cull front faces while rendering caster depth to curb acne / peter-panning
 			RenderCommand::SetCullFace(true);
-			RenderCommand::SetCullMode(RendererAPI::CullMode::Front);
+			RenderCommand::SetCullMode(RenderState::CullMode::Front);
 
 			s_Data.ShadowDepthShader->SetMat4("u_LightSpaceMatrix", s_Data.CascadeLightSpace[c]);
 
@@ -527,8 +535,9 @@ namespace GanymedE {
 				i = end;
 			}
 
-			RenderCommand::SetCullMode(RendererAPI::CullMode::Back);
-			s_Data.ShadowFramebuffers[c]->Unbind();
+			RenderCommand::SetCullMode(RenderState::CullMode::Back);
+			RenderCommand::GetState().WriteRGB = true;
+			RenderCommand::GetState().WriteAlpha = true;
 		}
 	}
 
@@ -544,18 +553,41 @@ namespace GanymedE {
 		shader->SetInt("u_UseShadows", s_Data.HasShadowLight ? 1 : 0);
 		shader->SetInt("u_CascadeCount", (int)kCascadeCount);
 		shader->SetFloat("u_ShadowTexelSize", shadowTexelSize);
+
+		// bgfx addresses an array uniform as a whole; "u_Name[i]" is not a name it
+		// knows. The four cascade matrices go up as one mat4[4], and the four
+		// split distances fit in a single vec4.
+		shader->SetMat4Array("u_LightSpaceMatrices", s_Data.CascadeLightSpace, kCascadeCount);
+		shader->SetFloat4("u_CascadeSplits", glm::vec4(
+			s_Data.CascadeSplits[0], s_Data.CascadeSplits[1],
+			s_Data.CascadeSplits[2], s_Data.CascadeSplits[3]));
+
 		for (uint32_t c = 0; c < kCascadeCount; c++)
 		{
 			std::string idx = std::to_string(c);
-			shader->SetMat4("u_LightSpaceMatrices[" + idx + "]", s_Data.CascadeLightSpace[c]);
-			shader->SetInt("u_ShadowMaps[" + idx + "]", (int)(kShadowMapSlot0 + c));
-			shader->SetFloat("u_CascadeSplits[" + idx + "]", s_Data.CascadeSplits[c]);
+
+			// Shadow lookups must clamp: a sample off the edge of a cascade would
+			// otherwise wrap and shadow the opposite side of the scene.
+			if (s_Data.ShadowFramebuffers[c])
+			{
+				shader->SetTexture("s_shadowMap" + idx,
+					(uint8_t)(kShadowMapSlot0 + c),
+					s_Data.ShadowFramebuffers[c]->GetDepthAttachment(),
+					BGFX_SAMPLER_UVW_CLAMP);
+			}
 		}
 
 		shader->SetInt("u_UseIBL", s_Data.UseIBL ? 1 : 0);
-		shader->SetInt("u_IrradianceMap", (int)kIrradianceSlot);
-		shader->SetInt("u_PrefilterMap", (int)kPrefilterSlot);
-		shader->SetInt("u_BRDFLUT", (int)kBRDFLutSlot);
+
+		// IBL textures bind per-material, because a sampler uniform belongs to a
+		// shader - there is no global "bind to unit 9" under bgfx.
+		if (s_Data.UseIBL && s_Data.ActiveEnvironment && s_Data.ActiveEnvironment->IsValid())
+		{
+			const Ref<Environment>& env = s_Data.ActiveEnvironment;
+			shader->SetTexture("u_IrradianceMap", (uint8_t)kIrradianceSlot, env->GetIrradiance(), BGFX_SAMPLER_UVW_CLAMP);
+			shader->SetTexture("u_PrefilterMap",  (uint8_t)kPrefilterSlot,  env->GetPrefilter(),  BGFX_SAMPLER_UVW_CLAMP);
+			shader->SetTexture("u_BRDFLUT",       (uint8_t)kBRDFLutSlot,    env->GetBRDFLut(),    BGFX_SAMPLER_UVW_CLAMP);
+		}
 		shader->SetFloat("u_MaxReflectionLod",
 			s_Data.ActiveEnvironment ? s_Data.ActiveEnvironment->GetMaxReflectionLod() : 0.0f);
 	}
@@ -564,8 +596,17 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		// Push all shared frame data to the GPU
-		s_Data.LightUniformBuffer->SetData(&s_Data.LightBuffer, sizeof(LightsUBO));
+		// Push all shared frame data to the GPU. The old LightsUBO was already
+		// vec4-shaped, so its members map straight onto vec4 uniforms and the
+		// GPULight array uploads as one flat vec4[] - no repacking needed.
+		FrameUniforms::SetDirectionalLight(s_Data.LightBuffer.DirLightDirection,
+			s_Data.LightBuffer.DirLightColor);
+		FrameUniforms::SetAmbient(s_Data.LightBuffer.AmbientSky,
+			s_Data.LightBuffer.AmbientGround);
+		FrameUniforms::SetLights(
+			reinterpret_cast<const glm::vec4*>(s_Data.LightBuffer.Lights),
+			(uint32_t)s_Data.LightBuffer.Counts.x,
+			kMaxLights);
 
 		// Partition the draw list: shadow casters skip camera culling (an off-screen
 		// mesh still casts a visible shadow); the color passes are frustum-culled.
@@ -601,6 +642,11 @@ namespace GanymedE {
 		// Shadow depth pass (re-renders the caster list from the light's POV)
 		RenderShadowPass(shadowCasters);
 
+		// RenderShadowPass leaves the current view pointing at the last cascade.
+		// Every colour draw below belongs to the scene view - without this they
+		// are submitted into the shadow framebuffer and simply never appear.
+		RenderCommand::SetViewId(RenderPass::SceneHDR);
+
 		// Opaque: group by material -> mesh -> submesh (instancing batches within a
 		// group), front-to-back inside each group for early-z
 		std::sort(opaque.begin(), opaque.end(), [](const DrawCommand* a, const DrawCommand* b)
@@ -617,17 +663,6 @@ namespace GanymedE {
 		RenderCommand::SetDepthTest(true);
 		RenderCommand::SetDepthWrite(true);
 		RenderCommand::SetBlend(false);
-
-		// Bind all cascade depth maps once for the whole pass (slots 5..8)
-		for (uint32_t c = 0; c < kCascadeCount; c++)
-		{
-			if (s_Data.ShadowFramebuffers[c])
-				s_Data.ShadowFramebuffers[c]->BindDepthTexture(kShadowMapSlot0 + c);
-		}
-
-		// Bind IBL textures once for the pass (slots 9..11)
-		if (s_Data.UseIBL && s_Data.ActiveEnvironment)
-			s_Data.ActiveEnvironment->BindIBL(kIrradianceSlot, kPrefilterSlot, kBRDFLutSlot);
 
 		const Material* boundMaterial = nullptr;
 		for (size_t i = 0; i < opaque.size(); )
@@ -699,7 +734,7 @@ namespace GanymedE {
 			s_Data.LineShader->Bind();
 			RenderCommand::SetDepthTest(true);
 			RenderCommand::SetDepthWrite(false);
-			RenderCommand::DrawLines(s_Data.LineVertexArray, count);
+			RenderCommand::DrawLines(s_Data.LineGeometry, count);
 			RenderCommand::SetDepthWrite(true);
 			s_Data.Stats.DrawCalls++;
 			s_Data.LineVertices.clear();
@@ -708,7 +743,7 @@ namespace GanymedE {
 
 	void Renderer3D::DrawSkybox()
 	{
-		if (!s_Data.DrawSkyboxFlag || !s_Data.FullscreenQuad)
+		if (!s_Data.DrawSkyboxFlag || !s_Data.FullscreenQuad.IsValid())
 			return;
 
 		RenderCommand::SetDepthTest(false);
@@ -719,11 +754,10 @@ namespace GanymedE {
 
 		if (s_Data.UseIBL && s_Data.ActiveEnvironment && s_Data.SkyboxCubeShader)
 		{
-			s_Data.ActiveEnvironment->BindSkybox(kSkyboxCubemapSlot);
-
 			s_Data.SkyboxCubeShader->Bind();
+			s_Data.SkyboxCubeShader->SetTexture("u_EnvironmentMap", (uint8_t)kSkyboxCubemapSlot,
+				s_Data.ActiveEnvironment->GetSkybox(), BGFX_SAMPLER_UVW_CLAMP);
 			s_Data.SkyboxCubeShader->SetMat4("u_InverseViewProjection", invViewProj);
-			s_Data.SkyboxCubeShader->SetInt("u_EnvironmentMap", (int)kSkyboxCubemapSlot);
 			s_Data.SkyboxCubeShader->SetFloat("u_Intensity", s_Data.SkyIntensity);
 		}
 		else if (s_Data.SkyboxShader)
@@ -753,7 +787,7 @@ namespace GanymedE {
 
 	void Renderer3D::DrawGrid()
 	{
-		if (!s_Data.GridShader || !s_Data.GridVertexArray)
+		if (!s_Data.GridShader || !s_Data.GridGeometry.IsValid())
 			return;
 
 		RenderCommand::SetDepthTest(true);
@@ -761,12 +795,18 @@ namespace GanymedE {
 		RenderCommand::SetCullFace(false);
 
 		s_Data.GridShader->Bind();
-		// Scale grid quad so the shader's world-XZ fade covers a large area
-		glm::mat4 transform = glm::scale(glm::mat4(1.0f), glm::vec3(100.0f));
-		s_Data.GridShader->SetMat4("u_Transform", transform);
-		s_Data.GridShader->SetFloat3("u_CameraPosition", s_Data.CameraBuffer.CameraPosition);
 
-		RenderCommand::DrawIndexed(s_Data.GridVertexArray);
+		// Scale grid quad so the shader's world-XZ fade covers a large area.
+		// This goes on bgfx's transform stack rather than a u_Transform uniform,
+		// which is what makes the predefined u_model / u_modelViewProj correct.
+		glm::mat4 transform = glm::scale(glm::mat4(1.0f), glm::vec3(100.0f));
+		bgfx::setTransform(&transform[0][0]);
+
+		// u_CameraPosition deliberately NOT set here: FrameUniforms already
+		// supplies it every draw, and bgfx asserts if one uniform is set twice
+		// before a submit.
+
+		RenderCommand::DrawIndexed(s_Data.GridGeometry);
 		s_Data.Stats.DrawCalls++;
 
 		RenderCommand::SetDepthWrite(true);

@@ -7,7 +7,8 @@ namespace GanymedE {
 	LayerStack::~LayerStack() {
 		for (Layer* layer : m_Layers)
 		{
-			layer->OnDetach();
+			if (layer->IsAttached())
+				layer->OnDetach();
 			delete layer;
 		}
 	}
