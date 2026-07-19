@@ -8,9 +8,9 @@ mesh import pipeline (cgltf + a binary cache).
 [`AssetTypes.h`](../../GanymedEngine/source/GanymedE/Assets/AssetTypes.h):
 
 - `AssetHandle` is a `UUID`; `InvalidAssetHandle` is 0 (`IsAssetHandleValid` checks).
-- `AssetType`: `StaticMesh`, `Environment`, `Texture`, `Material`, `Scene` — derived from file
-  extension by `AssetTypeFromExtension` (`.gltf/.glb` → StaticMesh, `.hdr` → Environment,
-  `.png/.jpg/...` → Texture, `.ganymede` → Scene).
+- `AssetType`: `StaticMesh`, `Environment`, `Texture`, `Material`, `Scene`, `Script` — derived from
+  file extension by `AssetTypeFromExtension` (`.gltf/.glb` → StaticMesh, `.hdr` → Environment,
+  `.png/.jpg/...` → Texture, `.ganymede` → Scene, `.lua` → Script).
 - `AssetMetadata` = handle + type + file path **relative to `assets/`**.
 
 Components reference handles, never paths (`StaticMeshComponent.Mesh`,
@@ -36,8 +36,9 @@ Load paths:
 - **Mesh** — try `MeshCache` first; on miss, `MeshImporter::Load` then write the cache.
 - **Environment** — `Environment::Create` (runs the IBL bake; see
   [rendering.md](rendering.md#environment--ibl)).
-- Texture/Material/Scene are registered types without a `GetAsset` path yet (textures are loaded
-  directly via `Texture2D::Create`; scenes via `SceneSerializer`).
+- Texture/Material/Scene/Script are registered types without a `GetAsset` path yet (textures are
+  loaded directly via `Texture2D::Create`; scenes via `SceneSerializer`; scripts by path in
+  `ScriptEngine`, since there is no runtime object to cache — see [scripting.md](scripting.md)).
 
 Asset roots: paths resolve against `GetAssetRoot()`
 ([`AssetPaths.h`](../../GanymedEngine/source/GanymedE/Assets/AssetPaths.h)) — the relative

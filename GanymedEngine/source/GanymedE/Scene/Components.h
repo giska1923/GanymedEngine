@@ -176,6 +176,22 @@ namespace GanymedE {
 		}
 	};
 
+	// A Lua gameplay script attached to this entity.
+	//
+	// Deliberately a POD holding nothing but the handle: every sol2 object (the class table, the
+	// per-entity instance table) lives inside ScriptEngine, keyed by UUID. That keeps sol2 out of
+	// this header entirely - it is included almost everywhere, and sol2's templates are expensive -
+	// and lets the play-mode Scene::Copy treat the component as trivially copyable like any other.
+	struct ScriptComponent
+	{
+		AssetHandle Script = InvalidAssetHandle;   // a .lua asset
+
+		ScriptComponent() = default;
+		ScriptComponent(const ScriptComponent&) = default;
+		ScriptComponent(AssetHandle script)
+			: Script(script) {}
+	};
+
 	struct PhysicsMaterial
 	{
 		float Friction = 0.5f;

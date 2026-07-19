@@ -82,6 +82,9 @@ copyable, no behavior beyond small helpers.
   Flagged `EnableInit`+`EnableFini` so `NativeScriptSystem` reacts declaratively to scripts
   appearing/disappearing. Script hooks: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`,
   `OnCollisionEnter/Exit(Entity other)`.
+- **`ScriptComponent`** — an `AssetHandle` to a `.lua` asset, and nothing else: every sol2 object
+  lives in `ScriptEngine`, keyed by UUID. Same `EnableInit`+`EnableFini` flags and the same hook
+  names as the native path, driven by `LuaScriptSystem`. Details: [scripting.md](scripting.md).
 
 ### Physics (pure data — Jolt never appears here)
 
@@ -111,6 +114,12 @@ reads the graveyard copy), a plain `IterView` runs `OnUpdate`. The editor path d
 views without instantiating (they must be read every update), which also cleans up instances if a
 script component is removed in edit mode. `OnRuntimeStop` sweeps all live scripts (stopping play is
 not a component removal, so FiniView never sees it).
+
+### LuaScriptSystem — [`Systems/LuaScriptSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/LuaScriptSystem.h)
+The same three-view lifecycle as `NativeScriptSystem`, for `ScriptComponent`, delegating to the
+global `ScriptEngine` VM. Additionally declares an unused `AccessView<RW<TransformComponent>>` so
+`ValidateOrdering` knows script bindings write transforms outside any view — which is why it is
+registered before `TransformSystem`. Details: [scripting.md](scripting.md).
 
 ### TransformSystem — [`Systems/TransformSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/TransformSystem.h)
 Maintains the `WorldTransformComponent` cache. A `ChangeView` reacting to `TransformComponent` and

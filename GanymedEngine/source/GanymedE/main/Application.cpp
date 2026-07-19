@@ -4,6 +4,7 @@
 #include "GanymedE/events/KeyEvent.h"
 
 #include "GanymedE/Renderer/Renderer.h"
+#include "GanymedE/Scripting/ScriptEngine.h"
 
 #include "GanymedE/Core/Input.h"
 #include "GanymedE/Core/KeyCodes.h"
@@ -27,6 +28,11 @@ namespace GanymedE {
 
 		Renderer::Init();
 
+		// Application scope, not the editor's, because the VM belongs to the engine the way the
+		// renderer does — a Scene constructed by any app registers a LuaScriptSystem. It needs no
+		// AssetManager at this point; script assets are only resolved when one is instantiated.
+		ScriptEngine::Init();
+
 		m_ImGuiLayer = new ImGuiLayer();
 		PushOverlay(m_ImGuiLayer);
 	}
@@ -34,6 +40,10 @@ namespace GanymedE {
 	Application::~Application()
 	{
 		GE_PROFILE_FUNCTION();
+
+		// Before Renderer::Shutdown, and later before UIEngine's teardown too: the RmlUi Lua
+		// plugin will hold references into this same VM.
+		ScriptEngine::Shutdown();
 
 		Renderer::Shutdown();
 	}
