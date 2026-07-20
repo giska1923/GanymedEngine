@@ -59,9 +59,24 @@ Other build facts that have bitten before (details in
 | spdlog | Logging (header-only) |
 | Lua 5.4.8 | Gameplay scripting VM (built as a C static lib) |
 | sol2 3.5.0 | C++ binding layer over Lua (header-only) |
+| RmlUi 6.2 | Game UI (HTML/CSS-style documents); Core + Lua plugin only |
+| FreeType 2.14.3 | RmlUi's font engine (its one hard dependency) |
 
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
-`extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`).
+`extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`, `extern/RmlUi.lua`, `extern/FreeType.lua`).
+
+Two defines these hand-written scripts must supply that CMake would have set for you, both of
+which fail at *runtime* rather than at build time if missed:
+
+- **`RMLUI_FONT_ENGINE_FREETYPE`** on the RmlUi project — CMake derives it from its
+  `RMLUI_FONT_ENGINE` option (default `freetype`). Without it everything links and
+  `Rml::Initialise()` fails with "No font engine interface set!".
+- **`RMLUI_STATIC_LIB`** on the RmlUi project *and* every consumer, like the Jolt defines. A
+  mismatch decorates RmlUi's API with `__declspec(dllimport)` on one side and the link fails.
+
+FreeType builds from the canonical minimal file list — one `.c` per module, each of which
+`#include`s the rest of its module. Adding the individual sources instead multiply-defines half of
+them.
 
 Those scripts must also keep their **output** outside the submodule trees — every one of them
 uses `%{wks.location}/bin` and `%{wks.location}/temp`, same as the first-party projects. A parent

@@ -55,6 +55,8 @@ IncludeDir["lua"] = "%{wks.location}/GanymedEngine/extern/lua"
 -- alongside IncludeDir.lua, never instead of it.
 IncludeDir["lua_cxx"] = "%{wks.location}/GanymedEngine/extern/lua_cxx"
 IncludeDir["sol2"] = "%{wks.location}/GanymedEngine/extern/sol2/include"
+IncludeDir["RmlUi"] = "%{wks.location}/GanymedEngine/extern/RmlUi/Include"
+IncludeDir["freetype"] = "%{wks.location}/GanymedEngine/extern/freetype/include"
 
 group "Dependencies"
 	include "vendor/premake"
@@ -64,6 +66,8 @@ group "Dependencies"
 	include "GanymedEngine/extern/Jolt.lua"
 	include "GanymedEngine/extern/bgfx.lua"
 	include "GanymedEngine/extern/Lua.lua"
+	include "GanymedEngine/extern/FreeType.lua"
+	include "GanymedEngine/extern/RmlUi.lua"
 group ""
 
 include "GanymedEngine"

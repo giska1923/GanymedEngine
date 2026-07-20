@@ -1,0 +1,16 @@
+<rml>
+<head>
+	<title>HUD</title>
+	<!-- rml.rcss first: it supplies the element defaults RmlUi does not ship
+	     (notably div { display: block }). Without it every box collapses. -->
+	<link type="text/rcss" href="rml.rcss"/>
+	<link type="text/rcss" href="hud.rcss"/>
+</head>
+<body>
+	<div id="health-bar">
+		<div id="health-fill"></div>
+		<span id="health-text">100 / 100</span>
+	</div>
+	<div id="score">Score: 0</div>
+</body>
+</rml>

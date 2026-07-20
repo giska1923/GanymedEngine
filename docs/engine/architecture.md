@@ -16,6 +16,7 @@ GanymedE/
 ├── Assets/      AssetManager (handle registry), MeshCache
 ├── Physics/     PhysicsScene (Jolt, pimpl'd)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
+├── UI/          UIEngine (RmlUi game UI; the editor's own UI is ImGui — see ui.md)
 ├── Math/        Transform decomposition, AABB + Frustum
 ├── ImGui/       ImGuiLayer (docking UI host)
 ├── Debug/       Instrumentor (chrome://tracing profiler)

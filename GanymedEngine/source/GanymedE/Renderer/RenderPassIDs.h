@@ -38,6 +38,16 @@ namespace GanymedE {
 		// this frame's IDs rather than the previous frame's.
 		constexpr uint16_t Picking = 27;
 
+		// Game UI (RmlUi), composited into the final LDR image.
+		//
+		// Because bgfx executes views in ID order, this one constant is the whole
+		// ordering story: sitting after Composite (26) means the UI lands on the
+		// tonemapped, anti-aliased image in display space and is never itself
+		// tonemapped - no matter where in the frame the submit calls happen. It
+		// also appears inside the editor's viewport image for free, since that
+		// image IS the composite attachment.
+		constexpr uint16_t UI = 28;
+
 		// Transient views used only while baking an environment map on load
 		// (equirect -> cubemap, irradiance, prefilter, BRDF LUT).
 		//

@@ -60,14 +60,20 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 | Q / W / E / R | Gizmo: hide / translate / rotate / scale (ignored while using the gizmo or RMB-flying) |
 | Ctrl+N / Ctrl+O / Ctrl+Shift+S | New / Open / Save-As scene |
 | Ctrl (held while dragging gizmo) | Snapping |
+| Ctrl+U | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only) |
 | F1 | bgfx stats overlay |
 
 ### Play / Stop (toolbar)
 
 ```
 Play: m_ActiveScene = Scene::Copy(m_EditorScene); OnRuntimeStart(); panels retarget the copy
-Stop: OnRuntimeStop(); m_ActiveScene = m_EditorScene; selection cleared
+      UIEngine::LoadDocument("assets/ui/hud.rml")
+Stop: UIEngine::CloseAllDocuments(); OnRuntimeStop(); m_ActiveScene = m_EditorScene; selection cleared
 ```
+
+Game UI (RmlUi) is loaded on Play and closed on Stop, and renders *inside* the viewport image
+rather than over the whole editor — `RenderPass::UI` composites into the same LDR target the
+viewport displays. The document path is hard-coded for now. Details: [ui.md](../engine/ui.md).
 
 The runtime scene is a disposable UUID-keyed deep copy — physics and scripts can do anything to
 it, and Stop restores the authored scene untouched. Scene switching (`OpenScene`) stops play

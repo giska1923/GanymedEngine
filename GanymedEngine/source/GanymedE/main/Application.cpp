@@ -5,6 +5,7 @@
 
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
+#include "GanymedE/UI/UIEngine.h"
 
 #include "GanymedE/Core/Input.h"
 #include "GanymedE/Core/KeyCodes.h"
@@ -33,6 +34,11 @@ namespace GanymedE {
 		// AssetManager at this point; script assets are only resolved when one is instantiated.
 		ScriptEngine::Init();
 
+		// After both: it needs a live bgfx with compiled shaders, and it shares
+		// ScriptEngine's lua_State. Sized to the window; the editor re-sizes it to
+		// the viewport once that exists.
+		UIEngine::Init(m_Window->GetWidth(), m_Window->GetHeight());
+
 		m_ImGuiLayer = new ImGuiLayer();
 		PushOverlay(m_ImGuiLayer);
 	}
@@ -41,8 +47,10 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		// Before Renderer::Shutdown, and later before UIEngine's teardown too: the RmlUi Lua
-		// plugin will hold references into this same VM.
+		// Strict order. UIEngine first: the RmlUi Lua plugin holds references into
+		// ScriptEngine's VM, and Rml::Shutdown releases GPU textures, so it must run
+		// while bgfx is still alive. Then the VM, then the GPU.
+		UIEngine::Shutdown();
 		ScriptEngine::Shutdown();
 
 		Renderer::Shutdown();

@@ -34,3 +34,9 @@
 [submodule "GanymedEngine/extern/sol2"]
 	path = GanymedEngine/extern/sol2
 	url = https://github.com/ThePhD/sol2
+[submodule "GanymedEngine/extern/RmlUi"]
+	path = GanymedEngine/extern/RmlUi
+	url = https://github.com/mikke89/RmlUi
+[submodule "GanymedEngine/extern/freetype"]
+	path = GanymedEngine/extern/freetype
+	url = https://gitlab.freedesktop.org/freetype/freetype

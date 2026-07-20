@@ -13,6 +13,7 @@
 #include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/Renderer3D.h"
+#include "GanymedE/UI/UIEngine.h"
 
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
@@ -40,6 +41,10 @@ namespace GanymedE {
 		m_IconStop = Texture2D::Create("resources/icons/StopButton.png");
 
 		m_SceneRenderer = CreateRef<SceneRenderer>(1280, 720);
+
+		// Game UI composites into the same LDR target the viewport image shows, so
+		// the HUD appears inside the viewport rather than over the whole editor.
+		UIEngine::SetTarget(m_SceneRenderer->GetCompositeFramebuffer());
 
 		m_EditorScene = CreateRef<Scene>();
 		SetupDefaultEnvironment(m_EditorScene);
@@ -79,6 +84,12 @@ namespace GanymedE {
 			m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
 
 			m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+
+			// SetViewportSize rebuilds the post-stack targets, so the composite
+			// framebuffer is a different object afterwards - re-point the UI at it
+			// or it keeps compositing into the destroyed one.
+			UIEngine::SetViewport((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+			UIEngine::SetTarget(m_SceneRenderer->GetCompositeFramebuffer());
 		}
 
 		// Render
@@ -102,6 +113,13 @@ namespace GanymedE {
 				m_EditorCamera.OnUpdate(ts);
 				m_ActiveScene->GetPhysicsDebugDrawSettings() = m_PhysicsDebugDraw;
 				m_ActiveScene->OnUpdateRuntime(ts, &m_EditorCamera);
+
+				// Update order matters even though the render order does not:
+				// gameplay scripts have just set this frame's values, and the
+				// context lays out and animates against them. The actual submit
+				// lands wherever - RenderPass::UI decides when it draws.
+				UIEngine::OnUpdate(ts);
+				UIEngine::OnRender();
 				break;
 			}
 		}
@@ -243,6 +261,17 @@ namespace GanymedE {
 					SaveSceneAs();
 
 				if (ImGui::MenuItem("Exit")) Application::Get().Close();
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("View"))
+			{
+				// RmlUi's own inspector: element tree, computed RCSS, event log.
+				// Debug builds only - the Debugger sources are not compiled otherwise.
+				bool debuggerVisible = UIEngine::IsDebuggerVisible();
+				if (ImGui::MenuItem("Game UI Debugger", "Ctrl+U", &debuggerVisible))
+					UIEngine::SetDebuggerVisible(debuggerVisible);
+
 				ImGui::EndMenu();
 			}
 
@@ -496,6 +525,12 @@ namespace GanymedE {
 		}
 
 		// Gizmos
+		case Key::U:
+		{
+			if (control)
+				UIEngine::SetDebuggerVisible(!UIEngine::IsDebuggerVisible());
+			break;
+		}
 		case Key::Q:
 		{
 			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
@@ -611,10 +646,16 @@ namespace GanymedE {
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 		m_SceneHierarchyPanel.SetSelectedEntity({});
 		m_SceneState = SceneState::Play;
+
+		// Hard-coded for now. Making this a scene property is the obvious next
+		// step, but it needs a UI-document asset type to hang off.
+		UIEngine::LoadDocument("assets/ui/hud.rml");
 	}
 
 	void EditorLayer::OnSceneStop()
 	{
+		UIEngine::CloseAllDocuments();
+
 		m_ActiveScene->OnRuntimeStop();
 		m_ActiveScene = m_EditorScene;
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);

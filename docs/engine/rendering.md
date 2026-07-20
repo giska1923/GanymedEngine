@@ -86,9 +86,14 @@ API notes:
   `vec3(x)`, `mul(m, v)` not `m * v`, `mtxFromCols`, varyings only in `main`'s signature, `line`
   is reserved in HLSL.
 
-Current programs (19): FlatColor, VertexPosColor, Texture, Line, Grid, Phong, ShadowDepth, Skybox,
+Current programs (20): FlatColor, VertexPosColor, Texture, Line, Grid, Phong, ShadowDepth, Skybox,
 SkyboxCube, Equirect, Irradiance, Prefilter, BRDFLut, BloomDownsample, BloomUpsample, Tonemap,
-FXAA, Blit, ImGui.
+FXAA, Blit, ImGui, RmlUi.
+
+Two of those ship a per-shader `varying.<name>.def.sc` because their vertex layout is fixed by a
+third party and does not match the engine's: **ImGui** and **RmlUi** (whose colour and texcoord
+attributes are in the opposite order to ImGui's). `compile_shaders` prefers such a file
+automatically.
 
 ## Textures & framebuffers
 
@@ -198,7 +203,13 @@ scene HDR (RGBA16F + entityID + D24S8)
   → tonemap (ACES-style, exposure; bloom composited additively in HDR before the curve)
   → FXAA (optional)
   → composite (LDR, shown in the editor viewport via GetFinalImageRendererID)
+  → game UI (RmlUi, RenderPass::UI = 28) composited into that same LDR target
 ```
+
+The UI pass sits after Composite purely by view ID, which is what keeps it in display space
+instead of being tonemapped with the scene — see [ui.md](ui.md). Note that
+`SetViewportSize` rebuilds the post-stack targets, so anything holding the composite framebuffer
+(the UI does) has to re-fetch it on resize.
 
 `BeginFrame` binds+clears the scene target (color to `ClearColor`, entity IDs to −1 via clear
 palette); render between Begin and End; `EndFrame` runs the stack. Settings

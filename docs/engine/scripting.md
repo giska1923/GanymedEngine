@@ -149,8 +149,9 @@ gameplay scripts have no business touching the filesystem or spawning processes,
 editor's, because any app that constructs a `Scene` gets a `LuaScriptSystem`. It needs no
 `AssetManager` at init time — script assets are resolved only when an instance is created.
 
-When `UIEngine` lands, it initialises *after* `ScriptEngine` (it shares the `lua_State`) and shuts
-down *before* it.
+`UIEngine` initialises *after* `ScriptEngine` — RmlUi's Lua plugin runs on this same `lua_State`,
+so UI and gameplay scripts share globals — and shuts down *before* it, because the plugin holds
+references into the state. See [ui.md](ui.md).
 
 ## Assets
 
