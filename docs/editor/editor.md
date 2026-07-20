@@ -75,6 +75,12 @@ Game UI (RmlUi) is loaded on Play and closed on Stop, and renders *inside* the v
 rather than over the whole editor — `RenderPass::UI` composites into the same LDR target the
 viewport displays. The document path is hard-coded for now. Details: [ui.md](../engine/ui.md).
 
+While playing, `OnEvent` forwards input to `UIEngine` **before** the editor's own handlers, but
+only when the viewport is hovered or focused — otherwise clicking a panel would be routed at a HUD
+sitting underneath it. If the UI claims the event (pointer over an actual widget, or a focused UI
+element taking a key), `EditorLayer::OnEvent` returns early and the gizmo/selection shortcuts never
+see it. Mouse coordinates are translated by `m_ViewportBounds[0]`, the same origin picking uses.
+
 The runtime scene is a disposable UUID-keyed deep copy — physics and scripts can do anything to
 it, and Stop restores the authored scene untouched. Scene switching (`OpenScene`) stops play
 first.

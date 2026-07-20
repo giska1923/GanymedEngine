@@ -345,6 +345,10 @@ namespace GanymedE {
 		m_ViewportBounds[0] = { viewportScreenPos.x, viewportScreenPos.y };
 		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
 
+		// Same origin the picking code subtracts: RmlUi wants viewport-local pixels,
+		// while engine mouse events arrive in window coordinates.
+		UIEngine::SetViewportOrigin(m_ViewportBounds[0].x, m_ViewportBounds[0].y);
+
 		uint32_t textureID = m_SceneRenderer->GetFinalImageRendererID();
 		// Render targets are addressed bottom-up on OpenGL and top-down on
 		// D3D/Vulkan/Metal, so the V axis has to follow the backend. The old
@@ -486,6 +490,16 @@ namespace GanymedE {
 	{
 		if (m_SceneState == SceneState::Edit)
 			m_EditorCamera.OnEvent(e);
+
+		// Game UI gets first refusal, but only while playing and only when the
+		// viewport actually owns the pointer - otherwise clicking a panel would be
+		// routed at a HUD sitting underneath it. UIEngine marks the event Handled
+		// when RmlUi consumed it, so the editor shortcuts below then skip it.
+		if (m_SceneState == SceneState::Play && (m_ViewportHovered || m_ViewportFocused))
+			UIEngine::OnEvent(e);
+
+		if (e.IsHandled())
+			return;
 
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<KeyPressedEvent>(GE_BIND_EVENT_FN(EditorLayer::OnKeyPressed));

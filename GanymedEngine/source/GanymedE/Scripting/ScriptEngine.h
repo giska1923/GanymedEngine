@@ -52,5 +52,15 @@ namespace GanymedE {
 		// Raw lua_State*, for initialising the RmlUi Lua plugin on the shared VM.
 		// Returned as void* so this header need not pull in the Lua C headers.
 		static void* GetLuaState();
+
+		// Re-installs the engine's global tables, letting them win a name collision.
+		//
+		// The price of one shared VM: RmlUi's Lua plugin registers globals of its own,
+		// and one is called `Log` - so `Rml::Lua::Initialise` running after
+		// ScriptEngine::Init silently replaced the engine's Log with RmlUi's, whose
+		// interface is Log.Message(Log.logtype.info, ...). Every script calling
+		// Log.Info then died on "attempt to call a nil value". UIEngine calls this
+		// straight after loading the plugin so engine names take precedence.
+		static void ReinstallGlobals();
 	};
 }

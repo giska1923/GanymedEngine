@@ -111,7 +111,14 @@ Copying nine floats beats both problems at script call rates.
 Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, `Cross`), `Entity`
 (`GetName`, `GetUUID`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians), `Get/SetScale`,
 `HasRigidBody`), `Input`, `Key`, `Mouse`, `Log` (routed to the **client** logger — script output is
-game output), `Scene.FindEntityByName`.
+game output), `Scene.FindEntityByName`, `UI` (the HUD data model — see [ui.md](ui.md)).
+
+> **The `Log` global collides with RmlUi's.** RmlUi's Lua plugin registers its own `Log` usertype,
+> and it loads after `ScriptEngine::Init`, so it shadowed ours until `UIEngine` started calling
+> `ScriptEngine::ReinstallGlobals()` afterwards. That is what `RegisterScriptGlobals` exists for —
+> the tables are re-installable, the usertypes deliberately are not (re-registering one would
+> rebuild metatables that live objects point at). One shared VM means one shared namespace; check
+> for collisions when adding a global or bumping RmlUi.
 
 Rules for anything added later:
 

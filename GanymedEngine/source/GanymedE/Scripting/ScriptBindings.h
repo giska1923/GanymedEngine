@@ -8,9 +8,15 @@
 
 namespace GanymedE {
 
-	// Populates the shared VM's globals: Vec3, Entity, Input, Key, Mouse, Log, Scene.
+	// Populates the shared VM's globals: Vec3, Entity, Input, Key, Mouse, Log, Scene, UI.
 	// Defined in ScriptBindings.cpp; kept out of ScriptEngine.cpp so the binding surface is one
 	// file to read and the TS declarations in scripts-src/types/ganymed.d.ts have one file to
 	// mirror.
 	void RegisterScriptBindings(sol::state& lua);
+
+	// Just the plain global tables, without re-registering the usertypes.
+	//
+	// Exists because RmlUi's Lua plugin installs globals of its own into the same state, and one
+	// of them is called `Log` - so whichever runs last wins. See ScriptEngine::ReinstallGlobals.
+	void RegisterScriptGlobals(sol::state& lua);
 }

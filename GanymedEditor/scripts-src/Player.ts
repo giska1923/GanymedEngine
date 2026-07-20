@@ -5,17 +5,33 @@
 // zero-surprise path. TSTL classes resolve through the loader's `prototype` fallback, but their
 // constructors never run — a foot-gun better avoided by convention than debugged later.
 
-const Player: Script & { speed: number; elapsed: number } = {
+const Player: Script & { speed: number; elapsed: number; health: number; score: number } = {
 	entity: undefined!, // injected by ScriptEngine before OnCreate
 	speed: 3.0,
 	elapsed: 0.0,
+	health: 100.0,
+	score: 0,
 
 	OnCreate() {
 		Log.Info(`Player created: ${this.entity.GetName()}`);
+		UI.SetHealth(this.health);
+		UI.SetScore(this.score);
 	},
 
 	OnUpdate(ts: number) {
 		this.elapsed += ts;
+
+		// Drive the HUD: health drains and refills, score ticks up. Both go through
+		// the data model, so the bar's width and the text follow without this script
+		// knowing anything about RML or RCSS.
+		this.health -= ts * 12.0;
+		if (this.health <= 0.0) {
+			this.health = 100.0;
+		}
+		UI.SetHealth(this.health);
+
+		this.score = math.floor(this.elapsed * 10.0);
+		UI.SetScore(this.score);
 
 		const pos = this.entity.GetTranslation();
 

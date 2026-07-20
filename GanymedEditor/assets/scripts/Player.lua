@@ -4,11 +4,22 @@ local Player = {
     entity = nil,
     speed = 3,
     elapsed = 0,
+    health = 100,
+    score = 0,
     OnCreate = function(self)
         Log.Info("Player created: " .. self.entity:GetName())
+        UI.SetHealth(self.health)
+        UI.SetScore(self.score)
     end,
     OnUpdate = function(self, ts)
         self.elapsed = self.elapsed + ts
+        self.health = self.health - ts * 12
+        if self.health <= 0 then
+            self.health = 100
+        end
+        UI.SetHealth(self.health)
+        self.score = math.floor(self.elapsed * 10)
+        UI.SetScore(self.score)
         local pos = self.entity:GetTranslation()
         if Input.IsKeyPressed(Key.W) then
             pos.z = pos.z - self.speed * ts

@@ -8,6 +8,7 @@
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
+#include "GanymedE/UI/UIEngine.h"
 
 // The entire binding surface, in one file on purpose: scripts-src/types/ganymed.d.ts is the
 // hand-written TypeScript mirror of it, and one file is one thing to keep in sync.
@@ -218,15 +219,39 @@ namespace GanymedE {
 				return sol::nullopt;
 			};
 		}
+
+		void RegisterUI(sol::state& lua)
+		{
+			// The gameplay-facing half of the RmlUi data model. Setting a value here
+			// writes the bound C++ variable and marks it dirty, which is what makes
+			// RmlUi re-evaluate the {{expressions}} referencing it.
+			//
+			// Fixed setters rather than UI.Set(name, value): RmlUi data models bind
+			// to real C++ addresses declared before any document loads, so a generic
+			// bag would need a different mechanism entirely (see docs/engine/ui.md).
+			sol::table ui = lua.create_named_table("UI");
+			ui["SetHealth"] = [](float health) { UIEngine::SetHudHealth(health); };
+			ui["SetScore"]  = [](int score)    { UIEngine::SetHudScore(score); };
+			ui["GetHealth"] = []() { return UIEngine::GetHudHealth(); };
+			ui["GetScore"]  = []() { return UIEngine::GetHudScore(); };
+		}
 	}
 
-	void RegisterScriptBindings(sol::state& lua)
+	void RegisterScriptGlobals(sol::state& lua)
 	{
-		RegisterVec3(lua);
-		RegisterEntity(lua);
 		RegisterInput(lua);
 		RegisterKeyCodes(lua);
 		RegisterLog(lua);
 		RegisterScene(lua);
+		RegisterUI(lua);
+	}
+
+	void RegisterScriptBindings(sol::state& lua)
+	{
+		// Usertypes first, then the tables. Only the tables are re-installable;
+		// re-registering a usertype would rebuild metatables live objects point at.
+		RegisterVec3(lua);
+		RegisterEntity(lua);
+		RegisterScriptGlobals(lua);
 	}
 }

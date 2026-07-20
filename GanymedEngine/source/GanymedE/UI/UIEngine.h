@@ -9,6 +9,7 @@ namespace Rml { class Context; class ElementDocument; }
 
 namespace GanymedE {
 
+	class Event;
 	class Framebuffer;
 
 	// Game UI (RmlUi), the counterpart to ScriptEngine on the UI side: a global
@@ -44,6 +45,28 @@ namespace GanymedE {
 		static void OnUpdate(Timestep ts);   // Context::Update - layout and animation
 		static void OnRender();              // submits draw lists to RenderPass::UI
 		static void SetViewport(uint32_t width, uint32_t height);
+
+		// Where the UI's top-left sits in window coordinates. The editor renders the
+		// game into a panel, so incoming mouse positions are window-relative and have
+		// to be shifted before RmlUi sees them; a shipped game leaves this at (0,0).
+		// Kept here rather than passed per-event so the editor never needs RmlUi.
+		static void SetViewportOrigin(float x, float y);
+
+		// Translates engine events into Context::Process* calls.
+		//
+		// Marks the event Handled when RmlUi consumed it, so gameplay input does not
+		// also fire. Note the inverted sense: Context::Process* returns TRUE when the
+		// event should keep propagating, i.e. when the UI did NOT take it.
+		static void OnEvent(Event& e);
+
+		// ---- HUD data model ----
+		// Deliberately a fixed pair rather than a general property bag: RmlUi data
+		// models bind to real C++ variables declared up front, so "arbitrary values
+		// from script" would need a different mechanism (see ui.md).
+		static void SetHudHealth(float health);   // 0..100
+		static void SetHudScore(int score);
+		static float GetHudHealth();
+		static int GetHudScore();
 
 		static Rml::Context* GetContext();
 

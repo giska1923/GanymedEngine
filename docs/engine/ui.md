@@ -108,8 +108,77 @@ Debugger** or **Ctrl+U**. Debug builds only; the Debugger sources are not compil
 When a document renders nothing, that inspector is usually the fastest way to find out why —
 `display: inline` and a zero-width box look identical to "not loaded" from the outside.
 
+## Input routing
+
+`UIEngine::OnEvent` translates engine events into `Context::Process*` calls. The editor forwards
+events to it only while playing *and* while the viewport owns the pointer, then bails out early if
+the event came back `Handled`.
+
+Mouse positions arrive in window coordinates and RmlUi wants viewport-local pixels, so
+`SetViewportOrigin` (fed from `m_ViewportBounds[0]`, the same origin picking subtracts) shifts
+them. Like picking, there is **no Y flip** — both address from the viewport's top-left.
+
+Key translation lives in
+[`Platform/RmlUi/RmlUiInput.h`](../../GanymedEngine/source/Platform/RmlUi/RmlUiInput.h). It is
+`RmlGLFW::ConvertKey` extracted verbatim from the reference backend and still switching on
+`GLFW_KEY_*`, because the engine's `KeyCodes.h` *is* GLFW's numbering — keeping the original
+constant names means it can be re-extracted on an RmlUi upgrade instead of being hand-translated
+and quietly drifting. Modifiers are polled from `Input` rather than taken from a callback bitfield,
+so the lock keys (`KM_CAPSLOCK`/`KM_NUMLOCK`/`KM_SCROLLLOCK`) are never reported; nothing depends
+on them.
+
+### What counts as "the UI took it"
+
+**Do not use `Context::Process*`'s return value for pointer events.** A HUD document's `<body>`
+fills the whole viewport, so RmlUi reports *every* mouse move as consumed — which swallows camera
+orbit and gameplay clicks the moment any HUD is on screen. Verified: with the naive rule, a probe
+over empty sky came back `handled=true`.
+
+Pointer events instead consult the hover element, and are claimed only when it is not the document
+root:
+
+| Event | Claimed when |
+|---|---|
+| Mouse move / button / wheel | The hover element exists and is not the document root |
+| Key down/up, text input | `Context::Process*` says it was consumed — i.e. something has **focus** |
+
+The asymmetry is deliberate: pointer events belong to whatever is under the cursor, keyboard events
+to whatever has focus. With nothing focused, editor shortcuts and gameplay keys keep working while
+a HUD is up.
+
+## Data binding
+
+`UIEngine::Init` creates a data model named `hud` bound to a `HudData { float Health; int Score; }`
+living in the engine data block. **The model must exist before any document declaring
+`data-model="hud"` loads** — RmlUi resolves bindings at parse time, and a document that arrives
+first renders its `{{expressions}}` as literal text.
+
+Setting a value is not enough on its own; RmlUi only re-evaluates expressions once the variable is
+marked dirty, which `SetHudHealth`/`SetHudScore` do.
+
+Scripts drive it through the `UI` table — `UI.SetHealth(n)`, `UI.SetScore(n)`, plus getters. The
+example `Player.ts` drains health and ticks score, and the bar's width follows via
+`data-style-width="health + '%'"` without the script knowing anything about RML or RCSS.
+
+> Fixed setters rather than a general `UI.Set(name, value)`: RmlUi data models bind to real C++
+> addresses declared up front, so an arbitrary property bag needs a different mechanism entirely
+> (`BindFunc`, or a bound map type). Worth doing when a second HUD needs it — not before.
+
+## Sharing one Lua VM has a cost
+
+`Rml::Lua::Initialise` installs globals of its own, and one of them is **`Log`** — a usertype whose
+interface is `Log.Message(Log.logtype.info, ...)`. Because the plugin loads *after*
+`ScriptEngine::Init`, it silently replaced the engine's `Log` table, and every script calling
+`Log.Info` died with "attempt to call a nil value (field 'Info')".
+
+`UIEngine::Init` therefore calls `ScriptEngine::ReinstallGlobals()` straight after loading the
+plugin, so engine names win. The plugin's `rmlui` global (documents, elements, event listeners) is
+untouched and still available to UI scripts.
+
+Worth remembering when adding either a binding or an RmlUi version bump: the two namespaces are
+genuinely shared, and collisions are silent.
+
 ## Not done yet
 
-Input routing (mouse/keyboard into `Context::Process*`, with viewport-relative coordinate
-translation and `Handled` propagation) and C++ ↔ UI data bindings are milestone 6. Until then the
-HUD is static and does not respond to the mouse.
+UI logic written in TypeScript against the `rmlui` global, and making the HUD document a scene
+property rather than a hard-coded path.

@@ -122,3 +122,18 @@ declare namespace Scene {
 	/** Linear scan over tags. Fine for setup; do not call it every frame. */
 	function FindEntityByName(name: string): Entity | undefined;
 }
+
+/**
+ * The game HUD's data model (RmlUi). Setting a value marks it dirty, so any
+ * {{expression}} referencing it re-evaluates on the next UI update.
+ *
+ * Fixed setters rather than a generic bag: RmlUi binds its data model to real
+ * C++ addresses declared before any document loads.
+ */
+declare namespace UI {
+	/** 0..100; the health bar's width is bound to this. */
+	function SetHealth(health: number): void;
+	function SetScore(score: number): void;
+	function GetHealth(): number;
+	function GetScore(): number;
+}

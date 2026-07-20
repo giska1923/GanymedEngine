@@ -196,6 +196,12 @@ namespace GanymedE {
 		return s_Data ? static_cast<void*>(s_Data->Lua.lua_state()) : nullptr;
 	}
 
+	void ScriptEngine::ReinstallGlobals()
+	{
+		if (s_Data)
+			RegisterScriptGlobals(s_Data->Lua);
+	}
+
 	void ScriptEngine::Instantiate(Entity entity, AssetHandle script)
 	{
 		if (!s_Data || !IsAssetHandleValid(script))
