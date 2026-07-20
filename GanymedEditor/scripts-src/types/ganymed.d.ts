@@ -137,3 +137,53 @@ declare namespace UI {
 	function GetHealth(): number;
 	function GetScore(): number;
 }
+
+// ---------------------------------------------------------------------------
+// RmlUi's own Lua API, available because the UI plugin shares this VM.
+//
+// A deliberately small slice of a large API — only what has been verified
+// against the engine. Extend it from RmlUi's Lua manual as needed; these are
+// hand-written declarations over a C++ binding, so nothing checks them for you.
+//
+// Prefer the `UI` data model above for values that change every frame: it is
+// declarative and batches through RmlUi's dirty-variable machinery. Reach for
+// `rmlui` when you need to restructure a document, not to push numbers into it.
+// ---------------------------------------------------------------------------
+
+declare interface RmlElement {
+	readonly id: string;
+	/** The element's inner markup. Assigning replaces its children. */
+	inner_rml: string;
+	class_name: string;
+
+	GetElementById(id: string): RmlElement | undefined;
+	QuerySelector(selector: string): RmlElement | undefined;
+	SetClass(className: string, activate: boolean): void;
+	IsClassSet(className: string): boolean;
+	SetAttribute(name: string, value: string): void;
+	GetAttribute(name: string): string | undefined;
+	AppendChild(element: RmlElement): void;
+	Focus(): void;
+	Blur(): void;
+}
+
+declare interface RmlDocument extends RmlElement {
+	readonly title: string;
+	Show(): void;
+	Hide(): void;
+	Close(): void;
+}
+
+declare interface RmlContext {
+	/**
+	 * Keyed by the document's `id` — i.e. the `id` attribute on its <body>, NOT
+	 * its <title>. Avoid the numeric index: in Debug builds the RmlUi Debugger
+	 * injects six documents of its own ahead of yours.
+	 */
+	readonly documents: { [id: string]: RmlDocument | undefined };
+}
+
+declare namespace rmlui {
+	/** Keyed by context name; the engine creates a single context called "main". */
+	const contexts: { [name: string]: RmlContext | undefined };
+}

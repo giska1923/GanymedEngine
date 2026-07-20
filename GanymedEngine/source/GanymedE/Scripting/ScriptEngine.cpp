@@ -30,7 +30,17 @@ namespace GanymedE {
 
 			// Chunk result per script asset, executed once per load. Cleared on runtime stop, which
 			// is the cheapest hot reload that exists: every Play press re-reads scripts from disk.
-			std::unordered_map<AssetHandle, sol::table> ScriptClasses;
+			struct ScriptClass
+			{
+				sol::table Table;
+				std::filesystem::path Path;
+				std::filesystem::file_time_type Stamp{};
+			};
+			std::unordered_map<AssetHandle, ScriptClass> ScriptClasses;
+
+			// Hot reload polls the filesystem, so it is throttled rather than run every
+			// frame - a stat() per script per frame is real cost for no benefit.
+			float HotReloadTimer = 0.0f;
 
 			// Live instances, keyed by entity UUID.
 			std::unordered_map<UUID, ScriptInstance> Instances;
@@ -64,7 +74,59 @@ namespace GanymedE {
 		// TypeScriptToLua emits `exports.default = ...`, so the real class table is one level in.
 		// Unwrapping here means a hand-written Lua script and a compiled TS one look identical to
 		// everything downstream.
-		sol::table* LoadScriptClass(AssetHandle handle)
+		// Runs the chunk and returns the (unwrapped) table, or nullopt on any failure.
+		// Split out of LoadScriptClass so hot reload can re-run a chunk without
+		// disturbing the cached entry until it knows the new one is good.
+		std::optional<sol::table> RunScriptChunk(const std::filesystem::path& path)
+		{
+			if (!std::filesystem::exists(path))
+			{
+				GE_CORE_ERROR("ScriptEngine: script file not found: {0}", path.string());
+				return std::nullopt;
+			}
+
+			sol::protected_function_result result =
+				s_Data->Lua.safe_script_file(path.string(), sol::script_pass_on_error);
+
+			if (!result.valid())
+			{
+				sol::error error = result;
+				GE_ERROR("Script load failed [{0}]: {1}", path.string(), error.what());
+				return std::nullopt;
+			}
+
+			sol::object returned = result;
+			if (!returned.is<sol::table>())
+			{
+				GE_ERROR("Script [{0}] must return a table of lifecycle methods", path.string());
+				return std::nullopt;
+			}
+
+			sol::table scriptClass = returned.as<sol::table>();
+
+			sol::object defaultExport = scriptClass["default"];
+			if (defaultExport.is<sol::table>())
+				scriptClass = defaultExport.as<sol::table>();
+
+			return scriptClass;
+		}
+
+		// The table method lookup should delegate to. TSTL `class` output puts methods
+		// on .prototype; object literals carry them directly.
+		sol::table MethodTableOf(const sol::table& scriptClass)
+		{
+			sol::object prototype = scriptClass["prototype"];
+			return prototype.is<sol::table>() ? prototype.as<sol::table>() : scriptClass;
+		}
+
+		std::filesystem::file_time_type StampOf(const std::filesystem::path& path)
+		{
+			std::error_code ec;
+			auto stamp = std::filesystem::last_write_time(path, ec);
+			return ec ? std::filesystem::file_time_type{} : stamp;
+		}
+
+		ScriptEngineData::ScriptClass* LoadScriptClass(AssetHandle handle)
 		{
 			auto cached = s_Data->ScriptClasses.find(handle);
 			if (cached != s_Data->ScriptClasses.end())
@@ -78,36 +140,16 @@ namespace GanymedE {
 				return nullptr;
 			}
 
-			if (!std::filesystem::exists(path))
-			{
-				GE_CORE_ERROR("ScriptEngine: script file not found: {0}", path.string());
+			std::optional<sol::table> scriptClass = RunScriptChunk(path);
+			if (!scriptClass)
 				return nullptr;
-			}
 
-			sol::protected_function_result result =
-				s_Data->Lua.safe_script_file(path.string(), sol::script_pass_on_error);
+			ScriptEngineData::ScriptClass entry;
+			entry.Table = *scriptClass;
+			entry.Path = path;
+			entry.Stamp = StampOf(path);
 
-			if (!result.valid())
-			{
-				sol::error error = result;
-				GE_ERROR("Script load failed [{0}]: {1}", path.string(), error.what());
-				return nullptr;
-			}
-
-			sol::object returned = result;
-			if (!returned.is<sol::table>())
-			{
-				GE_ERROR("Script [{0}] must return a table of lifecycle methods", path.string());
-				return nullptr;
-			}
-
-			sol::table scriptClass = returned.as<sol::table>();
-
-			sol::object defaultExport = scriptClass["default"];
-			if (defaultExport.is<sol::table>())
-				scriptClass = defaultExport.as<sol::table>();
-
-			return &s_Data->ScriptClasses.emplace(handle, scriptClass).first->second;
+			return &s_Data->ScriptClasses.emplace(handle, std::move(entry)).first->second;
 		}
 
 		// Every call into Lua goes through here. A script error must never cross the C++ boundary
@@ -214,7 +256,7 @@ namespace GanymedE {
 		if (s_Data->Instances.find(uuid) != s_Data->Instances.end())
 			return;
 
-		sol::table* scriptClass = LoadScriptClass(script);
+		ScriptEngineData::ScriptClass* scriptClass = LoadScriptClass(script);
 		if (!scriptClass)
 			return;
 
@@ -222,10 +264,7 @@ namespace GanymedE {
 		// methods and `self` stays per-entity. The prototype hop covers TSTL `class` output, where
 		// methods live on Class.prototype rather than on the table itself - object literals are
 		// still the documented pattern, since a TSTL class constructor never runs through here.
-		sol::table methods = *scriptClass;
-		sol::object prototype = (*scriptClass)["prototype"];
-		if (prototype.is<sol::table>())
-			methods = prototype.as<sol::table>();
+		sol::table methods = MethodTableOf(scriptClass->Table);
 
 		sol::table self = s_Data->Lua.create_table();
 		self[sol::metatable_key] = s_Data->Lua.create_table_with(sol::meta_function::index, methods);
@@ -276,6 +315,63 @@ namespace GanymedE {
 
 		// Dropping the cached chunks is what makes every Play press pick up edits from disk.
 		s_Data->ScriptClasses.clear();
+	}
+
+	void ScriptEngine::PollHotReload(Timestep ts)
+	{
+		if (!s_Data || s_Data->ScriptClasses.empty())
+			return;
+
+		// Once a second, not every frame: this stats every loaded script.
+		s_Data->HotReloadTimer += ts.GetSeconds();
+		if (s_Data->HotReloadTimer < 1.0f)
+			return;
+		s_Data->HotReloadTimer = 0.0f;
+
+		for (auto& [handle, scriptClass] : s_Data->ScriptClasses)
+		{
+			const std::filesystem::file_time_type stamp = StampOf(scriptClass.Path);
+			if (stamp == scriptClass.Stamp || stamp == std::filesystem::file_time_type{})
+				continue;
+
+			// Take the new stamp regardless of whether the chunk is valid, or a file
+			// with a syntax error re-reports every second until it is fixed.
+			scriptClass.Stamp = stamp;
+
+			std::optional<sol::table> reloaded = RunScriptChunk(scriptClass.Path);
+			if (!reloaded)
+			{
+				// The old table stays live, so a bad save leaves the running game on
+				// the last good version instead of killing every instance.
+				GE_WARN("Hot reload failed for {0}; keeping the previous version",
+					scriptClass.Path.filename().string());
+				continue;
+			}
+
+			scriptClass.Table = *reloaded;
+			const sol::table methods = MethodTableOf(scriptClass.Table);
+
+			// Re-point each live instance's metatable at the new methods. Only the
+			// lookup target changes: fields already on `self` survive, so an entity
+			// keeps its position, timers and whatever else state it accumulated.
+			int repointed = 0;
+			for (auto& [uuid, instance] : s_Data->Instances)
+			{
+				if (instance.Script != handle)
+					continue;
+
+				instance.Self[sol::metatable_key] =
+					s_Data->Lua.create_table_with(sol::meta_function::index, methods);
+
+				// A reload is the author's fix for whatever killed it, so give a
+				// disabled instance another chance.
+				instance.Dead = false;
+				repointed++;
+			}
+
+			GE_INFO("Hot reloaded {0} ({1} live instance{2})",
+				scriptClass.Path.filename().string(), repointed, repointed == 1 ? "" : "s");
+		}
 	}
 
 	void ScriptEngine::Update(entt::entity entity, Timestep ts)

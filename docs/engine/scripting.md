@@ -64,8 +64,26 @@ way to find the instance again.
 live script, then the `InitView`'s first-ever read reports those same entities.
 
 `OnRuntimeStop` clears instances *and* the cached class tables, so every Play press re-reads
-scripts from disk. That is the entire hot-reload story for now — deliberately, since it costs
-nothing and covers the common loop.
+scripts from disk — the cheapest possible reload, and it covers the common loop.
+
+### Hot reload during play
+
+`ScriptEngine::PollHotReload` (driven once per `LuaScriptSystem::OnUpdate`, throttled internally to
+once a second because it stats every loaded script) re-runs any chunk whose file changed and
+re-points each live instance's metatable `__index` at the new method table.
+
+**Only the lookup target changes**, so fields already on `self` survive: an entity keeps its
+position, timers, and whatever else it accumulated. Verified by swapping a version string mid-play —
+the output went `VERSION=one ticks=8` → `Hot reloaded (1 live instance)` → `VERSION=TWO ticks=9`.
+New code, same state.
+
+Two deliberate behaviours:
+
+- **A chunk that fails to compile leaves the old table live.** A bad save mid-play logs and keeps
+  the running game on the last good version rather than killing every instance. The new timestamp
+  is taken anyway, or a file with a syntax error re-reports every second until it is fixed.
+- **A reload revives a dead instance.** An edit is the author's fix for whatever disabled it, so
+  the `Dead` flag clears.
 
 ## Script contract
 
@@ -90,6 +108,10 @@ return Player
 ```
 
 All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`, `OnCollisionEnter/Exit(other)`.
+
+Collision hooks are dispatched by `PhysicsSystem::DispatchCollisionEvents`, per fixed step inside
+the accumulator loop, so native and Lua scripts see identical timing. An entity may carry a native
+script, a Lua script, both, or neither; both hear about the same collision.
 
 **TypeScriptToLua interop** is handled at load: an `exports.default` table is unwrapped, and method
 lookup falls back to `prototype` so TSTL `class` output resolves. Object literals remain the
@@ -128,7 +150,13 @@ Rules for anything added later:
 - **Writes to tracked components always pair with `MarkChanged`.** Same rule if a binding ever
   writes `RelationshipComponent`.
 - Physics-facing bindings belong on `PhysicsScene`, not on transform writes, so kinematic and
-  dynamic bodies behave correctly.
+  dynamic bodies behave correctly. `Entity:Get/SetLinearVelocity`, `AddImpulse` and `AddForce` do
+  this — reached via `Scene::Systems().Get<PhysicsSystem>()->GetPhysicsScene()`, which is null
+  outside play, so all four no-op rather than assert. **Writing a dynamic body's transform instead
+  does nothing visible**: `PhysicsScene::SyncTransforms` overwrites it from the simulation every
+  step. `AddImpulse` is a one-shot change in momentum; `AddForce` is consumed by the next step and
+  wants calling every frame while the push lasts. Each wakes the body first, because Jolt silently
+  discards a velocity set on a sleeping one.
 - Script component access is inherently *undeclared* ECS access — identical to native scripts,
   where `ScriptableEntity::GetComponent` bypasses views too. The `TransformWrite` declaration keeps
   the dominant case visible to ordering validation; exotic writes are on the author.
@@ -228,8 +256,25 @@ through the loader's `prototype` fallback, but their constructors never run.
 > consequence: if a file there has a `.ts` counterpart, editing the `.lua` directly is pointless —
 > the next `tstl` run overwrites it silently.
 
+## Exposed script properties — designed, not built
+
+The one item from the plan's polish list still open, and the one worth doing next: a `Properties`
+table on the class, shown in the inspector and serialized per entity, so a script can be tuned
+without an edit-reload cycle.
+
+It is **not** polish — it breaks the invariant at the top of this document. `ScriptComponent` is a
+bare `AssetHandle`; per-entity overrides mean it grows a `map<string, variant>`, which touches
+`Scene::Copy`, the serializer, and the panel. Sketch:
+
+- `ScriptEngine` reads a `Properties` table off the *class* (name → default) without instantiating,
+  so the panel can show fields before play.
+- `ScriptComponent` carries overrides as a small string→variant map; the serializer round-trips it
+  next to the handle.
+- `Instantiate` applies overrides onto `self` after the metatable is set and before `OnCreate`.
+
+Worth its own milestone rather than being folded into one.
+
 ## Not done yet
 
-Exposed script properties (a `Properties` table read by the inspector and
-serialized per entity), collision-event dispatch from `PhysicsSystem`, physics bindings through
-`PhysicsScene`, and live hot reload during play. See the plan document's implementation order.
+Script properties (above), and spawning/destroying bindings — which must go through
+`Scene::Commands()`, per the binding rules.

@@ -178,7 +178,30 @@ untouched and still available to UI scripts.
 Worth remembering when adding either a binding or an RmlUi version bump: the two namespaces are
 genuinely shared, and collisions are silent.
 
+## UI logic from TypeScript
+
+Because the plugin shares the gameplay VM, a TS-authored gameplay script can manipulate documents
+directly. `scripts-src/types/ganymed.d.ts` declares a verified slice of RmlUi's Lua API —
+`rmlui.contexts`, document lookup, `GetElementById`/`QuerySelector`, `inner_rml`, `SetClass`,
+attributes.
+
+```typescript
+const doc = rmlui.contexts["main"]?.documents["hud"];
+doc?.GetElementById("score")?.SetClass("flash", true);
+```
+
+Two things that cost time to discover:
+
+- **`documents` is keyed by the document's `id`** — the `id` attribute on its `<body>` — not by its
+  `<title>`. `documents["HUD"]` returns nil for a document titled HUD; `hud.rml` carries
+  `<body id="hud">` for this reason.
+- **Do not index `documents[n]`.** In Debug builds the Debugger injects six documents of its own
+  *ahead* of yours, so the HUD was index 7.
+
+Prefer the `UI` data model for values that change every frame — it is declarative and batches
+through the dirty-variable machinery. Reach for `rmlui` to restructure a document, not to push
+numbers into it.
+
 ## Not done yet
 
-UI logic written in TypeScript against the `rmlui` global, and making the HUD document a scene
-property rather than a hard-coded path.
+Making the HUD document a scene property rather than a hard-coded path.

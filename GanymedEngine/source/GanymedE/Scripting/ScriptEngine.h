@@ -46,6 +46,12 @@ namespace GanymedE {
 
 		static void Update(entt::entity entity, Timestep ts);
 
+		// Re-runs any script whose file changed on disk and re-points live instances at
+		// the new methods, keeping their accumulated state. Throttled internally; call
+		// once per update. Play-stop already re-reads everything, so this only matters
+		// for editing a script WHILE the game runs.
+		static void PollHotReload(Timestep ts);
+
 		static void OnCollisionEnter(Entity entity, Entity other);
 		static void OnCollisionExit(Entity entity, Entity other);
 

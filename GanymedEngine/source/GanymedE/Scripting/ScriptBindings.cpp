@@ -5,9 +5,12 @@
 #include "GanymedE/Core/Input.h"
 #include "GanymedE/Core/KeyCodes.h"
 #include "GanymedE/Core/MouseButtonCodes.h"
+#include "GanymedE/ECS/System.h"
+#include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
+#include "GanymedE/Scene/Systems/PhysicsSystem.h"
 #include "GanymedE/UI/UIEngine.h"
 
 // The entire binding surface, in one file on purpose: scripts-src/types/ganymed.d.ts is the
@@ -40,6 +43,18 @@ namespace GanymedE {
 		{
 			if (Scene* scene = Context())
 				scene->MarkChanged<TransformComponent>(entity);
+		}
+
+		// The live Jolt world, or null outside play. Reached through the system
+		// rather than held, because PhysicsScene exists only between play and stop.
+		PhysicsScene* Physics()
+		{
+			Scene* scene = Context();
+			if (!scene)
+				return nullptr;
+
+			PhysicsSystem* system = scene->Systems().Get<PhysicsSystem>();
+			return system ? system->GetPhysicsScene() : nullptr;
 		}
 
 		void RegisterVec3(sol::state& lua)
@@ -114,6 +129,34 @@ namespace GanymedE {
 				},
 
 				"HasRigidBody", [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
+
+				// --- Physics: routed through PhysicsScene, never through transforms ---
+				// Writing the transform of a dynamic body does nothing visible:
+				// SyncTransforms overwrites it from the simulation every step. These go
+				// to Jolt, so kinematic and dynamic bodies behave as their type says.
+				// All no-op when the entity has no body or play is not running.
+				"GetLinearVelocity", [](Entity& e)
+				{
+					PhysicsScene* physics = Physics();
+					return physics ? physics->GetLinearVelocity(e.GetUUID()) : glm::vec3(0.0f);
+				},
+				"SetLinearVelocity", [](Entity& e, const glm::vec3& velocity)
+				{
+					if (PhysicsScene* physics = Physics())
+						physics->SetLinearVelocity(e.GetUUID(), velocity);
+				},
+				// One-shot change in momentum.
+				"AddImpulse", [](Entity& e, const glm::vec3& impulse)
+				{
+					if (PhysicsScene* physics = Physics())
+						physics->AddImpulse(e.GetUUID(), impulse);
+				},
+				// Consumed by the next step; call it every frame while the push lasts.
+				"AddForce", [](Entity& e, const glm::vec3& force)
+				{
+					if (PhysicsScene* physics = Physics())
+						physics->AddForce(e.GetUUID(), force);
+				},
 
 				sol::meta_function::equal_to, [](const Entity& a, const Entity& b) { return a == b; },
 				sol::meta_function::to_string, [](Entity& e) { return "Entity(" + e.GetName() + ")"; }

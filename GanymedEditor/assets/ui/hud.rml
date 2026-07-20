@@ -8,7 +8,10 @@
 </head>
 <!-- data-model="hud" binds to the model UIEngine creates in Init. It must exist
      before this document loads, or the {{expressions}} render as literal text. -->
-<body data-model="hud">
+<!-- id is what `rmlui.contexts["main"].documents["hud"]` looks up from Lua. Do not
+     rely on documents[n] instead: in Debug builds the RmlUi Debugger injects six
+     documents of its own ahead of this one. -->
+<body id="hud" data-model="hud">
 	<div id="health-bar">
 		<div id="health-fill" data-style-width="health + '%'"></div>
 		<span id="health-text">{{health | round}} / 100</span>

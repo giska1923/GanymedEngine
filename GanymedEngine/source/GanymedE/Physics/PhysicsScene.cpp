@@ -629,4 +629,73 @@ namespace GanymedE {
 #endif
 	}
 
+	// ---- Runtime body control ----
+
+	bool PhysicsScene::HasBody(UUID entity) const
+	{
+		if (!m_Active || !m_Impl)
+			return false;
+
+		return m_Impl->EntityToBody.find(entity) != m_Impl->EntityToBody.end();
+	}
+
+	void PhysicsScene::SetLinearVelocity(UUID entity, const glm::vec3& velocity)
+	{
+		if (!m_Active || !m_Impl)
+			return;
+
+		auto it = m_Impl->EntityToBody.find(entity);
+		if (it == m_Impl->EntityToBody.end())
+			return;
+
+		auto& bodyInterface = m_Impl->System.GetBodyInterface();
+		// Activate first: setting a velocity on a sleeping body is silently dropped.
+		bodyInterface.ActivateBody(it->second);
+		bodyInterface.SetLinearVelocity(it->second, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+	}
+
+	glm::vec3 PhysicsScene::GetLinearVelocity(UUID entity) const
+	{
+		if (!m_Active || !m_Impl)
+			return glm::vec3(0.0f);
+
+		auto it = m_Impl->EntityToBody.find(entity);
+		if (it == m_Impl->EntityToBody.end())
+			return glm::vec3(0.0f);
+
+		const JPH::Vec3 velocity = m_Impl->System.GetBodyInterface().GetLinearVelocity(it->second);
+		return glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ());
+	}
+
+	void PhysicsScene::AddImpulse(UUID entity, const glm::vec3& impulse)
+	{
+		if (!m_Active || !m_Impl)
+			return;
+
+		auto it = m_Impl->EntityToBody.find(entity);
+		if (it == m_Impl->EntityToBody.end())
+			return;
+
+		auto& bodyInterface = m_Impl->System.GetBodyInterface();
+		bodyInterface.ActivateBody(it->second);
+		bodyInterface.AddImpulse(it->second, JPH::Vec3(impulse.x, impulse.y, impulse.z));
+	}
+
+	void PhysicsScene::AddForce(UUID entity, const glm::vec3& force)
+	{
+		if (!m_Active || !m_Impl)
+			return;
+
+		auto it = m_Impl->EntityToBody.find(entity);
+		if (it == m_Impl->EntityToBody.end())
+			return;
+
+		auto& bodyInterface = m_Impl->System.GetBodyInterface();
+		bodyInterface.ActivateBody(it->second);
+		// Force accumulates only until the next Step consumes it, so this is meant to
+		// be called every frame while the push lasts - unlike AddImpulse, which is a
+		// one-shot change in momentum.
+		bodyInterface.AddForce(it->second, JPH::Vec3(force.x, force.y, force.z));
+	}
+
 }

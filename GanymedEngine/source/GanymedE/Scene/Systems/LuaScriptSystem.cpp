@@ -47,6 +47,10 @@ namespace GanymedE {
 
 		DrainReactiveViews(/*instantiate=*/true);
 
+		// Before the update calls, so an edit saved this second takes effect on this
+		// frame rather than the next one.
+		ScriptEngine::PollHotReload(ts);
+
 		for (auto [entity, script] : View<ScriptView>())
 		{
 			(void)script;
