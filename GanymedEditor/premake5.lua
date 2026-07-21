@@ -58,7 +58,13 @@ project "GanymedEditor"
 		files { "resources/GanymedEditor.rc" }
 
 	-- Static libraries do not propagate their links outside Visual Studio,
-	-- so the executable links the dependency projects and system libraries itself
+	-- so the executable links the dependency projects and system libraries itself.
+	--
+	-- Order matters here in a way it does not on MSVC: GNU ld walks archives once,
+	-- left to right, pulling only the objects that resolve symbols undefined *so far*.
+	-- A library must therefore appear before the ones it depends on - RmlUi before
+	-- Lua and FreeType, bgfx before bimg and bx - or the link fails on symbols that
+	-- are plainly present in the archive list.
 	filter "system:linux"
 		systemversion "latest"
 
@@ -71,9 +77,9 @@ project "GanymedEditor"
 			"bgfx",
 			"bimg",
 			"bx",
-			"Lua",
 			"RmlUi",
 			"FreeType",
+			"Lua",
 			"GL",
 			"X11",
 			"dl",

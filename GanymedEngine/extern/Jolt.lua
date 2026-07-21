@@ -63,7 +63,13 @@ project "Jolt"
 
 	filter "system:macosx"
 		systemversion "latest"
-		-- Apple Silicon uses NEON; Intel Macs still get AVX2 via the defines above when applicable.
+		-- The JPH_USE_* defines above only tell Jolt's headers to reach for the intrinsics;
+		-- clang still refuses to inline _mm_fmadd_ps and friends unless the target features
+		-- are actually enabled, so the flags have to be repeated per platform.
+		--
+		-- This assumes x86_64, which the workspace pins. A native arm64 build would need
+		-- these dropped and the JPH_USE_* set swapped for the NEON path.
+		buildoptions { "-mavx2", "-mbmi", "-mpopcnt", "-mlzcnt", "-mf16c", "-mfma" }
 
 	filter "configurations:Debug"
 		runtime "Debug"

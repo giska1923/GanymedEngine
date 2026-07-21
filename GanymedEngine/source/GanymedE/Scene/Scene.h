@@ -143,8 +143,12 @@ namespace GanymedE {
 	private:
 		// Default: components need no post-add fixup. Specialize below (out of class) only for the
 		// ones that do — no need to touch this when adding a component type.
+		//
+		// Entity is taken by const reference, not by value: Entity.h includes this header, so
+		// Entity is still incomplete here, and a function *definition* needs complete parameter
+		// types. MSVC accepts the by-value form as an extension; gcc and clang reject it.
 		template<typename T>
-		void OnComponentAdded(Entity, T&) {}
+		void OnComponentAdded(const Entity&, T&) {}
 
 		// on_construct handler for change-tracked components: creating a component counts as a
 		// change, so that a remove + re-add within one frame still surfaces in ChangeViews.
@@ -210,5 +214,5 @@ namespace GanymedE {
 	// Must be declared before any use of AddComponent<CameraComponent>, otherwise translation units
 	// would silently instantiate the empty primary template instead.
 	template<>
-	void Scene::OnComponentAdded<CameraComponent>(Entity entity, CameraComponent& component);
+	void Scene::OnComponentAdded<CameraComponent>(const Entity& entity, CameraComponent& component);
 }

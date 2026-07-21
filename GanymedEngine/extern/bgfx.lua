@@ -50,8 +50,19 @@ local function bxDefines()
 		includedirs { BX_DIR .. "/include/compat/osx" }
 		externalincludedirs { BX_DIR .. "/include/compat/osx" }
 
+	-- And the third: dxgi.h includes <sal.h>, which bx shims here. bgfx enables the D3D11
+	-- and D3D12 renderers on Linux by default (src/config.h - they run over vkd3d), so
+	-- dxgi.cpp is compiled even though nothing here will ever select a D3D backend.
+	-- upstream bx adds this dir for every linux target.
+	--
+	-- -msse4.2 is upstream's baseline too, and it is not optional: bx's simd128_selb is
+	-- inline and reaches for _mm_blendv_ps, which gcc refuses to inline without SSE4.1.
+	-- It has to be identical across bx/bimg/bgfx or the BX_SIMD_* selection in those
+	-- inline headers diverges between the three static libs.
 	filter "system:linux"
 		pic "On"
+		includedirs { BX_DIR .. "/include/compat/linux" }
+		buildoptions { "-msse4.2", "-mfpmath=sse" }
 
 	filter {}
 

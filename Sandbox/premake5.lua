@@ -54,9 +54,11 @@ project "Sandbox"
 			"bgfx",
 			"bimg",
 			"bx",
-			"Lua",
+			-- Dependents before dependencies: GNU ld walks archives once, left to right.
+			-- See the same list in GanymedEditor/premake5.lua.
 			"RmlUi",
 			"FreeType",
+			"Lua",
 			"GL",
 			"X11",
 			"dl",

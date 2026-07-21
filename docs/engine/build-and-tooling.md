@@ -32,7 +32,14 @@ Other build facts that have bitten before (details in
 - `bimg_decode` is not built (it now drags in dav1d/libavif); images load through stb_image.
 - The `JPH_*` instruction-set defines in the engine's premake **must match `Jolt.lua`**, or Jolt
   types change layout across the boundary.
-- AVX2 is assumed (`/arch:AVX2`, `-mavx2 …`).
+- **AVX2 is assumed, and the flags must be repeated on every platform.** `/arch:AVX2` on MSVC,
+  `-mavx2 -mbmi -mpopcnt -mlzcnt -mf16c -mfma` on gcc/clang — Linux *and* macOS. The `JPH_USE_*`
+  defines only tell Jolt's headers to reach for the intrinsics; clang independently refuses to
+  inline `_mm_fmadd_ps` unless the target feature is enabled, so defines without flags is a
+  compile error, not a slow path. MSVC is the odd one out: it permits intrinsics regardless of
+  `/arch`, which is why gaps here only ever surface on the other two platforms. This pins the
+  build to x86_64 (which the workspace sets); a native arm64 macOS build would need these dropped
+  and the `JPH_USE_*` set swapped for Jolt's NEON path.
 - The `lua/lua` submodule is the **raw source mirror**, which does not ship `lua.hpp` — that
   header only exists in the packaged release tarballs, and sol2 includes it unconditionally.
   `extern/lua_cxx/lua.hpp` supplies it, and `IncludeDir.lua_cxx` must be on the include path
@@ -62,9 +69,16 @@ Other build facts that have bitten before (details in
   The engine and editor solve the same problem the older way, with
   `ALWAYS_SEARCH_USER_PATHS = YES` — that relies on the traditional headermap Xcode 26 now warns
   is unsupported, and should migrate to the helper.
-- bx ships shims for headers a platform's libc lacks. `compat/msvc` is on the include path for
-  Windows and **`compat/osx` for macOS** — without the latter, `allocator.cpp`'s `<malloc.h>`
-  does not resolve and bx does not compile at all.
+- bx ships shims for headers a platform's libc lacks, and **all three platforms need theirs on the
+  include path**: `compat/msvc` (Windows), `compat/osx` (macOS — supplies `<malloc.h>` for
+  `allocator.cpp`), `compat/linux` (supplies `<sal.h>`). The Linux one is needed because bgfx
+  enables the D3D11/D3D12 renderers on Linux by default (`src/config.h`, they run over vkd3d), so
+  `dxgi.cpp` compiles and pulls in `<sal.h>` even though nothing here selects a D3D backend.
+  Missing any of these is a hard compile failure, not a warning.
+- **Linux needs `-msse4.2 -mfpmath=sse` on bx/bimg/bgfx** (upstream bx's own baseline). bx's
+  `simd128_selb` is inline and uses `_mm_blendv_ps`; MSVC allows intrinsics regardless of `/arch`,
+  gcc refuses to inline it without SSE4.1. The flag must be identical across the three or the
+  `BX_SIMD_*` selection inside those inline headers diverges between the static libs.
 
 ## Dependencies (vendored under `GanymedEngine/extern/`)
 

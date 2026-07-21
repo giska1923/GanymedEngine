@@ -400,7 +400,7 @@ namespace GanymedE {
 	// The primary template lives in Scene.h and does nothing; only components needing post-add
 	// fixup are specialized here (declared in Scene.h so every TU picks up the specialization).
 	template<>
-	void Scene::OnComponentAdded<CameraComponent>(Entity entity, CameraComponent& component)
+	void Scene::OnComponentAdded<CameraComponent>(const Entity& entity, CameraComponent& component)
 	{
 		if (m_ViewportWidth > 0 && m_ViewportHeight > 0)
 			component.Camera.SetViewportSize(m_ViewportWidth, m_ViewportHeight);
