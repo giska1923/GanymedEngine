@@ -22,13 +22,13 @@ fi
 
 case "$(uname -s)" in
     Linux*)
-        GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/linux/genie"
+        BUNDLED_GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/linux/genie"
         GENIE_ARGS="--gcc=linux-gcc"
         PROJ_DIR="gmake-linux"
         OUT="$ROOT/scripts/tools/linux"
         ;;
     Darwin*)
-        GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/darwin/genie"
+        BUNDLED_GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/darwin/genie"
         if [ "$(uname -m)" = "arm64" ]; then
             GENIE_ARGS="--gcc=osx-arm64"
             PROJ_DIR="gmake-osx-arm64"
@@ -44,9 +44,33 @@ case "$(uname -s)" in
         ;;
 esac
 
+# bx bundles prebuilt GENie binaries, and they do not run everywhere: the darwin one is
+# arm64-only, so an Intel Mac reports "Bad CPU type in executable", and the linux one is
+# linked against glibc 2.38, so anything older than Ubuntu 24.04 fails in the loader.
+# GENie itself is a small C/Lua project that builds in seconds, so the escape hatch is to
+# build it and point GENIE at the result:
+#
+#   git clone https://github.com/bkaradzic/GENie && make -C GENie
+#   GENIE=/path/to/GENie/bin/darwin/genie ./scripts/build_shader_tools.sh
+GENIE="${GENIE:-$BUNDLED_GENIE}"
+chmod +x "$GENIE" 2>/dev/null || true
+
+# --version exits non-zero even on success, so check that it actually produced output:
+# that distinguishes "ran fine" from "could not exec" and "loader rejected it" alike.
+set +e
+GENIE_CHECK="$("$GENIE" --version 2>/dev/null)"
+set -e
+case "$GENIE_CHECK" in
+    *GENie*) ;;
+    *)
+        echo "❌ $GENIE will not run on this machine."
+        echo "   Build GENie from source and re-run with GENIE=<path> (see comment above)."
+        exit 1
+        ;;
+esac
+
 echo "[1/3] Generating bgfx tool projects with GENie..."
 cd "$BGFX"
-chmod +x "$GENIE" 2>/dev/null || true
 "$GENIE" --with-tools $GENIE_ARGS gmake > /dev/null
 
 echo "[2/3] Building shaderc (release64)... this takes a few minutes."

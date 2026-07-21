@@ -158,9 +158,33 @@ It is deliberately not a premake prebuild step — that would hard-fail builds o
 haven't built shaderc yet.
 
 `build_shader_tools.sh` drives bgfx's GENie build using the **prebuilt GENie binary bundled in
-bx** (`extern/bx/tools/bin/<os>/genie`). The Linux one is linked against glibc 2.38, so it fails
-on anything older than Ubuntu 24.04 with a `GLIBC_2.38 not found` error from the dynamic loader —
-build shaderc on a newer distro, or supply a GENie built locally.
+bx** (`extern/bx/tools/bin/<os>/genie`), and neither of the Unix ones runs everywhere:
+
+| Bundled binary | Built for | Fails on |
+|---|---|---|
+| `darwin/genie` | **arm64 only** | Intel Macs — `Bad CPU type in executable`. Rosetta cannot help; it translates x86_64 → arm64, not the reverse. |
+| `linux/genie` | glibc 2.38 | Anything older than Ubuntu 24.04 — `GLIBC_2.38 not found` from the loader. |
+
+(The `bin2c` and `ninja` binaries beside `darwin/genie` are x86_64, so the arm64 build is an
+upstream packaging inconsistency, not a deliberate drop of Intel support.)
+
+GENie is a small C/Lua project that builds in seconds, so the escape hatch is the **`GENIE`
+environment variable**, which overrides the bundled path:
+
+```
+git clone https://github.com/bkaradzic/GENie && make -C GENie
+GENIE=/path/to/GENie/bin/darwin/genie ./scripts/build_shader_tools.sh
+```
+
+The script preflights whichever GENie it ends up with and fails with that instruction rather than
+letting a raw loader error escape. Note it checks for *output*, not exit status: `genie --version`
+prints its banner to stdout and then exits **1**, so an exit-code check would reject a working
+binary.
+
+Shader compilation is host-independent — the `.bin` files are just bytecode, and shaderc generates
+MSL through SPIRV-Cross with no macOS SDK involved. A Windows shaderc can therefore produce the
+`metal` profile (verified), which is a usable stopgap if a machine cannot build shaderc at all:
+compile elsewhere and copy `assets/shaders/compiled/metal/` across.
 
 ## Script toolchain (optional)
 
