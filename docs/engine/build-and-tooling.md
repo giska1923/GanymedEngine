@@ -30,6 +30,10 @@ Other build facts that have bitten before (details in
   `thread.cpp`); `_HAS_EXCEPTIONS=0` is deliberately **not** defined (it would change STL layout
   across the lib boundary).
 - `bimg_decode` is not built (it now drags in dav1d/libavif); images load through stb_image.
+- macOS executables must link **`CoreMedia` and `VideoToolbox`** on top of the Metal/MetalKit set.
+  bgfx's Metal backend compiles in a hardware video decoder (`bgfx::mtl::VideoDecoderMtl`)
+  unconditionally — there is no config switch — so the frameworks are needed even though nothing
+  in the engine decodes video.
 - The `JPH_*` instruction-set defines in the engine's premake **must match `Jolt.lua`**, or Jolt
   types change layout across the boundary.
 - **AVX2 is assumed, and the flags must be repeated on every platform.** `/arch:AVX2` on MSVC,

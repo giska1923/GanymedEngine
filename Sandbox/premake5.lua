@@ -87,7 +87,10 @@ project "Sandbox"
 			"CoreVideo.framework",
 			"QuartzCore.framework",
 			"Metal.framework",
-			"MetalKit.framework"
+			"MetalKit.framework",
+			-- Required by bgfx's Metal video decoder; see GanymedEditor/premake5.lua
+			"CoreMedia.framework",
+			"VideoToolbox.framework"
 		}
 
 	filter "configurations:Debug"

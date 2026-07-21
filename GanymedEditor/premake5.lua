@@ -108,7 +108,12 @@ project "GanymedEditor"
 			"CoreVideo.framework",
 			"QuartzCore.framework",
 			"Metal.framework",
-			"MetalKit.framework"
+			"MetalKit.framework",
+			-- bgfx's Metal backend carries a hardware video decoder (bgfx::mtl::VideoDecoderMtl)
+			-- that is always compiled in - there is no config switch for it - so its two
+			-- frameworks are required even though nothing here decodes video.
+			"CoreMedia.framework",
+			"VideoToolbox.framework"
 		}
 
 	filter "configurations:Debug"
