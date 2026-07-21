@@ -20,7 +20,7 @@ namespace GanymedE {
 		for (auto [entity, script] : View<ScriptInitView>())
 		{
 			if (instantiate)
-				ScriptEngine::Instantiate(Entity{ entity, &m_Scene }, script.Script);
+				ScriptEngine::Instantiate(Entity{ entity, &m_Scene }, script);
 		}
 
 		// Scripts that went away since the last update. The slot reads the buried copy, so this
@@ -38,7 +38,7 @@ namespace GanymedE {
 		BindSceneContext();
 
 		for (auto [entity, script] : View<ScriptView>())
-			ScriptEngine::Instantiate(Entity{ entity, &m_Scene }, script.Script);
+			ScriptEngine::Instantiate(Entity{ entity, &m_Scene }, script);
 	}
 
 	void LuaScriptSystem::OnUpdate(Timestep ts)
@@ -73,13 +73,14 @@ namespace GanymedE {
 
 	void LuaScriptSystem::OnRuntimeStop()
 	{
-		BindSceneContext();
-
-		// Play stopping is not a component removal, so FiniView never sees it — the sweep over
-		// every live instance stays. This also drops the cached chunks, so the next Play press
-		// re-reads every script from disk.
-		ScriptEngine::DestroyAllInstances();
-
-		ScriptEngine::SetSceneContext(nullptr);
+		// Deliberately NOT DestroyAllInstances, and deliberately no BindSceneContext: Scene's
+		// destructor calls this, and the editor holds several Scenes at once (edit scene,
+		// play-mode copy, and whatever the serializer deserializes into). A global teardown here
+		// tore down the *playing* scene's instances whenever a throwaway Scene went out of scope.
+		//
+		// Play stopping is not a component removal, so FiniView never sees it — a sweep is still
+		// what is needed, just one scoped to this scene. This also drops the cached chunks, so the
+		// next Play press re-reads every script from disk.
+		ScriptEngine::DestroySceneInstances(&m_Scene);
 	}
 }

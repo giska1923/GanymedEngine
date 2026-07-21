@@ -35,6 +35,10 @@ namespace GanymedE {
 				sol::table Table;
 				std::filesystem::path Path;
 				std::filesystem::file_time_type Stamp{};
+
+				// Extracted from the class's `Properties` table at load. Cached because the
+				// inspector asks for it every frame it draws.
+				std::vector<ScriptEngine::ScriptField> Fields;
 			};
 			std::unordered_map<AssetHandle, ScriptClass> ScriptClasses;
 
@@ -42,16 +46,27 @@ namespace GanymedE {
 			// frame - a stat() per script per frame is real cost for no benefit.
 			float HotReloadTimer = 0.0f;
 
-			// Live instances, keyed by entity UUID.
-			std::unordered_map<UUID, ScriptInstance> Instances;
-
-			// Reverse map, and the reason instances are not simply keyed by entt::entity.
+			// Live instances, per scene, keyed by entity UUID.
 			//
-			// Teardown is driven by FiniView, which fires for entity *destruction* as well as
-			// component removal. By then the entity is gone from the registry, so its IDComponent -
-			// and therefore its UUID - is unreachable. This map is captured at Instantiate time and
-			// is the only way to find the instance again afterwards.
-			std::unordered_map<entt::entity, UUID> EntityToUUID;
+			// The outer Scene* key is load-bearing, not defensive. The editor holds several Scenes
+			// at once - the edit scene, the play-mode copy, and any temporary one the serializer
+			// deserializes into - and Scene::~Scene calls OnRuntimeStop. Flat maps meant that
+			// destroying a throwaway Scene tore down the *playing* scene's instances, and that
+			// entt::entity ids (which are per-registry and freely collide between scenes) resolved
+			// against whichever scene happened to have registered that id.
+			struct SceneInstances
+			{
+				std::unordered_map<UUID, ScriptInstance> ByUUID;
+
+				// Reverse map, and the reason instances are not simply keyed by entt::entity.
+				//
+				// Teardown is driven by FiniView, which fires for entity *destruction* as well as
+				// component removal. By then the entity is gone from the registry, so its
+				// IDComponent - and therefore its UUID - is unreachable. This is captured at
+				// Instantiate time and is the only way to find the instance again afterwards.
+				std::unordered_map<entt::entity, UUID> EntityToUUID;
+			};
+			std::unordered_map<Scene*, SceneInstances> Instances;
 		};
 
 		ScriptEngineData* s_Data = nullptr;
@@ -119,6 +134,73 @@ namespace GanymedE {
 			return prototype.is<sol::table>() ? prototype.as<sol::table>() : scriptClass;
 		}
 
+		// Maps one Lua value to the closed set of tunable types, or nullopt for anything else
+		// (tables, functions, nil). Lua 5.4 distinguishes integers from floats, and that
+		// distinction is kept: it decides whether the inspector draws an int or a float widget.
+		std::optional<ScriptFieldValue> ToFieldValue(const sol::object& value)
+		{
+			switch (value.get_type())
+			{
+				case sol::type::boolean:
+					return ScriptFieldValue{ value.as<bool>() };
+
+				case sol::type::number:
+					// Lua 5.4's integer/float subtypes are deliberately collapsed here; see the
+					// note on ScriptFieldValue in Components.h.
+					return ScriptFieldValue{ value.as<double>() };
+
+				case sol::type::string:
+					return ScriptFieldValue{ value.as<std::string>() };
+
+				case sol::type::userdata:
+					if (value.is<glm::vec3>())
+						return ScriptFieldValue{ value.as<glm::vec3>() };
+					return std::nullopt;
+
+				default:
+					return std::nullopt;
+			}
+		}
+
+		// Reads the class's `Properties` table into a sorted field list.
+		//
+		// Sorted because Lua table iteration order is unspecified - without this the inspector
+		// would reshuffle its rows between runs, and between two machines.
+		std::vector<ScriptEngine::ScriptField> ExtractFields(const sol::table& scriptClass,
+			const std::string& scriptName)
+		{
+			std::vector<ScriptEngine::ScriptField> fields;
+
+			sol::object properties = scriptClass["Properties"];
+			if (!properties.is<sol::table>())
+				return fields;
+
+			for (const auto& [key, value] : properties.as<sol::table>())
+			{
+				if (key.get_type() != sol::type::string)
+					continue;
+
+				const std::string name = key.as<std::string>();
+				std::optional<ScriptFieldValue> converted = ToFieldValue(value);
+				if (!converted)
+				{
+					GE_CORE_WARN("Script [{0}]: property '{1}' has an unsupported type and is "
+						"ignored (use a boolean, number, string or Vec3)", scriptName, name);
+					continue;
+				}
+
+				fields.push_back({ name, *converted });
+			}
+
+			std::sort(fields.begin(), fields.end(),
+				[](const ScriptEngine::ScriptField& a, const ScriptEngine::ScriptField& b)
+				{
+					return a.Name < b.Name;
+				});
+
+			return fields;
+		}
+
 		std::filesystem::file_time_type StampOf(const std::filesystem::path& path)
 		{
 			std::error_code ec;
@@ -148,6 +230,7 @@ namespace GanymedE {
 			entry.Table = *scriptClass;
 			entry.Path = path;
 			entry.Stamp = StampOf(path);
+			entry.Fields = ExtractFields(entry.Table, path.filename().string());
 
 			return &s_Data->ScriptClasses.emplace(handle, std::move(entry)).first->second;
 		}
@@ -177,14 +260,30 @@ namespace GanymedE {
 			instance.Dead = true;
 		}
 
-		ScriptInstance* FindInstance(entt::entity entity)
+		// Instances for the scene the engine is currently pointed at, or null. Every per-entity
+		// call resolves through this, so an entity id is never looked up against another scene's
+		// registry.
+		ScriptEngineData::SceneInstances* CurrentScene()
 		{
-			auto uuid = s_Data->EntityToUUID.find(entity);
-			if (uuid == s_Data->EntityToUUID.end())
+			if (!s_Data || !s_Data->SceneContext)
 				return nullptr;
 
-			auto instance = s_Data->Instances.find(uuid->second);
-			return instance != s_Data->Instances.end() ? &instance->second : nullptr;
+			auto it = s_Data->Instances.find(s_Data->SceneContext);
+			return it != s_Data->Instances.end() ? &it->second : nullptr;
+		}
+
+		ScriptInstance* FindInstance(entt::entity entity)
+		{
+			ScriptEngineData::SceneInstances* scene = CurrentScene();
+			if (!scene)
+				return nullptr;
+
+			auto uuid = scene->EntityToUUID.find(entity);
+			if (uuid == scene->EntityToUUID.end())
+				return nullptr;
+
+			auto instance = scene->ByUUID.find(uuid->second);
+			return instance != scene->ByUUID.end() ? &instance->second : nullptr;
 		}
 	}
 
@@ -244,16 +343,18 @@ namespace GanymedE {
 			RegisterScriptGlobals(s_Data->Lua);
 	}
 
-	void ScriptEngine::Instantiate(Entity entity, AssetHandle script)
+	void ScriptEngine::Instantiate(Entity entity, const ScriptComponent& component)
 	{
-		if (!s_Data || !IsAssetHandleValid(script))
+		const AssetHandle script = component.Script;
+		if (!s_Data || !s_Data->SceneContext || !IsAssetHandleValid(script))
 			return;
 
+		ScriptEngineData::SceneInstances& sceneInstances = s_Data->Instances[s_Data->SceneContext];
 		const UUID uuid = entity.GetUUID();
 
 		// Idempotent by contract: OnRuntimeStart sweeps every live script, then the InitView's
 		// first-ever read reports those same entities again.
-		if (s_Data->Instances.find(uuid) != s_Data->Instances.end())
+		if (sceneInstances.ByUUID.find(uuid) != sceneInstances.ByUUID.end())
 			return;
 
 		ScriptEngineData::ScriptClass* scriptClass = LoadScriptClass(script);
@@ -270,36 +371,88 @@ namespace GanymedE {
 		self[sol::metatable_key] = s_Data->Lua.create_table_with(sol::meta_function::index, methods);
 		self["entity"] = entity;
 
+		const std::string instancePath = scriptClass->Path.filename().string();
+		const auto& overrides = component.Fields;
+
+		// Properties land on `self` directly, not via the metatable: they are per-entity state,
+		// and a script assigning to self.speed must not write through to the shared class table.
+		//
+		// Defaults first, then this entity's overrides on top. Both happen BEFORE OnCreate, so a
+		// script can read its tuned values there - which is the whole point of exposing them.
+		for (const ScriptField& field : scriptClass->Fields)
+		{
+			const ScriptFieldValue* value = &field.Default;
+
+			auto override_ = overrides.find(field.Name);
+			if (override_ != overrides.end())
+			{
+				// Only accept an override whose type still matches the declaration. A script
+				// that changes `speed` from a number to a string leaves stale scene data behind,
+				// and pushing that into Lua would fail somewhere far less obvious than here.
+				if (override_->second.index() == field.Default.index())
+					value = &override_->second;
+				else
+					GE_WARN("Script [{0}]: saved value for '{1}' no longer matches the declared "
+						"type; using the script's default", instancePath, field.Name);
+			}
+
+			std::visit([&](const auto& v) { self[field.Name] = v; }, *value);
+		}
+
 		ScriptInstance instance;
 		instance.Self = self;
 		instance.Script = script;
+		instance.Path = instancePath;
 
-		std::filesystem::path path;
-		instance.Path = ResolveScriptPath(script, path) ? path.filename().string() : "<unknown>";
-
-		auto& stored = s_Data->Instances.emplace(uuid, std::move(instance)).first->second;
-		s_Data->EntityToUUID[static_cast<entt::entity>(entity)] = uuid;
+		auto& stored = sceneInstances.ByUUID.emplace(uuid, std::move(instance)).first->second;
+		sceneInstances.EntityToUUID[static_cast<entt::entity>(entity)] = uuid;
 
 		CallMethod(stored, "OnCreate");
 	}
 
 	void ScriptEngine::DestroyInstance(entt::entity entity)
 	{
-		if (!s_Data)
+		ScriptEngineData::SceneInstances* scene = CurrentScene();
+		if (!scene)
 			return;
 
-		auto uuid = s_Data->EntityToUUID.find(entity);
-		if (uuid == s_Data->EntityToUUID.end())
+		auto uuid = scene->EntityToUUID.find(entity);
+		if (uuid == scene->EntityToUUID.end())
 			return;
 
-		auto instance = s_Data->Instances.find(uuid->second);
-		if (instance != s_Data->Instances.end())
+		auto instance = scene->ByUUID.find(uuid->second);
+		if (instance != scene->ByUUID.end())
 		{
 			CallMethod(instance->second, "OnDestroy");
-			s_Data->Instances.erase(instance);
+			scene->ByUUID.erase(instance);
 		}
 
-		s_Data->EntityToUUID.erase(uuid);
+		scene->EntityToUUID.erase(uuid);
+	}
+
+	void ScriptEngine::DestroySceneInstances(Scene* scene)
+	{
+		if (!s_Data || !scene)
+			return;
+
+		auto it = s_Data->Instances.find(scene);
+		if (it != s_Data->Instances.end())
+		{
+			for (auto& [uuid, instance] : it->second.ByUUID)
+				CallMethod(instance, "OnDestroy");
+
+			s_Data->Instances.erase(it);
+		}
+
+		// Dropping the cached chunks is what makes every Play press pick up edits from disk.
+		// Global on purpose and harmless when another scene is live: the chunks simply reload
+		// on next use, and existing instances keep the method table they already resolved.
+		s_Data->ScriptClasses.clear();
+
+		// Only relinquish the context if it was this scene's; a temporary Scene being destroyed
+		// must not blind the one that is actually playing.
+		if (s_Data->SceneContext == scene)
+			s_Data->SceneContext = nullptr;
 	}
 
 	void ScriptEngine::DestroyAllInstances()
@@ -307,14 +460,25 @@ namespace GanymedE {
 		if (!s_Data)
 			return;
 
-		for (auto& [uuid, instance] : s_Data->Instances)
-			CallMethod(instance, "OnDestroy");
+		for (auto& [scene, instances] : s_Data->Instances)
+		{
+			for (auto& [uuid, instance] : instances.ByUUID)
+				CallMethod(instance, "OnDestroy");
+		}
 
 		s_Data->Instances.clear();
-		s_Data->EntityToUUID.clear();
-
-		// Dropping the cached chunks is what makes every Play press pick up edits from disk.
 		s_Data->ScriptClasses.clear();
+	}
+
+	const std::vector<ScriptEngine::ScriptField>& ScriptEngine::GetScriptFields(AssetHandle script)
+	{
+		static const std::vector<ScriptField> s_Empty;
+
+		if (!s_Data || !IsAssetHandleValid(script))
+			return s_Empty;
+
+		ScriptEngineData::ScriptClass* scriptClass = LoadScriptClass(script);
+		return scriptClass ? scriptClass->Fields : s_Empty;
 	}
 
 	void ScriptEngine::PollHotReload(Timestep ts)
@@ -349,24 +513,28 @@ namespace GanymedE {
 			}
 
 			scriptClass.Table = *reloaded;
+			scriptClass.Fields = ExtractFields(scriptClass.Table, scriptClass.Path.filename().string());
 			const sol::table methods = MethodTableOf(scriptClass.Table);
 
 			// Re-point each live instance's metatable at the new methods. Only the
 			// lookup target changes: fields already on `self` survive, so an entity
 			// keeps its position, timers and whatever else state it accumulated.
 			int repointed = 0;
-			for (auto& [uuid, instance] : s_Data->Instances)
+			for (auto& [scene, instances] : s_Data->Instances)
 			{
-				if (instance.Script != handle)
-					continue;
+				for (auto& [uuid, instance] : instances.ByUUID)
+				{
+					if (instance.Script != handle)
+						continue;
 
-				instance.Self[sol::metatable_key] =
-					s_Data->Lua.create_table_with(sol::meta_function::index, methods);
+					instance.Self[sol::metatable_key] =
+						s_Data->Lua.create_table_with(sol::meta_function::index, methods);
 
-				// A reload is the author's fix for whatever killed it, so give a
-				// disabled instance another chance.
-				instance.Dead = false;
-				repointed++;
+					// A reload is the author's fix for whatever killed it, so give a
+					// disabled instance another chance.
+					instance.Dead = false;
+					repointed++;
+				}
 			}
 
 			GE_INFO("Hot reloaded {0} ({1} live instance{2})",

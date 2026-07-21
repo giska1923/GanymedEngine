@@ -82,9 +82,12 @@ copyable, no behavior beyond small helpers.
   Flagged `EnableInit`+`EnableFini` so `NativeScriptSystem` reacts declaratively to scripts
   appearing/disappearing. Script hooks: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`,
   `OnCollisionEnter/Exit(Entity other)`.
-- **`ScriptComponent`** — an `AssetHandle` to a `.lua` asset, and nothing else: every sol2 object
-  lives in `ScriptEngine`, keyed by UUID. Same `EnableInit`+`EnableFini` flags and the same hook
-  names as the native path, driven by `LuaScriptSystem`. Details: [scripting.md](scripting.md).
+- **`ScriptComponent`** — an `AssetHandle` to a `.lua` asset plus `Fields`, a map of per-entity
+  property overrides (`bool`/`double`/`string`/`vec3`); every sol2 object still lives in
+  `ScriptEngine`, keyed by scene and UUID. Only overridden values are stored, so editing a default
+  in the script reaches entities that never changed it. Same `EnableInit`+`EnableFini` flags and
+  the same hook names as the native path, driven by `LuaScriptSystem`.
+  Details: [scripting.md](scripting.md).
 
 ### Physics (pure data — Jolt never appears here)
 
@@ -164,6 +167,9 @@ blocks keyed by component name. Notes:
   string fallbacks are still read for backward compatibility and imported into the registry on load.
   Unlike meshes, a deserialized `ScriptComponent` handle is *not* warmed through `GetAsset<>` —
   scripts have no runtime object to cache, and `ScriptEngine` loads the chunk on instantiation.
+  Its property overrides serialize as a `Fields` sequence of `{Name, Type, Value}`, sorted by name
+  so a scene file does not churn when a hash map reorders. Each carries its own type because the
+  declaring script may not be loadable when the scene is read back.
 - `WorldTransformComponent` is intentionally not serialized (derived).
 - Adding a component type means extending both `SerializeEntity` and `Deserialize` — this is one
   of the two remaining hand-maintained per-component lists (the other is the editor UI).

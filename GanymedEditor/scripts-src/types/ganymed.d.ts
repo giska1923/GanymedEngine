@@ -54,9 +54,27 @@ declare interface Entity {
 }
 
 /** The shape every gameplay script implements. All hooks are optional. */
+/**
+ * Values a script exposes to the editor. Declare them as a `Properties` table on
+ * the script object: the declared value is both the default and the type, and each
+ * is applied to `this` before OnCreate.
+ *
+ * Supported types: boolean, number, string, Vec3. Anything else is skipped with a
+ * warning. All numbers are floats — Lua 5.4 distinguishes 5 from 5.0, but TSTL
+ * cannot express that (TypeScript has one number type), so the engine treats every
+ * number the same way regardless of authoring language.
+ *
+ * The editor stores only the values you actually change, so editing a default in
+ * the script still reaches every entity that did not override it.
+ */
+declare type ScriptProperties = { [name: string]: boolean | number | string | Vec3 };
+
 declare interface Script {
 	/** Injected by ScriptEngine before OnCreate runs. */
 	entity: Entity;
+
+	/** Editor-exposed tunables; see ScriptProperties. */
+	Properties?: ScriptProperties;
 
 	OnCreate?(): void;
 	OnUpdate?(ts: number): void;

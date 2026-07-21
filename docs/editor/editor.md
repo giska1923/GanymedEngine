@@ -121,8 +121,13 @@ lights, sky light, script, rigid body, colliders); one collapsible section per c
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
 - Static mesh: shows the mesh asset (handle + path) — assign by dragging from the Content Browser.
 - Script: shows the `.lua` asset (handle + path) with a Clear button — assign by dragging a `.lua`
-  from the Content Browser (the drop is extension-filtered). Removing the component in edit mode is
-  safe: `LuaScriptSystem` drains its `FiniView` there and tears down any instance left from a
+  from the Content Browser (the drop is extension-filtered). Below it, one row per property the
+  script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The
+  schema is read from the script itself in edit mode, so the rows appear without entering play.
+  Only values you actually change are stored on the entity; **Reset** removes an override so the
+  field tracks the script's default again. Assigning a different script clears the overrides —
+  they are keyed by name against the old script's declarations. Removing the component in edit mode
+  is safe: `LuaScriptSystem` drains its `FiniView` there and tears down any instance left from a
   previous play session. See [scripting.md](../engine/scripting.md).
 - Sky light: environment asset, sky/ground colors, intensity, DrawSkybox.
 - Colliders: dimensions, offset, friction/restitution.

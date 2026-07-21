@@ -17,10 +17,10 @@ Plan of record: [`Scripting-And-UI-Integration.md`](../toDo&done/Scripting-And-U
 
 Two structural rules hold this together:
 
-- **`ScriptComponent` is a POD.** Every `sol::` object lives inside `ScriptEngine`, keyed by entity
-  UUID. `Components.h` is included nearly everywhere and sol2's templates are expensive, so the
-  component stays a bare handle — which also means the play-mode `Scene::Copy` needs nothing
-  special for it.
+- **`ScriptComponent` holds no sol2 types.** Every `sol::` object lives inside `ScriptEngine`, keyed
+  by scene and entity UUID. `Components.h` is included nearly everywhere and sol2's templates are
+  expensive, so the component carries only an `AssetHandle` plus a plain `map<string, variant>` of
+  property overrides — both trivially copyable by the play-mode `Scene::Copy`.
 - **sol2 appears in exactly one header**, [`ScriptBindings.h`](../../GanymedEngine/source/GanymedE/Scripting/ScriptBindings.h),
   which is private to `Scripting/` and included only from `.cpp` files there. `ScriptEngine.h` and
   `LuaScriptSystem.h` are sol2-free; `GetLuaState()` returns `void*` for that reason.
@@ -256,25 +256,74 @@ through the loader's `prototype` fallback, but their constructors never run.
 > consequence: if a file there has a `.ts` counterpart, editing the `.lua` directly is pointless —
 > the next `tstl` run overwrites it silently.
 
-## Exposed script properties — designed, not built
+## Exposed properties
 
-The one item from the plan's polish list still open, and the one worth doing next: a `Properties`
-table on the class, shown in the inspector and serialized per entity, so a script can be tuned
-without an edit-reload cycle.
+A script declares its tunables as a `Properties` table; each appears in the inspector, per entity,
+and is applied to `self` before `OnCreate`.
 
-It is **not** polish — it breaks the invariant at the top of this document. `ScriptComponent` is a
-bare `AssetHandle`; per-entity overrides mean it grows a `map<string, variant>`, which touches
-`Scene::Copy`, the serializer, and the panel. Sketch:
+```lua
+local Player = {}
 
-- `ScriptEngine` reads a `Properties` table off the *class* (name → default) without instantiating,
-  so the panel can show fields before play.
-- `ScriptComponent` carries overrides as a small string→variant map; the serializer round-trips it
-  next to the handle.
-- `Instantiate` applies overrides onto `self` after the metatable is set and before `OnCreate`.
+Player.Properties = {
+	speed = 3.0,
+	drainRate = 12.0,
+	label = "Hero",
+	invincible = false,
+	spawnOffset = Vec3(0, 1, 0),
+}
 
-Worth its own milestone rather than being folded into one.
+function Player:OnUpdate(ts)
+	-- self.speed is already the inspector's value
+end
+```
+
+The declared value is **both the default and the type declaration** — one source of truth, nothing
+to keep in sync. Supported types are boolean, number, string and `Vec3`; anything else (tables,
+functions) is skipped with a warning, because those are not tunable data and would mean serializing
+arbitrary graphs.
+
+Do **not** reassign a property in `OnCreate` — that overwrites whatever the inspector set.
+
+### Only overrides are stored
+
+`ScriptComponent::Fields` holds just the values an entity actually changes, never a snapshot of the
+defaults. Editing a default in the `.lua` therefore still reaches every entity that did not
+override it, which is what anyone tuning a script expects; a full snapshot would freeze each entity
+at whatever the defaults were the day it was created. The inspector's **Reset** deletes an override
+to restore that link.
+
+A saved override whose type no longer matches the declaration is ignored with a warning, and the
+script's default is used — a script changing `speed` from a number to a string leaves stale scene
+data behind, and pushing that into Lua would fail somewhere far less obvious.
+
+### All numbers are floats
+
+Lua 5.4 genuinely distinguishes `5` from `5.0`, and the first implementation honoured it. It was
+removed on evidence: **TSTL emits `3` for a TypeScript `3.0`**, because TypeScript has one number
+type. Honouring the subtype would make the same property behave differently depending on which
+language authored the script — and the failure is asymmetric. A float field wrongly given an
+integer widget can never be set to 3.5; an integer field given a float widget is merely untidy.
+
+### Reading the schema costs a chunk execution
+
+`ScriptEngine::GetScriptFields` works in edit mode with nothing instantiated — that is the point,
+since the inspector has to draw fields with no runtime scene. It does so by **executing the
+script's top-level chunk** (cached afterwards; lifecycle methods are not called). A script doing
+real work at file scope does that work in the editor. Keep top-level code to declarations.
+
+## Instances are stored per scene
+
+`ScriptEngine` keys instances by `Scene*` first, then UUID. This is load-bearing, not defensive.
+
+The editor holds several `Scene`s at once — the edit scene, the play-mode copy, and any temporary
+one the serializer deserializes into — and `Scene::~Scene` calls `OnRuntimeStop`. With flat maps,
+destroying a throwaway `Scene` tore down the *playing* scene's instances (observed as a spurious
+create → destroy → create cycle), and `entt::entity` ids, which are per-registry and collide freely
+between scenes, resolved against whichever scene happened to have registered that id.
+
+So: `LuaScriptSystem::OnRuntimeStop` calls `DestroySceneInstances(&m_Scene)`, never the global
+sweep. `DestroyAllInstances` exists only for engine shutdown.
 
 ## Not done yet
 
-Script properties (above), and spawning/destroying bindings — which must go through
-`Scene::Commands()`, per the binding rules.
+Spawning/destroying bindings — which must go through `Scene::Commands()`, per the binding rules.

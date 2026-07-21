@@ -9,6 +9,9 @@
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Assets/AssetTypes.h"
 
+#include <unordered_map>
+#include <variant>
+
 namespace GanymedE {
 
 	struct IDComponent
@@ -176,15 +179,37 @@ namespace GanymedE {
 		}
 	};
 
+	// One tunable value on a script, as stored per entity.
+	//
+	// The alternative shapes: a raw string (loses type, and the editor could not pick a widget) or
+	// a sol::object (would drag sol2 into this header, which the whole ScriptComponent design
+	// exists to avoid). A closed variant keeps both the type and the header boundary.
+	//
+	// Deliberately NOT every Lua type: tables and functions are not tunable data, and permitting
+	// them would mean serializing arbitrary graphs.
+	//
+	// Every number is a double, even though Lua 5.4 does distinguish integers from floats. That
+	// distinction cannot survive the TypeScript path - TS has a single number type, so TSTL emits
+	// `3` for a declared `3.0` - and honouring it would make the same property behave differently
+	// depending on which language authored the script. The failure is asymmetric, too: a float
+	// field wrongly given an integer widget can never be set to 3.5, while an integer field given
+	// a float widget is merely untidy. So: one number type.
+	using ScriptFieldValue = std::variant<bool, double, std::string, glm::vec3>;
+
 	// A Lua gameplay script attached to this entity.
 	//
-	// Deliberately a POD holding nothing but the handle: every sol2 object (the class table, the
-	// per-entity instance table) lives inside ScriptEngine, keyed by UUID. That keeps sol2 out of
-	// this header entirely - it is included almost everywhere, and sol2's templates are expensive -
-	// and lets the play-mode Scene::Copy treat the component as trivially copyable like any other.
+	// Every sol2 object (the class table, the per-entity instance table) still lives inside
+	// ScriptEngine, keyed by UUID - that is what keeps sol2 out of this header, which is included
+	// almost everywhere and would otherwise pay for sol2's templates everywhere.
+	//
+	// `Fields` holds **only the values this entity overrides**, never a full copy of the script's
+	// defaults. That is the load-bearing choice: editing a default in the .lua then propagates to
+	// every entity that did not explicitly change it, which is what anyone tuning a script expects.
+	// A full snapshot would freeze each entity at whatever the defaults were when it was created.
 	struct ScriptComponent
 	{
 		AssetHandle Script = InvalidAssetHandle;   // a .lua asset
+		std::unordered_map<std::string, ScriptFieldValue> Fields;
 
 		ScriptComponent() = default;
 		ScriptComponent(const ScriptComponent&) = default;
