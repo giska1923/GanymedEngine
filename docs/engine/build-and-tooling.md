@@ -48,6 +48,18 @@ Other build facts that have bitten before (details in
   and a workspace-wide `WindowedApp` makes the xcode4 exporter emit a `.app` bundle — which
   Xcode 14+ refuses to code sign without an `Info.plist` premake never generates, and whose
   launcher rewrites the working directory the relative asset paths rely on.
+- **Angled includes on the xcode4 exporter.** premake maps `includedirs` to
+  `USER_HEADER_SEARCH_PATHS` and emits `ALWAYS_SEARCH_USER_PATHS = NO`, so clang searches those
+  paths for quoted includes only. bx/bimg/bgfx include their own public headers angled
+  (`<bx/allocator.h>`), so `bgfx.lua` routes every include path through the local `bxIncludeDirs`
+  helper, which re-declares them as `externalincludedirs` (→ `SYSTEM_HEADER_SEARCH_PATHS`,
+  i.e. `-isystem`) under `filter "action:xcode4"`. The helper is scoped to that action so
+  vs2022/gmake2 output is unchanged. The engine and editor solve the same problem the older way,
+  with `ALWAYS_SEARCH_USER_PATHS = YES` — that relies on the traditional headermap Xcode 26 now
+  warns is unsupported, and should migrate to the same helper approach.
+- bx ships shims for headers a platform's libc lacks. `compat/msvc` is on the include path for
+  Windows and **`compat/osx` for macOS** — without the latter, `allocator.cpp`'s `<malloc.h>`
+  does not resolve and bx does not compile at all.
 
 ## Dependencies (vendored under `GanymedEngine/extern/`)
 

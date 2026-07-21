@@ -15,6 +15,25 @@ local BX_DIR   = "bx"
 local BIMG_DIR = "bimg"
 local BGFX_DIR = "bgfx"
 
+-- bx, bimg and bgfx include their own public headers with the angled form
+-- (<bx/allocator.h>, <bimg/bimg.h>). premake's xcode4 exporter puts includedirs into
+-- USER_HEADER_SEARCH_PATHS, which clang searches for quoted includes only -- it emits
+-- ALWAYS_SEARCH_USER_PATHS = NO, and the headermap that would otherwise resolve the
+-- quoted form is the header style Xcode now warns is unsupported. So on that exporter
+-- the same paths have to go out again as SYSTEM_HEADER_SEARCH_PATHS (-isystem), which
+-- externalincludedirs produces and angled includes do search.
+--
+-- Scoped to the exporter rather than applied everywhere so vs2022/gmake2 output is
+-- unchanged: those map includedirs to plain -I // AdditionalIncludeDirectories, which
+-- already works for both include forms.
+local function bxIncludeDirs(dirs)
+	includedirs(dirs)
+
+	filter "action:xcode4"
+		externalincludedirs(dirs)
+	filter {}
+end
+
 -- Settings bx's own toolchain applies to every project it builds.
 local function bxDefines()
 	-- bx uses SEH (__try) in thread.cpp, which MSVC rejects when object unwinding
@@ -42,6 +61,13 @@ local function bxDefines()
 		includedirs { BX_DIR .. "/include/compat/msvc" }
 		-- bx/platform.h hard-errors without the conforming preprocessor.
 		buildoptions { "/Zc:__cplusplus", "/Zc:preprocessor" }
+
+	-- Same idea on the other side: allocator.cpp includes <malloc.h>, which libc does
+	-- not ship here, and bx supplies the shim. bx's own genie build adds this for
+	-- macosx too; it was missing, so bx never compiled on this platform.
+	filter "system:macosx"
+		includedirs { BX_DIR .. "/include/compat/osx" }
+		externalincludedirs { BX_DIR .. "/include/compat/osx" }
 
 	filter "system:linux"
 		pic "On"
@@ -86,7 +112,7 @@ project "bx"
 		BX_DIR .. "/scripts/**.natvis"
 	}
 
-	includedirs
+	bxIncludeDirs
 	{
 		BX_DIR .. "/include",
 		BX_DIR .. "/3rdparty"
@@ -118,7 +144,7 @@ project "bimg"
 		BIMG_DIR .. "/3rdparty/astc-encoder/source/**.h"
 	}
 
-	includedirs
+	bxIncludeDirs
 	{
 		BIMG_DIR .. "/include",
 		BIMG_DIR .. "/3rdparty/astc-encoder/include",
@@ -154,7 +180,7 @@ project "bgfx"
 		BGFX_DIR .. "/scripts/**.natvis"
 	}
 
-	includedirs
+	bxIncludeDirs
 	{
 		BGFX_DIR .. "/include",
 		BGFX_DIR .. "/3rdparty",
