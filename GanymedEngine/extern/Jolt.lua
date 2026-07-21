@@ -30,7 +30,10 @@ project "Jolt"
 		"JoltPhysics/Jolt/Compute/MTL/**"
 	}
 
-	includedirs
+	-- Jolt reaches for its own headers angled from the repo root (<Jolt/Core/Core.h>);
+	-- see angledIncludeDirs in the workspace premake5.lua for why xcode4 needs more
+	-- than includedirs for that.
+	angledIncludeDirs
 	{
 		"JoltPhysics"
 	}

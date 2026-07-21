@@ -56,9 +56,9 @@ Other build facts that have bitten before (details in
   as `externalincludedirs` (→ `SYSTEM_HEADER_SEARCH_PATHS`, i.e. `-isystem`) under
   `filter "action:xcode4"`. It is scoped to that action so vs2022/gmake2 output is unchanged.
   Any dependency whose sources use `#include <Lib/Header.h>` for its *own* headers must declare
-  its include paths through this helper, not `includedirs`. Currently: bx/bimg/bgfx, RmlUi,
-  FreeType. GLFW and ImGui do not need it (their angled includes are all system frameworks),
-  and yaml-cpp and Lua have none. **Jolt does need it and has not been converted yet.**
+  its include paths through this helper, not `includedirs` — currently bx/bimg/bgfx, Jolt, RmlUi
+  and FreeType. GLFW and ImGui do not need it (their angled includes are all system frameworks),
+  and yaml-cpp and Lua have none.
   The engine and editor solve the same problem the older way, with
   `ALWAYS_SEARCH_USER_PATHS = YES` — that relies on the traditional headermap Xcode 26 now warns
   is unsupported, and should migrate to the helper.
