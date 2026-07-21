@@ -18,7 +18,8 @@ namespace GanymedE {
 		Environment,
 		Texture,
 		Material,
-		Scene
+		Scene,
+		Script
 	};
 
 	inline bool IsAssetHandleValid(AssetHandle handle)

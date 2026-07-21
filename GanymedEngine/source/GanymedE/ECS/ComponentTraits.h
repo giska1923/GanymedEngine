@@ -47,6 +47,18 @@ namespace GanymedE {
 		static constexpr bool EnableFini   = true;
 	};
 
+	// Lua script lifecycle is the same shape as the native one: InitView instantiates scripts that
+	// appear, FiniView tears down scripts that go away - including ones whose entity was destroyed,
+	// which is the case a plain iteration cannot see at all. The component itself is a bare handle,
+	// so the graveyard copy costs nothing; what it buys is the handle still being readable during
+	// teardown, for diagnostics.
+	template<> struct ComponentTraits<ScriptComponent>
+	{
+		static constexpr bool TrackChanges = false;
+		static constexpr bool EnableInit   = true;
+		static constexpr bool EnableFini   = true;
+	};
+
 	// ---- Every user-facing component, in one place ----
 	// This is the single source of truth: anything that must be applied to "all components"
 	// (Scene::Copy, and later serialization / editor menus / change-buffer hookup) iterates this
@@ -66,6 +78,7 @@ namespace GanymedE {
 		SpotLightComponent,
 		SkyLightComponent,
 		NativeScriptComponent,
+		ScriptComponent,
 		RigidBodyComponent,
 		BoxColliderComponent,
 		SphereColliderComponent,

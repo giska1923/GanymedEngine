@@ -8,6 +8,7 @@
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Scripting/ScriptEngine.h"
 
 #include <algorithm>
 #include <cctype>
@@ -234,6 +235,85 @@ namespace GanymedE {
 		ImGui::PopID();
 	}
 
+	// The tunables a script declares, each row showing this entity's value.
+	//
+	// The schema comes from the script (ScriptEngine::GetScriptFields, which loads the class
+	// without instantiating), while the values come from the component. A row is only written
+	// back into component.Fields when the user actually changes it, so an untouched field keeps
+	// tracking the script's default rather than being frozen at whatever it was when the entity
+	// was created. "Reset" deletes the override to restore that link.
+	static void DrawScriptFields(ScriptComponent& component)
+	{
+		if (!IsAssetHandleValid(component.Script))
+			return;
+
+		const auto& fields = ScriptEngine::GetScriptFields(component.Script);
+
+		ImGui::Separator();
+		if (fields.empty())
+		{
+			ImGui::TextDisabled("No properties (add a `Properties` table to the script)");
+			return;
+		}
+
+		for (const auto& field : fields)
+		{
+			ImGui::PushID(field.Name.c_str());
+
+			auto it = component.Fields.find(field.Name);
+			const bool overridden = it != component.Fields.end()
+				&& it->second.index() == field.Default.index();
+
+			// Show the override if there is a usable one, otherwise the script's default.
+			ScriptFieldValue value = overridden ? it->second : field.Default;
+			bool changed = false;
+
+			std::visit([&](auto& v)
+			{
+				using T = std::decay_t<decltype(v)>;
+				if constexpr (std::is_same_v<T, bool>)
+				{
+					changed = ImGui::Checkbox(field.Name.c_str(), &v);
+				}
+				else if constexpr (std::is_same_v<T, double>)
+				{
+					float scratch = (float)v;
+					changed = ImGui::DragFloat(field.Name.c_str(), &scratch, 0.05f);
+					if (changed)
+						v = scratch;
+				}
+				else if constexpr (std::is_same_v<T, std::string>)
+				{
+					// memcpy rather than strncpy: strncpy is deprecated on MSVC and its _s
+					// replacement is not portable, and the length is already known here.
+					char buffer[256] = {};
+					std::memcpy(buffer, v.data(), std::min(v.size(), sizeof(buffer) - 1));
+					if (ImGui::InputText(field.Name.c_str(), buffer, sizeof(buffer)))
+					{
+						v = buffer;
+						changed = true;
+					}
+				}
+				else   // glm::vec3
+				{
+					changed = ImGui::DragFloat3(field.Name.c_str(), glm::value_ptr(v), 0.05f);
+				}
+			}, value);
+
+			if (changed)
+				component.Fields[field.Name] = value;
+
+			if (overridden)
+			{
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Reset"))
+					component.Fields.erase(field.Name);
+			}
+
+			ImGui::PopID();
+		}
+	}
+
 	template<typename T, typename UIFunction>
 	static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
 	{
@@ -355,6 +435,15 @@ namespace GanymedE {
 				if (ImGui::MenuItem("Sky Light"))
 				{
 					m_SelectionContext.AddComponent<SkyLightComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<ScriptComponent>())
+			{
+				if (ImGui::MenuItem("Script"))
+				{
+					m_SelectionContext.AddComponent<ScriptComponent>();
 					ImGui::CloseCurrentPopup();
 				}
 			}
@@ -559,6 +648,48 @@ namespace GanymedE {
 				}
 				ImGui::EndDragDropTarget();
 			}
+		});
+
+		DrawComponent<ScriptComponent>("Script", entity, [](auto& component)
+		{
+			if (IsAssetHandleValid(component.Script))
+			{
+				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Script);
+				if (metadata)
+					ImGui::Text("Script: %s", metadata->FilePath.c_str());
+				else
+					ImGui::Text("Script handle: %llu", static_cast<uint64_t>(component.Script));
+
+				if (ImGui::Button("Clear"))
+					component.Script = InvalidAssetHandle;
+			}
+			else
+			{
+				ImGui::TextDisabled("No script assigned");
+			}
+
+			ImGui::TextDisabled("Drop a .lua file here");
+
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
+				{
+					const char* path = (const char*)payload->Data;
+					std::string ext = std::filesystem::path(path).extension().string();
+					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+					if (ext == ".lua")
+					{
+						component.Script = AssetManager::ImportAsset(path);
+						// Overrides are keyed by name against the old script's declarations;
+						// carrying them to a different script would apply values it never asked
+						// for. Clearing is the honest option.
+						component.Fields.clear();
+					}
+				}
+				ImGui::EndDragDropTarget();
+			}
+
+			DrawScriptFields(component);
 		});
 
 		DrawComponent<DirectionalLightComponent>("Directional Light", entity, [](auto& component)

@@ -60,14 +60,26 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 | Q / W / E / R | Gizmo: hide / translate / rotate / scale (ignored while using the gizmo or RMB-flying) |
 | Ctrl+N / Ctrl+O / Ctrl+Shift+S | New / Open / Save-As scene |
 | Ctrl (held while dragging gizmo) | Snapping |
+| Ctrl+U | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only) |
 | F1 | bgfx stats overlay |
 
 ### Play / Stop (toolbar)
 
 ```
 Play: m_ActiveScene = Scene::Copy(m_EditorScene); OnRuntimeStart(); panels retarget the copy
-Stop: OnRuntimeStop(); m_ActiveScene = m_EditorScene; selection cleared
+      UIEngine::LoadDocument("assets/ui/hud.rml")
+Stop: UIEngine::CloseAllDocuments(); OnRuntimeStop(); m_ActiveScene = m_EditorScene; selection cleared
 ```
+
+Game UI (RmlUi) is loaded on Play and closed on Stop, and renders *inside* the viewport image
+rather than over the whole editor — `RenderPass::UI` composites into the same LDR target the
+viewport displays. The document path is hard-coded for now. Details: [ui.md](../engine/ui.md).
+
+While playing, `OnEvent` forwards input to `UIEngine` **before** the editor's own handlers, but
+only when the viewport is hovered or focused — otherwise clicking a panel would be routed at a HUD
+sitting underneath it. If the UI claims the event (pointer over an actual widget, or a focused UI
+element taking a key), `EditorLayer::OnEvent` returns early and the gizmo/selection shortcuts never
+see it. Mouse coordinates are translated by `m_ViewportBounds[0]`, the same origin picking uses.
 
 The runtime scene is a disposable UUID-keyed deep copy — physics and scripts can do anything to
 it, and Stop restores the authored scene untouched. Scene switching (`OpenScene`) stops play
@@ -101,13 +113,22 @@ API — legal because panels run outside the system update.
 ### Properties (drawn by the same panel)
 
 Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, rigid body, colliders); one collapsible section per component
+lights, sky light, script, rigid body, colliders); one collapsible section per component
 (`DrawComponent<T>` helper with a remove-component menu). Notable behaviors:
 
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons) and call
   `MarkChanged<TransformComponent>` only when a value actually changed.
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
 - Static mesh: shows the mesh asset (handle + path) — assign by dragging from the Content Browser.
+- Script: shows the `.lua` asset (handle + path) with a Clear button — assign by dragging a `.lua`
+  from the Content Browser (the drop is extension-filtered). Below it, one row per property the
+  script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The
+  schema is read from the script itself in edit mode, so the rows appear without entering play.
+  Only values you actually change are stored on the entity; **Reset** removes an override so the
+  field tracks the script's default again. Assigning a different script clears the overrides —
+  they are keyed by name against the old script's declarations. Removing the component in edit mode
+  is safe: `LuaScriptSystem` drains its `FiniView` there and tears down any instance left from a
+  previous play session. See [scripting.md](../engine/scripting.md).
 - Sky light: environment asset, sky/ground colors, intensity, DrawSkybox.
 - Colliders: dimensions, offset, friction/restitution.
 
@@ -120,11 +141,11 @@ one of the two remaining hand-maintained per-component lists (the other is the s
 `assets/` (the `.assets/` mesh-cache directory is hidden):
 
 - Directory/file icons, tinted by asset type (mesh blue, environment orange, scene green, texture
-  pink, material purple). Double-click enters directories; the `<-` button goes up but can never
+  pink, material purple, script yellow). Double-click enters directories; the `<-` button goes up but can never
   escape the asset root (path-normalized check).
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
-- Right-click on an importable file (mesh/environment/texture/material) → **Import**, registering
+- Right-click on an importable file (mesh/environment/texture/material/script) → **Import**, registering
   it with the `AssetManager` (idempotent; persists `AssetRegistry.gr` immediately).
 
 ## Adding an editor feature — where things hook

@@ -25,6 +25,8 @@ The repository contains three applications:
 | [Rendering](engine/rendering.md) | The bgfx backend: view model, resources, shaders, Renderer2D/3D, shadows, IBL, post stack, async picking |
 | [Assets](engine/assets.md) | AssetManager, the registry, handles, mesh import (cgltf) and the binary mesh cache |
 | [Physics](engine/physics.md) | Jolt integration: PhysicsScene, body lifecycle, fixed timestep, interpolation, collision events, debug draw |
+| [Scripting](engine/scripting.md) | Lua 5.4 + sol2: ScriptEngine, LuaScriptSystem, the binding rules, error handling, sandboxing |
+| [Game UI](engine/ui.md) | RmlUi: UIEngine, the bgfx render backend, RenderPass::UI, RCSS gotchas, the Debugger |
 | [Platform](engine/platform.md) | GLFW windows per OS, input, BgfxContext (bgfx lifetime), ImGui layer and its bgfx renderer |
 | [Build & tooling](engine/build-and-tooling.md) | premake workspace, dependencies, the shader toolchain (shaderc), profiling, compile-time tests |
 
@@ -42,7 +44,7 @@ kept because they record *why* things are the way they are, including verificati
 - [`3D_ROADMAP.md`](toDo&done/3D_ROADMAP.md) — the original 2D→3D plan (phases 0–8, essentially complete)
 - [`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](toDo&done/ECS_VIEWS_IMPLEMENTATION_GUIDE.md) — the file-by-file plan for the view/access-wrapper ECS (complete)
 - [`BGFX_MIGRATION.md`](toDo&done/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except some Phase 7 hardening)
-- [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — the next planned phase (revised 2026-07-19 for the post-bgfx/post-ECS engine; not yet implemented)
+- [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — the current phase (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
 
 ## Building & running
 

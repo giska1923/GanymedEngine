@@ -5,6 +5,7 @@
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/SceneSingletons.h"
+#include "GanymedE/Scripting/ScriptEngine.h"
 
 namespace GanymedE {
 
@@ -31,6 +32,7 @@ namespace GanymedE {
 			return;
 
 		ScriptAccess scripts = View<ScriptAccess>();
+		LuaScriptAccess luaScripts = View<LuaScriptAccess>();
 
 		for (const auto& event : m_PhysicsScene->GetCollisionEvents())
 		{
@@ -41,14 +43,24 @@ namespace GanymedE {
 
 			auto notify = [&](Entity self, Entity other)
 			{
+				// Native and Lua scripts are independent: an entity may carry either,
+				// both, or neither, and both hear about the same collision.
 				auto script = scripts.FindOne<NativeScriptComponent>(self);
-				if (!script || !script->Instance)
-					return;
+				if (script && script->Instance)
+				{
+					if (event.Entered)
+						script->Instance->OnCollisionEnter(other);
+					else
+						script->Instance->OnCollisionExit(other);
+				}
 
-				if (event.Entered)
-					script->Instance->OnCollisionEnter(other);
-				else
-					script->Instance->OnCollisionExit(other);
+				if (luaScripts.Has(self))
+				{
+					if (event.Entered)
+						ScriptEngine::OnCollisionEnter(self, other);
+					else
+						ScriptEngine::OnCollisionExit(self, other);
+				}
 			};
 
 			notify(a, b);

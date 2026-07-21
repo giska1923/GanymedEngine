@@ -1,0 +1,39 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"lib": ["ESNext"],
+		// "bundler", not the "node"/node10 the older TSTL guides show: that mode is deprecated in
+		// TypeScript 6 (an error, not a warning) and removed in 7. TSTL resolves modules through
+		// its own enhanced-resolve pass anyway, so this only governs type resolution.
+		"moduleResolution": "bundler",
+		"strict": true,
+		"types": ["lua-types/5.4"],
+		// Emitted straight into the assets folder the AssetManager scans. Nothing under
+		// scripts-src/ ships; only the .lua does.
+		"outDir": "../assets/scripts"
+	},
+	"tstl": {
+		"luaTarget": "5.4",
+		// Inline the TS helper lib into each emitted file, so every .lua is self-contained and the
+		// C++ loader needs no require() path setup. ScriptEngine does not open the package library
+		// at all, so a non-inlined build would fail to resolve its helpers at runtime.
+		"luaLibImport": "inline",
+		// Static API calls (Input.IsKeyPressed) must compile to `.` calls, not `:` calls.
+		"noImplicitSelf": true,
+		// OFF, deviating from the integration plan, for two reasons that compound:
+		//
+		//  1. It emits a preamble calling debug.getinfo and reassigning debug.traceback, so it
+		//     hard-requires the `debug` library. ScriptEngine deliberately does not open `debug` -
+		//     it defeats metatables, reads locals and upvalues, and can hook the VM. Opening the
+		//     whole stdlib's most dangerous member to prettify a stack trace is a bad trade.
+		//  2. It would buy nothing anyway. sol2 builds its tracebacks with luaL_traceback (the C
+		//     API), which never consults the Lua-level `debug` table, so the rewritten
+		//     debug.traceback is not on the path any engine-reported script error takes.
+		//
+		// Cost: runtime errors cite .lua line numbers. The emitted Lua stays close enough to the
+		// TypeScript to follow. If this ever stops being true, the narrow fix is a minimal `debug`
+		// table exposing only getinfo/traceback - not sol::lib::debug.
+		"sourceMapTraceback": false
+	},
+	"include": ["**/*.ts", "types/**/*.d.ts"]
+}

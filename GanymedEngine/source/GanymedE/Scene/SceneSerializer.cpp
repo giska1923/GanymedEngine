@@ -178,6 +178,55 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		if (entity.HasComponent<ScriptComponent>())
+		{
+			out << YAML::Key << "ScriptComponent";
+			out << YAML::BeginMap;
+
+			auto& sc = entity.GetComponent<ScriptComponent>();
+			if (IsAssetHandleValid(sc.Script))
+				out << YAML::Key << "Script" << YAML::Value << static_cast<uint64_t>(sc.Script);
+
+			// Per-entity property overrides. Each carries its type, because the script that
+			// declares it may not be loadable when this is read back (missing file, or a scene
+			// opened before the asset registry knows about it) - the value still has to
+			// round-trip intact rather than becoming a guess.
+			if (!sc.Fields.empty())
+			{
+				// Sorted, so a scene file does not churn just because a hash map reordered.
+				std::vector<const std::pair<const std::string, ScriptFieldValue>*> sorted;
+				sorted.reserve(sc.Fields.size());
+				for (const auto& field : sc.Fields)
+					sorted.push_back(&field);
+				std::sort(sorted.begin(), sorted.end(),
+					[](const auto* a, const auto* b) { return a->first < b->first; });
+
+				out << YAML::Key << "Fields" << YAML::Value << YAML::BeginSeq;
+				for (const auto* field : sorted)
+				{
+					out << YAML::BeginMap;
+					out << YAML::Key << "Name" << YAML::Value << field->first;
+					std::visit([&out](const auto& value)
+					{
+						using T = std::decay_t<decltype(value)>;
+						if constexpr (std::is_same_v<T, bool>)
+							out << YAML::Key << "Type" << YAML::Value << "Bool";
+						else if constexpr (std::is_same_v<T, double>)
+							out << YAML::Key << "Type" << YAML::Value << "Float";
+						else if constexpr (std::is_same_v<T, std::string>)
+							out << YAML::Key << "Type" << YAML::Value << "String";
+						else
+							out << YAML::Key << "Type" << YAML::Value << "Vec3";
+						out << YAML::Key << "Value" << YAML::Value << value;
+					}, field->second);
+					out << YAML::EndMap;
+				}
+				out << YAML::EndSeq;
+			}
+
+			out << YAML::EndMap;
+		}
+
 		if (entity.HasComponent<DirectionalLightComponent>())
 		{
 			out << YAML::Key << "DirectionalLightComponent";
@@ -425,6 +474,53 @@ namespace GanymedE {
 						auto meshPath = staticMeshComponent["MeshPath"];
 						if (meshPath)
 							smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
+					}
+				}
+
+				auto scriptComponent = entity["ScriptComponent"];
+				if (scriptComponent)
+				{
+					auto& sc = deserializedEntity.AddComponent<ScriptComponent>();
+
+					auto scriptHandle = scriptComponent["Script"];
+					if (scriptHandle)
+					{
+						// No GetAsset<> call to match the mesh path above: a script has no runtime
+						// object to warm, and ScriptEngine loads the chunk itself on instantiation.
+						sc.Script = scriptHandle.as<uint64_t>();
+					}
+					else
+					{
+						// Backward compatibility with path-based scenes
+						auto scriptPath = scriptComponent["ScriptPath"];
+						if (scriptPath)
+							sc.Script = AssetManager::ImportAsset(scriptPath.as<std::string>());
+					}
+
+					if (auto fields = scriptComponent["Fields"])
+					{
+						for (auto field : fields)
+						{
+							auto name = field["Name"];
+							auto type = field["Type"];
+							auto value = field["Value"];
+							if (!name || !type || !value)
+								continue;
+
+							const std::string typeName = type.as<std::string>();
+							if (typeName == "Bool")
+								sc.Fields[name.as<std::string>()] = value.as<bool>();
+							// "Int" is accepted but folded into a double - see ScriptFieldValue.
+							else if (typeName == "Int" || typeName == "Float")
+								sc.Fields[name.as<std::string>()] = value.as<double>();
+							else if (typeName == "String")
+								sc.Fields[name.as<std::string>()] = value.as<std::string>();
+							else if (typeName == "Vec3")
+								sc.Fields[name.as<std::string>()] = value.as<glm::vec3>();
+							else
+								GE_CORE_WARN("SceneSerializer: unknown script field type '{0}' "
+									"for '{1}'", typeName, name.as<std::string>());
+						}
 					}
 				}
 

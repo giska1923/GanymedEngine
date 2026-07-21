@@ -40,7 +40,13 @@ project "GanymedEngine"
 		"JPH_USE_LZCNT",
 		"JPH_USE_TZCNT",
 		"JPH_USE_F16C",
-		"JPH_USE_FMADD"
+		"JPH_USE_FMADD",
+		-- Bounds/type checks on every sol2 call. Costs a little perf, turns script
+		-- bugs into readable errors instead of crashes.
+		"SOL_ALL_SAFETIES_ON=1",
+		-- Must match RmlUi.lua. Without it RmlUi's headers decorate their API with
+		-- __declspec(dllimport) here and the static link fails.
+		"RMLUI_STATIC_LIB"
 	}
 
 	includedirs
@@ -57,7 +63,11 @@ project "GanymedEngine"
 		"%{IncludeDir.Jolt}",
 		"%{IncludeDir.bx}",
 		"%{IncludeDir.bimg}",
-		"%{IncludeDir.bgfx}"
+		"%{IncludeDir.bgfx}",
+		"%{IncludeDir.lua}",
+		"%{IncludeDir.lua_cxx}",
+		"%{IncludeDir.sol2}",
+		"%{IncludeDir.RmlUi}"
 	}
 
 	links
@@ -68,7 +78,10 @@ project "GanymedEngine"
 		"Jolt",
 		"bgfx",
 		"bimg",
-		"bx"
+		"bx",
+		"Lua",
+		"RmlUi",
+		"FreeType"
 	}
 
 	filter "system:windows"

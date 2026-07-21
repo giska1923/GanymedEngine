@@ -18,12 +18,16 @@ namespace GanymedE {
 		// Collision dispatch needs random access to script instances by entity, not iteration.
 		using ScriptAccess = ECS::AccessView<ECS::RW<NativeScriptComponent>>;
 
+		// The Lua path alongside it. Read-only: the instance lives in ScriptEngine,
+		// so only "does this entity have a script" is needed here.
+		using LuaScriptAccess = ECS::AccessView<ECS::RO<ScriptComponent>>;
+
 		// PhysicsScene::SyncTransforms writes TransformComponent directly, outside any view.
 		// Declaring it here keeps the access metadata honest, so ordering validation knows
 		// TransformSystem has to run after this system rather than before it.
 		using TransformWrite = ECS::AccessView<ECS::RW<TransformComponent>>;
 
-		using Views = TypeList<ScriptAccess, TransformWrite>;
+		using Views = TypeList<ScriptAccess, LuaScriptAccess, TransformWrite>;
 
 		using ECS::System<PhysicsSystem>::System;
 

@@ -212,8 +212,8 @@ public:
 ### SystemManager
 
 Owned by `Scene`; registration order **is** execution order. The built-in registration (in
-`Scene`'s constructor) is: `PhysicsSystem` → `NativeScriptSystem` → `TransformSystem` →
-`CameraSystem` → `RenderSystem`.
+`Scene`'s constructor) is: `PhysicsSystem` → `NativeScriptSystem` → `LuaScriptSystem` →
+`TransformSystem` → `CameraSystem` → `RenderSystem`.
 
 - **Lifecycle runs opposite to update order**: `OnRuntimeStart` iterates in reverse so scripts are
   instantiated *before* `PhysicsScene::Start` builds bodies (a rigid body added in a script's

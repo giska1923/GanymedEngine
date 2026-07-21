@@ -7,6 +7,7 @@
 #include "GanymedE/ECS/ComponentTraits.h"
 #include "GanymedE/ECS/System.h"
 #include "GanymedE/Scene/Systems/CameraSystem.h"
+#include "GanymedE/Scene/Systems/LuaScriptSystem.h"
 #include "GanymedE/Scene/Systems/NativeScriptSystem.h"
 #include "GanymedE/Scene/Systems/PhysicsSystem.h"
 #include "GanymedE/Scene/Systems/RenderSystem.h"
@@ -49,6 +50,7 @@ namespace GanymedE {
 		m_Systems = CreateScope<ECS::SystemManager>();
 		m_Systems->Add<PhysicsSystem>(*this);
 		m_Systems->Add<NativeScriptSystem>(*this);
+		m_Systems->Add<LuaScriptSystem>(*this);   // scripts move things...
 		m_Systems->Add<TransformSystem>(*this);   // after anything that moves entities...
 		m_Systems->Add<CameraSystem>(*this);      // ...and before anything that reads world space
 		m_Systems->Add<RenderSystem>(*this);

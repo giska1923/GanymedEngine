@@ -55,6 +55,23 @@ namespace GanymedE {
 		const std::vector<PhysicsCollisionEvent>& GetCollisionEvents() const { return m_CollisionEvents; }
 		void ClearCollisionEvents() { m_CollisionEvents.clear(); }
 
+		// ---- Runtime body control, for gameplay scripts ----
+		//
+		// This is the route scripts must take to move a physics body. Writing the
+		// TransformComponent instead fights the simulation: PhysicsScene::SyncTransforms
+		// overwrites it from the body every step, so the write appears to do nothing for
+		// dynamic bodies. All of these no-op on an entity with no body (static geometry,
+		// or a call made outside play) rather than asserting - a script poking at the
+		// wrong entity should not take the editor down.
+		//
+		// Jolt puts idle bodies to sleep, so each of these wakes the body; a velocity set
+		// on a sleeping body would otherwise be quietly discarded.
+		void SetLinearVelocity(UUID entity, const glm::vec3& velocity);
+		glm::vec3 GetLinearVelocity(UUID entity) const;
+		void AddImpulse(UUID entity, const glm::vec3& impulse);
+		void AddForce(UUID entity, const glm::vec3& force);
+		bool HasBody(UUID entity) const;
+
 	private:
 		struct BodyPose
 		{

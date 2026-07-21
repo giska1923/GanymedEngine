@@ -12,7 +12,7 @@
 Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor` and `Sandbox`
 (console apps linking the engine), plus the dependency group built from source via their own
 premake scripts in `GanymedEngine/extern/*.lua`: GLFW, ImGui (+ImGuizmo), yaml-cpp, Jolt,
-bx/bimg/bgfx. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug renderer), `Release`,
+bx/bimg/bgfx, Lua. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug renderer), `Release`,
 `Dist` (no Jolt debug renderer). Output goes to `bin/<config>-<os>-<arch>/<project>/`,
 intermediates to `temp/`.
 
@@ -33,6 +33,15 @@ Other build facts that have bitten before (details in
 - The `JPH_*` instruction-set defines in the engine's premake **must match `Jolt.lua`**, or Jolt
   types change layout across the boundary.
 - AVX2 is assumed (`/arch:AVX2`, `-mavx2 …`).
+- The `lua/lua` submodule is the **raw source mirror**, which does not ship `lua.hpp` — that
+  header only exists in the packaged release tarballs, and sol2 includes it unconditionally.
+  `extern/lua_cxx/lua.hpp` supplies it, and `IncludeDir.lua_cxx` must be on the include path
+  alongside `IncludeDir.lua`, never instead of it. It sits outside the submodule for the same
+  reason the build scripts do.
+- The engine defines **`SOL_ALL_SAFETIES_ON=1`**: bounds and type checks on every sol2 call, so a
+  script bug surfaces as a logged Lua error instead of a crash across the C++ boundary.
+- Lua is pinned to the newest **5.4.x** (5.4.8) rather than 5.5, because sol2 does not support 5.5
+  and TypeScriptToLua's highest `luaTarget` is 5.4.
 
 ## Dependencies (vendored under `GanymedEngine/extern/`)
 
@@ -48,9 +57,26 @@ Other build facts that have bitten before (details in
 | cgltf | glTF import (header-only) |
 | stb_image | Image loading (header-only) |
 | spdlog | Logging (header-only) |
+| Lua 5.4.8 | Gameplay scripting VM (built as a C static lib) |
+| sol2 3.5.0 | C++ binding layer over Lua (header-only) |
+| RmlUi 6.2 | Game UI (HTML/CSS-style documents); Core + Lua plugin only |
+| FreeType 2.14.3 | RmlUi's font engine (its one hard dependency) |
 
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
-`extern/Jolt.lua`, `extern/bgfx.lua`).
+`extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`, `extern/RmlUi.lua`, `extern/FreeType.lua`).
+
+Two defines these hand-written scripts must supply that CMake would have set for you, both of
+which fail at *runtime* rather than at build time if missed:
+
+- **`RMLUI_FONT_ENGINE_FREETYPE`** on the RmlUi project — CMake derives it from its
+  `RMLUI_FONT_ENGINE` option (default `freetype`). Without it everything links and
+  `Rml::Initialise()` fails with "No font engine interface set!".
+- **`RMLUI_STATIC_LIB`** on the RmlUi project *and* every consumer, like the Jolt defines. A
+  mismatch decorates RmlUi's API with `__declspec(dllimport)` on one side and the link fails.
+
+FreeType builds from the canonical minimal file list — one `.c` per module, each of which
+`#include`s the rest of its module. Adding the individual sources instead multiply-defines half of
+them.
 
 Those scripts must also keep their **output** outside the submodule trees — every one of them
 uses `%{wks.location}/bin` and `%{wks.location}/temp`, same as the first-party projects. A parent
@@ -78,6 +104,28 @@ restart the app** (a failed/missing program logs and skips its draws rather than
 
 It is deliberately not a premake prebuild step — that would hard-fail builds on machines that
 haven't built shaderc yet.
+
+## Script toolchain (optional)
+
+Gameplay scripts may be authored in TypeScript and compiled to Lua by
+[TypeScriptToLua](https://typescripttolua.github.io/). Entirely optional — the engine loads `.lua`,
+and hand-written Lua is a first-class path.
+
+```
+cd GanymedEditor/scripts-src
+npm install        # once; needs Node + npm, nothing else in the C++ build depends on it
+npm run watch      # recompiles into ../assets/scripts on every save
+```
+
+Unlike shader bytecode, the emitted `assets/scripts/*.lua` **is tracked in git** — the folder also
+holds hand-written scripts, so it cannot be ignored wholesale. `scripts-src/node_modules/` is
+ignored; `package.json`, `package-lock.json` and `tsconfig.json` need explicit `!` negations in
+`.gitignore` because a blanket `*.json` rule would otherwise swallow them.
+
+Pinning note: `typescript-to-lua` declares an **exact** `typescript` peer version (1.37.1 ↔ 6.0.2).
+Take the pair the lockfile records rather than upgrading TypeScript on its own. Config rationale
+(`luaLibImport`, `noImplicitSelf`, why `sourceMapTraceback` is off) is in
+[scripting.md](scripting.md#typescript-authoring-typescripttolua).
 
 ## Assets
 

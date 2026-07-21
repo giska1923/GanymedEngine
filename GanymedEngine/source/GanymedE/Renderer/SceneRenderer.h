@@ -57,6 +57,12 @@ namespace GanymedE {
 		uint32_t GetFinalImageRendererID() const;
 		const Ref<Framebuffer>& GetSceneFramebuffer() const { return m_SceneFramebuffer; }
 
+		// The LDR target the post stack resolves into, and what the viewport image
+		// shows. Exposed so the game UI can composite into it: RenderPass::UI sorts
+		// after Composite, so anything drawn there lands on the finished image in
+		// display space rather than being tonemapped with the scene.
+		const Ref<Framebuffer>& GetCompositeFramebuffer() const { return m_CompositeFramebuffer; }
+
 		SceneRendererSettings& GetSettings() { return m_Settings; }
 		const SceneRendererSettings& GetSettings() const { return m_Settings; }
 

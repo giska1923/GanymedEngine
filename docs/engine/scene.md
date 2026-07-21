@@ -82,6 +82,12 @@ copyable, no behavior beyond small helpers.
   Flagged `EnableInit`+`EnableFini` so `NativeScriptSystem` reacts declaratively to scripts
   appearing/disappearing. Script hooks: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`,
   `OnCollisionEnter/Exit(Entity other)`.
+- **`ScriptComponent`** — an `AssetHandle` to a `.lua` asset plus `Fields`, a map of per-entity
+  property overrides (`bool`/`double`/`string`/`vec3`); every sol2 object still lives in
+  `ScriptEngine`, keyed by scene and UUID. Only overridden values are stored, so editing a default
+  in the script reaches entities that never changed it. Same `EnableInit`+`EnableFini` flags and
+  the same hook names as the native path, driven by `LuaScriptSystem`.
+  Details: [scripting.md](scripting.md).
 
 ### Physics (pure data — Jolt never appears here)
 
@@ -111,6 +117,12 @@ reads the graveyard copy), a plain `IterView` runs `OnUpdate`. The editor path d
 views without instantiating (they must be read every update), which also cleans up instances if a
 script component is removed in edit mode. `OnRuntimeStop` sweeps all live scripts (stopping play is
 not a component removal, so FiniView never sees it).
+
+### LuaScriptSystem — [`Systems/LuaScriptSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/LuaScriptSystem.h)
+The same three-view lifecycle as `NativeScriptSystem`, for `ScriptComponent`, delegating to the
+global `ScriptEngine` VM. Additionally declares an unused `AccessView<RW<TransformComponent>>` so
+`ValidateOrdering` knows script bindings write transforms outside any view — which is why it is
+registered before `TransformSystem`. Details: [scripting.md](scripting.md).
 
 ### TransformSystem — [`Systems/TransformSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/TransformSystem.h)
 Maintains the `WorldTransformComponent` cache. A `ChangeView` reacting to `TransformComponent` and
@@ -151,8 +163,13 @@ blocks keyed by component name. Notes:
 
 - Entity identity is the real UUID; deserialization mints a fresh UUID on `0` or collision
   (legacy scenes serialized one hardcoded ID for every entity).
-- Asset references serialize as **handles** (`uint64_t`); `MeshPath`/`EnvironmentPath` string
-  fallbacks are still read for backward compatibility and imported into the registry on load.
+- Asset references serialize as **handles** (`uint64_t`); `MeshPath`/`EnvironmentPath`/`ScriptPath`
+  string fallbacks are still read for backward compatibility and imported into the registry on load.
+  Unlike meshes, a deserialized `ScriptComponent` handle is *not* warmed through `GetAsset<>` —
+  scripts have no runtime object to cache, and `ScriptEngine` loads the chunk on instantiation.
+  Its property overrides serialize as a `Fields` sequence of `{Name, Type, Value}`, sorted by name
+  so a scene file does not churn when a hash map reorders. Each carries its own type because the
+  declaring script may not be loadable when the scene is read back.
 - `WorldTransformComponent` is intentionally not serialized (derived).
 - Adding a component type means extending both `SerializeEntity` and `Deserialize` — this is one
   of the two remaining hand-maintained per-component lists (the other is the editor UI).

@@ -1,0 +1,51 @@
+/* RmlUi is not a browser: RCSS is roughly CSS2 plus much of CSS3 (flexbox,
+   transitions, transforms, animations). Check the RCSS reference before assuming
+   a property exists - the in-editor Debugger shows computed values. */
+
+/* No @font-face here: the faces are registered in C++ by UIEngine::Init via
+   Rml::LoadFontFace, and RCSS rejects the CSS @font-face at-rule outright - the
+   parser then recovers by skipping to the next '}', which silently swallows the
+   rule that follows it. */
+
+body {
+	font-family: Montserrat;
+	font-size: 18dp;
+	color: white;
+	width: 100%;
+	height: 100%;
+}
+
+#health-bar {
+	position: absolute;
+	bottom: 30dp;
+	left: 30dp;
+	width: 300dp;
+	height: 24dp;
+	background-color: #00000080;
+	border-radius: 4dp;
+}
+
+#health-fill {
+	width: 100%;
+	height: 100%;
+	background-color: #c0392b;
+	border-radius: 4dp;
+	/* Driving this from a gameplay script lands in milestone 6. */
+	transition: width 0.2s cubic-out;
+}
+
+#health-text {
+	position: absolute;
+	left: 12dp;
+	top: 2dp;
+	font-size: 15dp;
+	font-weight: bold;
+}
+
+#score {
+	position: absolute;
+	top: 30dp;
+	right: 30dp;
+	font-weight: bold;
+	font-size: 22dp;
+}

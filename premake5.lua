@@ -50,6 +50,13 @@ IncludeDir["Jolt"] = "%{wks.location}/GanymedEngine/extern/JoltPhysics"
 IncludeDir["bx"] = "%{wks.location}/GanymedEngine/extern/bx/include"
 IncludeDir["bimg"] = "%{wks.location}/GanymedEngine/extern/bimg/include"
 IncludeDir["bgfx"] = "%{wks.location}/GanymedEngine/extern/bgfx/include"
+IncludeDir["lua"] = "%{wks.location}/GanymedEngine/extern/lua"
+-- Supplies lua.hpp, which the lua/lua source mirror does not ship. Must come
+-- alongside IncludeDir.lua, never instead of it.
+IncludeDir["lua_cxx"] = "%{wks.location}/GanymedEngine/extern/lua_cxx"
+IncludeDir["sol2"] = "%{wks.location}/GanymedEngine/extern/sol2/include"
+IncludeDir["RmlUi"] = "%{wks.location}/GanymedEngine/extern/RmlUi/Include"
+IncludeDir["freetype"] = "%{wks.location}/GanymedEngine/extern/freetype/include"
 
 group "Dependencies"
 	include "vendor/premake"
@@ -58,6 +65,9 @@ group "Dependencies"
 	include "GanymedEngine/extern/yaml-cpp"
 	include "GanymedEngine/extern/Jolt.lua"
 	include "GanymedEngine/extern/bgfx.lua"
+	include "GanymedEngine/extern/Lua.lua"
+	include "GanymedEngine/extern/FreeType.lua"
+	include "GanymedEngine/extern/RmlUi.lua"
 group ""
 
 include "GanymedEngine"

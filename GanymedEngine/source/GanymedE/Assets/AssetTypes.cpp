@@ -22,6 +22,8 @@ namespace GanymedE {
 			return AssetType::Material;
 		if (ext == ".ganymede")
 			return AssetType::Scene;
+		if (ext == ".lua")
+			return AssetType::Script;
 
 		return AssetType::None;
 	}
@@ -35,6 +37,7 @@ namespace GanymedE {
 			case AssetType::Texture:      return "Texture";
 			case AssetType::Material:     return "Material";
 			case AssetType::Scene:        return "Scene";
+			case AssetType::Script:       return "Script";
 			default:                      return "None";
 		}
 	}

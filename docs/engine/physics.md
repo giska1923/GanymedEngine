@@ -71,9 +71,24 @@ run *after* physics.
 ## Collision events → scripts
 
 `PhysicsSystem::DispatchCollisionEvents` resolves each event's UUIDs to entities and calls
-`OnCollisionEnter/OnCollisionExit(other)` on both sides' `ScriptableEntity` instances (looked up
-through an `AccessView<RW<NativeScriptComponent>>`). Events accumulate per fixed step and are
-cleared after dispatch.
+`OnCollisionEnter/OnCollisionExit(other)` on both sides' scripts. Events accumulate per fixed step
+and are cleared after dispatch.
+
+Both script kinds are notified, through separate views: `AccessView<RW<NativeScriptComponent>>` for
+`ScriptableEntity` instances, and `AccessView<RO<ScriptComponent>>` for Lua ones (read-only — the
+instance lives in `ScriptEngine`, so only "does this entity have a script" is needed here). An
+entity may carry either, both, or neither, and dispatch stays inside the fixed-step loop so the two
+see identical timing. See [scripting.md](scripting.md).
+
+## Runtime body control (for scripts)
+
+`SetLinearVelocity` / `GetLinearVelocity` / `AddImpulse` / `AddForce`, keyed by entity UUID against
+the `EntityToBody` map. This is the only correct way for gameplay code to move a dynamic body:
+writing its `TransformComponent` instead is overwritten by `SyncTransforms` on the very next step.
+
+Each wakes the body before acting — Jolt sleeps idle bodies and silently discards a velocity set on
+a sleeping one. All of them no-op when the entity has no body or play is not running, rather than
+asserting: a script poking at the wrong entity should not take the editor down.
 
 ## Debug draw
 
