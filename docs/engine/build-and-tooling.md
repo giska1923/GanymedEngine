@@ -137,14 +137,30 @@ scripts\compile_shaders.bat       # every .sc in assets/shaders/src → dx11 / s
                                   # → GanymedEditor/assets/shaders/compiled/<profile>/ and Sandbox's copy
 ```
 
-(`.sh` twins exist for Linux/macOS.) The profile-folder ↔ backend mapping must match
-`ProfileDirectory()` in [`Shader.cpp`](../../GanymedEngine/source/GanymedE/Renderer/Shader.cpp).
+`.sh` twins exist for Linux/macOS (`build_shader_tools.sh`, `compile_shaders.sh`). The profile-folder
+↔ backend mapping must match `ProfileDirectory()` in
+[`Shader.cpp`](../../GanymedEngine/source/GanymedE/Renderer/Shader.cpp), and **the profile set is
+per-OS**, because the folder is picked at runtime from the live bgfx backend:
+
+| OS | `--platform` | Profiles built |
+|---|---|---|
+| Windows | `windows` | `dx11` (`s_5_0`), `spirv`, `glsl` (`410`) |
+| Linux | `linux` | `spirv`, `glsl` (`410`) |
+| macOS | `osx` | `metal`, `glsl` (`410`) |
+
+`metal` is shaderc's alias for Metal 1.2. Missing it is not a build error — bgfx selects Metal on
+macOS, `ProfileDirectory()` asks for `compiled/metal/`, and every shader silently fails to load.
 `compile_shaders` prefers a per-shader `varying.<Name>.def.sc` over the shared `varying.def.sc`
 when present (ImGui needs this). There is no file watcher: **edit a shader → re-run the script →
 restart the app** (a failed/missing program logs and skips its draws rather than crashing).
 
 It is deliberately not a premake prebuild step — that would hard-fail builds on machines that
 haven't built shaderc yet.
+
+`build_shader_tools.sh` drives bgfx's GENie build using the **prebuilt GENie binary bundled in
+bx** (`extern/bx/tools/bin/<os>/genie`). The Linux one is linked against glibc 2.38, so it fails
+on anything older than Ubuntu 24.04 with a `GLIBC_2.38 not found` error from the dynamic loader —
+build shaderc on a newer distro, or supply a GENie built locally.
 
 ## Script toolchain (optional)
 
