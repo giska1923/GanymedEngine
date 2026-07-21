@@ -49,14 +49,19 @@ Other build facts that have bitten before (details in
   Xcode 14+ refuses to code sign without an `Info.plist` premake never generates, and whose
   launcher rewrites the working directory the relative asset paths rely on.
 - **Angled includes on the xcode4 exporter.** premake maps `includedirs` to
-  `USER_HEADER_SEARCH_PATHS` and emits `ALWAYS_SEARCH_USER_PATHS = NO`, so clang searches those
-  paths for quoted includes only. bx/bimg/bgfx include their own public headers angled
-  (`<bx/allocator.h>`), so `bgfx.lua` routes every include path through the local `bxIncludeDirs`
-  helper, which re-declares them as `externalincludedirs` (→ `SYSTEM_HEADER_SEARCH_PATHS`,
-  i.e. `-isystem`) under `filter "action:xcode4"`. The helper is scoped to that action so
-  vs2022/gmake2 output is unchanged. The engine and editor solve the same problem the older way,
-  with `ALWAYS_SEARCH_USER_PATHS = YES` — that relies on the traditional headermap Xcode 26 now
-  warns is unsupported, and should migrate to the same helper approach.
+  `USER_HEADER_SEARCH_PATHS` and emits `ALWAYS_SEARCH_USER_PATHS = NO`, and clang searches user
+  paths for *quoted* includes only — so on Xcode, a dependency that reaches for its own public
+  headers angled resolves against nothing. The workspace `premake5.lua` defines
+  **`angledIncludeDirs(dirs)`** for this: it declares the paths as `includedirs` normally, plus
+  as `externalincludedirs` (→ `SYSTEM_HEADER_SEARCH_PATHS`, i.e. `-isystem`) under
+  `filter "action:xcode4"`. It is scoped to that action so vs2022/gmake2 output is unchanged.
+  Any dependency whose sources use `#include <Lib/Header.h>` for its *own* headers must declare
+  its include paths through this helper, not `includedirs`. Currently: bx/bimg/bgfx, RmlUi,
+  FreeType. GLFW and ImGui do not need it (their angled includes are all system frameworks),
+  and yaml-cpp and Lua have none. **Jolt does need it and has not been converted yet.**
+  The engine and editor solve the same problem the older way, with
+  `ALWAYS_SEARCH_USER_PATHS = YES` — that relies on the traditional headermap Xcode 26 now warns
+  is unsupported, and should migrate to the helper.
 - bx ships shims for headers a platform's libc lacks. `compat/msvc` is on the include path for
   Windows and **`compat/osx` for macOS** — without the latter, `allocator.cpp`'s `<malloc.h>`
   does not resolve and bx does not compile at all.

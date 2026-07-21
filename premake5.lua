@@ -36,6 +36,27 @@ workspace "GanymedEngine"
 
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
+-- Include paths for third-party libraries that include their own public headers with
+-- the angled form - <Jolt/Jolt.h>, <RmlUi/Core/Core.h>, <freetype/freetype.h>,
+-- <bx/allocator.h>. premake's xcode4 exporter maps includedirs to
+-- USER_HEADER_SEARCH_PATHS and emits ALWAYS_SEARCH_USER_PATHS = NO, and clang searches
+-- user paths for quoted includes only, so on that exporter the angled form resolves
+-- against nothing. (It appears to half-work in Xcode's own diagnostics because the
+-- headermap indexes the target's file list and answers the quoted form - that is the
+-- header style Xcode 26 now warns is unsupported.)
+--
+-- externalincludedirs emits SYSTEM_HEADER_SEARCH_PATHS, i.e. -isystem, which the angled
+-- form does search. Scoped to the exporter on purpose: vs2022 and gmake2 map includedirs
+-- to plain AdditionalIncludeDirectories / -I, which already serves both include forms,
+-- and routing them through /external:I would change MSVC warning behaviour for no gain.
+function angledIncludeDirs(dirs)
+	includedirs(dirs)
+
+	filter "action:xcode4"
+		externalincludedirs(dirs)
+	filter {}
+end
+
 -- Include directories relative to root folder (solution directory)
 IncludeDir = {}
 IncludeDir["GLFW"] = "%{wks.location}/GanymedEngine/extern/GLFW/include"

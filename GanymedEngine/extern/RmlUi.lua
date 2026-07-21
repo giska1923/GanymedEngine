@@ -25,7 +25,10 @@ project "RmlUi"
 		"RmlUi/Include/RmlUi/**.h"
 	}
 
-	includedirs
+	-- Every one of these is consumed angled: <RmlUi/Core/Core.h> from Include,
+	-- <ft2build.h> from freetype, <lua.h> from lua. See angledIncludeDirs in the
+	-- workspace premake5.lua for why that needs special handling on xcode4.
+	angledIncludeDirs
 	{
 		"RmlUi/Include",
 		"RmlUi/Source",
