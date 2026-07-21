@@ -10,7 +10,7 @@
 - macOS: `scripts/macOS_GenerateProjects.sh` → Xcode workspace.
 
 Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor` and `Sandbox`
-(console apps linking the engine), plus the dependency group built from source via their own
+(executables linking the engine), plus the dependency group built from source via their own
 premake scripts in `GanymedEngine/extern/*.lua`: GLFW, ImGui (+ImGuizmo), yaml-cpp, Jolt,
 bx/bimg/bgfx, Lua. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug renderer), `Release`,
 `Dist` (no Jolt debug renderer). Output goes to `bin/<config>-<os>-<arch>/<project>/`,
@@ -42,6 +42,12 @@ Other build facts that have bitten before (details in
   script bug surfaces as a logged Lua error instead of a crash across the C++ boundary.
 - Lua is pinned to the newest **5.4.x** (5.4.8) rather than 5.5, because sol2 does not support 5.5
   and TypeScriptToLua's highest `luaTarget` is 5.4.
+- `GanymedEditor` is `kind "ConsoleApp"` by default and only `WindowedApp` under
+  `filter "system:windows"`, where it buys `/SUBSYSTEM:WINDOWS` (no console window behind the
+  editor; `entrypoint "mainCRTStartup"` keeps `main()`). `kind` is not platform-scoped by default,
+  and a workspace-wide `WindowedApp` makes the xcode4 exporter emit a `.app` bundle — which
+  Xcode 14+ refuses to code sign without an `Info.plist` premake never generates, and whose
+  launcher rewrites the working directory the relative asset paths rely on.
 
 ## Dependencies (vendored under `GanymedEngine/extern/`)
 

@@ -1,5 +1,9 @@
 project "GanymedEditor"
-	kind "WindowedApp"
+	-- WindowedApp only on Windows (see the system:windows filter). On xcode4 it would
+	-- emit a .app bundle, and Xcode refuses to code sign a bundle without an Info.plist
+	-- that premake does not generate - plus a bundle rewrites the working directory,
+	-- which the relative asset paths depend on.
+	kind "ConsoleApp"
 	language "C++"
 	cppdialect "C++17"
 	staticruntime "off"
@@ -44,6 +48,10 @@ project "GanymedEditor"
 	filter "system:windows"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
+
+		-- /SUBSYSTEM:WINDOWS so no console window sits behind the editor;
+		-- mainCRTStartup keeps the entry point at main() rather than WinMain
+		kind "WindowedApp"
 		entrypoint "mainCRTStartup"
 
 		-- Embeds the executable icon (resources/icon.ico)
