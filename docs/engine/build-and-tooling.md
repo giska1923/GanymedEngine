@@ -181,6 +181,13 @@ letting a raw loader error escape. Note it checks for *output*, not exit status:
 prints its banner to stdout and then exits **1**, so an exit-code check would reject a working
 binary.
 
+The macOS branch also passes **`--with-macos=13.0`**. bx defaults its macOS target to `10.13.6`
+for the `gmake` action — the newer defaults are wired only to the `xcode*` actions, and its own
+`--with-macos` help text claiming "default 13.0" is wrong for this path. glslang uses
+`std::filesystem`, which libc++ marks unavailable before 10.15, so without the override the tool
+build dies on `'absolute' is unavailable: introduced in macOS 10.15`. Only `buildoptions` carries
+`-target` in bx's toolchain, so this affects compilation, not the link.
+
 Shader compilation is host-independent — the `.bin` files are just bytecode, and shaderc generates
 MSL through SPIRV-Cross with no macOS SDK involved. A Windows shaderc can therefore produce the
 `metal` profile (verified), which is a usable stopgap if a machine cannot build shaderc at all:

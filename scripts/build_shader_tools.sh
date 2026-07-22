@@ -29,11 +29,17 @@ case "$(uname -s)" in
         ;;
     Darwin*)
         BUNDLED_GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/darwin/genie"
+        # bx defaults the macOS target to 10.13.6 for the gmake action (its newer defaults
+        # only apply to the xcode* actions), and glslang uses std::filesystem, which libc++
+        # marks unavailable before 10.15 - so the tool build fails on 'absolute' is
+        # unavailable unless the target is raised. 13.0 is what bx's own --with-macos help
+        # claims as the default.
+        MACOS_TARGET="13.0"
         if [ "$(uname -m)" = "arm64" ]; then
-            GENIE_ARGS="--gcc=osx-arm64"
+            GENIE_ARGS="--gcc=osx-arm64 --with-macos=$MACOS_TARGET"
             PROJ_DIR="gmake-osx-arm64"
         else
-            GENIE_ARGS="--gcc=osx-x64"
+            GENIE_ARGS="--gcc=osx-x64 --with-macos=$MACOS_TARGET"
             PROJ_DIR="gmake-osx-x64"
         fi
         OUT="$ROOT/scripts/tools/darwin"
