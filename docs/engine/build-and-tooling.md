@@ -181,6 +181,11 @@ letting a raw loader error escape. Note it checks for *output*, not exit status:
 prints its banner to stdout and then exits **1**, so an exit-code check would reject a working
 binary.
 
+bx generates its makefiles into `.build/projects/<action>-<--gcc value>`, so the script derives
+that directory from the toolchain name rather than spelling it out — `linux-gcc` gives
+`gmake-linux-gcc`, not `gmake-linux`. Getting it wrong surfaces only after GENie succeeds, as
+`make: *** .build/projects/…: No such file or directory`.
+
 The macOS branch also passes **`--with-macos=13.0`**. bx defaults its macOS target to `10.13.6`
 for the `gmake` action — the newer defaults are wired only to the `xcode*` actions, and its own
 `--with-macos` help text claiming "default 13.0" is wrong for this path. glslang uses

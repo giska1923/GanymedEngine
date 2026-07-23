@@ -23,25 +23,23 @@ fi
 case "$(uname -s)" in
     Linux*)
         BUNDLED_GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/linux/genie"
-        GENIE_ARGS="--gcc=linux-gcc"
-        PROJ_DIR="gmake-linux"
+        GCC_TOOLCHAIN="linux-gcc"
+        EXTRA_GENIE_ARGS=""
         OUT="$ROOT/scripts/tools/linux"
         ;;
     Darwin*)
         BUNDLED_GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/darwin/genie"
+        if [ "$(uname -m)" = "arm64" ]; then
+            GCC_TOOLCHAIN="osx-arm64"
+        else
+            GCC_TOOLCHAIN="osx-x64"
+        fi
         # bx defaults the macOS target to 10.13.6 for the gmake action (its newer defaults
         # only apply to the xcode* actions), and glslang uses std::filesystem, which libc++
         # marks unavailable before 10.15 - so the tool build fails on 'absolute' is
         # unavailable unless the target is raised. 13.0 is what bx's own --with-macos help
         # claims as the default.
-        MACOS_TARGET="13.0"
-        if [ "$(uname -m)" = "arm64" ]; then
-            GENIE_ARGS="--gcc=osx-arm64 --with-macos=$MACOS_TARGET"
-            PROJ_DIR="gmake-osx-arm64"
-        else
-            GENIE_ARGS="--gcc=osx-x64 --with-macos=$MACOS_TARGET"
-            PROJ_DIR="gmake-osx-x64"
-        fi
+        EXTRA_GENIE_ARGS="--with-macos=13.0"
         OUT="$ROOT/scripts/tools/darwin"
         ;;
     *)
@@ -49,6 +47,13 @@ case "$(uname -s)" in
         exit 1
         ;;
 esac
+
+GENIE_ARGS="--gcc=$GCC_TOOLCHAIN $EXTRA_GENIE_ARGS"
+
+# bx puts the generated makefiles in .build/projects/<action>-<gcc value> (toolchain.lua),
+# so the directory name is derived rather than spelled out - hardcoding it silently drifts
+# from the --gcc value and make then fails with "No such file or directory".
+PROJ_DIR="gmake-$GCC_TOOLCHAIN"
 
 # bx bundles prebuilt GENie binaries, and they do not run everywhere: the darwin one is
 # arm64-only, so an Intel Mac reports "Bad CPU type in executable", and the linux one is
