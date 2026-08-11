@@ -161,11 +161,21 @@ with it:
   ship weights that do not sum to 1 often enough that skipping this shows up as limbs swelling and
   shrinking as the rig moves.
 - Inverse bind matrices come from the skin's accessor, identity if it is absent (the spec allows it).
-- **`Skeleton::RootTransform`** holds the world transform of whatever sits above the root joints —
-  Blender's `Armature`, a Y-up correction node. The inverse binds already account for it, so leaving
-  it out of the global composition skins the whole mesh by its inverse. It is kept out of
-  `LocalRestPose` because animation channels replace joint locals wholesale. Of the Khronos samples,
-  CesiumMan and RiggedFigure both have a non-identity one.
+- **`Skeleton::RootTransform`** is the matrix that seeds root joints when the runtime composes
+  global joint transforms. It folds two corrections into one value:
+  `inverse(skinnedMeshNodeWorld) * rootJointParentWorld`.
+  - The right-hand term is the world transform of whatever sits above the root joints — Blender's
+    `Armature`, a Y-up correction node. The inverse binds already account for it, so leaving it out
+    skins the whole mesh by its inverse.
+  - The inverse is required by the glTF spec: the transform of the node a skinned mesh hangs off
+    MUST be ignored, and the joint matrices carry its inverse instead. Skinning output is already
+    in mesh space, so applying that node transform as well applies it twice.
+
+  It is kept out of `LocalRestPose` because animation channels replace joint locals wholesale. The
+  correctness test is that at the rest pose `Global[i] * InverseBind[i]` comes out as identity for
+  every joint; anything else means one of the two terms is wrong. Of the Khronos samples, both
+  CesiumMan and RiggedFigure exercise it and Fox does not — every node in Fox is at identity, so it
+  cannot distinguish a right answer from several wrong ones.
 - **Conditional world bake.** Skinned primitives skip the world-space bake and keep their vertices
   in skin space, because glTF places them via `globalJointTransform * inverseBindMatrix` and the
   spec says a skinned mesh node's own transform is ignored. Static primitives are baked exactly as
@@ -188,9 +198,12 @@ skeleton and animation clips) as a binary blob under `assets/.assets/`, keyed by
 the source file's timestamp stored for invalidation. `TryLoad` returns null on version/timestamp
 mismatch, falling back to a full re-import. The content browser hides the `.assets/` directory.
 
-The format is at **v4** (v4 added the skeleton, clips, the skin vertex stream and
-`Submesh::IsSkinned`). Bumping the version *is* the migration: every existing cache fails the
-version check on first load and gets re-imported.
+The format is at **v5** (v4 added the skeleton, clips, the skin vertex stream and
+`Submesh::IsSkinned`; v5 has the same layout and exists only to discard caches written with the
+pre-correction `RootTransform`). Bumping the version *is* the migration: every existing cache fails
+the version check on first load and gets re-imported. A bump is the right move whenever the
+*meaning* of a stored field changes, not just its layout — a stale cache with a silently wrong
+value is far harder to diagnose than a re-import.
 
 Practical notes:
 - Delete `assets/.assets/` to force a full re-import (e.g. after changing importer code — the

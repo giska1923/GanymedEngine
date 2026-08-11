@@ -16,7 +16,9 @@ namespace GanymedE {
 	namespace {
 
 		constexpr uint32_t MESH_CACHE_MAGIC = 0x48434D47; // 'GMCH'
-		constexpr uint32_t MESH_CACHE_VERSION = 4; // v4: skeleton, animation clips, skin vertex stream
+		// v5 has v4's layout; the bump is to discard caches holding a Skeleton::RootTransform
+		// written before it accounted for the skinned mesh node's transform.
+		constexpr uint32_t MESH_CACHE_VERSION = 5;
 
 		void WriteString(std::ostream& out, const std::string& str)
 		{

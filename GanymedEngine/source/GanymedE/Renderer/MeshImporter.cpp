@@ -158,7 +158,7 @@ namespace GanymedE {
 		// with gltf joint index -> skeleton joint index, which the JOINTS_0 attribute
 		// values have to be pushed through.
 		bool BuildSkeleton(const cgltf_skin* skin, const std::unordered_map<const cgltf_node*, glm::mat4>& nodeWorld,
-			Skeleton& outSkeleton, std::vector<uint32_t>& outRemap)
+			const glm::mat4& meshNodeWorld, Skeleton& outSkeleton, std::vector<uint32_t>& outRemap)
 		{
 			const cgltf_size jointCount = skin->joints_count;
 			if (jointCount == 0)
@@ -261,12 +261,27 @@ namespace GanymedE {
 				}
 			}
 
+			// Two corrections fold into one seed matrix.
+			//
+			// The inverse: glTF says the transform of the node a skinned mesh hangs off MUST be
+			// ignored, and that joint matrices carry inverse(meshNodeWorld) instead - skinning
+			// output is already in mesh space, so applying the node transform would apply it
+			// twice. The multiply: inverse binds are relative to mesh space, so joint globals
+			// must include whatever sits above the root joints (a Blender "Armature", a Y-up
+			// conversion node).
+			//
+			// Both are identity in the simple exports, which is why omitting the inverse looked
+			// correct until a rest-pose palette was actually composed and failed to come out as
+			// identity on CesiumMan.
+			glm::mat4 rootParentWorld{ 1.0f };
 			if (rootParent)
 			{
 				auto it = nodeWorld.find(rootParent);
 				if (it != nodeWorld.end())
-					outSkeleton.RootTransform = it->second;
+					rootParentWorld = it->second;
 			}
+
+			outSkeleton.RootTransform = glm::inverse(meshNodeWorld) * rootParentWorld;
 
 			if (jointCount > Skeleton::MaxBones)
 			{
@@ -497,7 +512,18 @@ namespace GanymedE {
 					path.filename().string(), (uint32_t)data->skins_count);
 			}
 
-			if (BuildSkeleton(&data->skins[0], nodeWorld, skeleton, jointRemap))
+			// The node the skinned mesh hangs off, whose transform the joint matrices cancel.
+			glm::mat4 skinnedMeshWorld{ 1.0f };
+			for (const NodeEntry& entry : sceneNodes)
+			{
+				if (entry.Node->mesh && entry.Node->skin == &data->skins[0])
+				{
+					skinnedMeshWorld = entry.World;
+					break;
+				}
+			}
+
+			if (BuildSkeleton(&data->skins[0], nodeWorld, skinnedMeshWorld, skeleton, jointRemap))
 			{
 				skin = &data->skins[0];
 				for (cgltf_size j = 0; j < skin->joints_count; j++)
