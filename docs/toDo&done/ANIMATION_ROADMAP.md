@@ -313,9 +313,22 @@ struct SkinVertex
 Joints ship as floats first: `AttribTypeFromShaderType` in `Renderer/Buffer.h` forces
 everything to `AttribType::Float` today, and packing to Uint8 is an optimization, not a
 requirement. `AttribFromName` (same header — it *asserts* on unknown names) gains
-`a_indices → bgfx::Attrib::Indices` and `a_weight → bgfx::Attrib::Weight`, and the attribute
-table in `assets/shaders/src/varying.def.sc` gets matching rows — its header comment already
-demands the two stay in sync.
+`a_JointIndices → bgfx::Attrib::Indices` and `a_JointWeights → bgfx::Attrib::Weight`, and the
+attribute table in `assets/shaders/src/varying.def.sc` gets matching rows — its header comment
+already demands the two stay in sync.
+
+> **Correction, made while executing.** The plan originally named these `a_indices`/`a_weight`
+> on both sides. That conflates two namespaces: `AttribFromName`'s keys are the *engine's*
+> `BufferElement` names (`a_CapitalCase`), while `a_indices`/`a_weight` are shaderc's fixed
+> vertex-input names (`s_allowedVertexShaderInputs` in `tools/shaderc/shaderc.cpp` — anything
+> else is rejected outright). So the three-column table reads
+> `a_JointIndices → BLENDINDICES → a_indices`, matching how every other row already works.
+
+**Skin vertices are parallel to the position stream, not a compacted array.** Both bgfx streams
+are bound with a single `startVertex`, so a mixed static/skinned file must still carry a
+`SkinVertex` for every vertex — zeroed for the static ones. `Mesh::GetSkinVertices()` is
+therefore either empty or exactly `GetVertices().size()` long; `Mesh`'s constructor drops the
+skin data outright if that invariant is violated.
 
 ### 2.2 Runtime-facing types
 
@@ -324,11 +337,16 @@ New header `GanymedEngine/source/GanymedE/Renderer/Animation.h`:
 ```cpp
 struct Skeleton
 {
+	static constexpr uint32_t MaxBones = 128;
+
 	// Parents-before-children order, so one forward pass composes globals.
 	std::vector<int32_t>     ParentIndices;   // -1 = root
 	std::vector<glm::mat4>   InverseBind;
 	std::vector<JointPose>   LocalRestPose;   // TRS with quat rotation — NOT matrices
 	std::vector<std::string> JointNames;
+
+	// Everything above the root joints in the glTF scene graph. See below.
+	glm::mat4 RootTransform{ 1.0f };
 };
 
 struct AnimationClip
@@ -357,12 +375,40 @@ must be uploaded anyway.
 `Mesh` gains: `Skeleton m_Skeleton` (+`HasSkeleton()`), `std::vector<AnimationClip> m_Clips`
 (+`FindClip(name)`), `std::vector<SkinVertex> m_SkinVertices`, `Submesh::IsSkinned`.
 
+> **`RootTransform`, added while executing.** The original `Skeleton` had nowhere to put the
+> transform of whatever sits *above* the root joints — Blender's `Armature`, a Y-up correction
+> node. Composing globals purely from `LocalRestPose` + `ParentIndices` is wrong whenever that
+> node is not identity, and it usually isn't: the inverse bind matrices come from the file and
+> already include it, so at bind pose you get
+> `Global_ours[i] * InverseBind[i] = inverse(Armature) * GlobalBind[i] * inverse(GlobalBind[i])`
+> `= inverse(Armature)` instead of identity — the whole character transformed by the inverse of
+> its own armature node. Of the three verification models, CesiumMan and RiggedFigure both have
+> a non-identity one.
+>
+> It is stored separately rather than baked into the root joints' `LocalRestPose` because
+> animation channels *replace* joint locals wholesale and would clobber it on the first
+> translation key. Global composition (Phase 3, step 3) is therefore:
+>
+> ```cpp
+> Global[i] = Parent[i] >= 0 ? Global[Parent[i]] * Local[i]
+>                            : Skeleton.RootTransform * Local[i];
+> ```
+>
+> Root joints under *different* parents are possible in principle; the importer warns and uses
+> the first. No sample rig does this.
+
 ### 2.3 Importer changes (`MeshImporter.cpp`)
 
 - Parse the **first** `cgltf_skin` only; warn if the file has more (v1 degradation, logged).
+- **Topologically sort the joints and remap `JOINTS_0` through the sort.** The plan assumed
+  `skin.joints` already arrives parents-before-children; glTF guarantees no such ordering. The
+  sort is what makes Phase 3's single-forward-pass composition legal — without it the
+  guarantee stated in 2.2 is just a hope.
 - Joints via `cgltf_accessor_read_uint` — **not** `cgltf_accessor_read_float`, which
   normalizes integer accessors. Weights via `cgltf_accessor_unpack_floats`, then
   renormalize (exporters ship non-normalized weights more often than you'd think).
+  Out-of-range joint indices are clamped to 0; a stray index would otherwise sample past the
+  end of the palette uniform.
 - Inverse binds from the skin's accessor; identity fallback if absent (spec allows it).
 - **Conditional world-bake.** Skinned primitives skip the world-space bake entirely — their
   vertices stay in skin space, because glTF skinning places them via
@@ -374,7 +420,13 @@ must be uploaded anyway.
 - **Fix nondeterministic submesh order while in the file**: replace the
   `unordered_map<node*, mat4>` traversal with an explicit DFS over scene roots collecting
   into a vector. Today's order changes run to run, which makes cache diffs and joint↔submesh
-  correlation flaky.
+  correlation flaky. (The map survives as a lookup table for `RootTransform`; only the
+  *iteration* moved to the vector.)
+- **Non-indexed primitives.** Pre-existing gap found by the verification below: the importer
+  bailed on any primitive without an index accessor, which glTF permits (triangle soup in draw
+  order) and Khronos' Fox uses — so Fox imported as "no triangle geometry". Since the engine
+  always draws indexed, a trivial `0..n-1` list is synthesized. Unrelated to skinning, fixed
+  here because it blocks this phase's own checkpoint.
 
 ### 2.4 Cache format v4 (`MeshCache.cpp`)
 
@@ -387,6 +439,18 @@ auto-invalidates every existing cache on first load — that *is* the migration.
 - Import the Khronos sample models **Fox, CesiumMan, RiggedFigure**; log joint counts and
   clip names/durations and check them against a glTF viewer.
 - Cache roundtrip: cold import vs cache load produce identical skeleton/clip/skin data.
+
+Results (temporary probe in `EditorLayer::OnAttach`, since import needs a live bgfx device;
+probe removed afterwards). Cold import and cache load agreed on every field:
+
+| Model | Joints | Clips | Verts / skin verts | `RootTransform` |
+|---|---|---|---|---|
+| Fox | 24 | Survey 3.417s, Walk 0.708s, Run 1.158s — 21 channels each | 1728 / 1728 (non-indexed) | identity |
+| CesiumMan | 19 | 1 × 2.000s, 57 channels | 3273 / 3273 | non-identity (Y-up node) |
+| RiggedFigure | 19 | 1 × 1.250s, 57 channels | 370 / 370 | non-identity (90° X) |
+| BoxTextured (static control) | 0 | 0 | 24 / 0 | — |
+
+57 channels = 19 joints × 3 paths, and 24 joints for Fox, both matching the published models.
 - Every existing static scene renders pixel-identically (the conditional bake must be a
   no-op for static content).
 - A skinned model imported but not yet animated renders **wrong** until Phase 4 (skin-space
@@ -457,8 +521,9 @@ Per-frame update:
 1. `Time += ts * Speed` when `Playing`; wrap (Loop) or clamp (one-shot) by clip duration.
 2. Per channel: binary-search the key pair, lerp translation/scale, **slerp** rotation
    (STEP holds the left key).
-3. Compose local poses over the rest pose, one parents-first pass (the array is pre-sorted)
-   for globals, then `Palette[i] = Global[i] * InverseBind[i]`.
+3. Compose local poses over the rest pose, one parents-first pass (the importer sorts the
+   array, see 2.3) for globals — seeding roots with `Skeleton::RootTransform`, not identity —
+   then `Palette[i] = Global[i] * InverseBind[i]`.
 4. Unknown clip name (the failure mode of clips-by-name, e.g. a DCC rename): warn **once**
    per component, output the bind pose (identity palette). Loud, not broken.
 
