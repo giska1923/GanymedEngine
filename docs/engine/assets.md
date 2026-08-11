@@ -180,6 +180,13 @@ with it:
   in skin space, because glTF places them via `globalJointTransform * inverseBindMatrix` and the
   spec says a skinned mesh node's own transform is ignored. Static primitives are baked exactly as
   before. `Submesh::IsSkinned` is the single gate every downstream consumer honors.
+- **A skinned submesh keeps its `LocalTransform`**, where a static one has it reset to identity
+  because the bake already spent it. That looks like the spec violation the point above just
+  avoided, and is not one: `RootTransform` carries the inverse of the very same matrix, so
+  re-applying it at draw time (`Renderer3D` composes `worldTransform * LocalTransform`) cancels
+  instead of double-applying. Clearing it leaves the mesh in raw bind space, which for any file with
+  a Y-up correction node means the character renders lying on its side. Both halves of that
+  cancellation have to be present; either alone is wrong.
 - **Clips**: LINEAR and STEP are supported; CUBICSPLINE degrades to linear (the middle value of each
   in-tangent/value/out-tangent triple) with a warning. Morph-target weight channels are skipped.
   Duration is the maximum key time across channels. Rotation values are stored **xyzw** — glTF's
@@ -198,9 +205,10 @@ skeleton and animation clips) as a binary blob under `assets/.assets/`, keyed by
 the source file's timestamp stored for invalidation. `TryLoad` returns null on version/timestamp
 mismatch, falling back to a full re-import. The content browser hides the `.assets/` directory.
 
-The format is at **v5** (v4 added the skeleton, clips, the skin vertex stream and
-`Submesh::IsSkinned`; v5 has the same layout and exists only to discard caches written with the
-pre-correction `RootTransform`). Bumping the version *is* the migration: every existing cache fails
+The format is at **v6** (v4 added the skeleton, clips, the skin vertex stream and
+`Submesh::IsSkinned`; v5 and v6 have that same layout and exist only to discard caches whose stored
+*values* were stale — v5 the pre-correction `RootTransform`, v6 skinned submeshes written with an
+identity `LocalTransform`). Bumping the version *is* the migration: every existing cache fails
 the version check on first load and gets re-imported. A bump is the right move whenever the
 *meaning* of a stored field changes, not just its layout — a stale cache with a silently wrong
 value is far harder to diagnose than a re-import.

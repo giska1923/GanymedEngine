@@ -161,8 +161,9 @@ record. `OnRuntimeStart` resets every animator's `Time` to zero, so play begins 
 clip whatever the editor was scrubbed to — the editor scene is a separate copy and keeps its scrub
 position for when play stops.
 
-Its registration slot (after the script systems, before `TransformSystem`) is a documented
-intention that `ValidateOrdering` cannot enforce — see [ecs.md](ecs.md#systemmanager).
+Its registration slot (after the script systems, before `TransformSystem`) is a documented intention
+that `ValidateOrdering` cannot enforce; the part it does enforce is running ahead of `RenderSystem`,
+which reads the palette. See [ecs.md](ecs.md#systemmanager).
 
 ### TransformSystem — [`Systems/TransformSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/TransformSystem.h)
 Maintains the `WorldTransformComponent` cache. A `ChangeView` reacting to `TransformComponent` and
@@ -183,6 +184,14 @@ begins Renderer3D with the main camera (or the editor fallback), submits lights,
 meshes, collider gizmos (or Jolt debug draw when enabled during play), ends the scene, then does the
 2D pass (sprites) in its own render view. The editor path additionally draws the grid. Its nine view
 declarations are live documentation of exactly what rendering reads.
+
+The mesh view carries `OptRO<AnimatorComponent>`, so one iteration covers both draw paths: an
+entity with an animator, a mesh that `HasSkeleton()`, and a non-empty palette goes to
+`Renderer3D::SubmitSkinnedMesh`, everything else to `SubmitMesh`. A rigged mesh with no animator
+therefore draws as static geometry in its bind pose, which is the sane result of dropping a
+character into a scene before authoring anything. Declaring that optional read is also what made
+the `AnimationSystem`-before-`RenderSystem` ordering checkable at last — see
+[ecs.md](ecs.md#systemmanager).
 
 ## Singletons
 

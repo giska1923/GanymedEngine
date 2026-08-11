@@ -1,7 +1,9 @@
 # GanymedEngine — Skeletal Animation Roadmap
 
-Status: **planned, not started**. Written 2026-08-02, against the post-scripting/post-bgfx
-engine (branch point: the Linux/macOS build-fix work).
+Status: **Phases 1–4 executed; Phase 5 outstanding.** Written 2026-08-02, against the
+post-scripting/post-bgfx engine (branch point: the Linux/macOS build-fix work). Each phase carries
+its own "execution notes" section recording where the plan was wrong or diverged from — read those
+alongside the plan, not instead of it.
 
 This is the plan of record for the fifth milestone: skeletal animation, from glTF import to
 animated, shadow-casting characters driven by Lua. It follows the format of
@@ -657,6 +659,97 @@ Accepted cost: N skinned characters = N submits + N palette uploads. The escape 
   branch must not perturb batching.
 - Entity picking works on a skinned entity mid-animation.
 - Two skinned entities play *different* clips simultaneously and independently.
+
+### Phase 4 execution notes
+
+**No `varying.PhongSkinned.def.sc` was needed.** 4.1 called for one "per convention", but the shared
+`varying.def.sc` already declares `a_indices`/`a_weight` (Phase 2 added them when it documented the
+attribute table), and the skinned varyings are identical to Phong's. A per-shader varying file is
+for layouts that *differ* from the engine's, which is why only ImGui and RmlUi have one.
+
+**The loader forbade reusing `fs_Phong`, which 4.1 assumed was free.** `Shader` paired `vs_<name>`
+with `fs_<name>`, so a `PhongSkinned` program could only have had a `fs_PhongSkinned` — a duplicate
+of a 300-line PBR shader existing solely to satisfy a naming rule. `Shader::CreateFromStages(name,
+vertexStage, fragmentStage)` names the two stages independently instead. Both skinned programs use
+it. This was not in the plan and is the one piece of new engine surface Phase 4 added beyond the
+skinning path itself.
+
+**Skinned commands stayed in the main draw list**, not "their own list" as 4.3 specified: a `bool
+IsSkinned` and a `uint32_t PaletteOffset` on `DrawCommand`. A separate list would have needed its
+own copy of the culling, the opaque/transparent split, the depth sort and the material-bind cache to
+get the same ordering the plan also demanded. The merge loop instead grew guards that exclude
+skinned commands from a run. The cost of that choice is that the guards are load-bearing in a way a
+separate list would not have been — hence measuring static batching rather than trusting it.
+
+**Palettes are staged once per entity, not per draw.** 4.3 said "copy the palette into the command
+buffer"; a mesh with several skinned submeshes would then copy the same 8 KB once per submesh. All
+submeshes of one submit share an offset into a frame-lifetime `PaletteStorage`.
+
+**Two bgfx behaviours had to be designed around, both of the same shape: a uniform or texture set
+twice with no submit between is fatal, not an overwrite.**
+- `u_LightSpaceMatrix` is set once per cascade and covers the skinned draws too. Setting it again
+  inside the skinned caster loop asserts — but only in a scene with *no* static casters, since
+  otherwise a static submit intervenes. Worth noting how narrow that repro is.
+- `DrawSkinnedCommand` calls `bgfx::discard()` on its early-out rather than returning, because the
+  caller has already queued the material's uniforms and textures for a draw that is not going to
+  happen.
+
+Also: a skinned draw must rebind its material even when the material pointer is unchanged (bgfx
+discards texture bindings at submit), and must invalidate the `boundMaterial` cache on the way out,
+or the next static draw inherits the skinned program and reads a stream 1 that is not bound.
+
+**Phase 2 bug found by Phase 4: skinned submeshes were losing their `LocalTransform`.** The import
+reset `LocalTransform` to identity for *every* submesh, correct for static ones whose vertices were
+baked to world space and wrong for skinned ones. `Skeleton::RootTransform` carries
+`inverse(skinnedMeshNodeWorld)` (the Phase 3 correction), and nothing was re-applying the matrix it
+was meant to cancel — so a file with a Y-up correction node rendered its character lying on its
+side. Skinned submeshes now keep the node transform, `Renderer3D` re-applies it as
+`worldTransform * LocalTransform`, and the two cancel. Mesh cache is at **v6** to discard caches
+holding the identity.
+
+Note the shape of this bug and of the Phase 3 one: both were a *half* of a cancellation, and both
+came from design tension 5 (conditional baking) — one mesh holding world-baked static and
+bind-space skinned vertices means every consumer of `Submesh` needs the `IsSkinned` gate, and the
+two that were missed were the two that looked like they had nothing to do with skinning.
+
+**Bounds padding is a fraction of the largest extent, not per axis.** A per-axis 50% pad let
+CesiumMan's arms leave its box: it stands arms-down with an X extent of 0.31 against a height of
+1.51, and a walk cycle swings a limb about as far as the rig is long regardless of how thin the bind
+pose is on that axis. `SkinnedBoundsPadding` is 25% of `max(extent)` applied to every axis.
+
+Results (temporary probe in `EditorLayer`, two `BoxTextured` + two `Fox` entities on different
+clips, removed afterwards):
+
+| Check | Result |
+|---|---|
+| Static-only scene | 7 draws, 5 instanced, 0 skinned, 0 culled |
+| Same scene + 2 skinned entities | 17 draws, **5 instanced** (unchanged), 10 skinned |
+| Skinned draws per entity | 5 = 1 color pass + 4 cascades — every cascade, as intended |
+| Fox skin data | 24 joints, 1728 skin vertices, stream 1 created, 1/1 submeshes skinned |
+| Stream 1 layout (bgfx log) | `Attrib::Indices` num 4 + `Attrib::Weights` num 4, float, stride 32 |
+| `u_Bones` uniform | one handle, `num 128`; both skinned programs report `r.count 512`, CB size 8256 B |
+| `PhongSkinned` fragment stage | resolves to `fs_Phong`'s constants (CB 2656 B) — the reuse works |
+| Two entities, different clips, same frame | Walk vs Run at t=0: 24/24 joints, max palette element difference 61.7 |
+| Skinned submesh bounds | padded extent (102.5, 156.4, 232.1) against a bind-pose (25.2, 79.0, 154.7) |
+
+**Not verified programmatically: entity picking on a skinned entity.** The probe projected the posed
+AABB and read the entity-ID attachment back across a 5×5 grid of pixels inside it, and got −1
+everywhere — but so did a *static* box used as a control, so the probe's readback harness is what
+failed, not the skinned path. The skinned draw builds the same `MeshInstanceData` (transform +
+entity ID) and submits with instance count 1 through the same `DrawIndexedInstanced*` entry point as
+a static draw, and its fragment stage *is* `fs_Phong`, so there is no code path by which its ID
+would differ; that is an argument, not a measurement. Worth a separate look at why an off-mouse
+`RequestEntityID`/`PollEntityID` pair reads cleared pixels — it is not a Phase 4 change and hover
+picking works normally in the editor.
+
+**Pose correctness** was established the other way round: the lying-down bug above was spotted by eye
+in the viewport, and the fix checked by replaying the vertex shader's blend on the CPU and confirming
+the result stands upright in Y. Matching a reference viewer frame-for-frame was not done.
+
+**Shadow deformation** is verified structurally, not visually: the skinned depth program is issued
+once per cascade per skinned caster (the 10-draw figure above), which is the mechanism. That the
+resulting silhouette tracks the pose follows from `vs_ShadowDepthSkinned` running the same blend as
+`vs_PhongSkinned`, which is read, not measured.
 
 ---
 

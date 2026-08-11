@@ -232,8 +232,11 @@ Owned by `Scene`; registration order **is** execution order. The built-in regist
   `AnimationSystem`'s slot before `TransformSystem` is a documented intention, not a checked one,
   since the two have no component in common. Its slot after the script systems is unenforceable
   for the other reason — both write `AnimatorComponent`, and writer-vs-writer is out of scope by
-  design. The only part of that placement validation will ever catch is staying ahead of
-  `RenderSystem`, once that reads the palette.
+  design. The one part of that placement validation does catch is staying ahead of `RenderSystem`,
+  which became real when `RenderSystem`'s mesh view picked up `OptRO<AnimatorComponent>` to read the
+  palette: move `AnimationSystem` after it and the assert fires. Note what that took — the
+  constraint existed from the moment the palette did, but nothing could check it until a reader
+  *declared* the component.
 - `Get<S>()` gives direct system access — used only where no data path exists yet (the renderer
   fetching the live `PhysicsScene` for Jolt debug draw).
 
