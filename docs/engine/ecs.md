@@ -204,7 +204,10 @@ public:
 - `System<Impl>` (CRTP) = `ISystem` + `ViewHolder<Impl>`. Declare `using Views = TypeList<...>`
   and call `View<V>()`; asking for an undeclared view is a compile error.
 - `ISystem` hooks: `OnRuntimeStart/Stop` (play mode), `OnUpdate` (play), `OnUpdateEditor`
-  (edit mode — default no-op).
+  (edit mode — default no-op). Most simulating systems leave `OnUpdateEditor` alone;
+  `AnimationSystem` is the exception and splits the difference, evaluating poses in edit mode
+  (so inspector scrubbing moves the model) without running the clock (so rigs are not permanently
+  in motion while you are placing things).
 - `Access()` returns the union `ViewDesc` of all declared views — derived, never hand-written.
 - `ViewHolder` type-erases its state tuple behind an interface pointer because
   `Implementation::Views` is not nameable while the derived class is still incomplete.
@@ -213,7 +216,7 @@ public:
 
 Owned by `Scene`; registration order **is** execution order. The built-in registration (in
 `Scene`'s constructor) is: `PhysicsSystem` → `NativeScriptSystem` → `LuaScriptSystem` →
-`TransformSystem` → `CameraSystem` → `RenderSystem`.
+`AnimationSystem` → `TransformSystem` → `CameraSystem` → `RenderSystem`.
 
 - **Lifecycle runs opposite to update order**: `OnRuntimeStart` iterates in reverse so scripts are
   instantiated *before* `PhysicsScene::Start` builds bodies (a rigid body added in a script's
@@ -223,6 +226,14 @@ Owned by `Scene`; registration order **is** execution order. The built-in regist
   *only reads* component X and a later system writes X, A sees last frame's values — that is
   logged and counted, and the `Scene` constructor asserts the count is zero. Two writers of the
   same component are not flagged (an order is needed, but the declarations cannot pick it).
+- **What it cannot check** is worth being clear about, because it is easy to assume a passing
+  assert means the order is right. It only sees reader-vs-writer pairs on a *shared* component.
+  Systems that share no component are unconstrained no matter how they are ordered:
+  `AnimationSystem`'s slot before `TransformSystem` is a documented intention, not a checked one,
+  since the two have no component in common. Its slot after the script systems is unenforceable
+  for the other reason — both write `AnimatorComponent`, and writer-vs-writer is out of scope by
+  design. The only part of that placement validation will ever catch is staying ahead of
+  `RenderSystem`, once that reads the palette.
 - `Get<S>()` gives direct system access — used only where no data path exists yet (the renderer
   fetching the live `PhysicsScene` for Jolt debug draw).
 

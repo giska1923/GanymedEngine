@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <cstdint>
@@ -16,6 +17,13 @@ namespace GanymedE {
 		glm::vec3 Translation{ 0.0f };
 		glm::quat Rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
 		glm::vec3 Scale{ 1.0f };
+
+		glm::mat4 ToMatrix() const
+		{
+			return glm::translate(glm::mat4(1.0f), Translation)
+				* glm::mat4_cast(Rotation)
+				* glm::scale(glm::mat4(1.0f), Scale);
+		}
 	};
 
 	// Joints are flat arrays, never entities. TransformComponent stores Euler angles
@@ -44,6 +52,10 @@ namespace GanymedE {
 		//
 		// Kept out of LocalRestPose because animation channels replace joint locals
 		// wholesale and would otherwise overwrite it.
+		// Seeds root joints instead of identity when composing globals. Folds two things the
+		// inverse binds assume: the transform of whatever sits above the root joints, and the
+		// inverse of the skinned mesh node's transform, which glTF requires be cancelled rather
+		// than applied. Kept out of LocalRestPose so animation channels cannot overwrite it.
 		glm::mat4 RootTransform{ 1.0f };
 
 		bool IsEmpty() const { return ParentIndices.empty(); }

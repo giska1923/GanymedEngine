@@ -71,7 +71,16 @@ copyable, no behavior beyond small helpers.
 ### Rendering
 
 - **`SpriteRendererComponent`** — 2D quad color (drawn by Renderer2D).
-- **`StaticMeshComponent`** — `AssetHandle` of a mesh (see [assets.md](assets.md)).
+- **`StaticMeshComponent`** — `AssetHandle` of a mesh (see [assets.md](assets.md)). Also carries
+  skinned meshes: there is no separate `SkinnedMeshComponent`, because the asset already knows
+  whether it has a skeleton and a second component would duplicate the drag-drop, serialization,
+  inspector and `RenderSystem` plumbing to say nothing new.
+- **`AnimatorComponent`** — `Clip` (by name), `Speed`, `Playing`, `Loop`, `Time`, and a runtime
+  `Palette` of joint matrices. An entity is skinned iff its mesh `HasSkeleton()` *and* it has an
+  animator. Clips are named rather than indexed because indices shift whenever a DCC reorders or
+  adds a clip on re-export; the cost is that a rename detaches the reference silently, which
+  `AnimationSystem` compensates for by warning once and holding the bind pose. `Time` and `Palette`
+  are not serialized — a scene loads at the head of its clip, and the palette is rebuilt per frame.
 - **`CameraComponent`** — a `SceneCamera` (perspective or orthographic) + `Primary` +
   `FixedAspectRatio`. The first primary camera wins (resolved once per update by `CameraSystem`).
 - **`DirectionalLightComponent`** — color/intensity/`CastShadows`; direction is the entity's
@@ -194,3 +203,9 @@ OnSceneStop: ActiveScene->OnRuntimeStop();  m_ActiveScene = m_EditorScene;
 
 The runtime scene is a disposable deep copy keyed by UUID — physics can knock everything over and
 Stop simply discards the copy. This is why stable UUIDs and the generic `ComponentList` copy exist.
+
+The generic copy is a shallow value copy of every component, so anything that is runtime-only needs
+an explicit fixup sweep after it. There are two: `NativeScriptComponent::Instance` is nulled so
+instances are recreated on play, and `AnimatorComponent::Palette` is cleared because carrying a
+per-joint matrix array per entity into the new scene buys one frame of stale data. Adding a
+component with runtime-only state means adding a third sweep — nothing enforces this.

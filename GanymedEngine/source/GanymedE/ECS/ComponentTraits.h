@@ -72,6 +72,7 @@ namespace GanymedE {
 		RelationshipComponent,
 		SpriteRendererComponent,
 		StaticMeshComponent,
+		AnimatorComponent,
 		CameraComponent,
 		DirectionalLightComponent,
 		PointLightComponent,

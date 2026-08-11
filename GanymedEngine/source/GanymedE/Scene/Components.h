@@ -104,6 +104,33 @@ namespace GanymedE {
 			: Mesh(mesh) {}
 	};
 
+	// Plays one of the clips carried by the entity's StaticMeshComponent mesh. There is no
+	// SkinnedMeshComponent: an entity is skinned iff its mesh asset HasSkeleton() and it has an
+	// animator, so a second mesh component would duplicate drag-drop, serialization, inspector and
+	// RenderSystem plumbing to express something the asset already knows.
+	//
+	// Clips are referenced by name rather than index because indices shift whenever a DCC
+	// reorders or adds a clip on re-export. A name that no longer resolves warns once and falls
+	// back to the bind pose - see AnimationSystem.
+	struct AnimatorComponent
+	{
+		std::string Clip;
+		float Speed = 1.0f;
+		bool Playing = true;
+		bool Loop = true;
+
+		// Not serialized: a scene should load at the start of its clip, not wherever it was saved.
+		float Time = 0.0f;
+
+		// Runtime-only, rebuilt every frame by AnimationSystem and cleared by the Scene::Copy
+		// fixup. Lives here rather than in system-owned storage so its lifetime is the entity's
+		// and RenderSystem can reach it through declared access instead of another system's map.
+		std::vector<glm::mat4> Palette;
+
+		AnimatorComponent() = default;
+		AnimatorComponent(const AnimatorComponent&) = default;
+	};
+
 	struct CameraComponent
 	{
 		SceneCamera Camera;
