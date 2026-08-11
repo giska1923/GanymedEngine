@@ -52,7 +52,10 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
   `{ ShaderDataType::Float3, "a_Position" }` authoring syntax and translates to
   `bgfx::VertexLayout` via **`AttribFromName`** — bgfx attributes are semantic slots, so free-form
   data rides in spare TexCoords (`a_TexIndex`→TexCoord1, `a_TilingFactor`→TexCoord2,
-  `a_EntityID`→TexCoord3). This table must stay in sync with `varying.def.sc`. There is no 32-bit
+  `a_EntityID`→TexCoord3). Skinned meshes add `a_JointIndices`→Indices and `a_JointWeights`→Weight
+  on a second vertex stream; note the shader-side names for those two are **not** ours to pick —
+  shaderc rejects any vertex input outside its fixed list, so they are declared `a_indices` and
+  `a_weight`. This table must stay in sync with `varying.def.sc`. There is no 32-bit
   int attribute: integers travel as floats (exact to 2^24 — fine for entity IDs), and the CPU-side
   data must be written as float. `VertexBuffer` is static (data ctor) or dynamic (size ctor +
   `SetData`); `IndexBuffer` is 32-bit; `Geometry` is the VB+IB pair that replaced `VertexArray`.
