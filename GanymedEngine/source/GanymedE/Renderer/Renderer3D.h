@@ -36,9 +36,6 @@ namespace GanymedE {
 		static void SubmitSkyLight(const glm::vec3& skyColor, const glm::vec3& groundColor, float intensity, bool drawSkybox);
 		static void SubmitEnvironment(const Ref<Environment>& environment, float intensity, bool drawSkybox);
 
-		// Loads and caches an HDR environment (relative to the assets/ folder).
-		static Ref<Environment> LoadEnvironment(const std::string& path);
-
 		static void DrawSkybox();
 		static void DrawGrid();
 

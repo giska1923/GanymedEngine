@@ -3,8 +3,10 @@
 
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/MeshCache.h"
+#include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Renderer/Environment.h"
 #include "GanymedE/Renderer/MeshImporter.h"
+#include "GanymedE/Renderer/Texture.h"
 
 #include <fstream>
 #include <yaml-cpp/yaml.h>
@@ -18,6 +20,7 @@ namespace GanymedE {
 
 		std::unordered_map<AssetHandle, Ref<Mesh>> LoadedMeshes;
 		std::unordered_map<AssetHandle, Ref<Environment>> LoadedEnvironments;
+		std::unordered_map<AssetHandle, Ref<Texture2D>> LoadedTextures;
 
 		bool Initialized = false;
 	};
@@ -42,8 +45,12 @@ namespace GanymedE {
 		SaveRegistry();
 		s_Data.Registry.clear();
 		s_Data.PathToHandle.clear();
+		// Runs from EditorLayer::OnDetach while Renderer::IsGpuAlive() is still true,
+		// so the GPU-resource destructors release real bgfx handles rather than
+		// tripping the is-alive guard.
 		s_Data.LoadedMeshes.clear();
 		s_Data.LoadedEnvironments.clear();
+		s_Data.LoadedTextures.clear();
 		s_Data.Initialized = false;
 	}
 
@@ -150,6 +157,32 @@ namespace GanymedE {
 		return environment;
 	}
 
+	Ref<Texture2D> AssetManager::LoadTexture(AssetHandle handle)
+	{
+		if (!IsAssetHandleValid(handle))
+			return nullptr;
+
+		// Plain map lookup on the hit path: RenderSystem re-fetches assets by handle
+		// every frame per entity, and texture consumers may end up there too.
+		auto cached = s_Data.LoadedTextures.find(handle);
+		if (cached != s_Data.LoadedTextures.end())
+		{
+			GE_CORE_TRACE("Texture cache hit (handle {0})", static_cast<uint64_t>(handle));
+			return cached->second;
+		}
+
+		const AssetMetadata* metadata = GetMetadata(handle);
+		if (!metadata || metadata->Type != AssetType::Texture)
+			return nullptr;
+
+		std::filesystem::path fullPath = GetAssetRoot() / metadata->FilePath;
+		Ref<Texture2D> texture = TextureImporter::LoadFromFile(fullPath, false);
+		if (texture)
+			s_Data.LoadedTextures[handle] = texture;
+
+		return texture;
+	}
+
 	template<>
 	Ref<Mesh> AssetManager::GetAsset<Mesh>(AssetHandle handle)
 	{
@@ -160,6 +193,12 @@ namespace GanymedE {
 	Ref<Environment> AssetManager::GetAsset<Environment>(AssetHandle handle)
 	{
 		return LoadEnvironment(handle);
+	}
+
+	template<>
+	Ref<Texture2D> AssetManager::GetAsset<Texture2D>(AssetHandle handle)
+	{
+		return LoadTexture(handle);
 	}
 
 	void AssetManager::LoadRegistry()

@@ -3,12 +3,11 @@
 #include "MeshCache.h"
 
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Renderer/Shader.h"
 #include "GanymedE/Renderer/Texture.h"
-
-#include <stb_image.h>
 
 #include <fstream>
 
@@ -64,24 +63,6 @@ namespace GanymedE {
 			if (size > 0)
 				in.read(reinterpret_cast<char*>(data.data()), size);
 			return data;
-		}
-
-		// Mirrors MeshImporter's embedded-image decode (compressed PNG/JPEG bytes -> RGBA texture)
-		Ref<Texture2D> CreateTextureFromEmbedded(const std::vector<uint8_t>& data)
-		{
-			if (data.empty())
-				return nullptr;
-
-			stbi_set_flip_vertically_on_load(1);
-			int width, height, channels;
-			unsigned char* pixels = stbi_load_from_memory(data.data(), (int)data.size(), &width, &height, &channels, 4);
-			if (!pixels)
-				return nullptr;
-
-			Ref<Texture2D> texture = Texture2D::Create((uint32_t)width, (uint32_t)height);
-			texture->SetData(pixels, width * height * 4);
-			stbi_image_free(pixels);
-			return texture;
 		}
 
 		void WriteVector(std::ostream& out, const std::vector<MeshVertex>& vertices)
@@ -227,20 +208,22 @@ namespace GanymedE {
 				material->SetNormalMapPath(normalPath);
 				material->SetMetallicRoughnessMapPath(mrPath);
 
+				// Same resolve the cold-import path uses, so a cache load shares the
+				// manager's texture cache instead of decoding its own copies.
 				if (!albedoPath.empty())
-					material->SetAlbedoMap(Texture2D::Create((GetAssetRoot() / albedoPath).string()));
+					material->SetAlbedoMap(TextureImporter::LoadMaterialMap(albedoPath));
 				else
-					material->SetAlbedoMap(CreateTextureFromEmbedded(albedoEmbedded));
+					material->SetAlbedoMap(TextureImporter::LoadFromMemory(albedoEmbedded.data(), albedoEmbedded.size(), true));
 
 				if (!normalPath.empty())
-					material->SetNormalMap(Texture2D::Create((GetAssetRoot() / normalPath).string()));
+					material->SetNormalMap(TextureImporter::LoadMaterialMap(normalPath));
 				else
-					material->SetNormalMap(CreateTextureFromEmbedded(normalEmbedded));
+					material->SetNormalMap(TextureImporter::LoadFromMemory(normalEmbedded.data(), normalEmbedded.size(), true));
 
 				if (!mrPath.empty())
-					material->SetMetallicRoughnessMap(Texture2D::Create((GetAssetRoot() / mrPath).string()));
+					material->SetMetallicRoughnessMap(TextureImporter::LoadMaterialMap(mrPath));
 				else
-					material->SetMetallicRoughnessMap(CreateTextureFromEmbedded(mrEmbedded));
+					material->SetMetallicRoughnessMap(TextureImporter::LoadFromMemory(mrEmbedded.data(), mrEmbedded.size(), true));
 
 				// Keep the bytes so a future cache rewrite doesn't drop the textures
 				material->SetAlbedoMapEmbeddedData(std::move(albedoEmbedded));

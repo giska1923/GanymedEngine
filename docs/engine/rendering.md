@@ -160,9 +160,10 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
 Also owned here: the procedural **skybox** (fullscreen quad, sky/ground gradient + sun) or the
 **cubemap skybox** when an environment is active; the editor **grid** (fragment-shader infinite
 grid on a scaled quad — its transform goes through `bgfx::setTransform`, and it must not set
-`u_CameraPosition` because `FrameUniforms` already does, one-uniform-per-draw); an environment
-cache for `LoadEnvironment`. `GetStats()` reports draws/meshes/culled/instanced/transparent counts
-(shown in the editor Stats panel).
+`u_CameraPosition` because `FrameUniforms` already does, one-uniform-per-draw). The active
+environment is whatever `SubmitEnvironment` set this frame — caching environments by path is
+`AssetManager`'s job, not the renderer's. `GetStats()` reports
+draws/meshes/culled/instanced/transparent counts (shown in the editor Stats panel).
 
 Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5–8 shadow cascades,
 9–11 IBL, 12 skybox cubemap.

@@ -7,12 +7,12 @@
 #include "Texture.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Components.h"
 
 #include <cgltf.h>
-#include <stb_image.h>
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -31,13 +31,14 @@ namespace GanymedE {
 			if (image->uri)
 			{
 				std::filesystem::path imagePath = basePath / image->uri;
+				std::error_code ec;
+				auto relative = std::filesystem::relative(imagePath, GetAssetRoot(), ec);
+				std::string recordedPath = ec ? imagePath.string() : relative.generic_string();
+
 				if (outRelativePath)
-				{
-					std::error_code ec;
-					auto relative = std::filesystem::relative(imagePath, GetAssetRoot(), ec);
-					*outRelativePath = ec ? imagePath.string() : relative.generic_string();
-				}
-				return Texture2D::Create(imagePath.string());
+					*outRelativePath = recordedPath;
+
+				return TextureImporter::LoadMaterialMap(recordedPath);
 			}
 
 			if (image->buffer_view)
@@ -45,15 +46,10 @@ namespace GanymedE {
 				const cgltf_buffer_view* view = image->buffer_view;
 				const uint8_t* data = (const uint8_t*)view->buffer->data + view->offset;
 
-				stbi_set_flip_vertically_on_load(1);
-				int width, height, channels;
-				unsigned char* pixels = stbi_load_from_memory(data, (int)view->size, &width, &height, &channels, 4);
-				if (!pixels)
+				// No file identity, so no registry entry and no de-duplication here.
+				Ref<Texture2D> texture = TextureImporter::LoadFromMemory(data, view->size, true);
+				if (!texture)
 					return nullptr;
-
-				Ref<Texture2D> texture = Texture2D::Create((uint32_t)width, (uint32_t)height);
-				texture->SetData(pixels, width * height * 4);
-				stbi_image_free(pixels);
 
 				// No file on disk to reload from — keep the compressed bytes so MeshCache can persist them
 				if (outEmbeddedData)

@@ -89,9 +89,9 @@ namespace GanymedE {
 		Ref<Shader> SkyboxCubeShader;
 		Geometry FullscreenQuad;
 
-		// HDR image-based lighting (optional)
+		// HDR image-based lighting (optional). Refreshed by SubmitEnvironment each
+		// frame; caching by path is AssetManager's job.
 		Ref<Environment> ActiveEnvironment;
-		std::unordered_map<std::string, Ref<Environment>> EnvironmentCache;
 		bool UseIBL = false;
 
 		// Directional cascaded shadow maps
@@ -315,20 +315,6 @@ namespace GanymedE {
 		// w = intensity for the shader; w > 0.5 flags real IBL (not procedural hemispheric)
 		s_Data.LightBuffer.AmbientSky = glm::vec4(0.0f, 0.0f, 0.0f, intensity);
 		s_Data.LightBuffer.AmbientGround = glm::vec4(0.0f, 0.0f, 0.0f, 2.0f);
-	}
-
-	Ref<Environment> Renderer3D::LoadEnvironment(const std::string& path)
-	{
-		if (path.empty())
-			return nullptr;
-
-		auto it = s_Data.EnvironmentCache.find(path);
-		if (it != s_Data.EnvironmentCache.end())
-			return it->second;
-
-		Ref<Environment> environment = Environment::Create(path);
-		s_Data.EnvironmentCache[path] = environment;
-		return environment;
 	}
 
 	void Renderer3D::SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID)
