@@ -113,7 +113,7 @@ API — legal because panels run outside the system update.
 ### Properties (drawn by the same panel)
 
 Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, script, rigid body, colliders); one collapsible section per component
+lights, sky light, animator, script, rigid body, colliders); one collapsible section per component
 (`DrawComponent<T>` helper with a remove-component menu). Notable behaviors:
 
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons) and call
@@ -121,6 +121,12 @@ lights, sky light, script, rigid body, colliders); one collapsible section per c
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
 - Static mesh: shows the mesh asset (handle + path) — assign with
   `AcceptAssetDropHandle(StaticMesh)`.
+- Animator: a **combo over the clip names the entity's own mesh carries**, rather than a free text
+  field. The clip reference is a name, so a text field would let you type one that resolves to
+  nothing and get a silent bind pose. Plus Speed, Playing, Loop, and a **Time** slider bounded by
+  the selected clip's duration. Time is the useful one in edit mode: `AnimationSystem` evaluates
+  poses there but never advances the clock, so dragging Time is how you inspect a rig without
+  entering play. Falls back to "No rigged mesh on this entity" when the mesh has no skeleton.
 - Script: shows the `.lua` asset (handle + path) with a Clear button — assign with
   `AcceptAssetDropHandle(Script)`. Below it, one row per property the
   script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The

@@ -438,6 +438,15 @@ namespace GanymedE {
 				}
 			}
 
+			if (!m_SelectionContext.HasComponent<AnimatorComponent>())
+			{
+				if (ImGui::MenuItem("Animator"))
+				{
+					m_SelectionContext.AddComponent<AnimatorComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
 			if (!m_SelectionContext.HasComponent<ScriptComponent>())
 			{
 				if (ImGui::MenuItem("Script"))
@@ -638,6 +647,64 @@ namespace GanymedE {
 			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::StaticMesh);
 			if (IsAssetHandleValid(dropped))
 				component.Mesh = dropped;
+		});
+
+		DrawComponent<AnimatorComponent>("Animator", entity, [entity](auto& component)
+		{
+			Ref<Mesh> mesh = entity.HasComponent<StaticMeshComponent>()
+				? AssetManager::GetAsset<Mesh>(entity.GetComponent<StaticMeshComponent>().Mesh)
+				: nullptr;
+
+			const bool rigged = mesh && mesh->HasSkeleton();
+			if (!rigged)
+			{
+				ImGui::TextDisabled("No rigged mesh on this entity");
+			}
+			else
+			{
+				// A combo over the mesh's own clip names rather than a text field: the name *is*
+				// the reference, and typing it by hand is exactly how you end up silently posed
+				// at bind while wondering why nothing moves.
+				const auto& clips = mesh->GetClips();
+				if (ImGui::BeginCombo("Clip", component.Clip.empty() ? "(none)" : component.Clip.c_str()))
+				{
+					if (ImGui::Selectable("(none)", component.Clip.empty()))
+						component.Clip.clear();
+
+					for (const AnimationClip& clip : clips)
+					{
+						const bool selected = component.Clip == clip.Name;
+						if (ImGui::Selectable(clip.Name.c_str(), selected))
+							component.Clip = clip.Name;
+						if (selected)
+							ImGui::SetItemDefaultFocus();
+					}
+
+					ImGui::EndCombo();
+				}
+
+				if (clips.empty())
+					ImGui::TextDisabled("Mesh is rigged but carries no clips");
+			}
+
+			ImGui::DragFloat("Speed", &component.Speed, 0.01f, -10.0f, 10.0f);
+			ImGui::Checkbox("Playing", &component.Playing);
+			ImGui::SameLine();
+			ImGui::Checkbox("Loop", &component.Loop);
+
+			// Edit mode evaluates the pose but never runs the clock, so this slider is the only
+			// way to move a rig without entering play mode.
+			const AnimationClip* clip = rigged ? mesh->FindClip(component.Clip) : nullptr;
+			const float duration = clip ? clip->Duration : 0.0f;
+			ImGui::DragFloat("Time", &component.Time, 0.01f, 0.0f, duration);
+			if (duration > 0.0f)
+			{
+				ImGui::SameLine();
+				ImGui::TextDisabled("/ %.2fs", duration);
+			}
+
+			if (rigged)
+				ImGui::Text("Joints: %u", mesh->GetSkeleton().JointCount());
 		});
 
 		DrawComponent<ScriptComponent>("Script", entity, [](auto& component)
