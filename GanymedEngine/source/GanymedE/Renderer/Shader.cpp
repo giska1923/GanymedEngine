@@ -77,6 +77,11 @@ namespace GanymedE {
 	}
 
 	Shader::Shader(const std::string& name)
+		: Shader(name, name, name)
+	{
+	}
+
+	Shader::Shader(const std::string& name, const std::string& vertexStage, const std::string& fragmentStage)
 		: m_Name(name)
 	{
 		const char* profile = ProfileDirectory();
@@ -88,8 +93,8 @@ namespace GanymedE {
 
 		const std::string directory = std::string("assets/shaders/compiled/") + profile;
 
-		bgfx::ShaderHandle vs = LoadShaderStage(directory, "vs_", name);
-		bgfx::ShaderHandle fs = LoadShaderStage(directory, "fs_", name);
+		bgfx::ShaderHandle vs = LoadShaderStage(directory, "vs_", vertexStage);
+		bgfx::ShaderHandle fs = LoadShaderStage(directory, "fs_", fragmentStage);
 
 		if (!bgfx::isValid(vs) || !bgfx::isValid(fs))
 		{
@@ -242,6 +247,12 @@ namespace GanymedE {
 		GE_CORE_WARN("Shader::Create with inline sources is unsupported under bgfx; "
 			"loading compiled '{0}' instead", name);
 		return CreateRef<Shader>(name);
+	}
+
+	Ref<Shader> Shader::CreateFromStages(const std::string& name, const std::string& vertexStage,
+		const std::string& fragmentStage)
+	{
+		return CreateRef<Shader>(name, vertexStage, fragmentStage);
 	}
 
 	void ShaderLibrary::Add(const std::string& name, const Ref<Shader>& shader)

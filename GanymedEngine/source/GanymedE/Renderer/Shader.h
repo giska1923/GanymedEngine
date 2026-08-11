@@ -24,6 +24,13 @@ namespace GanymedE {
 	{
 	public:
 		Shader(const std::string& name);
+
+		// Names the two stages independently, for programs that share one. The
+		// skinned variants differ only in their vertex shader, and the loader's
+		// vs_<name>/fs_<name> pairing would otherwise force a duplicate copy of
+		// the 300-line PBR fragment shader purely to satisfy the naming rule.
+		Shader(const std::string& name, const std::string& vertexStage, const std::string& fragmentStage);
+
 		~Shader();
 
 		Shader(const Shader&) = delete;
@@ -63,6 +70,10 @@ namespace GanymedE {
 
 		static Ref<Shader> Create(const std::string& filepath);
 		static Ref<Shader> Create(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc);
+
+		// Distinct from the three-argument Create above, which takes shader source.
+		static Ref<Shader> CreateFromStages(const std::string& name, const std::string& vertexStage,
+			const std::string& fragmentStage);
 	private:
 		// Uniform handles are created on first use and live for the program's
 		// lifetime; bgfx dedupes by name internally but this avoids the lookup.
