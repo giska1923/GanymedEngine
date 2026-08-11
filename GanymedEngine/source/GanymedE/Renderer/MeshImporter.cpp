@@ -750,10 +750,19 @@ namespace GanymedE {
 			clips.clear();
 		}
 
-		// Static vertices were already baked to world space, and skinned ones are
-		// placed by their joint matrices, so neither wants LocalTransform applied again.
+		// Static vertices were baked to world space above, so their transform is spent.
+		// A skinned submesh could not be baked - the palette has to operate on the
+		// original bind-space positions - so it KEEPS the node transform. That looks
+		// like a spec violation (glTF says a skinned mesh node's transform is ignored)
+		// and is not one: Skeleton::RootTransform carries the inverse of the same
+		// matrix, so re-applying it here cancels rather than double-applies. Dropping
+		// it instead leaves the mesh in raw bind space, which for any file with a
+		// Y-up correction node means the character renders lying on its side.
 		for (auto& submesh : submeshes)
-			submesh.LocalTransform = glm::mat4(1.0f);
+		{
+			if (!submesh.IsSkinned)
+				submesh.LocalTransform = glm::mat4(1.0f);
+		}
 
 		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials,
 			std::move(skinVertices), skeleton, std::move(clips));

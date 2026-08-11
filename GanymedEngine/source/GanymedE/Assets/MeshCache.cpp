@@ -16,9 +16,11 @@ namespace GanymedE {
 	namespace {
 
 		constexpr uint32_t MESH_CACHE_MAGIC = 0x48434D47; // 'GMCH'
-		// v5 has v4's layout; the bump is to discard caches holding a Skeleton::RootTransform
-		// written before it accounted for the skinned mesh node's transform.
-		constexpr uint32_t MESH_CACHE_VERSION = 5;
+		// v5 and v6 have v4's layout; both bumps discard caches whose values are stale
+		// rather than whose fields moved. v5: Skeleton::RootTransform written before it
+		// accounted for the skinned mesh node's transform. v6: skinned submeshes written
+		// with an identity LocalTransform, which drops that node transform entirely.
+		constexpr uint32_t MESH_CACHE_VERSION = 6;
 
 		void WriteString(std::ostream& out, const std::string& str)
 		{

@@ -45,13 +45,6 @@ namespace GanymedE {
 		std::vector<JointPose>   LocalRestPose;
 		std::vector<std::string> JointNames;
 
-		// World transform of whatever sits ABOVE the root joints in the glTF scene
-		// graph - Blender's "Armature" node, a Y-up correction node, and so on.
-		// The inverse bind matrices come from the file and already account for it, so
-		// leaving it out of the global composition would skin the mesh by its inverse.
-		//
-		// Kept out of LocalRestPose because animation channels replace joint locals
-		// wholesale and would otherwise overwrite it.
 		// Seeds root joints instead of identity when composing globals. Folds two things the
 		// inverse binds assume: the transform of whatever sits above the root joints, and the
 		// inverse of the skinned mesh node's transform, which glTF requires be cancelled rather
