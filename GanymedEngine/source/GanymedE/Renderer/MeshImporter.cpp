@@ -89,13 +89,21 @@ namespace GanymedE {
 			return transform;
 		}
 
-		void ComputeNodeWorldTransforms(const cgltf_node* node, const glm::mat4& parentWorld,
-			std::unordered_map<const cgltf_node*, glm::mat4>& outWorld)
+		struct NodeEntry
+		{
+			const cgltf_node* Node;
+			glm::mat4 World;
+		};
+
+		// Depth-first into a vector, not an unordered_map: submesh order used to be
+		// whatever the map iterated, which changed run to run and made cache diffs and
+		// joint-to-submesh correlation impossible to reason about.
+		void CollectNodes(const cgltf_node* node, const glm::mat4& parentWorld, std::vector<NodeEntry>& out)
 		{
 			glm::mat4 world = parentWorld * GetNodeLocalTransform(node);
-			outWorld[node] = world;
+			out.push_back({ node, world });
 			for (cgltf_size i = 0; i < node->children_count; i++)
-				ComputeNodeWorldTransforms(node->children[i], world, outWorld);
+				CollectNodes(node->children[i], world, out);
 		}
 
 		template<typename T>
@@ -104,6 +112,276 @@ namespace GanymedE {
 			T value{};
 			cgltf_accessor_read_float(accessor, index, (float*)&value, sizeof(T) / sizeof(float));
 			return value;
+		}
+
+		// glTF requires node matrices to be decomposable to TRS, so no skew or
+		// perspective handling. A negative determinant means a mirroring scale; the
+		// sign has to land on one axis or the rotation comes out garbage.
+		JointPose PoseFromNode(const cgltf_node* node)
+		{
+			JointPose pose;
+
+			if (!node->has_matrix)
+			{
+				if (node->has_translation)
+					pose.Translation = glm::make_vec3(node->translation);
+				if (node->has_rotation)
+					pose.Rotation = glm::make_quat(node->rotation);
+				if (node->has_scale)
+					pose.Scale = glm::make_vec3(node->scale);
+				return pose;
+			}
+
+			glm::mat4 m = glm::make_mat4(node->matrix);
+			pose.Translation = glm::vec3(m[3]);
+
+			glm::vec3 axes[3] = { glm::vec3(m[0]), glm::vec3(m[1]), glm::vec3(m[2]) };
+			pose.Scale = { glm::length(axes[0]), glm::length(axes[1]), glm::length(axes[2]) };
+
+			if (glm::determinant(glm::mat3(m)) < 0.0f)
+			{
+				pose.Scale.x = -pose.Scale.x;
+				axes[0] = -axes[0];
+			}
+
+			for (int i = 0; i < 3; i++)
+			{
+				float length = glm::length(axes[i]);
+				axes[i] = length > 1e-8f ? axes[i] / length : glm::vec3(i == 0, i == 1, i == 2);
+			}
+
+			pose.Rotation = glm::quat_cast(glm::mat3(axes[0], axes[1], axes[2]));
+			return pose;
+		}
+
+		// Reads skin.joints into parents-before-children order and fills `outRemap`
+		// with gltf joint index -> skeleton joint index, which the JOINTS_0 attribute
+		// values have to be pushed through.
+		bool BuildSkeleton(const cgltf_skin* skin, const std::unordered_map<const cgltf_node*, glm::mat4>& nodeWorld,
+			Skeleton& outSkeleton, std::vector<uint32_t>& outRemap)
+		{
+			const cgltf_size jointCount = skin->joints_count;
+			if (jointCount == 0)
+				return false;
+
+			std::unordered_map<const cgltf_node*, uint32_t> nodeToGltfJoint;
+			nodeToGltfJoint.reserve(jointCount);
+			for (cgltf_size j = 0; j < jointCount; j++)
+				nodeToGltfJoint[skin->joints[j]] = (uint32_t)j;
+
+			// Parent in glTF-joint indices; -1 when the parent node is not itself a joint.
+			std::vector<int32_t> gltfParent(jointCount, -1);
+			for (cgltf_size j = 0; j < jointCount; j++)
+			{
+				const cgltf_node* parent = skin->joints[j]->parent;
+				if (!parent)
+					continue;
+
+				auto it = nodeToGltfJoint.find(parent);
+				if (it != nodeToGltfJoint.end())
+					gltfParent[j] = (int32_t)it->second;
+			}
+
+			// Topological sort. glTF gives no ordering guarantee for skin.joints, but
+			// composing globals in a single forward pass needs parents first.
+			outRemap.assign(jointCount, UINT32_MAX);
+			std::vector<uint32_t> order;
+			order.reserve(jointCount);
+
+			bool progressed = true;
+			while (order.size() < jointCount && progressed)
+			{
+				progressed = false;
+				for (cgltf_size j = 0; j < jointCount; j++)
+				{
+					if (outRemap[j] != UINT32_MAX)
+						continue;
+
+					int32_t parent = gltfParent[j];
+					if (parent >= 0 && outRemap[parent] == UINT32_MAX)
+						continue;
+
+					outRemap[j] = (uint32_t)order.size();
+					order.push_back((uint32_t)j);
+					progressed = true;
+				}
+			}
+
+			if (order.size() != jointCount)
+			{
+				GE_CORE_ERROR("Skin '{0}' has a cyclic joint hierarchy - skipping skeleton",
+					skin->name ? skin->name : "<unnamed>");
+				return false;
+			}
+
+			outSkeleton.ParentIndices.resize(jointCount);
+			outSkeleton.InverseBind.assign(jointCount, glm::mat4(1.0f));
+			outSkeleton.LocalRestPose.resize(jointCount);
+			outSkeleton.JointNames.resize(jointCount);
+
+			for (uint32_t sorted = 0; sorted < (uint32_t)jointCount; sorted++)
+			{
+				uint32_t gltfIndex = order[sorted];
+				const cgltf_node* jointNode = skin->joints[gltfIndex];
+
+				int32_t parent = gltfParent[gltfIndex];
+				outSkeleton.ParentIndices[sorted] = parent >= 0 ? (int32_t)outRemap[parent] : -1;
+				outSkeleton.LocalRestPose[sorted] = PoseFromNode(jointNode);
+				outSkeleton.JointNames[sorted] = jointNode->name ? jointNode->name : "Joint";
+
+				// The spec allows the accessor to be absent, meaning identity binds.
+				if (skin->inverse_bind_matrices)
+				{
+					cgltf_accessor_read_float(skin->inverse_bind_matrices, gltfIndex,
+						glm::value_ptr(outSkeleton.InverseBind[sorted]), 16);
+				}
+			}
+
+			// Everything above the root joints. Root joints are almost always a single
+			// node ("Armature"), but nothing in the format demands it, so disagreement
+			// is reported rather than silently picking one.
+			const cgltf_node* rootParent = nullptr;
+			bool rootParentSet = false;
+			for (uint32_t sorted = 0; sorted < (uint32_t)jointCount; sorted++)
+			{
+				if (outSkeleton.ParentIndices[sorted] != -1)
+					continue;
+
+				const cgltf_node* parent = skin->joints[order[sorted]]->parent;
+				if (!rootParentSet)
+				{
+					rootParent = parent;
+					rootParentSet = true;
+				}
+				else if (parent != rootParent)
+				{
+					GE_CORE_WARN("Skin '{0}' has root joints under different parents - "
+						"using the first one's transform", skin->name ? skin->name : "<unnamed>");
+					break;
+				}
+			}
+
+			if (rootParent)
+			{
+				auto it = nodeWorld.find(rootParent);
+				if (it != nodeWorld.end())
+					outSkeleton.RootTransform = it->second;
+			}
+
+			if (jointCount > Skeleton::MaxBones)
+			{
+				GE_CORE_WARN("Skin '{0}' has {1} joints, over the {2}-bone palette limit - "
+					"joints past the limit will not animate",
+					skin->name ? skin->name : "<unnamed>", (uint32_t)jointCount, Skeleton::MaxBones);
+			}
+
+			return true;
+		}
+
+		using ChannelPath = AnimationClip::Channel::Path;
+
+		ChannelPath PathFromGltf(cgltf_animation_path_type path, bool& outSupported)
+		{
+			outSupported = true;
+			switch (path)
+			{
+				case cgltf_animation_path_type_translation: return ChannelPath::Translation;
+				case cgltf_animation_path_type_rotation:    return ChannelPath::Rotation;
+				case cgltf_animation_path_type_scale:       return ChannelPath::Scale;
+				default: break;
+			}
+
+			// Morph-target weights are explicitly out of scope for v1.
+			outSupported = false;
+			return ChannelPath::Translation;
+		}
+
+		std::vector<AnimationClip> BuildClips(const cgltf_data* data,
+			const std::unordered_map<const cgltf_node*, uint32_t>& nodeToJoint)
+		{
+			std::vector<AnimationClip> clips;
+			clips.reserve(data->animations_count);
+
+			std::vector<float> scratch;
+
+			for (cgltf_size a = 0; a < data->animations_count; a++)
+			{
+				const cgltf_animation& src = data->animations[a];
+
+				AnimationClip clip;
+				clip.Name = src.name && src.name[0] ? src.name : ("Clip " + std::to_string(a));
+				bool warnedCubic = false;
+
+				for (cgltf_size c = 0; c < src.channels_count; c++)
+				{
+					const cgltf_animation_channel& channel = src.channels[c];
+					if (!channel.target_node || !channel.sampler)
+						continue;
+
+					auto joint = nodeToJoint.find(channel.target_node);
+					if (joint == nodeToJoint.end())
+						continue;
+
+					bool supported = false;
+					ChannelPath target = PathFromGltf(channel.target_path, supported);
+					if (!supported)
+						continue;
+
+					const cgltf_animation_sampler* sampler = channel.sampler;
+					if (!sampler->input || !sampler->output || sampler->input->count == 0)
+						continue;
+
+					AnimationClip::Channel out;
+					out.Joint = joint->second;
+					out.Target = target;
+					out.Mode = sampler->interpolation == cgltf_interpolation_type_step
+						? AnimationClip::Channel::Interp::Step
+						: AnimationClip::Channel::Interp::Linear;
+
+					const bool cubic = sampler->interpolation == cgltf_interpolation_type_cubic_spline;
+					if (cubic && !warnedCubic)
+					{
+						GE_CORE_WARN("Clip '{0}' uses CUBICSPLINE interpolation - degraded to linear", clip.Name);
+						warnedCubic = true;
+					}
+
+					const cgltf_size keyCount = sampler->input->count;
+					out.Times.resize(keyCount);
+					cgltf_accessor_unpack_floats(sampler->input, out.Times.data(), keyCount);
+
+					// CUBICSPLINE stores (inTangent, value, outTangent) per key; the
+					// middle element is the one linear sampling wants.
+					const cgltf_size components = cgltf_num_components(sampler->output->type);
+					const cgltf_size stride = cubic ? components * 3 : components;
+					const cgltf_size valueOffset = cubic ? components : 0;
+
+					scratch.resize(cgltf_accessor_unpack_floats(sampler->output, nullptr, 0));
+					cgltf_accessor_unpack_floats(sampler->output, scratch.data(), scratch.size());
+
+					if (scratch.size() < keyCount * stride)
+						continue;
+
+					out.Values.resize(keyCount, glm::vec4(0.0f));
+					for (cgltf_size k = 0; k < keyCount; k++)
+					{
+						const float* value = scratch.data() + k * stride + valueOffset;
+						for (cgltf_size comp = 0; comp < components && comp < 4; comp++)
+							out.Values[k][(int)comp] = value[comp];
+					}
+
+					clip.Duration = std::max(clip.Duration, out.Times.back());
+					clip.Channels.push_back(std::move(out));
+				}
+
+				if (clip.Channels.empty())
+					continue;
+
+				GE_CORE_INFO("  clip '{0}': {1} channels, {2:.3f}s",
+					clip.Name, clip.Channels.size(), clip.Duration);
+				clips.push_back(std::move(clip));
+			}
+
+			return clips;
 		}
 
 	}
@@ -183,28 +461,58 @@ namespace GanymedE {
 		if (materials.empty())
 			materials.push_back(Material::Create(shader));
 
-		// Node world transforms
-		std::unordered_map<const cgltf_node*, glm::mat4> nodeWorld;
+		// Node world transforms, in a deterministic depth-first order
+		std::vector<NodeEntry> sceneNodes;
 		if (data->scenes_count > 0)
 		{
 			const cgltf_scene& scene = data->scene ? *data->scene : data->scenes[0];
 			for (cgltf_size i = 0; i < scene.nodes_count; i++)
-				ComputeNodeWorldTransforms(scene.nodes[i], glm::mat4(1.0f), nodeWorld);
+				CollectNodes(scene.nodes[i], glm::mat4(1.0f), sceneNodes);
 		}
 		else
 		{
 			for (cgltf_size i = 0; i < data->nodes_count; i++)
 			{
 				if (!data->nodes[i].parent)
-					ComputeNodeWorldTransforms(&data->nodes[i], glm::mat4(1.0f), nodeWorld);
+					CollectNodes(&data->nodes[i], glm::mat4(1.0f), sceneNodes);
+			}
+		}
+
+		std::unordered_map<const cgltf_node*, glm::mat4> nodeWorld;
+		nodeWorld.reserve(sceneNodes.size());
+		for (const NodeEntry& entry : sceneNodes)
+			nodeWorld[entry.Node] = entry.World;
+
+		// Skin: the first one only. Multi-skin files are a v1 gap, not a silent one.
+		const cgltf_skin* skin = nullptr;
+		Skeleton skeleton;
+		std::vector<uint32_t> jointRemap;
+		std::unordered_map<const cgltf_node*, uint32_t> nodeToJoint;
+
+		if (data->skins_count > 0)
+		{
+			if (data->skins_count > 1)
+			{
+				GE_CORE_WARN("glTF '{0}' has {1} skins - only the first is imported",
+					path.filename().string(), (uint32_t)data->skins_count);
+			}
+
+			if (BuildSkeleton(&data->skins[0], nodeWorld, skeleton, jointRemap))
+			{
+				skin = &data->skins[0];
+				for (cgltf_size j = 0; j < skin->joints_count; j++)
+					nodeToJoint[skin->joints[j]] = jointRemap[j];
 			}
 		}
 
 		std::vector<MeshVertex> vertices;
+		std::vector<SkinVertex> skinVertices;
 		std::vector<uint32_t> indices;
 		std::vector<Submesh> submeshes;
+		std::vector<float> weightScratch;
 
-		auto appendPrimitive = [&](const cgltf_primitive& primitive, const glm::mat4& transform, const char* name)
+		auto appendPrimitive = [&](const cgltf_primitive& primitive, const glm::mat4& transform,
+			const char* name, bool nodeIsSkinned)
 		{
 			if (primitive.type != cgltf_primitive_type_triangles)
 				return;
@@ -213,6 +521,8 @@ namespace GanymedE {
 			const cgltf_accessor* normalAccessor = nullptr;
 			const cgltf_accessor* tangentAccessor = nullptr;
 			const cgltf_accessor* texcoordAccessor = nullptr;
+			const cgltf_accessor* jointsAccessor = nullptr;
+			const cgltf_accessor* weightsAccessor = nullptr;
 
 			for (cgltf_size a = 0; a < primitive.attributes_count; a++)
 			{
@@ -226,19 +536,37 @@ namespace GanymedE {
 						if (attr.index == 0)
 							texcoordAccessor = attr.data;
 						break;
+					// JOINTS_1/WEIGHTS_1 exist for >4 influences per vertex; the four
+					// strongest is the standard budget and all the palette shader takes.
+					case cgltf_attribute_type_joints:
+						if (attr.index == 0)
+							jointsAccessor = attr.data;
+						break;
+					case cgltf_attribute_type_weights:
+						if (attr.index == 0)
+							weightsAccessor = attr.data;
+						break;
 					default: break;
 				}
 			}
 
-			if (!positionAccessor || !primitive.indices)
+			if (!positionAccessor)
 				return;
+
+			// glTF allows a primitive with no index accessor - the positions are
+			// triangle soup in draw order (Khronos' Fox is one). We always draw
+			// indexed, so the trivial 0..n-1 list gets synthesized below.
+			const cgltf_size indexCount = primitive.indices ? primitive.indices->count : positionAccessor->count;
+
+			const bool skinned = nodeIsSkinned && jointsAccessor && weightsAccessor;
 
 			Submesh submesh;
 			submesh.BaseVertex = (uint32_t)vertices.size();
 			submesh.BaseIndex = (uint32_t)indices.size();
-			submesh.IndexCount = (uint32_t)primitive.indices->count;
+			submesh.IndexCount = (uint32_t)indexCount;
 			submesh.LocalTransform = transform;
 			submesh.Name = name ? name : "Submesh";
+			submesh.IsSkinned = skinned;
 
 			int materialIndex = 0;
 			if (primitive.material)
@@ -247,13 +575,17 @@ namespace GanymedE {
 				materialIndex = 0;
 			submesh.MaterialIndex = (uint32_t)materialIndex;
 
-			glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(transform)));
+			// Skinned vertices stay in skin space: the joint matrices already carry the
+			// world placement, and the spec says a skinned mesh node's own transform is
+			// ignored. Baking it in would apply the node transform twice.
+			const glm::mat4 bake = skinned ? glm::mat4(1.0f) : transform;
+			const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(bake)));
 
 			for (cgltf_size v = 0; v < positionAccessor->count; v++)
 			{
 				MeshVertex vertex{};
 				glm::vec3 pos = ReadAccessorElement<glm::vec3>(positionAccessor, v);
-				vertex.Position = glm::vec3(transform * glm::vec4(pos, 1.0f));
+				vertex.Position = glm::vec3(bake * glm::vec4(pos, 1.0f));
 
 				if (normalAccessor)
 				{
@@ -283,21 +615,77 @@ namespace GanymedE {
 				vertices.push_back(vertex);
 			}
 
-			for (cgltf_size i = 0; i < primitive.indices->count; i++)
-				indices.push_back((uint32_t)cgltf_accessor_read_index(primitive.indices, i));
+			for (cgltf_size i = 0; i < indexCount; i++)
+			{
+				indices.push_back(primitive.indices
+					? (uint32_t)cgltf_accessor_read_index(primitive.indices, i)
+					: (uint32_t)i);
+			}
 
 			// Indices are relative to this primitive's vertices; BaseVertex handles the offset in the draw call.
 			// Our IndexBuffer stores raw primitive indices (0-based per primitive), so BaseVertex is required.
 			submeshes.push_back(submesh);
+
+			// Once the file has a skeleton every vertex needs a skin entry, whether its
+			// primitive is skinned or not: bgfx binds both streams with one startVertex,
+			// so a short stream would read past its end for later submeshes.
+			if (skeleton.IsEmpty())
+				return;
+
+			const size_t skinBase = skinVertices.size();
+			skinVertices.resize(skinBase + positionAccessor->count);
+			if (!skinned)
+				return;
+
+			// Weights are commonly stored normalized ubyte/ushort; unpack_floats applies
+			// the accessor's normalization and, unlike read_float, handles sparse data.
+			const cgltf_size weightComponents = cgltf_num_components(weightsAccessor->type);
+			weightScratch.resize(cgltf_accessor_unpack_floats(weightsAccessor, nullptr, 0));
+			cgltf_accessor_unpack_floats(weightsAccessor, weightScratch.data(), weightScratch.size());
+
+			const uint32_t jointCount = skeleton.JointCount();
+
+			for (cgltf_size v = 0; v < positionAccessor->count; v++)
+			{
+				SkinVertex& skinVertex = skinVertices[skinBase + v];
+
+				// read_uint, not read_float: JOINTS_0 is an unnormalized integer
+				// accessor, and read_float would hand back raw bytes for the ubyte case.
+				cgltf_uint joints[4] = { 0, 0, 0, 0 };
+				cgltf_accessor_read_uint(jointsAccessor, v, joints, 4);
+
+				glm::vec4 weights(0.0f);
+				if ((v + 1) * weightComponents <= weightScratch.size())
+				{
+					for (cgltf_size comp = 0; comp < weightComponents && comp < 4; comp++)
+						weights[(int)comp] = weightScratch[v * weightComponents + comp];
+				}
+
+				// A joint index past the palette would sample whatever follows it.
+				for (int i = 0; i < 4; i++)
+				{
+					uint32_t index = joints[i] < jointCount ? joints[i] : 0;
+					skinVertex.JointIndices[i] = (float)index;
+				}
+
+				// Exporters quantize weights and they stop summing to 1; unnormalized
+				// weights show up as limbs that shrink and swell as the rig moves.
+				float sum = weights.x + weights.y + weights.z + weights.w;
+				skinVertex.JointWeights = sum > 1e-6f ? weights / sum : glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+			}
 		};
 
-		for (auto& [node, world] : nodeWorld)
+		for (const NodeEntry& entry : sceneNodes)
 		{
+			const cgltf_node* node = entry.Node;
 			if (!node->mesh)
 				continue;
 
 			for (cgltf_size p = 0; p < node->mesh->primitives_count; p++)
-				appendPrimitive(node->mesh->primitives[p], world, node->name ? node->name : node->mesh->name);
+			{
+				appendPrimitive(node->mesh->primitives[p], entry.World,
+					node->name ? node->name : node->mesh->name, skin && node->skin == skin);
+			}
 		}
 
 		// Fallback: no scene nodes referenced meshes — load all meshes at identity
@@ -307,9 +695,13 @@ namespace GanymedE {
 			{
 				const cgltf_mesh& mesh = data->meshes[m];
 				for (cgltf_size p = 0; p < mesh.primitives_count; p++)
-					appendPrimitive(mesh.primitives[p], glm::mat4(1.0f), mesh.name);
+					appendPrimitive(mesh.primitives[p], glm::mat4(1.0f), mesh.name, false);
 			}
 		}
+
+		std::vector<AnimationClip> clips;
+		if (!nodeToJoint.empty())
+			clips = BuildClips(data, nodeToJoint);
 
 		cgltf_free(data);
 
@@ -319,14 +711,30 @@ namespace GanymedE {
 			return nullptr;
 		}
 
-		// Vertices already transformed; clear LocalTransform so Renderer doesn't double-apply
+		// A file can declare a skin that no primitive actually uses. Carrying a
+		// skeleton with no skinned geometry would just cost a palette upload.
+		bool anySkinned = false;
+		for (const Submesh& submesh : submeshes)
+			anySkinned |= submesh.IsSkinned;
+
+		if (!anySkinned)
+		{
+			skeleton = {};
+			skinVertices.clear();
+			clips.clear();
+		}
+
+		// Static vertices were already baked to world space, and skinned ones are
+		// placed by their joint matrices, so neither wants LocalTransform applied again.
 		for (auto& submesh : submeshes)
 			submesh.LocalTransform = glm::mat4(1.0f);
 
-		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials);
+		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials,
+			std::move(skinVertices), skeleton, std::move(clips));
 		mesh->SetPath(MakeAssetRelative(path).generic_string());
-		GE_CORE_INFO("Loaded mesh '{0}' ({1} verts, {2} indices, {3} submeshes)",
-			path.filename().string(), vertices.size(), indices.size(), submeshes.size());
+		GE_CORE_INFO("Loaded mesh '{0}' ({1} verts, {2} indices, {3} submeshes, {4} joints, {5} clips)",
+			path.filename().string(), vertices.size(), indices.size(), submeshes.size(),
+			skeleton.JointCount(), mesh->GetClips().size());
 		return mesh;
 	}
 

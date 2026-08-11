@@ -128,9 +128,13 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 [`MeshImporter`](../../GanymedEngine/source/GanymedE/Renderer/MeshImporter.cpp) loads glTF 2.0
 (`.gltf`/`.glb`) via the header-only cgltf:
 
-- Walks the node tree, flattening every mesh primitive into one interleaved vertex/index buffer
-  with a `Submesh` per primitive (node transform → `Submesh::LocalTransform`).
-- Reads position/normal/tangent/texcoord; missing normals/tangents get defaults.
+- Walks the node tree **depth-first into a vector**, flattening every mesh primitive into one
+  interleaved vertex/index buffer with a `Submesh` per primitive. Traversal order is part of the
+  contract: submesh order must be stable across runs or cache diffs and joint↔submesh correlation
+  become impossible to reason about.
+- Reads position/normal/tangent/texcoord; missing normals/tangents get defaults. A primitive with
+  no index accessor is legal glTF (triangle soup in draw order) and gets a synthesized `0..n-1`
+  index list, since the engine always draws indexed.
 - Materials map from glTF PBR metallic-roughness: base color factor/texture, normal map,
   metallic-roughness map, two-sided flag, alpha mode → `IsTransparent`. External texture URIs are
   recorded as paths and resolved through `TextureImporter::LoadMaterialMap` (so they de-duplicate
@@ -139,13 +143,54 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 - `MeshImporter::Instantiate(scene, path)` — used by viewport drag-drop — imports the asset
   (registry) and creates an entity with a `StaticMeshComponent`.
 
+### Skinning data
+
+A rigged glTF carries its skeleton and its clips **inside the `Mesh` asset**
+([`Animation.h`](../../GanymedEngine/source/GanymedE/Renderer/Animation.h)): a `.glb` ships mesh,
+skin and animation in one file, so separate clip assets would buy registry surgery and nothing else.
+
+Only the **first** `cgltf_skin` is imported; files with more log a warning. What the importer does
+with it:
+
+- **Joints are topologically sorted** (parents before children) and `JOINTS_0` values are remapped
+  through that sort. glTF does not order `skin.joints`, but composing joint globals in one forward
+  pass requires it.
+- `JOINTS_0` is read with `cgltf_accessor_read_uint`, *not* `read_float` — the accessor is an
+  unnormalized integer one. `WEIGHTS_0` goes through `cgltf_accessor_unpack_floats` (which honors
+  the accessor's `normalized` flag and handles sparse data) and is then **renormalized**; exporters
+  ship weights that do not sum to 1 often enough that skipping this shows up as limbs swelling and
+  shrinking as the rig moves.
+- Inverse bind matrices come from the skin's accessor, identity if it is absent (the spec allows it).
+- **`Skeleton::RootTransform`** holds the world transform of whatever sits above the root joints —
+  Blender's `Armature`, a Y-up correction node. The inverse binds already account for it, so leaving
+  it out of the global composition skins the whole mesh by its inverse. It is kept out of
+  `LocalRestPose` because animation channels replace joint locals wholesale. Of the Khronos samples,
+  CesiumMan and RiggedFigure both have a non-identity one.
+- **Conditional world bake.** Skinned primitives skip the world-space bake and keep their vertices
+  in skin space, because glTF places them via `globalJointTransform * inverseBindMatrix` and the
+  spec says a skinned mesh node's own transform is ignored. Static primitives are baked exactly as
+  before. `Submesh::IsSkinned` is the single gate every downstream consumer honors.
+- **Clips**: LINEAR and STEP are supported; CUBICSPLINE degrades to linear (the middle value of each
+  in-tangent/value/out-tangent triple) with a warning. Morph-target weight channels are skipped.
+  Duration is the maximum key time across channels. Rotation values are stored **xyzw** — glTF's
+  order, not `glm::quat`'s `(w, x, y, z)` constructor order.
+- Skin weights ride a **second vertex stream** (`SkinVertex`) rather than widening `MeshVertex`,
+  which would tax every static mesh 32 bytes a vertex. Because both bgfx streams are bound with one
+  `startVertex`, `Mesh::GetSkinVertices()` is either empty or exactly parallel to the vertex array:
+  in a file mixing static and skinned primitives, the static vertices carry zeroed skin entries.
+- A skin declared but used by no primitive is dropped along with its clips.
+
 ## MeshCache
 
 [`MeshCache`](../../GanymedEngine/source/GanymedE/Assets/MeshCache.h) dumps the fully-parsed mesh
-(vertices, indices, submeshes, material scalars/paths/embedded texture bytes) as a binary blob
-under `assets/.assets/`, keyed by source path with the source file's timestamp stored for
-invalidation. `TryLoad` returns null on version/timestamp mismatch, falling back to a full
-re-import. The content browser hides the `.assets/` directory.
+(vertices, indices, submeshes, material scalars/paths/embedded texture bytes, skin vertices,
+skeleton and animation clips) as a binary blob under `assets/.assets/`, keyed by source path with
+the source file's timestamp stored for invalidation. `TryLoad` returns null on version/timestamp
+mismatch, falling back to a full re-import. The content browser hides the `.assets/` directory.
+
+The format is at **v4** (v4 added the skeleton, clips, the skin vertex stream and
+`Submesh::IsSkinned`). Bumping the version *is* the migration: every existing cache fails the
+version check on first load and gets re-imported.
 
 Practical notes:
 - Delete `assets/.assets/` to force a full re-import (e.g. after changing importer code — the
