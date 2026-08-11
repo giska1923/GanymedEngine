@@ -43,8 +43,26 @@ local function bxDefines()
 		-- bx/platform.h hard-errors without the conforming preprocessor.
 		buildoptions { "/Zc:__cplusplus", "/Zc:preprocessor" }
 
+	-- Same idea on the other side: allocator.cpp includes <malloc.h>, which libc does
+	-- not ship here, and bx supplies the shim. bx's own genie build adds this for
+	-- macosx too; it was missing, so bx never compiled on this platform.
+	filter "system:macosx"
+		includedirs { BX_DIR .. "/include/compat/osx" }
+		externalincludedirs { BX_DIR .. "/include/compat/osx" }
+
+	-- And the third: dxgi.h includes <sal.h>, which bx shims here. bgfx enables the D3D11
+	-- and D3D12 renderers on Linux by default (src/config.h - they run over vkd3d), so
+	-- dxgi.cpp is compiled even though nothing here will ever select a D3D backend.
+	-- upstream bx adds this dir for every linux target.
+	--
+	-- -msse4.2 is upstream's baseline too, and it is not optional: bx's simd128_selb is
+	-- inline and reaches for _mm_blendv_ps, which gcc refuses to inline without SSE4.1.
+	-- It has to be identical across bx/bimg/bgfx or the BX_SIMD_* selection in those
+	-- inline headers diverges between the three static libs.
 	filter "system:linux"
 		pic "On"
+		includedirs { BX_DIR .. "/include/compat/linux" }
+		buildoptions { "-msse4.2", "-mfpmath=sse" }
 
 	filter {}
 
@@ -86,7 +104,7 @@ project "bx"
 		BX_DIR .. "/scripts/**.natvis"
 	}
 
-	includedirs
+	angledIncludeDirs
 	{
 		BX_DIR .. "/include",
 		BX_DIR .. "/3rdparty"
@@ -118,7 +136,7 @@ project "bimg"
 		BIMG_DIR .. "/3rdparty/astc-encoder/source/**.h"
 	}
 
-	includedirs
+	angledIncludeDirs
 	{
 		BIMG_DIR .. "/include",
 		BIMG_DIR .. "/3rdparty/astc-encoder/include",
@@ -154,7 +172,7 @@ project "bgfx"
 		BGFX_DIR .. "/scripts/**.natvis"
 	}
 
-	includedirs
+	angledIncludeDirs
 	{
 		BGFX_DIR .. "/include",
 		BGFX_DIR .. "/3rdparty",

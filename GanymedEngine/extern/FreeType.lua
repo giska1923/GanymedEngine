@@ -59,7 +59,9 @@ project "FreeType"
 		"freetype/src/winfonts/winfnt.c"
 	}
 
-	includedirs { "freetype/include" }
+	-- FreeType's own sources reach for <freetype/...> and <ft2build.h>, so this has to
+	-- be an angled-capable path; see angledIncludeDirs in the workspace premake5.lua.
+	angledIncludeDirs { "freetype/include" }
 
 	-- Without this every module header refuses to compile ("FT2_BUILD_LIBRARY not
 	-- defined"), which is FreeType's guard against including internals downstream.

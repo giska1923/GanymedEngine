@@ -106,6 +106,9 @@ project "GanymedEngine"
 
 	filter "system:macosx"
 		systemversion "latest"
+		-- Must match Jolt.lua: the JPH_USE_* defines make Jolt's headers emit AVX2/FMA
+		-- intrinsics, and clang rejects those unless the target features are enabled here too.
+		buildoptions { "-mavx2", "-mbmi", "-mpopcnt", "-mlzcnt", "-mf16c", "-mfma" }
 
 	filter "configurations:Debug"
 		defines { "GE_DEBUG", "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }

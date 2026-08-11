@@ -22,20 +22,24 @@ fi
 
 case "$(uname -s)" in
     Linux*)
-        GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/linux/genie"
-        GENIE_ARGS="--gcc=linux-gcc"
-        PROJ_DIR="gmake-linux"
+        BUNDLED_GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/linux/genie"
+        GCC_TOOLCHAIN="linux-gcc"
+        EXTRA_GENIE_ARGS=""
         OUT="$ROOT/scripts/tools/linux"
         ;;
     Darwin*)
-        GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/darwin/genie"
+        BUNDLED_GENIE="$ROOT/GanymedEngine/extern/bx/tools/bin/darwin/genie"
         if [ "$(uname -m)" = "arm64" ]; then
-            GENIE_ARGS="--gcc=osx-arm64"
-            PROJ_DIR="gmake-osx-arm64"
+            GCC_TOOLCHAIN="osx-arm64"
         else
-            GENIE_ARGS="--gcc=osx-x64"
-            PROJ_DIR="gmake-osx-x64"
+            GCC_TOOLCHAIN="osx-x64"
         fi
+        # bx defaults the macOS target to 10.13.6 for the gmake action (its newer defaults
+        # only apply to the xcode* actions), and glslang uses std::filesystem, which libc++
+        # marks unavailable before 10.15 - so the tool build fails on 'absolute' is
+        # unavailable unless the target is raised. 13.0 is what bx's own --with-macos help
+        # claims as the default.
+        EXTRA_GENIE_ARGS="--with-macos=13.0"
         OUT="$ROOT/scripts/tools/darwin"
         ;;
     *)
@@ -44,9 +48,40 @@ case "$(uname -s)" in
         ;;
 esac
 
+GENIE_ARGS="--gcc=$GCC_TOOLCHAIN $EXTRA_GENIE_ARGS"
+
+# bx puts the generated makefiles in .build/projects/<action>-<gcc value> (toolchain.lua),
+# so the directory name is derived rather than spelled out - hardcoding it silently drifts
+# from the --gcc value and make then fails with "No such file or directory".
+PROJ_DIR="gmake-$GCC_TOOLCHAIN"
+
+# bx bundles prebuilt GENie binaries, and they do not run everywhere: the darwin one is
+# arm64-only, so an Intel Mac reports "Bad CPU type in executable", and the linux one is
+# linked against glibc 2.38, so anything older than Ubuntu 24.04 fails in the loader.
+# GENie itself is a small C/Lua project that builds in seconds, so the escape hatch is to
+# build it and point GENIE at the result:
+#
+#   git clone https://github.com/bkaradzic/GENie && make -C GENie
+#   GENIE=/path/to/GENie/bin/darwin/genie ./scripts/build_shader_tools.sh
+GENIE="${GENIE:-$BUNDLED_GENIE}"
+chmod +x "$GENIE" 2>/dev/null || true
+
+# --version exits non-zero even on success, so check that it actually produced output:
+# that distinguishes "ran fine" from "could not exec" and "loader rejected it" alike.
+set +e
+GENIE_CHECK="$("$GENIE" --version 2>/dev/null)"
+set -e
+case "$GENIE_CHECK" in
+    *GENie*) ;;
+    *)
+        echo "❌ $GENIE will not run on this machine."
+        echo "   Build GENie from source and re-run with GENIE=<path> (see comment above)."
+        exit 1
+        ;;
+esac
+
 echo "[1/3] Generating bgfx tool projects with GENie..."
 cd "$BGFX"
-chmod +x "$GENIE" 2>/dev/null || true
 "$GENIE" --with-tools $GENIE_ARGS gmake > /dev/null
 
 echo "[2/3] Building shaderc (release64)... this takes a few minutes."

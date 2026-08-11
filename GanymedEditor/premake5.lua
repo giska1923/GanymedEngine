@@ -1,5 +1,9 @@
 project "GanymedEditor"
-	kind "WindowedApp"
+	-- WindowedApp only on Windows (see the system:windows filter). On xcode4 it would
+	-- emit a .app bundle, and Xcode refuses to code sign a bundle without an Info.plist
+	-- that premake does not generate - plus a bundle rewrites the working directory,
+	-- which the relative asset paths depend on.
+	kind "ConsoleApp"
 	language "C++"
 	cppdialect "C++17"
 	staticruntime "off"
@@ -44,13 +48,23 @@ project "GanymedEditor"
 	filter "system:windows"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
+
+		-- /SUBSYSTEM:WINDOWS so no console window sits behind the editor;
+		-- mainCRTStartup keeps the entry point at main() rather than WinMain
+		kind "WindowedApp"
 		entrypoint "mainCRTStartup"
 
 		-- Embeds the executable icon (resources/icon.ico)
 		files { "resources/GanymedEditor.rc" }
 
 	-- Static libraries do not propagate their links outside Visual Studio,
-	-- so the executable links the dependency projects and system libraries itself
+	-- so the executable links the dependency projects and system libraries itself.
+	--
+	-- Order matters here in a way it does not on MSVC: GNU ld walks archives once,
+	-- left to right, pulling only the objects that resolve symbols undefined *so far*.
+	-- A library must therefore appear before the ones it depends on - RmlUi before
+	-- Lua and FreeType, bgfx before bimg and bx - or the link fails on symbols that
+	-- are plainly present in the archive list.
 	filter "system:linux"
 		systemversion "latest"
 
@@ -63,9 +77,9 @@ project "GanymedEditor"
 			"bgfx",
 			"bimg",
 			"bx",
-			"Lua",
 			"RmlUi",
 			"FreeType",
+			"Lua",
 			"GL",
 			"X11",
 			"dl",
@@ -94,7 +108,12 @@ project "GanymedEditor"
 			"CoreVideo.framework",
 			"QuartzCore.framework",
 			"Metal.framework",
-			"MetalKit.framework"
+			"MetalKit.framework",
+			-- bgfx's Metal backend carries a hardware video decoder (bgfx::mtl::VideoDecoderMtl)
+			-- that is always compiled in - there is no config switch for it - so its two
+			-- frameworks are required even though nothing here decodes video.
+			"CoreMedia.framework",
+			"VideoToolbox.framework"
 		}
 
 	filter "configurations:Debug"

@@ -41,6 +41,14 @@ Key entry points:
 called during a system update; `GetComponent`/`HasComponent` are always fine. `GetUUID()` and
 `GetName()` read `IDComponent`/`TagComponent`. A default-constructed `Entity` is falsy.
 
+`AddComponent` calls `Scene::OnComponentAdded<T>`, whose primary template does nothing; only
+components needing post-add fixup are specialized (currently just `CameraComponent`, to seed the
+viewport size). That hook takes `const Entity&` rather than `Entity` by value on purpose:
+`Entity.h` includes `Scene.h`, so `Entity` is only forward-declared where the primary template is
+*defined*, and a function definition requires complete parameter types. A reference to an
+incomplete type is legal, by value is not — MSVC accepts the by-value form as an extension, gcc
+and clang reject it outright.
+
 ## Component catalog
 
 All in [`Components.h`](../../GanymedEngine/source/GanymedE/Scene/Components.h) — plain structs,

@@ -54,9 +54,11 @@ project "Sandbox"
 			"bgfx",
 			"bimg",
 			"bx",
-			"Lua",
+			-- Dependents before dependencies: GNU ld walks archives once, left to right.
+			-- See the same list in GanymedEditor/premake5.lua.
 			"RmlUi",
 			"FreeType",
+			"Lua",
 			"GL",
 			"X11",
 			"dl",
@@ -85,7 +87,10 @@ project "Sandbox"
 			"CoreVideo.framework",
 			"QuartzCore.framework",
 			"Metal.framework",
-			"MetalKit.framework"
+			"MetalKit.framework",
+			-- Required by bgfx's Metal video decoder; see GanymedEditor/premake5.lua
+			"CoreMedia.framework",
+			"VideoToolbox.framework"
 		}
 
 	filter "configurations:Debug"
