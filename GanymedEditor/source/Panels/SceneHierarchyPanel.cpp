@@ -1,4 +1,5 @@
 #include "SceneHierarchyPanel.h"
+#include "../AssetDragDrop.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -11,8 +12,6 @@
 #include "GanymedE/Scripting/ScriptEngine.h"
 
 #include <algorithm>
-#include <cctype>
-#include <filesystem>
 
 namespace GanymedE {
 
@@ -636,18 +635,9 @@ namespace GanymedE {
 				ImGui::TextDisabled("No mesh assigned");
 			}
 
-			if (ImGui::BeginDragDropTarget())
-			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-				{
-					const char* path = (const char*)payload->Data;
-					std::string ext = std::filesystem::path(path).extension().string();
-					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-					if (ext == ".gltf" || ext == ".glb")
-						component.Mesh = AssetManager::ImportAsset(path);
-				}
-				ImGui::EndDragDropTarget();
-			}
+			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::StaticMesh);
+			if (IsAssetHandleValid(dropped))
+				component.Mesh = dropped;
 		});
 
 		DrawComponent<ScriptComponent>("Script", entity, [](auto& component)
@@ -670,23 +660,14 @@ namespace GanymedE {
 
 			ImGui::TextDisabled("Drop a .lua file here");
 
-			if (ImGui::BeginDragDropTarget())
+			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::Script);
+			if (IsAssetHandleValid(dropped))
 			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-				{
-					const char* path = (const char*)payload->Data;
-					std::string ext = std::filesystem::path(path).extension().string();
-					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-					if (ext == ".lua")
-					{
-						component.Script = AssetManager::ImportAsset(path);
-						// Overrides are keyed by name against the old script's declarations;
-						// carrying them to a different script would apply values it never asked
-						// for. Clearing is the honest option.
-						component.Fields.clear();
-					}
-				}
-				ImGui::EndDragDropTarget();
+				component.Script = dropped;
+				// Overrides are keyed by name against the old script's declarations;
+				// carrying them to a different script would apply values it never asked
+				// for. Clearing is the honest option.
+				component.Fields.clear();
 			}
 
 			DrawScriptFields(component);
@@ -741,18 +722,9 @@ namespace GanymedE {
 				ImGui::ColorEdit3("Ground Color", glm::value_ptr(component.GroundColor));
 			}
 
-			if (ImGui::BeginDragDropTarget())
-			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-				{
-					const char* path = (const char*)payload->Data;
-					std::string ext = std::filesystem::path(path).extension().string();
-					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-					if (ext == ".hdr")
-						component.Environment = AssetManager::ImportAsset(path);
-				}
-				ImGui::EndDragDropTarget();
-			}
+			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::Environment);
+			if (IsAssetHandleValid(dropped))
+				component.Environment = dropped;
 
 			ImGui::DragFloat("Intensity", &component.Intensity, 0.02f, 0.0f, 20.0f);
 			ImGui::Checkbox("Draw Skybox", &component.DrawSkybox);

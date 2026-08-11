@@ -251,6 +251,15 @@ and the extension filters are disjoint. **Verify this during the smoke test**; i
 rejects a double-`BeginDragDropTarget` on one item, fall back to an
 `initializer_list<AssetType>` overload returning `{type, path}`.
 
+> **Resolved during execution (2026-08-11): the double call does not work; the
+> `initializer_list` overload is what shipped.** `ImGui::EndDragDropTarget` calls
+> `ClearDragDrop()` as soon as `payload.Delivery` is set, and `BeginDragDropTarget` early-returns
+> on `!g.DragDropActive` — so on the frame the drop lands, the second call sees no active drag.
+> The premise that "the extension filters are disjoint" does not save it: both calls request the
+> same `CONTENT_BROWSER_ITEM` payload type and the extension filter is applied *after* accepting,
+> so the first call unconditionally wins the delivery. Dropping a `.glb` on the viewport would
+> have silently done nothing.
+
 ### 1.7 Sequencing and docs
 
 Commit order: (1) 1.1–1.4 as one change (loader + cache + consolidation + dead code);

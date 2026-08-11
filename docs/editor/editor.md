@@ -40,9 +40,9 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   is wrong on half of them).
 - **Event blocking**: `ImGuiLayer::BlockEvents(false)` while the viewport is hovered/focused, so
   camera and shortcut input reaches the layer.
-- **Drag-drop from the Content Browser**: `.ganymede` opens the scene; `.gltf`/`.glb`
-  (edit mode only) imports and instantiates the mesh via `MeshImporter::Instantiate` and selects
-  it.
+- **Drag-drop from the Content Browser** via `EditorUI::AcceptAssetDrop` (see
+  [below](#typed-drag-drop)): a `Scene` drop opens the scene; a `StaticMesh` drop (edit mode only)
+  instantiates it via `MeshImporter::Instantiate` and selects it.
 - **Gizmos** (edit mode, with a selection): ImGuizmo manipulates the entity's **world** transform
   (`Scene::GetWorldSpaceTransform`, so parented entities gizmo correctly), converts back to local
   through the parent's inverse world matrix, decomposes (`Math::DecomposeTransform`), applies
@@ -119,9 +119,10 @@ lights, sky light, script, rigid body, colliders); one collapsible section per c
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons) and call
   `MarkChanged<TransformComponent>` only when a value actually changed.
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
-- Static mesh: shows the mesh asset (handle + path) — assign by dragging from the Content Browser.
-- Script: shows the `.lua` asset (handle + path) with a Clear button — assign by dragging a `.lua`
-  from the Content Browser (the drop is extension-filtered). Below it, one row per property the
+- Static mesh: shows the mesh asset (handle + path) — assign with
+  `AcceptAssetDropHandle(StaticMesh)`.
+- Script: shows the `.lua` asset (handle + path) with a Clear button — assign with
+  `AcceptAssetDropHandle(Script)`. Below it, one row per property the
   script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The
   schema is read from the script itself in edit mode, so the rows appear without entering play.
   Only values you actually change are stored on the entity; **Reset** removes an override so the
@@ -129,7 +130,8 @@ lights, sky light, script, rigid body, colliders); one collapsible section per c
   they are keyed by name against the old script's declarations. Removing the component in edit mode
   is safe: `LuaScriptSystem` drains its `FiniView` there and tears down any instance left from a
   previous play session. See [scripting.md](../engine/scripting.md).
-- Sky light: environment asset, sky/ground colors, intensity, DrawSkybox.
+- Sky light: environment asset (`AcceptAssetDropHandle(Environment)`), sky/ground colors, intensity,
+  DrawSkybox.
 - Colliders: dimensions, offset, friction/restitution.
 
 Adding a component type means extending this panel's Add-Component popup and `DrawComponents` —
@@ -153,13 +155,38 @@ one of the two remaining hand-maintained per-component lists (the other is the s
   `RenderSystem` re-fetches by handle every frame — see
   [assets.md](../engine/assets.md#reload) for the invariant that makes eviction safe mid-frame.
 
+## Typed drag-drop
+
+[`AssetDragDrop.h`](../../GanymedEditor/source/AssetDragDrop.h) —
+`namespace GanymedE::EditorUI`. Every drop target goes through it, so
+`AssetTypeFromExtension` is the single source of truth for what a target accepts on the editor side
+too (it previously wasn't used here at all: each site hand-rolled
+`extension()` → `::tolower` → string compare).
+
+| Call | Returns |
+|---|---|
+| `AcceptAssetDrop(type)` | `optional<path>` — the dropped path relative to `assets/`, iff its type matches |
+| `AcceptAssetDrop({types...})` | `AssetDrop { Type, Path }`, falsy when nothing matched — for targets accepting several types |
+| `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent) on match, else `InvalidAssetHandle` |
+
+Call it immediately after the widget that should accept the drop; it wraps
+`BeginDragDropTarget` / `AcceptDragDropPayload("CONTENT_BROWSER_ITEM")` / `EndDragDropTarget`.
+A mismatched drop is silently ignored.
+
+**A multi-type target must use the `initializer_list` overload, not two calls in a row.**
+`ImGui::EndDragDropTarget` calls `ClearDragDrop` as soon as a payload is delivered, and
+`BeginDragDropTarget` early-returns when no drag is active — so a second call after the same widget
+sees nothing on the frame the drop actually lands. Both calls would also share the one
+`CONTENT_BROWSER_ITEM` payload type (the type filtering happens *after* accepting, on the extension),
+so the first call always wins the delivery and the second type would never fire.
+
 ## Adding an editor feature — where things hook
 
 | Want to… | Touch |
 |---|---|
 | New panel | Create under `Panels/`, own it in `EditorLayer`, call `OnImGuiRender`, dock it in the DockBuilder block |
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
-| New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, drag-drop handling at the consumer |
+| New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |
 | New shortcut | `EditorLayer::OnKeyPressed` |
 | New scene-wide toggle | Prefer a singleton in `SceneSingletons.h`, edit it from the Stats panel like `PhysicsSettings` |
 
