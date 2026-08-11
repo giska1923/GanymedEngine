@@ -74,14 +74,28 @@ namespace GanymedE {
 
 	void RenderSystem::SubmitMeshes()
 	{
-		for (auto [entity, worldTransform, meshComponent] : View<MeshView>())
+		for (auto [entity, worldTransform, meshComponent, animator] : View<MeshView>())
 		{
 			if (!IsAssetHandleValid(meshComponent.Mesh))
 				continue;
 
 			Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(meshComponent.Mesh);
-			if (mesh)
+			if (!mesh)
+				continue;
+
+			// An entity is skinned iff its mesh has a skeleton and it has an animator -
+			// the same gate the AnimationSystem poses on. A rigged mesh with no animator
+			// draws as static geometry in its bind pose, which is the sane default for
+			// dropping a character into a scene before authoring anything.
+			if (animator && mesh->HasSkeleton() && !animator->Palette.empty())
+			{
+				Renderer3D::SubmitSkinnedMesh(mesh, worldTransform.World,
+					animator->Palette.data(), (uint32_t)animator->Palette.size(), (int)entity);
+			}
+			else
+			{
 				Renderer3D::SubmitMesh(mesh, worldTransform.World, (int)entity);
+			}
 		}
 	}
 
