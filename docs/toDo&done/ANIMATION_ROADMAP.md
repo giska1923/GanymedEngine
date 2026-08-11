@@ -450,6 +450,10 @@ probe removed afterwards). Cold import and cache load agreed on every field:
 | RiggedFigure | 19 | 1 × 1.250s, 57 channels | 370 / 370 | non-identity (90° X) |
 | BoxTextured (static control) | 0 | 0 | 24 / 0 | — |
 
+> **Corrected in Phase 3.** The `RootTransform` values recorded here were wrong for the
+> non-identity cases: they omitted the `inverse(meshNodeWorld)` term the glTF spec requires. See
+> the Phase 3 execution notes. Nothing else in this table changed.
+
 57 channels = 19 joints × 3 paths, and 24 joints for Fox, both matching the published models.
 - Every existing static scene renders pixel-identically (the conditional bake must be a
   no-op for static content).
@@ -544,6 +548,51 @@ drives a kinematic body).
 - `ValidateOrdering` passes with the new registration (it will catch AnimationSystem placed
   after TransformSystem, since TransformSystem reads transforms via ChangeView — leave a
   comment at the registration site anyway).
+
+### Phase 3 execution notes
+
+**"Samples too" was implemented as sample-without-advance.** Edit mode evaluates the pose at the
+current `Time` but never runs the clock. Everything 3.2 asks for is satisfied by evaluation;
+advancing as well would leave every rigged model in the scene permanently moving while placing
+things, and `Time` is not serialized so it would drift with no record. A preview-play toggle, if
+wanted, belongs with Phase 5's inspector work.
+
+**The `ValidateOrdering` claim above is wrong.** The check only fires on a reader-vs-writer pair
+over a *shared* component. `AnimationSystem` writes `AnimatorComponent` and reads
+`StaticMeshComponent`; `TransformSystem` reads `TransformComponent`/`RelationshipComponent` and
+writes `WorldTransformComponent`. They have nothing in common, so placing AnimationSystem *after*
+TransformSystem passes validation silently. The slot before TransformSystem is a documented
+intention only. The slot after the script systems is unenforceable for a different reason already
+noted in 3.2 (writer-vs-writer). The one part that ever becomes checked is staying ahead of
+`RenderSystem`, and only once Phase 4 makes it declare `RO<AnimatorComponent>`. A comment at the
+registration site says all of this.
+
+**Phase 2 bug found by Phase 3: `RootTransform` was missing the mesh-node inverse.** Composing a
+rest-pose palette is the first thing that can actually falsify the Phase 2 import, and it did.
+Per the glTF spec the transform of the node a skinned mesh hangs off MUST be ignored, with the
+joint matrices carrying `inverse(meshNodeWorld)` instead — skinning output is already in mesh
+space, so applying the node transform as well applies it twice. Phase 2 captured only the root
+joints' ancestor transform. `RootTransform` is now
+`inverse(skinnedMeshNodeWorld) * rootJointParentWorld`, and the mesh cache is at **v5** to discard
+caches holding the old value (same layout — the *meaning* of a field changed, which is just as
+much a reason to bump).
+
+The test that caught it, and the one to reuse: **at the rest pose `Global[i] * InverseBind[i]` must
+be identity for every joint.** Note that Fox cannot detect this class of bug — every node in it is
+at identity, so it passed both before and after the fix. Always validate skinning against a model
+with a non-trivial node hierarchy.
+
+Results (temporary probe in `EditorLayer::OnUpdate` across successive frames, removed afterwards):
+
+| Check | Result |
+|---|---|
+| Fox clips resolve by name | Survey 3.4167s, Walk 0.7083s, Run 1.1583s — matches Phase 2 |
+| Fox palette at t=0 / 0.100 / 0.354 | 24 joints, all three distinct and non-degenerate |
+| Fox rest pose max deviation from identity | 1.0e-5 |
+| CesiumMan rest pose, before the RootTransform fix | **1.0** (a pure 90° rotation, zero translation) |
+| CesiumMan rest pose, after | 1.0e-6 across all 19 joints |
+| Unknown clip name | one warning, bind pose held, no repeat on later frames |
+| Edit mode does not advance Time | Time exactly 0.1000 after a frame with `Playing = true` |
 
 ---
 
