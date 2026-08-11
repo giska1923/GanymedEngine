@@ -82,6 +82,21 @@ namespace GanymedE {
 		const AnimationClip* FindClip(const std::string& name) const;
 
 		const Geometry& GetGeometry() const { return m_Geometry; }
+
+		// Vertex stream 1 for skinned draws, parallel to the stream-0 vertices.
+		// Null on a mesh with no skin data.
+		const Ref<VertexBuffer>& GetSkinVertexBuffer() const { return m_SkinGeometry; }
+
+		// How far a skinned submesh's bind-pose AABB is padded to stand in for the posed
+		// one, as a fraction of the box's LARGEST extent - not of each axis. A limb can
+		// swing about as far as the rig is long, so a narrow axis needs the same absolute
+		// slack as a wide one: CesiumMan stands with its arms down (X extent 0.31 against
+		// a height of 1.51) and its walk cycle leaves a per-axis 50% pad on both sides.
+		//
+		// Exact posed bounds would mean skinning every vertex on the CPU each frame to
+		// decide one culling test, which is not a trade worth making. The failure mode
+		// here is a character popping at the screen edge if a clip swings wider than this.
+		static constexpr float SkinnedBoundsPadding = 0.25f;
 		const std::string& GetPath() const { return m_Path; }
 		void SetPath(const std::string& path) { m_Path = path; }
 
@@ -116,6 +131,7 @@ namespace GanymedE {
 		std::vector<AnimationClip> m_Clips;
 
 		Geometry m_Geometry;
+		Ref<VertexBuffer> m_SkinGeometry;
 		std::vector<MeshInstanceData> m_InstanceData;
 
 		std::string m_Path;

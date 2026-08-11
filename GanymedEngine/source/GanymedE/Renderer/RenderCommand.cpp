@@ -117,6 +117,14 @@ namespace GanymedE {
 	void RenderCommand::DrawIndexedInstanced(const Geometry& geometry, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex,
 		const void* instanceData, uint32_t instanceCount, uint16_t instanceStride)
 	{
+		DrawIndexedInstancedSkinned(geometry, Ref<VertexBuffer>{}, indexCount, baseIndex, baseVertex,
+			instanceData, instanceCount, instanceStride);
+	}
+
+	void RenderCommand::DrawIndexedInstancedSkinned(const Geometry& geometry, const Ref<VertexBuffer>& skinStream,
+		uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex,
+		const void* instanceData, uint32_t instanceCount, uint16_t instanceStride)
+	{
 		if (!BeginSubmit(geometry))
 			return;
 
@@ -139,6 +147,15 @@ namespace GanymedE {
 			bgfx::setVertexBuffer(0, geometry.Vertices->GetDynamicHandle(), baseVertex, UINT32_MAX);
 		else
 			bgfx::setVertexBuffer(0, geometry.Vertices->GetStaticHandle(), baseVertex, UINT32_MAX);
+
+		// Same baseVertex as stream 0: the skin data is per-vertex, in the same order.
+		if (skinStream && skinStream->IsValid())
+		{
+			if (skinStream->IsDynamic())
+				bgfx::setVertexBuffer(1, skinStream->GetDynamicHandle(), baseVertex, UINT32_MAX);
+			else
+				bgfx::setVertexBuffer(1, skinStream->GetStaticHandle(), baseVertex, UINT32_MAX);
+		}
 
 		bgfx::setIndexBuffer(geometry.Indices->GetHandle(), baseIndex, indexCount);
 		bgfx::setState(s_State.ToBgfx());

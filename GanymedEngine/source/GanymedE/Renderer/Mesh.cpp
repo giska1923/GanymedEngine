@@ -71,6 +71,20 @@ namespace GanymedE {
 				{ ShaderDataType::Float2, "a_TexCoord" }
 			});
 
+		// Skin attributes ride a second stream so static meshes pay nothing for
+		// them: widening MeshVertex would add 32 bytes to every vertex in the
+		// engine to serve the few that are rigged.
+		if (!m_SkinVertices.empty())
+		{
+			m_SkinGeometry = VertexBuffer::Create(
+				m_SkinVertices.data(),
+				(uint32_t)(m_SkinVertices.size() * sizeof(SkinVertex)),
+				{
+					{ ShaderDataType::Float4, "a_JointIndices" },
+					{ ShaderDataType::Float4, "a_JointWeights" }
+				});
+		}
+
 		// The per-instance transform/ID buffer is gone: bgfx allocates instance
 		// data from a transient pool at submit time instead of keeping a
 		// divisor-1 vertex buffer around.
@@ -103,6 +117,16 @@ namespace GanymedE {
 				{
 					submesh.Bounds.Grow(p);
 				}
+			}
+
+			// A skinned submesh's vertices are the bind pose; the palette moves them
+			// at draw time, so the measured box is not the box that gets drawn. Pad
+			// it rather than compute the real thing per frame.
+			if (submesh.IsSkinned && !first)
+			{
+				const glm::vec3 extent = submesh.Bounds.Max - submesh.Bounds.Min;
+				const float pad = glm::max(glm::max(extent.x, extent.y), extent.z) * SkinnedBoundsPadding;
+				submesh.Bounds = AABB(submesh.Bounds.Min - pad, submesh.Bounds.Max + pad);
 			}
 
 			// Whole-mesh bounds include the submesh's local transform
