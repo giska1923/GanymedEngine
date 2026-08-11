@@ -31,7 +31,7 @@ Key entry points:
 | `MarkChanged<T>(entity)` | Report an out-of-view write of a tracked component (see [ecs.md](ecs.md#accessors-and-the-modify-invariant)) |
 
 `Scene`'s constructor wires the entt signals for tracked/init/fini component types, creates the
-`RenderContext` and `PhysicsSettings` singletons, registers the five built-in systems, and asserts
+`RenderContext` and `PhysicsSettings` singletons, registers the seven built-in systems, and asserts
 `ValidateOrdering()` passes.
 
 ## Entity
@@ -140,6 +140,29 @@ The same three-view lifecycle as `NativeScriptSystem`, for `ScriptComponent`, de
 global `ScriptEngine` VM. Additionally declares an unused `AccessView<RW<TransformComponent>>` so
 `ValidateOrdering` knows script bindings write transforms outside any view — which is why it is
 registered before `TransformSystem`. Details: [scripting.md](scripting.md).
+
+### AnimationSystem — [`Systems/AnimationSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/AnimationSystem.h)
+Samples each `AnimatorComponent`'s clip and leaves a joint palette on the component. Per animator:
+advance `Time` (wrapped or clamped by clip duration), binary-search each channel's key pair and
+interpolate — lerp for translation/scale, **slerp** for rotation, `Step` holding the left key —
+over a copy of the skeleton's rest pose, so joints and paths the clip does not drive keep their
+authored transform. Globals are then composed in a single forward pass (the importer sorts joints
+parents-before-children so no recursion is needed), seeded from `Skeleton::RootTransform` rather
+than identity, giving `Palette[i] = Global[i] * InverseBind[i]`.
+
+An unresolvable clip name warns once per distinct name and holds the bind pose; a missing skeleton
+clears the palette, which is also the signal to the renderer to use the static path. Scratch pose
+and global arrays are system members reused across entities and frames.
+
+**Runs in edit mode, but samples without advancing.** Evaluating poses is what makes the
+inspector's Time scrub move the model; running the clock as well would leave every rig in the scene
+permanently in motion while placing things, and `Time` is not serialized so it would drift with no
+record. `OnRuntimeStart` resets every animator's `Time` to zero, so play begins at the head of the
+clip whatever the editor was scrubbed to — the editor scene is a separate copy and keeps its scrub
+position for when play stops.
+
+Its registration slot (after the script systems, before `TransformSystem`) is a documented
+intention that `ValidateOrdering` cannot enforce — see [ecs.md](ecs.md#systemmanager).
 
 ### TransformSystem — [`Systems/TransformSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/TransformSystem.h)
 Maintains the `WorldTransformComponent` cache. A `ChangeView` reacting to `TransformComponent` and

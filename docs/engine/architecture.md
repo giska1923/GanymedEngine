@@ -51,6 +51,8 @@ Application::Run loop
 │   │   ├─ SystemManager::OnUpdate[Editor] (m_IsUpdating = true while running)
 │   │   │   ├─ PhysicsSystem               fixed-step Jolt, collision events, transform writeback
 │   │   │   ├─ NativeScriptSystem          script lifecycle + OnUpdate
+│   │   │   ├─ LuaScriptSystem             the same lifecycle for Lua ScriptComponents
+│   │   │   ├─ AnimationSystem             sample clips → joint palette on AnimatorComponent
 │   │   │   ├─ TransformSystem             recompute dirty world transforms (ChangeView)
 │   │   │   ├─ CameraSystem                resolve primary camera → RenderContext singleton
 │   │   │   └─ RenderSystem                submit lights/sky/meshes/sprites/gizmos to Renderer2D/3D
@@ -83,7 +85,7 @@ Two ordering facts worth internalizing:
   `bgfx::shutdown()`, and every GPU-resource destructor checks that flag (statics can outlive
   `main()`; C++ guarantees nothing about their order relative to bgfx teardown).
 - `EditorLayer` owns the `SceneRenderer` (render targets + post stack) and the active `Scene`.
-- `Scene` owns the entt registry, the `SystemManager` (five built-in systems), the `CommandQueue`,
+- `Scene` owns the entt registry, the `SystemManager` (seven built-in systems), the `CommandQueue`,
   per-component-type change buffers / graveyards / init-fini buffers, and the UUID→entity map.
   Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`).
 - `PhysicsSystem` owns the `PhysicsScene` (Jolt world) — it exists only between play and stop.
