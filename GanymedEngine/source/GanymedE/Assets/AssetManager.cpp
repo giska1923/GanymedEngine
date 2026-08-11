@@ -201,6 +201,62 @@ namespace GanymedE {
 		return LoadTexture(handle);
 	}
 
+	void AssetManager::Reload(AssetHandle handle)
+	{
+		const AssetMetadata* metadata = GetMetadata(handle);
+		if (!metadata)
+			return;
+
+		switch (metadata->Type)
+		{
+			case AssetType::Texture:
+				s_Data.LoadedTextures.erase(handle);
+				break;
+
+			case AssetType::Environment:
+				s_Data.LoadedEnvironments.erase(handle);
+				break;
+
+			case AssetType::StaticMesh:
+			{
+				// Order matters: the mesh's textures have to go first, or the reimported
+				// mesh rebinds the stale cached ones through LoadMaterialMap.
+				auto cached = s_Data.LoadedMeshes.find(handle);
+				if (cached != s_Data.LoadedMeshes.end() && cached->second)
+				{
+					for (const auto& material : cached->second->GetMaterials())
+					{
+						if (!material)
+							continue;
+
+						for (const std::string* mapPath : {
+							&material->GetAlbedoMapPath(),
+							&material->GetNormalMapPath(),
+							&material->GetMetallicRoughnessMapPath() })
+						{
+							if (mapPath->empty())
+								continue;
+
+							AssetHandle textureHandle = GetHandle(*mapPath);
+							if (IsAssetHandleValid(textureHandle))
+								s_Data.LoadedTextures.erase(textureHandle);
+						}
+					}
+				}
+
+				s_Data.LoadedMeshes.erase(handle);
+				MeshCache::Invalidate(metadata->FilePath);
+				break;
+			}
+
+			default:
+				// Material/Scene/Script have no GetAsset cache to evict.
+				return;
+		}
+
+		GE_CORE_INFO("Reloading asset '{0}'", metadata->FilePath);
+	}
+
 	void AssetManager::LoadRegistry()
 	{
 		std::filesystem::path registryPath = GetAssetRoot() / "AssetRegistry.gr";

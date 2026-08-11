@@ -28,6 +28,7 @@ one registry + per-type in-memory caches:
 | `ImportAsset(relativePath)` | Idempotent registration: existing path returns its handle; otherwise mint a UUID, infer the type, persist the registry immediately. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
 | `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D` |
+| `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
 
 The registry lives at `assets/AssetRegistry.gr` — YAML, one `{Handle, Type, FilePath}` entry per
 asset. It is data, checked into the repo alongside the assets it describes.
@@ -89,6 +90,33 @@ Editor chrome (`EditorLayer` icons, `ContentBrowserPanel` icons, the checkerboar
 stays on the `Texture2D(path)` constructor with hard-coded `resources/` paths — outside the asset
 cache, since it has no asset identity and no reason to be evictable.
 
+## Reload
+
+`Reload(handle)` is plain eviction, dispatched on the metadata type:
+
+| Type | Action |
+|---|---|
+| Texture, Environment | Erase from the per-type map. |
+| StaticMesh | Three steps, **in this order**: (1) walk the cached mesh's materials' `Get*MapPath()`s, resolve each through `GetHandle`, erase those from `LoadedTextures`; (2) erase from `LoadedMeshes`; (3) `MeshCache::Invalidate` — delete the `.meshcache` file. |
+| Material, Scene, Script | Nothing; these have no `GetAsset` cache. |
+
+Step (1) is not optional: skip it and the reimported mesh silently rebinds the stale cached textures
+through `LoadMaterialMap`. Step (3) is what makes Reload mean *reimport now* rather than *recheck the
+timestamp* — the cache's timestamp check already catches source edits, but a referenced external
+texture can change while the `.gltf`'s own timestamp does not.
+
+**Why plain eviction is safe** — this is the invariant the asset layer relies on:
+
+- Components store `AssetHandle`s, never `Ref`s.
+- `RenderSystem` re-fetches by handle every frame, so an eviction lands on the next frame; the
+  inspector fetches per draw; the serializer only warms the cache;
+  `Renderer3D::s_Data.ActiveEnvironment` is overwritten by the next `SubmitEnvironment`.
+- Evicted objects drain via `shared_ptr` refcount, and bgfx defers handle destruction to frame end,
+  so evicting mid-frame from ImGui code cannot pull a texture out from under an in-flight draw.
+
+The rule for future consumers: **re-fetch by handle each frame, or accept staleness across a
+Reload.** Caching a `Ref` on a component breaks it.
+
 Asset roots: paths resolve against `GetAssetRoot()`
 ([`AssetPaths.h`](../../GanymedEngine/source/GanymedE/Assets/AssetPaths.h)) — the relative
 directory `assets/`, i.e. **relative to the working directory**, which is why the apps must run
@@ -121,7 +149,8 @@ re-import. The content browser hides the `.assets/` directory.
 
 Practical notes:
 - Delete `assets/.assets/` to force a full re-import (e.g. after changing importer code — the
-  cache has a version field, bump it when the format changes).
+  cache has a version field, bump it when the format changes). `MeshCache::Invalidate` does the
+  same for one mesh, and is how `AssetManager::Reload` forces a reimport.
 - The cache stores material *data*, not GPU resources; textures are created on load either from
   the recorded paths (via `TextureImporter::LoadMaterialMap`, same as cold import) or the embedded
   bytes.

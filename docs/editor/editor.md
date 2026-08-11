@@ -147,6 +147,11 @@ one of the two remaining hand-maintained per-component lists (the other is the s
   the properties panel accept the relevant types.
 - Right-click on an importable file (mesh/environment/texture/material/script) → **Import**, registering
   it with the `AssetManager` (idempotent; persists `AssetRegistry.gr` immediately).
+- Right-click on an already-registered file → **Reload**, evicting it from the manager's cache so the
+  next fetch re-reads it from disk. For a mesh this also drops its textures and deletes the
+  `.meshcache`, i.e. a full reimport. Edits land in the viewport on the next frame because
+  `RenderSystem` re-fetches by handle every frame — see
+  [assets.md](../engine/assets.md#reload) for the invariant that makes eviction safe mid-frame.
 
 ## Adding an editor feature — where things hook
 

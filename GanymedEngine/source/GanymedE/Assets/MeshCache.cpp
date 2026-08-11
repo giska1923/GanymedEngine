@@ -335,4 +335,22 @@ namespace GanymedE {
 		return true;
 	}
 
+	bool MeshCache::Invalidate(const std::filesystem::path& sourceRelativePath)
+	{
+		std::filesystem::path cachePath = GetCachePath(sourceRelativePath);
+
+		std::error_code ec;
+		bool removed = std::filesystem::remove(cachePath, ec);
+		if (ec)
+		{
+			GE_CORE_WARN("Failed to remove mesh cache '{0}'", cachePath.filename().string());
+			return false;
+		}
+
+		if (removed)
+			GE_CORE_INFO("Invalidated mesh cache '{0}'", cachePath.filename().string());
+
+		return removed;
+	}
+
 }

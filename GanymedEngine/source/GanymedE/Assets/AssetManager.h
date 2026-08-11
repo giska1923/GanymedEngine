@@ -36,6 +36,11 @@ namespace GanymedE {
 			return nullptr;
 		}
 
+		// Evict a loaded asset so the next GetAsset re-reads it from disk. For a mesh
+		// this also drops its textures and the .meshcache file - "reimport now".
+		// Safe to call mid-frame from editor UI; see docs/engine/assets.md for why.
+		static void Reload(AssetHandle handle);
+
 		static void LoadRegistry();
 		static void SaveRegistry();
 
