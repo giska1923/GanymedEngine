@@ -129,6 +129,74 @@ namespace GanymedE {
 				},
 
 				"HasRigidBody", [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
+				"HasAnimator",  [](Entity& e) { return e.HasComponent<AnimatorComponent>(); },
+
+				// --- Animation ---
+				// AnimatorComponent is untracked, so unlike the transform setters these need no
+				// MarkChanged: AnimationSystem reads the component every frame regardless.
+				//
+				// Every one of these no-ops on an entity without an animator rather than
+				// asserting, matching the physics bindings. Entity::GetComponent asserts on a
+				// missing component, and in Release that assert is gone and the read is UB.
+				//
+				// No clip-name validation here on purpose. AnimationSystem already warns once per
+				// distinct bad name and holds the bind pose; a second check would report the same
+				// typo twice, and it cannot even do so reliably because the mesh asset may not be
+				// resident yet.
+				"PlayAnimation", [](Entity& e, const std::string& name)
+				{
+					if (!e.HasComponent<AnimatorComponent>())
+						return;
+
+					auto& animator = e.GetComponent<AnimatorComponent>();
+
+					// Restarting only on an actual clip CHANGE is what makes the obvious idiom
+					// work: a script that calls PlayAnimation every frame from a branch
+					// ("grounded and PlayAnimation('Idle') or PlayAnimation('Run')") would
+					// otherwise pin Time at 0 forever, because the script systems run before
+					// AnimationSystem and would undo each frame's advance. Re-playing the current
+					// clip therefore resumes it; switching clips is the documented hard cut.
+					if (animator.Clip != name)
+					{
+						animator.Clip = name;
+						animator.Time = 0.0f;
+					}
+
+					animator.Playing = true;
+				},
+				// Freezes on the pose currently posed rather than rewinding to the clip start:
+				// Playing = false only stops the clock, and AnimationSystem keeps building the
+				// palette from the unchanged Time. Rewinding would snap the character on a call
+				// that reads like "pause", and PlayAnimation already covers restart-from-zero.
+				"StopAnimation", [](Entity& e)
+				{
+					if (e.HasComponent<AnimatorComponent>())
+						e.GetComponent<AnimatorComponent>().Playing = false;
+				},
+				// Time multiplier. Negative rewinds; 0 freezes without clearing Playing.
+				"SetAnimationSpeed", [](Entity& e, float speed)
+				{
+					if (e.HasComponent<AnimatorComponent>())
+						e.GetComponent<AnimatorComponent>().Speed = speed;
+				},
+				"SetAnimationLooping", [](Entity& e, bool loop)
+				{
+					if (e.HasComponent<AnimatorComponent>())
+						e.GetComponent<AnimatorComponent>().Loop = loop;
+				},
+				"IsAnimationPlaying", [](Entity& e)
+				{
+					return e.HasComponent<AnimatorComponent>()
+						&& e.GetComponent<AnimatorComponent>().Playing;
+				},
+				// The name the animator is set to, which is not proof the mesh has a clip by that
+				// name - an unresolved reference keeps its name and holds the bind pose.
+				"GetCurrentAnimation", [](Entity& e)
+				{
+					return e.HasComponent<AnimatorComponent>()
+						? e.GetComponent<AnimatorComponent>().Clip
+						: std::string{};
+				},
 
 				// --- Physics: routed through PhysicsScene, never through transforms ---
 				// Writing the transform of a dynamic body does nothing visible:

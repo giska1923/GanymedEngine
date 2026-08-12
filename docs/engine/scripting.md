@@ -132,8 +132,9 @@ Copying nine floats beats both problems at script call rates.
 
 Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, `Cross`), `Entity`
 (`GetName`, `GetUUID`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians), `Get/SetScale`,
-`HasRigidBody`), `Input`, `Key`, `Mouse`, `Log` (routed to the **client** logger — script output is
-game output), `Scene.FindEntityByName`, `UI` (the HUD data model — see [ui.md](ui.md)).
+`HasRigidBody`, the physics and animation calls below), `Input`, `Key`, `Mouse`, `Log` (routed to
+the **client** logger — script output is game output), `Scene.FindEntityByName`, `UI` (the HUD data
+model — see [ui.md](ui.md)).
 
 > **The `Log` global collides with RmlUi's.** RmlUi's Lua plugin registers its own `Log` usertype,
 > and it loads after `ScriptEngine::Init`, so it shadowed ours until `UIEngine` started calling
@@ -160,6 +161,50 @@ Rules for anything added later:
 - Script component access is inherently *undeclared* ECS access — identical to native scripts,
   where `ScriptableEntity::GetComponent` bypasses views too. The `TransformWrite` declaration keeps
   the dominant case visible to ordering validation; exotic writes are on the author.
+
+### Animation
+
+`HasAnimator`, `PlayAnimation(name)`, `StopAnimation`, `SetAnimationSpeed`, `SetAnimationLooping`,
+`IsAnimationPlaying`, `GetCurrentAnimation`. All of them **no-op on an entity without an
+`AnimatorComponent`** rather than assert, the same way the physics calls no-op outside play —
+`Entity::GetComponent` asserts on a missing component, and in Release that assert is compiled out
+and the read is undefined.
+
+`AnimatorComponent` is **untracked**, so unlike the transform setters these pair with no
+`MarkChanged`: `AnimationSystem` re-reads the component every frame regardless. The system runs
+*after* both script systems in the chain (see [ecs.md](ecs.md)), so a call lands on the same
+frame's pose rather than the next one's.
+
+**`PlayAnimation` restarts only on an actual clip change.** Re-playing the clip already selected
+sets `Playing` and leaves `Time` alone. This is deliberate and it is the whole reason the obvious
+idiom works:
+
+```lua
+if grounded then self.entity:PlayAnimation("Idle") else self.entity:PlayAnimation("Run") end
+```
+
+Called every frame, a `PlayAnimation` that unconditionally zeroed `Time` would undo each frame's
+advance before `AnimationSystem` ever saw it — the character would sit pinned one tick into the
+clip, playing nothing, with no error anywhere. Unity's `Animator.Play` *does* restart
+unconditionally and expects a state machine above it to gate the call; Ganymed has no such layer in
+v1 (blend trees and state machines are explicitly out of scope), so the guard lives in the binding.
+Switching clips is still the documented hard cut, `Time = 0` with no crossfade, and restarting the
+current clip means switching away and back.
+
+**`StopAnimation` freezes, it does not rewind.** `Playing = false` only stops the clock;
+`BuildPalette` still runs, so the character holds the pose it was in. Rewinding would snap the rig
+on a call most people reach for meaning "pause", and `PlayAnimation` already covers
+restart-from-zero.
+
+An unknown clip name is **not** an error at the call site. `AnimationSystem::ResolveClip` already
+warns once per distinct bad name and holds the bind pose; validating here would report one typo
+twice, and could not do it reliably anyway because the mesh asset may not be resident when the
+script runs. `GetCurrentAnimation` returns the name the animator is *set to*, which for the same
+reason is not proof the mesh has a clip by that name.
+
+There is no `Get/SetAnimationTime`. Clip progress is what an "is this animation finished" query
+would need, and that belongs with animation events — cut from v1 along with blend trees. The
+inspector's Time slider covers the edit-mode scrubbing case.
 
 ## Errors
 
