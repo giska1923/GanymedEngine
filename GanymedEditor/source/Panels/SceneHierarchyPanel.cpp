@@ -693,10 +693,13 @@ namespace GanymedE {
 			ImGui::Checkbox("Loop", &component.Loop);
 
 			// Edit mode evaluates the pose but never runs the clock, so this slider is the only
-			// way to move a rig without entering play mode.
+			// way to move a rig without entering play mode. Scrubbing clears Playing, which
+			// matters in play mode only - there the clock would otherwise overwrite the scrubbed
+			// value on the very next update and the slider would appear not to work at all.
 			const AnimationClip* clip = rigged ? mesh->FindClip(component.Clip) : nullptr;
 			const float duration = clip ? clip->Duration : 0.0f;
-			ImGui::DragFloat("Time", &component.Time, 0.01f, 0.0f, duration);
+			if (ImGui::DragFloat("Time", &component.Time, 0.01f, 0.0f, duration))
+				component.Playing = false;
 			if (duration > 0.0f)
 			{
 				ImGui::SameLine();

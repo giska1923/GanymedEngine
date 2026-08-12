@@ -126,7 +126,10 @@ lights, sky light, animator, script, rigid body, colliders); one collapsible sec
   nothing and get a silent bind pose. Plus Speed, Playing, Loop, and a **Time** slider bounded by
   the selected clip's duration. Time is the useful one in edit mode: `AnimationSystem` evaluates
   poses there but never advances the clock, so dragging Time is how you inspect a rig without
-  entering play. Falls back to "No rigged mesh on this entity" when the mesh has no skeleton.
+  entering play. **Dragging Time clears Playing** — in play mode the clock would otherwise
+  overwrite the scrubbed value on the next update and the slider would look broken. Falls back to
+  "No rigged mesh on this entity" when the mesh has no skeleton. Scripts drive the same component
+  through `PlayAnimation` and friends — see [scripting.md](../engine/scripting.md).
 - Script: shows the `.lua` asset (handle + path) with a Clear button — assign with
   `AcceptAssetDropHandle(Script)`. Below it, one row per property the
   script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The
