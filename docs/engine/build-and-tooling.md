@@ -51,6 +51,11 @@ Other build facts that have bitten before (details in
   reason the build scripts do.
 - The engine defines **`SOL_ALL_SAFETIES_ON=1`**: bounds and type checks on every sol2 call, so a
   script bug surfaces as a logged Lua error instead of a crash across the C++ boundary.
+- The engine builds with **`/bigobj`** on MSVC. sol2 instantiates enough templates per usertype
+  member that `ScriptBindings.cpp` crossed the COFF section limit (`C1128`) on a handful of new
+  `Entity` methods. The flag changes the object file format only — no codegen, no runtime cost — so
+  it is set for the project rather than filtered to the one file that needs it today. Expect to
+  need it again as the binding surface grows; it is not a sign anything is wrong.
 - Lua is pinned to the newest **5.4.x** (5.4.8) rather than 5.5, because sol2 does not support 5.5
   and TypeScriptToLua's highest `luaTarget` is 5.4.
 - `GanymedEditor` is `kind "ConsoleApp"` by default and only `WindowedApp` under

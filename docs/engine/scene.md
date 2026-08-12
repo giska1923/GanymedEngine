@@ -31,7 +31,7 @@ Key entry points:
 | `MarkChanged<T>(entity)` | Report an out-of-view write of a tracked component (see [ecs.md](ecs.md#accessors-and-the-modify-invariant)) |
 
 `Scene`'s constructor wires the entt signals for tracked/init/fini component types, creates the
-`RenderContext` and `PhysicsSettings` singletons, registers the five built-in systems, and asserts
+`RenderContext` and `PhysicsSettings` singletons, registers the seven built-in systems, and asserts
 `ValidateOrdering()` passes.
 
 ## Entity
@@ -71,7 +71,16 @@ copyable, no behavior beyond small helpers.
 ### Rendering
 
 - **`SpriteRendererComponent`** — 2D quad color (drawn by Renderer2D).
-- **`StaticMeshComponent`** — `AssetHandle` of a mesh (see [assets.md](assets.md)).
+- **`StaticMeshComponent`** — `AssetHandle` of a mesh (see [assets.md](assets.md)). Also carries
+  skinned meshes: there is no separate `SkinnedMeshComponent`, because the asset already knows
+  whether it has a skeleton and a second component would duplicate the drag-drop, serialization,
+  inspector and `RenderSystem` plumbing to say nothing new.
+- **`AnimatorComponent`** — `Clip` (by name), `Speed`, `Playing`, `Loop`, `Time`, and a runtime
+  `Palette` of joint matrices. An entity is skinned iff its mesh `HasSkeleton()` *and* it has an
+  animator. Clips are named rather than indexed because indices shift whenever a DCC reorders or
+  adds a clip on re-export; the cost is that a rename detaches the reference silently, which
+  `AnimationSystem` compensates for by warning once and holding the bind pose. `Time` and `Palette`
+  are not serialized — a scene loads at the head of its clip, and the palette is rebuilt per frame.
 - **`CameraComponent`** — a `SceneCamera` (perspective or orthographic) + `Primary` +
   `FixedAspectRatio`. The first primary camera wins (resolved once per update by `CameraSystem`).
 - **`DirectionalLightComponent`** — color/intensity/`CastShadows`; direction is the entity's
@@ -132,6 +141,30 @@ global `ScriptEngine` VM. Additionally declares an unused `AccessView<RW<Transfo
 `ValidateOrdering` knows script bindings write transforms outside any view — which is why it is
 registered before `TransformSystem`. Details: [scripting.md](scripting.md).
 
+### AnimationSystem — [`Systems/AnimationSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/AnimationSystem.h)
+Samples each `AnimatorComponent`'s clip and leaves a joint palette on the component. Per animator:
+advance `Time` (wrapped or clamped by clip duration), binary-search each channel's key pair and
+interpolate — lerp for translation/scale, **slerp** for rotation, `Step` holding the left key —
+over a copy of the skeleton's rest pose, so joints and paths the clip does not drive keep their
+authored transform. Globals are then composed in a single forward pass (the importer sorts joints
+parents-before-children so no recursion is needed), seeded from `Skeleton::RootTransform` rather
+than identity, giving `Palette[i] = Global[i] * InverseBind[i]`.
+
+An unresolvable clip name warns once per distinct name and holds the bind pose; a missing skeleton
+clears the palette, which is also the signal to the renderer to use the static path. Scratch pose
+and global arrays are system members reused across entities and frames.
+
+**Runs in edit mode, but samples without advancing.** Evaluating poses is what makes the
+inspector's Time scrub move the model; running the clock as well would leave every rig in the scene
+permanently in motion while placing things, and `Time` is not serialized so it would drift with no
+record. `OnRuntimeStart` resets every animator's `Time` to zero, so play begins at the head of the
+clip whatever the editor was scrubbed to — the editor scene is a separate copy and keeps its scrub
+position for when play stops.
+
+Its registration slot (after the script systems, before `TransformSystem`) is a documented intention
+that `ValidateOrdering` cannot enforce; the part it does enforce is running ahead of `RenderSystem`,
+which reads the palette. See [ecs.md](ecs.md#systemmanager).
+
 ### TransformSystem — [`Systems/TransformSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/TransformSystem.h)
 Maintains the `WorldTransformComponent` cache. A `ChangeView` reacting to `TransformComponent` and
 `RelationshipComponent` yields only entities that actually moved/re-parented; for each, the world
@@ -151,6 +184,14 @@ begins Renderer3D with the main camera (or the editor fallback), submits lights,
 meshes, collider gizmos (or Jolt debug draw when enabled during play), ends the scene, then does the
 2D pass (sprites) in its own render view. The editor path additionally draws the grid. Its nine view
 declarations are live documentation of exactly what rendering reads.
+
+The mesh view carries `OptRO<AnimatorComponent>`, so one iteration covers both draw paths: an
+entity with an animator, a mesh that `HasSkeleton()`, and a non-empty palette goes to
+`Renderer3D::SubmitSkinnedMesh`, everything else to `SubmitMesh`. A rigged mesh with no animator
+therefore draws as static geometry in its bind pose, which is the sane result of dropping a
+character into a scene before authoring anything. Declaring that optional read is also what made
+the `AnimationSystem`-before-`RenderSystem` ordering checkable at last — see
+[ecs.md](ecs.md#systemmanager).
 
 ## Singletons
 
@@ -194,3 +235,9 @@ OnSceneStop: ActiveScene->OnRuntimeStop();  m_ActiveScene = m_EditorScene;
 
 The runtime scene is a disposable deep copy keyed by UUID — physics can knock everything over and
 Stop simply discards the copy. This is why stable UUIDs and the generic `ComponentList` copy exist.
+
+The generic copy is a shallow value copy of every component, so anything that is runtime-only needs
+an explicit fixup sweep after it. There are two: `NativeScriptComponent::Instance` is nulled so
+instances are recreated on play, and `AnimatorComponent::Palette` is cleared because carrying a
+per-joint matrix array per entity into the new scene buys one frame of stale data. Adding a
+component with runtime-only state means adding a third sweep — nothing enforces this.

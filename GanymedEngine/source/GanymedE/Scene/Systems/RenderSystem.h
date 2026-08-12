@@ -16,7 +16,12 @@ namespace GanymedE {
 	public:
 		// The primary-camera search now lives in CameraSystem, which runs first and leaves the
 		// answer in the RenderContext singleton.
-		using MeshView       = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<StaticMeshComponent>>;
+		// The animator is optional, not a second view: one iteration covers both draw
+		// paths, and declaring the read here is what finally makes the ordering against
+		// AnimationSystem enforceable. Until this, the two shared no component, so
+		// ValidateOrdering had nothing to check and the correct order was only a
+		// convention in Scene's registration list.
+		using MeshView       = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<StaticMeshComponent>, ECS::OptRO<AnimatorComponent>>;
 		using SpriteView     = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<SpriteRendererComponent>>;
 		using DirLightView   = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<DirectionalLightComponent>>;
 		using PointLightView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<PointLightComponent>>;

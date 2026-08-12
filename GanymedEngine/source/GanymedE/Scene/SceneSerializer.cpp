@@ -178,6 +178,25 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		if (entity.HasComponent<AnimatorComponent>())
+		{
+			out << YAML::Key << "AnimatorComponent";
+			out << YAML::BeginMap;
+
+			// Time and Palette are deliberately absent: a scene loads at the head of its clip,
+			// and the palette is rebuilt every frame.
+			auto& animator = entity.GetComponent<AnimatorComponent>();
+			// Omitted rather than written empty: an empty scalar reads back as a null node, and
+			// as<std::string>() throws on those.
+			if (!animator.Clip.empty())
+				out << YAML::Key << "Clip" << YAML::Value << animator.Clip;
+			out << YAML::Key << "Speed" << YAML::Value << animator.Speed;
+			out << YAML::Key << "Playing" << YAML::Value << animator.Playing;
+			out << YAML::Key << "Loop" << YAML::Value << animator.Loop;
+
+			out << YAML::EndMap;
+		}
+
 		if (entity.HasComponent<ScriptComponent>())
 		{
 			out << YAML::Key << "ScriptComponent";
@@ -475,6 +494,20 @@ namespace GanymedE {
 						if (meshPath)
 							smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
 					}
+				}
+
+				auto animatorComponent = entity["AnimatorComponent"];
+				if (animatorComponent)
+				{
+					auto& animator = deserializedEntity.AddComponent<AnimatorComponent>();
+
+					auto clip = animatorComponent["Clip"];
+					if (clip)
+						animator.Clip = clip.as<std::string>();
+
+					animator.Speed = animatorComponent["Speed"].as<float>();
+					animator.Playing = animatorComponent["Playing"].as<bool>();
+					animator.Loop = animatorComponent["Loop"].as<bool>();
 				}
 
 				auto scriptComponent = entity["ScriptComponent"];

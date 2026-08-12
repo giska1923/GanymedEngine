@@ -51,6 +51,38 @@ declare interface Entity {
 	SetScale(value: Vec3): void;
 
 	HasRigidBody(): boolean;
+	HasAnimator(): boolean;
+
+	/**
+	 * Switches to `name` and plays it. Switching clips is a hard cut from the start —
+	 * there is no crossfade in v1.
+	 *
+	 * Calling this with the clip already selected does NOT restart it, it only resumes
+	 * playback. That is deliberate: the natural idiom is to call this every frame from a
+	 * branch, and restarting unconditionally would pin the clip at its first frame,
+	 * because scripts run before the animation system each update. To restart the current
+	 * clip, switch away and back.
+	 *
+	 * An unknown name is not an error here. The animation system warns once and holds the
+	 * bind pose.
+	 *
+	 * No-op on an entity without an animator.
+	 */
+	PlayAnimation(name: string): void;
+
+	/** Stops the clock and freezes on the current pose. Does not rewind. */
+	StopAnimation(): void;
+
+	/** Time multiplier. Negative rewinds; 0 freezes without clearing the playing flag. */
+	SetAnimationSpeed(speed: number): void;
+	SetAnimationLooping(loop: boolean): void;
+	IsAnimationPlaying(): boolean;
+
+	/**
+	 * The clip name the animator is set to. Empty when there is no animator, no clip is
+	 * selected, or — note — the name does not resolve against the mesh.
+	 */
+	GetCurrentAnimation(): string;
 }
 
 /** The shape every gameplay script implements. All hooks are optional. */

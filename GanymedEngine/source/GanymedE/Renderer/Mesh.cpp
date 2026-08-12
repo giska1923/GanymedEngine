@@ -10,16 +10,52 @@ namespace GanymedE {
 		Build();
 	}
 
+	Mesh::Mesh(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices,
+		const std::vector<Submesh>& submeshes, const std::vector<Ref<Material>>& materials,
+		std::vector<SkinVertex> skinVertices, Skeleton skeleton, std::vector<AnimationClip> clips)
+		: m_Vertices(vertices), m_Indices(indices), m_Submeshes(submeshes), m_Materials(materials),
+		  m_SkinVertices(std::move(skinVertices)), m_Skeleton(std::move(skeleton)), m_Clips(std::move(clips))
+	{
+		// Both vertex streams are bound with one startVertex, so a partially filled
+		// skin stream would read garbage for the tail of the mesh.
+		if (!m_SkinVertices.empty() && m_SkinVertices.size() != m_Vertices.size())
+		{
+			GE_CORE_ERROR("Skin vertex count ({0}) does not match vertex count ({1}) - dropping skin data",
+				m_SkinVertices.size(), m_Vertices.size());
+			m_SkinVertices.clear();
+		}
+
+		Build();
+	}
+
 	Ref<Mesh> Mesh::Create(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices,
 		const std::vector<Submesh>& submeshes, const std::vector<Ref<Material>>& materials)
 	{
 		return CreateRef<Mesh>(vertices, indices, submeshes, materials);
 	}
 
+	Ref<Mesh> Mesh::Create(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices,
+		const std::vector<Submesh>& submeshes, const std::vector<Ref<Material>>& materials,
+		std::vector<SkinVertex> skinVertices, Skeleton skeleton, std::vector<AnimationClip> clips)
+	{
+		return CreateRef<Mesh>(vertices, indices, submeshes, materials,
+			std::move(skinVertices), std::move(skeleton), std::move(clips));
+	}
+
 	Ref<Material> Mesh::GetMaterial(uint32_t index) const
 	{
 		if (index < m_Materials.size())
 			return m_Materials[index];
+		return nullptr;
+	}
+
+	const AnimationClip* Mesh::FindClip(const std::string& name) const
+	{
+		for (const AnimationClip& clip : m_Clips)
+		{
+			if (clip.Name == name)
+				return &clip;
+		}
 		return nullptr;
 	}
 
@@ -34,6 +70,20 @@ namespace GanymedE {
 				{ ShaderDataType::Float3, "a_Tangent" },
 				{ ShaderDataType::Float2, "a_TexCoord" }
 			});
+
+		// Skin attributes ride a second stream so static meshes pay nothing for
+		// them: widening MeshVertex would add 32 bytes to every vertex in the
+		// engine to serve the few that are rigged.
+		if (!m_SkinVertices.empty())
+		{
+			m_SkinGeometry = VertexBuffer::Create(
+				m_SkinVertices.data(),
+				(uint32_t)(m_SkinVertices.size() * sizeof(SkinVertex)),
+				{
+					{ ShaderDataType::Float4, "a_JointIndices" },
+					{ ShaderDataType::Float4, "a_JointWeights" }
+				});
+		}
 
 		// The per-instance transform/ID buffer is gone: bgfx allocates instance
 		// data from a transient pool at submit time instead of keeping a
@@ -67,6 +117,16 @@ namespace GanymedE {
 				{
 					submesh.Bounds.Grow(p);
 				}
+			}
+
+			// A skinned submesh's vertices are the bind pose; the palette moves them
+			// at draw time, so the measured box is not the box that gets drawn. Pad
+			// it rather than compute the real thing per frame.
+			if (submesh.IsSkinned && !first)
+			{
+				const glm::vec3 extent = submesh.Bounds.Max - submesh.Bounds.Min;
+				const float pad = glm::max(glm::max(extent.x, extent.y), extent.z) * SkinnedBoundsPadding;
+				submesh.Bounds = AABB(submesh.Bounds.Min - pad, submesh.Bounds.Max + pad);
 			}
 
 			// Whole-mesh bounds include the submesh's local transform

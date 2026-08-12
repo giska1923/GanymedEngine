@@ -71,6 +71,13 @@ namespace GanymedE {
 		int EntityID = -1;
 		float SortKey = 0.0f;  // squared distance from camera
 		AABB WorldBounds;      // submesh bounds in world space, for frustum culling
+
+		// Skinned draws index into Renderer3DData::PaletteStorage instead of holding
+		// a vector: the palette is copied at submit, so nothing here depends on the
+		// AnimatorComponent's storage still being alive (or unchanged) at flush time,
+		// exactly as instance data is already staged CPU-side.
+		uint32_t PaletteOffset = 0;
+		bool IsSkinned = false;
 	};
 
 	struct Renderer3DData
@@ -82,6 +89,16 @@ namespace GanymedE {
 
 		std::vector<DrawCommand> DrawList;
 
+		// One MaxBones-sized block per skinned submit, identity-padded. bgfx fixes an
+		// array uniform's size at creation, so the upload is always the whole array
+		// however few joints a rig has - 8 KB per skinned entity per frame.
+		std::vector<glm::mat4> PaletteStorage;
+
+		// vs_PhongSkinned + fs_Phong, and vs_ShadowDepthSkinned + fs_ShadowDepth:
+		// both reuse the static fragment stage unchanged.
+		Ref<Shader> SkinnedShader;
+		Ref<Shader> ShadowDepthSkinnedShader;
+
 		Ref<Shader> GridShader;
 		Geometry GridGeometry;
 
@@ -89,9 +106,9 @@ namespace GanymedE {
 		Ref<Shader> SkyboxCubeShader;
 		Geometry FullscreenQuad;
 
-		// HDR image-based lighting (optional)
+		// HDR image-based lighting (optional). Refreshed by SubmitEnvironment each
+		// frame; caching by path is AssetManager's job.
 		Ref<Environment> ActiveEnvironment;
-		std::unordered_map<std::string, Ref<Environment>> EnvironmentCache;
 		bool UseIBL = false;
 
 		// Directional cascaded shadow maps
@@ -136,6 +153,10 @@ namespace GanymedE {
 		s_Data.SkyboxShader = Shader::Create("assets/shaders/Skybox.glsl");
 		s_Data.SkyboxCubeShader = Shader::Create("assets/shaders/SkyboxCube.glsl");
 		s_Data.ShadowDepthShader = Shader::Create("assets/shaders/ShadowDepth.glsl");
+
+		s_Data.SkinnedShader = Shader::CreateFromStages("PhongSkinned", "PhongSkinned", "Phong");
+		s_Data.ShadowDepthSkinnedShader = Shader::CreateFromStages("ShadowDepthSkinned",
+			"ShadowDepthSkinned", "ShadowDepth");
 
 		// Fullscreen-ish large quad on XZ plane; real infinite look comes from the fragment shader
 		float gridVertices[] = {
@@ -189,6 +210,9 @@ namespace GanymedE {
 		s_Data.SkyboxCubeShader = nullptr;
 		s_Data.FullscreenQuad = {};
 		s_Data.ShadowDepthShader = nullptr;
+		s_Data.PaletteStorage.clear();
+		s_Data.SkinnedShader = nullptr;
+		s_Data.ShadowDepthSkinnedShader = nullptr;
 		for (uint32_t i = 0; i < kCascadeCount; i++)
 			s_Data.ShadowFramebuffers[i] = nullptr;
 		FrameUniforms::Shutdown();
@@ -201,6 +225,7 @@ namespace GanymedE {
 	static void ResetFrameState()
 	{
 		s_Data.DrawList.clear();
+		s_Data.PaletteStorage.clear();
 		s_Data.LineVertices.clear();
 
 		s_Data.LightBuffer = LightsUBO{};
@@ -317,20 +342,6 @@ namespace GanymedE {
 		s_Data.LightBuffer.AmbientGround = glm::vec4(0.0f, 0.0f, 0.0f, 2.0f);
 	}
 
-	Ref<Environment> Renderer3D::LoadEnvironment(const std::string& path)
-	{
-		if (path.empty())
-			return nullptr;
-
-		auto it = s_Data.EnvironmentCache.find(path);
-		if (it != s_Data.EnvironmentCache.end())
-			return it->second;
-
-		Ref<Environment> environment = Environment::Create(path);
-		s_Data.EnvironmentCache[path] = environment;
-		return environment;
-	}
-
 	void Renderer3D::SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID)
 	{
 		if (!mesh)
@@ -344,16 +355,25 @@ namespace GanymedE {
 		}
 	}
 
-	void Renderer3D::SubmitMesh(const Ref<Mesh>& mesh, uint32_t submeshIndex, const Ref<Material>& material,
-		const glm::mat4& transform, int entityID)
+	// Returns the pushed command so a skinned submit can attach its palette. Only
+	// valid until the next push, which is all the one caller needs.
+	static DrawCommand* PushDrawCommand(const Ref<Mesh>& mesh, uint32_t submeshIndex,
+		const Ref<Material>& material, const glm::mat4& transform, int entityID)
 	{
 		if (!mesh || submeshIndex >= mesh->GetSubmeshes().size())
-			return;
+			return nullptr;
 
 		DrawCommand cmd;
 		cmd.Mesh = mesh;
 		cmd.SubmeshIndex = submeshIndex;
 		cmd.Material = material;
+
+		// LocalTransform applies to skinned submeshes too, which reads wrong against
+		// glTF's "the skinned mesh node's transform MUST be ignored" until you notice
+		// that Skeleton::RootTransform carries the inverse of that same node's world
+		// matrix (see BuildSkeleton). The two cancel, and the bounds below ride the
+		// same matrix as the vertices. Drop either one alone and a Y-up-corrected
+		// character renders on its side.
 		cmd.Transform = transform * mesh->GetSubmeshes()[submeshIndex].LocalTransform;
 		cmd.EntityID = entityID;
 		cmd.WorldBounds = mesh->GetSubmeshes()[submeshIndex].Bounds.Transformed(cmd.Transform);
@@ -363,6 +383,63 @@ namespace GanymedE {
 
 		s_Data.DrawList.push_back(cmd);
 		s_Data.Stats.MeshCount++;
+		return &s_Data.DrawList.back();
+	}
+
+	void Renderer3D::SubmitMesh(const Ref<Mesh>& mesh, uint32_t submeshIndex, const Ref<Material>& material,
+		const glm::mat4& transform, int entityID)
+	{
+		PushDrawCommand(mesh, submeshIndex, material, transform, entityID);
+	}
+
+	// Copies a palette into the frame's storage, identity-padded to MaxBones so the
+	// upload can hand bgfx one contiguous array of the fixed size it was created at.
+	static uint32_t StagePalette(const glm::mat4* palette, uint32_t jointCount)
+	{
+		const uint32_t offset = (uint32_t)s_Data.PaletteStorage.size();
+		s_Data.PaletteStorage.resize(offset + Skeleton::MaxBones, glm::mat4(1.0f));
+		std::copy(palette, palette + jointCount, s_Data.PaletteStorage.begin() + offset);
+		return offset;
+	}
+
+	void Renderer3D::SubmitSkinnedMesh(const Ref<Mesh>& mesh, const glm::mat4& transform,
+		const glm::mat4* palette, uint32_t jointCount, int entityID)
+	{
+		if (!mesh)
+			return;
+
+		// Degrade to the static path rather than dropping the entity: a rig whose
+		// palette has not been built yet, or whose program failed to compile, should
+		// still draw in its bind pose instead of vanishing.
+		if (!palette || jointCount == 0 || !mesh->GetSkinVertexBuffer()
+			|| !s_Data.SkinnedShader || !s_Data.SkinnedShader->IsValid())
+		{
+			SubmitMesh(mesh, transform, entityID);
+			return;
+		}
+
+		// Import already warns about oversized rigs; clamping here keeps the upload
+		// in bounds, and the joints past the limit simply do not deform.
+		if (jointCount > Skeleton::MaxBones)
+			jointCount = Skeleton::MaxBones;
+
+		// Staged once per entity - every skinned submesh of this mesh shares it.
+		const uint32_t paletteOffset = StagePalette(palette, jointCount);
+
+		const auto& submeshes = mesh->GetSubmeshes();
+		for (uint32_t i = 0; i < (uint32_t)submeshes.size(); i++)
+		{
+			Ref<Material> material = mesh->GetMaterial(submeshes[i].MaterialIndex);
+			DrawCommand* cmd = PushDrawCommand(mesh, i, material, transform, entityID);
+
+			// A file can mix rigged and rigid primitives under one skin; only the
+			// rigged ones need the palette, the rest keep instancing.
+			if (cmd && submeshes[i].IsSkinned)
+			{
+				cmd->IsSkinned = true;
+				cmd->PaletteOffset = paletteOffset;
+			}
+		}
 	}
 
 	// Fits one orthographic light frustum to a slice of the camera frustum (stable, texel-snapped).
@@ -480,12 +557,60 @@ namespace GanymedE {
 		}
 	}
 
+	// One skinned submesh, one draw call. Batching is off the table: the palette is a
+	// uniform, not per-instance data, so two characters in different poses cannot
+	// share a draw. Instance count stays 1 so the vertex-input convention (i_data0..4)
+	// is the same everywhere and the entity ID still reaches the picking attachment.
+	//
+	// program replaces whatever the material bound. bgfx uniforms are global by name,
+	// so the material's values are already queued for this draw and only the program
+	// consuming them changes.
+	static void DrawSkinnedCommand(const DrawCommand& cmd, const Ref<Shader>& program)
+	{
+		const Ref<VertexBuffer>& skinStream = cmd.Mesh->GetSkinVertexBuffer();
+		if (!skinStream || !program || !program->IsValid())
+		{
+			// Discard, don't just return: the caller has already queued this draw's
+			// uniforms and textures, and bgfx treats setting one of them twice with no
+			// submit in between as fatal, not as an overwrite.
+			bgfx::discard();
+			return;
+		}
+
+		program->SetMat4Array("u_Bones", &s_Data.PaletteStorage[cmd.PaletteOffset], Skeleton::MaxBones);
+		program->Bind();
+
+		const Submesh& submesh = cmd.Mesh->GetSubmeshes()[cmd.SubmeshIndex];
+
+		MeshInstanceData instance;
+		instance.Transform = cmd.Transform;
+		instance.EntityID = glm::vec4((float)cmd.EntityID);
+
+		RenderCommand::DrawIndexedInstancedSkinned(cmd.Mesh->GetGeometry(), skinStream,
+			submesh.IndexCount, submesh.BaseIndex, (int32_t)submesh.BaseVertex,
+			&instance, 1, (uint16_t)sizeof(MeshInstanceData));
+		s_Data.Stats.DrawCalls++;
+		s_Data.Stats.SkinnedDraws++;
+	}
+
 	static void RenderShadowPass(std::vector<const DrawCommand*>& casters)
 	{
 		if (!s_Data.HasShadowLight || !s_Data.ShadowDepthShader || casters.empty())
 			return;
 
 		ComputeCascades(s_Data.ShadowLightDir);
+
+		// Skinned casters leave the instanced list: they need the deforming depth
+		// shader. Skipping this would put a bind-pose shadow under a moving
+		// character, which reads as a bug even though nothing errored.
+		std::vector<const DrawCommand*> skinnedCasters;
+		for (const DrawCommand* cmd : casters)
+		{
+			if (cmd->IsSkinned)
+				skinnedCasters.push_back(cmd);
+		}
+		casters.erase(std::remove_if(casters.begin(), casters.end(),
+			[](const DrawCommand* cmd) { return cmd->IsSkinned; }), casters.end());
 
 		// Group instances by mesh + submesh (material is irrelevant for depth)
 		std::sort(casters.begin(), casters.end(), [](const DrawCommand* a, const DrawCommand* b)
@@ -494,8 +619,6 @@ namespace GanymedE {
 				return a->Mesh < b->Mesh;
 			return a->SubmeshIndex < b->SubmeshIndex;
 		});
-
-		s_Data.ShadowDepthShader->Bind();
 
 		for (uint32_t c = 0; c < kCascadeCount; c++)
 		{
@@ -521,7 +644,14 @@ namespace GanymedE {
 			RenderCommand::SetCullFace(true);
 			RenderCommand::SetCullMode(RenderState::CullMode::Front);
 
+			// Set once for the whole cascade, covering the skinned draws too: a uniform
+			// value persists across submits, but setting it twice with no submit in
+			// between is fatal - and with no static casters, that is exactly what a
+			// second set for the skinned pass would be.
 			s_Data.ShadowDepthShader->SetMat4("u_LightSpaceMatrix", s_Data.CascadeLightSpace[c]);
+
+			// Rebound per cascade because the skinned draws below replace the program.
+			s_Data.ShadowDepthShader->Bind();
 
 			for (size_t i = 0; i < casters.size(); )
 			{
@@ -534,6 +664,11 @@ namespace GanymedE {
 				DrawInstancedGroup(&casters[i], end - i);
 				i = end;
 			}
+
+			// Every cascade, not just the one the camera happens to sample: a
+			// character casting into cascade 2 while standing in cascade 0 is normal.
+			for (const DrawCommand* cmd : skinnedCasters)
+				DrawSkinnedCommand(*cmd, s_Data.ShadowDepthSkinnedShader);
 
 			RenderCommand::SetCullMode(RenderState::CullMode::Back);
 			RenderCommand::GetState().WriteRGB = true;
@@ -667,20 +802,38 @@ namespace GanymedE {
 		const Material* boundMaterial = nullptr;
 		for (size_t i = 0; i < opaque.size(); )
 		{
+			// A skinned command never joins a run - its palette is per-draw uniform
+			// state. With no skinned commands present these clauses are always true,
+			// so a static scene batches exactly as it did before.
 			size_t end = i + 1;
-			while (end < opaque.size()
+			while (!opaque[i]->IsSkinned
+				&& end < opaque.size() && !opaque[end]->IsSkinned
 				&& opaque[end]->Material == opaque[i]->Material
 				&& opaque[end]->Mesh == opaque[i]->Mesh
 				&& opaque[end]->SubmeshIndex == opaque[i]->SubmeshIndex)
 				end++;
 
-			if (opaque[i]->Material && opaque[i]->Material.get() != boundMaterial)
+			// A skinned draw always rebinds: bgfx discards texture bindings at submit,
+			// so it cannot ride on a cache entry left by an earlier draw.
+			if (opaque[i]->Material && (opaque[i]->IsSkinned || opaque[i]->Material.get() != boundMaterial))
 			{
 				BindMaterialForColorPass(opaque[i]->Material);
 				boundMaterial = opaque[i]->Material.get();
 			}
 
-			DrawInstancedGroup(&opaque[i], end - i);
+			if (opaque[i]->IsSkinned)
+			{
+				DrawSkinnedCommand(*opaque[i], s_Data.SkinnedShader);
+
+				// The skinned program is bound now, so the next static draw must not
+				// inherit "material already bound" - it would render rigid geometry
+				// through a vertex shader reading a stream 1 that is not there.
+				boundMaterial = nullptr;
+			}
+			else
+			{
+				DrawInstancedGroup(&opaque[i], end - i);
+			}
 			i = end;
 		}
 
@@ -697,21 +850,32 @@ namespace GanymedE {
 
 			for (size_t i = 0; i < transparent.size(); )
 			{
-				// Only merge neighbours that stayed adjacent after the depth sort
+				// Only merge neighbours that stayed adjacent after the depth sort, and
+				// never merge a skinned command (see the opaque loop).
 				size_t end = i + 1;
-				while (end < transparent.size()
+				while (!transparent[i]->IsSkinned
+					&& end < transparent.size() && !transparent[end]->IsSkinned
 					&& transparent[end]->Material == transparent[i]->Material
 					&& transparent[end]->Mesh == transparent[i]->Mesh
 					&& transparent[end]->SubmeshIndex == transparent[i]->SubmeshIndex)
 					end++;
 
-				if (transparent[i]->Material && transparent[i]->Material.get() != boundMaterial)
+				if (transparent[i]->Material
+					&& (transparent[i]->IsSkinned || transparent[i]->Material.get() != boundMaterial))
 				{
 					BindMaterialForColorPass(transparent[i]->Material);
 					boundMaterial = transparent[i]->Material.get();
 				}
 
-				DrawInstancedGroup(&transparent[i], end - i);
+				if (transparent[i]->IsSkinned)
+				{
+					DrawSkinnedCommand(*transparent[i], s_Data.SkinnedShader);
+					boundMaterial = nullptr;
+				}
+				else
+				{
+					DrawInstancedGroup(&transparent[i], end - i);
+				}
 				i = end;
 			}
 

@@ -14,6 +14,12 @@
 //   a_TexIndex         TEXCOORD1       a_texcoord1
 //   a_TilingFactor     TEXCOORD2       a_texcoord2
 //   a_EntityID         TEXCOORD3       a_texcoord3
+//   a_JointIndices     BLENDINDICES    a_indices
+//   a_JointWeights     BLENDWEIGHT     a_weight
+//
+// a_indices and a_weight come from the skinned mesh's second vertex stream and
+// are only declared by the skinning shaders. Their names are not ours to pick -
+// shaderc rejects any vertex input outside its fixed list.
 //
 // Note a_position is declared vec3. Fullscreen passes bind a 2-component
 // position buffer; bgfx fills the missing components with (0,0,1), so those
@@ -37,6 +43,8 @@ vec2  a_texcoord0 : TEXCOORD0;
 float a_texcoord1 : TEXCOORD1;
 float a_texcoord2 : TEXCOORD2;
 float a_texcoord3 : TEXCOORD3;
+vec4  a_indices   : BLENDINDICES;
+vec4  a_weight    : BLENDWEIGHT;
 
 // Per-instance data. These semantics are NOT free to choose: bgfx binds the
 // instance data buffer to TEXCOORD31 counting DOWN, so i_data0..4 must be

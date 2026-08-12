@@ -3,12 +3,11 @@
 #include "MeshCache.h"
 
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Renderer/Shader.h"
 #include "GanymedE/Renderer/Texture.h"
-
-#include <stb_image.h>
 
 #include <fstream>
 
@@ -17,7 +16,11 @@ namespace GanymedE {
 	namespace {
 
 		constexpr uint32_t MESH_CACHE_MAGIC = 0x48434D47; // 'GMCH'
-		constexpr uint32_t MESH_CACHE_VERSION = 3; // v3: embedded texture bytes for pathless maps
+		// v5 and v6 have v4's layout; both bumps discard caches whose values are stale
+		// rather than whose fields moved. v5: Skeleton::RootTransform written before it
+		// accounted for the skinned mesh node's transform. v6: skinned submeshes written
+		// with an identity LocalTransform, which drops that node transform entirely.
+		constexpr uint32_t MESH_CACHE_VERSION = 6;
 
 		void WriteString(std::ostream& out, const std::string& str)
 		{
@@ -66,56 +69,26 @@ namespace GanymedE {
 			return data;
 		}
 
-		// Mirrors MeshImporter's embedded-image decode (compressed PNG/JPEG bytes -> RGBA texture)
-		Ref<Texture2D> CreateTextureFromEmbedded(const std::vector<uint8_t>& data)
+		// Trivially copyable element types only - the arrays are written as one blob.
+		template<typename T>
+		void WriteArray(std::ostream& out, const std::vector<T>& values)
 		{
-			if (data.empty())
-				return nullptr;
-
-			stbi_set_flip_vertically_on_load(1);
-			int width, height, channels;
-			unsigned char* pixels = stbi_load_from_memory(data.data(), (int)data.size(), &width, &height, &channels, 4);
-			if (!pixels)
-				return nullptr;
-
-			Ref<Texture2D> texture = Texture2D::Create((uint32_t)width, (uint32_t)height);
-			texture->SetData(pixels, width * height * 4);
-			stbi_image_free(pixels);
-			return texture;
-		}
-
-		void WriteVector(std::ostream& out, const std::vector<MeshVertex>& vertices)
-		{
-			uint32_t count = (uint32_t)vertices.size();
+			static_assert(std::is_trivially_copyable<T>::value, "WriteArray writes a raw blob");
+			uint32_t count = (uint32_t)values.size();
 			WriteValue(out, count);
 			if (count > 0)
-				out.write(reinterpret_cast<const char*>(vertices.data()), count * sizeof(MeshVertex));
+				out.write(reinterpret_cast<const char*>(values.data()), count * sizeof(T));
 		}
 
-		void ReadVector(std::istream& in, std::vector<MeshVertex>& vertices)
+		template<typename T>
+		void ReadArray(std::istream& in, std::vector<T>& values)
 		{
+			static_assert(std::is_trivially_copyable<T>::value, "ReadArray reads a raw blob");
 			uint32_t count = 0;
 			ReadValue(in, count);
-			vertices.resize(count);
+			values.resize(count);
 			if (count > 0)
-				in.read(reinterpret_cast<char*>(vertices.data()), count * sizeof(MeshVertex));
-		}
-
-		void WriteIndices(std::ostream& out, const std::vector<uint32_t>& indices)
-		{
-			uint32_t count = (uint32_t)indices.size();
-			WriteValue(out, count);
-			if (count > 0)
-				out.write(reinterpret_cast<const char*>(indices.data()), count * sizeof(uint32_t));
-		}
-
-		void ReadIndices(std::istream& in, std::vector<uint32_t>& indices)
-		{
-			uint32_t count = 0;
-			ReadValue(in, count);
-			indices.resize(count);
-			if (count > 0)
-				in.read(reinterpret_cast<char*>(indices.data()), count * sizeof(uint32_t));
+				in.read(reinterpret_cast<char*>(values.data()), count * sizeof(T));
 		}
 
 		void WriteSubmeshes(std::ostream& out, const std::vector<Submesh>& submeshes)
@@ -129,6 +102,7 @@ namespace GanymedE {
 				WriteValue(out, submesh.IndexCount);
 				WriteValue(out, submesh.MaterialIndex);
 				WriteValue(out, submesh.LocalTransform);
+				WriteValue(out, submesh.IsSkinned);
 				WriteString(out, submesh.Name);
 			}
 		}
@@ -145,8 +119,85 @@ namespace GanymedE {
 				ReadValue(in, submesh.IndexCount);
 				ReadValue(in, submesh.MaterialIndex);
 				ReadValue(in, submesh.LocalTransform);
+				ReadValue(in, submesh.IsSkinned);
 				submesh.Name = ReadString(in);
 			}
+		}
+
+		void WriteSkeleton(std::ostream& out, const Skeleton& skeleton)
+		{
+			WriteArray(out, skeleton.ParentIndices);
+			WriteArray(out, skeleton.InverseBind);
+			WriteArray(out, skeleton.LocalRestPose);
+			WriteValue(out, skeleton.RootTransform);
+
+			WriteValue(out, (uint32_t)skeleton.JointNames.size());
+			for (const std::string& name : skeleton.JointNames)
+				WriteString(out, name);
+		}
+
+		Skeleton ReadSkeleton(std::istream& in)
+		{
+			Skeleton skeleton;
+			ReadArray(in, skeleton.ParentIndices);
+			ReadArray(in, skeleton.InverseBind);
+			ReadArray(in, skeleton.LocalRestPose);
+			ReadValue(in, skeleton.RootTransform);
+
+			uint32_t nameCount = 0;
+			ReadValue(in, nameCount);
+			skeleton.JointNames.resize(nameCount);
+			for (std::string& name : skeleton.JointNames)
+				name = ReadString(in);
+
+			return skeleton;
+		}
+
+		void WriteClips(std::ostream& out, const std::vector<AnimationClip>& clips)
+		{
+			WriteValue(out, (uint32_t)clips.size());
+			for (const AnimationClip& clip : clips)
+			{
+				WriteString(out, clip.Name);
+				WriteValue(out, clip.Duration);
+
+				WriteValue(out, (uint32_t)clip.Channels.size());
+				for (const AnimationClip::Channel& channel : clip.Channels)
+				{
+					WriteValue(out, channel.Joint);
+					WriteValue(out, channel.Target);
+					WriteValue(out, channel.Mode);
+					WriteArray(out, channel.Times);
+					WriteArray(out, channel.Values);
+				}
+			}
+		}
+
+		std::vector<AnimationClip> ReadClips(std::istream& in)
+		{
+			uint32_t clipCount = 0;
+			ReadValue(in, clipCount);
+
+			std::vector<AnimationClip> clips(clipCount);
+			for (AnimationClip& clip : clips)
+			{
+				clip.Name = ReadString(in);
+				ReadValue(in, clip.Duration);
+
+				uint32_t channelCount = 0;
+				ReadValue(in, channelCount);
+				clip.Channels.resize(channelCount);
+				for (AnimationClip::Channel& channel : clip.Channels)
+				{
+					ReadValue(in, channel.Joint);
+					ReadValue(in, channel.Target);
+					ReadValue(in, channel.Mode);
+					ReadArray(in, channel.Times);
+					ReadArray(in, channel.Values);
+				}
+			}
+
+			return clips;
 		}
 
 		void WriteMaterials(std::ostream& out, const std::vector<Ref<Material>>& materials)
@@ -227,20 +278,22 @@ namespace GanymedE {
 				material->SetNormalMapPath(normalPath);
 				material->SetMetallicRoughnessMapPath(mrPath);
 
+				// Same resolve the cold-import path uses, so a cache load shares the
+				// manager's texture cache instead of decoding its own copies.
 				if (!albedoPath.empty())
-					material->SetAlbedoMap(Texture2D::Create((GetAssetRoot() / albedoPath).string()));
+					material->SetAlbedoMap(TextureImporter::LoadMaterialMap(albedoPath));
 				else
-					material->SetAlbedoMap(CreateTextureFromEmbedded(albedoEmbedded));
+					material->SetAlbedoMap(TextureImporter::LoadFromMemory(albedoEmbedded.data(), albedoEmbedded.size(), true));
 
 				if (!normalPath.empty())
-					material->SetNormalMap(Texture2D::Create((GetAssetRoot() / normalPath).string()));
+					material->SetNormalMap(TextureImporter::LoadMaterialMap(normalPath));
 				else
-					material->SetNormalMap(CreateTextureFromEmbedded(normalEmbedded));
+					material->SetNormalMap(TextureImporter::LoadFromMemory(normalEmbedded.data(), normalEmbedded.size(), true));
 
 				if (!mrPath.empty())
-					material->SetMetallicRoughnessMap(Texture2D::Create((GetAssetRoot() / mrPath).string()));
+					material->SetMetallicRoughnessMap(TextureImporter::LoadMaterialMap(mrPath));
 				else
-					material->SetMetallicRoughnessMap(CreateTextureFromEmbedded(mrEmbedded));
+					material->SetMetallicRoughnessMap(TextureImporter::LoadFromMemory(mrEmbedded.data(), mrEmbedded.size(), true));
 
 				// Keep the bytes so a future cache rewrite doesn't drop the textures
 				material->SetAlbedoMapEmbeddedData(std::move(albedoEmbedded));
@@ -307,15 +360,21 @@ namespace GanymedE {
 		std::vector<uint32_t> indices;
 		std::vector<Submesh> submeshes;
 
-		ReadVector(in, vertices);
-		ReadIndices(in, indices);
+		ReadArray(in, vertices);
+		ReadArray(in, indices);
 		ReadSubmeshes(in, submeshes);
 		std::vector<Ref<Material>> materials = ReadMaterials(in);
+
+		std::vector<SkinVertex> skinVertices;
+		ReadArray(in, skinVertices);
+		Skeleton skeleton = ReadSkeleton(in);
+		std::vector<AnimationClip> clips = ReadClips(in);
 
 		if (vertices.empty() || indices.empty())
 			return nullptr;
 
-		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials);
+		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials,
+			std::move(skinVertices), std::move(skeleton), std::move(clips));
 		mesh->SetPath(sourceRelativePath.generic_string());
 		GE_CORE_INFO("Loaded mesh cache '{0}'", cachePath.filename().string());
 		return mesh;
@@ -343,13 +402,34 @@ namespace GanymedE {
 		WriteValue(out, MESH_CACHE_VERSION);
 		WriteValue(out, sourceTimestamp);
 		WriteString(out, sourceRelativePath.generic_string());
-		WriteVector(out, mesh->GetVertices());
-		WriteIndices(out, mesh->GetIndices());
+		WriteArray(out, mesh->GetVertices());
+		WriteArray(out, mesh->GetIndices());
 		WriteSubmeshes(out, mesh->GetSubmeshes());
 		WriteMaterials(out, mesh->GetMaterials());
+		WriteArray(out, mesh->GetSkinVertices());
+		WriteSkeleton(out, mesh->GetSkeleton());
+		WriteClips(out, mesh->GetClips());
 
 		GE_CORE_INFO("Wrote mesh cache '{0}'", cachePath.filename().string());
 		return true;
+	}
+
+	bool MeshCache::Invalidate(const std::filesystem::path& sourceRelativePath)
+	{
+		std::filesystem::path cachePath = GetCachePath(sourceRelativePath);
+
+		std::error_code ec;
+		bool removed = std::filesystem::remove(cachePath, ec);
+		if (ec)
+		{
+			GE_CORE_WARN("Failed to remove mesh cache '{0}'", cachePath.filename().string());
+			return false;
+		}
+
+		if (removed)
+			GE_CORE_INFO("Invalidated mesh cache '{0}'", cachePath.filename().string());
+
+		return removed;
 	}
 
 }

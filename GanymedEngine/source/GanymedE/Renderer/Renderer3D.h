@@ -22,9 +22,17 @@ namespace GanymedE {
 		static void BeginScene(const EditorCamera& camera);
 		static void EndScene();
 
-		static void SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID = -1);
 		static void SubmitMesh(const Ref<Mesh>& mesh, uint32_t submeshIndex, const Ref<Material>& material,
 			const glm::mat4& transform, int entityID = -1);
+		static void SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID = -1);
+
+		// Draws the mesh with a joint palette (AnimatorComponent::Palette) instead of
+		// the static path. The palette is copied here, so the caller may reuse or
+		// rebuild its storage immediately. Skinned submeshes cannot batch - each is
+		// one draw call with its own palette upload - so this falls back to
+		// SubmitMesh when there is nothing to skin with.
+		static void SubmitSkinnedMesh(const Ref<Mesh>& mesh, const glm::mat4& transform,
+			const glm::mat4* palette, uint32_t jointCount, int entityID = -1);
 
 		// Analytic lights (submit between BeginScene and EndScene)
 		static void SubmitDirectionalLight(const glm::vec3& direction, const glm::vec3& color, float intensity, bool castShadows);
@@ -35,9 +43,6 @@ namespace GanymedE {
 		// Environment / ambient. Procedural fallback when no HDR path is provided.
 		static void SubmitSkyLight(const glm::vec3& skyColor, const glm::vec3& groundColor, float intensity, bool drawSkybox);
 		static void SubmitEnvironment(const Ref<Environment>& environment, float intensity, bool drawSkybox);
-
-		// Loads and caches an HDR environment (relative to the assets/ folder).
-		static Ref<Environment> LoadEnvironment(const std::string& path);
 
 		static void DrawSkybox();
 		static void DrawGrid();
@@ -56,6 +61,7 @@ namespace GanymedE {
 			uint32_t CulledMeshes = 0;     // rejected by camera frustum culling
 			uint32_t InstancedDraws = 0;   // draw calls that batched > 1 instance
 			uint32_t TransparentMeshes = 0;
+			uint32_t SkinnedDraws = 0;     // draw calls that uploaded a joint palette
 		};
 		static void ResetStats();
 		static Statistics GetStats();

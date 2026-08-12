@@ -59,6 +59,10 @@ namespace GanymedE {
 		if (name == "a_TexIndex")     return bgfx::Attrib::TexCoord1;
 		if (name == "a_TilingFactor") return bgfx::Attrib::TexCoord2;
 		if (name == "a_EntityID")     return bgfx::Attrib::TexCoord3;
+		// Skin stream (stream 1 on skinned meshes only). shaderc's names for these
+		// two are fixed: a_indices and a_weight.
+		if (name == "a_JointIndices") return bgfx::Attrib::Indices;
+		if (name == "a_JointWeights") return bgfx::Attrib::Weight;
 
 		GE_CORE_ASSERT(false, "Unmapped vertex attribute - add it to AttribFromName, "
 			"or route it through an instance data buffer if it is per-instance.");

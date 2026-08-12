@@ -6,6 +6,7 @@
 #include "GanymedE/ECS/CommandQueue.h"
 #include "GanymedE/ECS/ComponentTraits.h"
 #include "GanymedE/ECS/System.h"
+#include "GanymedE/Scene/Systems/AnimationSystem.h"
 #include "GanymedE/Scene/Systems/CameraSystem.h"
 #include "GanymedE/Scene/Systems/LuaScriptSystem.h"
 #include "GanymedE/Scene/Systems/NativeScriptSystem.h"
@@ -51,6 +52,12 @@ namespace GanymedE {
 		m_Systems->Add<PhysicsSystem>(*this);
 		m_Systems->Add<NativeScriptSystem>(*this);
 		m_Systems->Add<LuaScriptSystem>(*this);   // scripts move things...
+		// ...and set clip state, which the palette must reflect the same frame. Nothing enforces
+		// this slot: AnimationSystem shares no component with TransformSystem, and it and the
+		// script systems are both *writers* of AnimatorComponent, which ValidateOrdering
+		// deliberately refuses to arbitrate. It becomes enforced against RenderSystem only, once
+		// that reads the palette.
+		m_Systems->Add<AnimationSystem>(*this);
 		m_Systems->Add<TransformSystem>(*this);   // after anything that moves entities...
 		m_Systems->Add<CameraSystem>(*this);      // ...and before anything that reads world space
 		m_Systems->Add<RenderSystem>(*this);
@@ -200,6 +207,14 @@ namespace GanymedE {
 				auto& nsc = view.get<NativeScriptComponent>(e);
 				nsc.Instance = nullptr;
 			}
+		}
+
+		// Joint palettes are rebuilt every frame by AnimationSystem; copying them would carry a
+		// per-joint matrix array per entity into the new scene for one frame's worth of nothing.
+		{
+			auto view = dstRegistry.view<AnimatorComponent>();
+			for (auto e : view)
+				view.get<AnimatorComponent>(e).Palette.clear();
 		}
 
 		return newScene;

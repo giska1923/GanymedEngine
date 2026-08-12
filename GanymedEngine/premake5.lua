@@ -86,7 +86,12 @@ project "GanymedEngine"
 
 	filter "system:windows"
 		systemversion "latest"
-		buildoptions { "/utf-8", "/arch:AVX2" }
+		-- /bigobj raises the COFF section limit. sol2 instantiates enough templates per
+		-- usertype that ScriptBindings.cpp alone crossed it (C1128) on a handful of new
+		-- Entity methods. It changes the object file format only - no codegen, no runtime
+		-- cost - so it is set for the project rather than filtered to the one file that
+		-- needs it today.
+		buildoptions { "/utf-8", "/arch:AVX2", "/bigobj" }
 
 		links
 		{

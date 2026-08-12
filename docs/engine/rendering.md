@@ -48,11 +48,17 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
   namespace-like class keeping the old call-site shape: state setters mutate one `RenderState`;
   `DrawIndexed`/`DrawIndexedInstanced`/`DrawLines` bind buffers, apply `FrameUniforms`, fold the
   state in, and `bgfx::submit` with the program recorded by `Shader::Bind()`.
+  `DrawIndexedInstancedSkinned` is the same call plus a second vertex stream, bound at the *same*
+  `baseVertex` as stream 0 — the two must be parallel per-vertex or the mesh skins against the
+  wrong joints, silently.
 - [`Buffer.h`](../../GanymedEngine/source/GanymedE/Renderer/Buffer.h): `BufferLayout` keeps the
   `{ ShaderDataType::Float3, "a_Position" }` authoring syntax and translates to
   `bgfx::VertexLayout` via **`AttribFromName`** — bgfx attributes are semantic slots, so free-form
   data rides in spare TexCoords (`a_TexIndex`→TexCoord1, `a_TilingFactor`→TexCoord2,
-  `a_EntityID`→TexCoord3). This table must stay in sync with `varying.def.sc`. There is no 32-bit
+  `a_EntityID`→TexCoord3). Skinned meshes add `a_JointIndices`→Indices and `a_JointWeights`→Weight
+  on a second vertex stream; note the shader-side names for those two are **not** ours to pick —
+  shaderc rejects any vertex input outside its fixed list, so they are declared `a_indices` and
+  `a_weight`. This table must stay in sync with `varying.def.sc`. There is no 32-bit
   int attribute: integers travel as floats (exact to 2^24 — fine for entity IDs), and the CPU-side
   data must be written as float. `VertexBuffer` is static (data ctor) or dynamic (size ctor +
   `SetData`); `IndexBuffer` is 32-bit; `Geometry` is the VB+IB pair that replaced `VertexArray`.
@@ -71,6 +77,12 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
 picks the profile matching `bgfx::getRendererType()` (mapping in `Shader.cpp::ProfileDirectory`).
 Call sites still say `Shader::Create("assets/shaders/Foo.glsl")` — the path is reduced to its stem.
 
+The `vs_<name>`/`fs_<name>` pairing is a convention of the loader, not a requirement of the format,
+and `Shader::CreateFromStages(name, vertexStage, fragmentStage)` names the two independently. Both
+skinned programs use it: they differ from their static counterparts only in the vertex shader, and
+without it the naming rule alone would force a duplicate copy of the 300-line `fs_Phong` to sit
+next to it. (Not to be confused with the three-argument `Shader::Create`, which takes source.)
+
 **Edit a shader → re-run `compile_shaders`.** A missing/failed program logs an error and its draws
 are skipped (the engine keeps running).
 
@@ -86,9 +98,9 @@ API notes:
   `vec3(x)`, `mul(m, v)` not `m * v`, `mtxFromCols`, varyings only in `main`'s signature, `line`
   is reserved in HLSL.
 
-Current programs (20): FlatColor, VertexPosColor, Texture, Line, Grid, Phong, ShadowDepth, Skybox,
-SkyboxCube, Equirect, Irradiance, Prefilter, BRDFLut, BloomDownsample, BloomUpsample, Tonemap,
-FXAA, Blit, ImGui, RmlUi.
+Current programs (22): FlatColor, VertexPosColor, Texture, Line, Grid, Phong, PhongSkinned,
+ShadowDepth, ShadowDepthSkinned, Skybox, SkyboxCube, Equirect, Irradiance, Prefilter, BRDFLut,
+BloomDownsample, BloomUpsample, Tonemap, FXAA, Blit, ImGui, RmlUi.
 
 Two of those ship a per-shader `varying.<name>.def.sc` because their vertex layout is fixed by a
 third party and does not match the engine's: **ImGui** and **RmlUi** (whose colour and texcoord
@@ -144,13 +156,17 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    one view per cascade (`RenderPass::Shadow + n`). Cascade fitting is stable (bounding-sphere) and
    texel-snapped to kill edge shimmer; front-face culling reduces acne. Color writes are disabled
    (a depth-only FB rejects draws whose write mask targets missing attachments). Split scheme:
-   log/linear blend (λ=0.7) capped at 200 units.
+   log/linear blend (λ=0.7) capped at 200 units. Skinned casters are split out of the instanced
+   caster list and redrawn through `ShadowDepthSkinned` in **every** cascade — a character standing
+   in cascade 0 casting into cascade 2 is ordinary, and a bind-pose shadow under a moving character
+   reads as a bug even though nothing errored.
 4. **View restore** — back to `RenderPass::SceneHDR` (the shadow pass left the sticky view ID on
    the last cascade).
 5. **Opaque** — sorted material → mesh → submesh → front-to-back; contiguous runs of the same
    (mesh, submesh) draw as **instanced chunks** (≤1024 instances per draw, transient instance
    buffer). Material binds carry the per-pass extras: cascade matrices (one `mat4[4]`), splits
-   (one vec4), shadow samplers (slots 5–8, clamped), IBL maps (slots 9–11) and flags.
+   (one vec4), shadow samplers (slots 5–8, clamped), IBL maps (slots 9–11) and flags. A skinned
+   command never joins a run (see below).
 6. **Transparent** — back-to-front, blending on, depth-write off; only neighbors that stayed
    adjacent after the depth sort are instanced together.
 7. **Debug lines** — accumulated `DrawLine/DrawWireBox/DrawWireSphere/DrawWireCapsule` calls flush
@@ -160,12 +176,62 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
 Also owned here: the procedural **skybox** (fullscreen quad, sky/ground gradient + sun) or the
 **cubemap skybox** when an environment is active; the editor **grid** (fragment-shader infinite
 grid on a scaled quad — its transform goes through `bgfx::setTransform`, and it must not set
-`u_CameraPosition` because `FrameUniforms` already does, one-uniform-per-draw); an environment
-cache for `LoadEnvironment`. `GetStats()` reports draws/meshes/culled/instanced/transparent counts
-(shown in the editor Stats panel).
+`u_CameraPosition` because `FrameUniforms` already does, one-uniform-per-draw). The active
+environment is whatever `SubmitEnvironment` set this frame — caching environments by path is
+`AssetManager`'s job, not the renderer's. `GetStats()` reports
+draws/meshes/culled/instanced/transparent/skinned counts (shown in the editor Stats panel).
 
 Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5–8 shadow cascades,
 9–11 IBL, 12 skybox cubemap.
+
+### Skinned meshes
+
+`Renderer3D::SubmitSkinnedMesh(mesh, transform, palette, jointCount, entityID)` is the skinned
+entry point; `RenderSystem` calls it for entities whose mesh has a skeleton and whose animator has
+built a palette. Everything else about the command — sorting, culling, material binding, entity-ID
+picking — goes through the same path as a static draw. Only three things differ:
+
+- **The palette is copied at submit** into a frame-lifetime `PaletteStorage`, one `MaxBones`-sized
+  identity-padded block per skinned entity (shared by all of its skinned submeshes), and the
+  command holds an offset into it. This is how instance data is already staged, and it means the
+  flush does not depend on `AnimatorComponent::Palette` still being alive or unchanged.
+- **Skinned commands do not batch.** The palette is uniform state, not per-instance data, so two
+  characters in different poses cannot share a draw. Each skinned submesh is one submit with
+  `SetMat4Array("u_Bones", …)` in front of it. Instance count stays **1** rather than dropping to a
+  non-instanced draw, so there is one vertex-input convention (`i_data0..4`) everywhere and the
+  entity ID still reaches the picking attachment. The merge loop's guards are written so that a
+  scene with no skinned commands batches byte-for-byte as it did before.
+- **The program is replaced per skinned draw**, which forces a material rebind on it and on the
+  next static draw after it — bgfx discards texture bindings at submit, so a skinned draw cannot
+  ride the material cache, and a static draw must not inherit the skinned program (it would read a
+  stream 1 that is not bound).
+
+`Skeleton::MaxBones` is **128**: one `mat4[128]` uniform, which is a *single* handle against
+`BGFX_CONFIG_MAX_UNIFORMS = 512` (the limit counts handles, not vec4s) and 512 vec4s inside D3D11's
+4096-vec4 constant buffer. Humanoid rigs run 60–90 joints. The caveat is GL: its guaranteed minimum
+`MAX_VERTEX_UNIFORM_VECTORS` is 256, so a minimal GL implementation may fail to link the skinned
+programs. D3D/Vulkan/Metal are the primary backends and this is documented rather than engineered
+around. Import warns and clamps above 128 joints — drawing wrong, loudly.
+
+Bounds are the one deliberate approximation. A skinned submesh's vertices are the bind pose, so the
+measured AABB is not the box that gets drawn; `Mesh::ComputeBounds` pads it by
+`SkinnedBoundsPadding` (25%) of the box's **largest** extent — not per axis, because a limb can
+swing about as far as the rig is long, so a narrow axis needs the same absolute slack as a wide one
+(CesiumMan stands arms-down with an X extent of 0.31 against a height of 1.51, and its walk cycle
+overruns a per-axis 50% pad). Exact posed bounds mean skinning every vertex on the CPU each frame to
+decide one culling test. The failure mode is a character popping at the screen edge if a clip swings
+wider than the pad.
+
+Order of operations in `vs_PhongSkinned`: blend the palette in mesh space **first**, apply the
+per-instance model matrix after, exactly where `vs_Phong` applies it. The palette is
+`Global * InverseBind`, which is identity at the bind pose, so an unposed rig lands precisely where
+`vs_Phong` would have put it.
+
+One last trap. `Submesh::LocalTransform` is *kept* for skinned submeshes, where static ones have it
+reset to identity by the world-space bake, and re-applying it here is what cancels the
+`inverse(skinnedMeshNodeWorld)` folded into `Skeleton::RootTransform`. Both halves have to be
+present: dropping either alone leaves a Y-up-corrected character rendering on its side. See
+[assets.md](assets.md#skinning-data).
 
 ## Materials & meshes
 
@@ -178,8 +244,12 @@ Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5�
   `Bind()` uploads the scalars and binds the maps to slots 0–2 (white fallback).
 - [`Mesh`](../../GanymedEngine/source/GanymedE/Renderer/Mesh.h) — interleaved
   `MeshVertex{Position, Normal, Tangent, TexCoord}` + 32-bit indices + `Submesh` table
-  (base vertex/index, count, material index, local transform, name, local AABB) + material list +
-  the built `Geometry`. Bounds are computed on build and used for culling.
+  (base vertex/index, count, material index, local transform, name, local AABB, `IsSkinned`) +
+  material list + the built `Geometry`, plus the skeleton and clips on a rigged asset. Bounds are
+  computed on build and used for culling. `Build` also creates the optional stream-1 buffer
+  (`GetSkinVertexBuffer()`, null when there is no skin data) from `SkinVertex{JointIndices,
+  JointWeights}`; the skin attributes ride a second stream rather than widening `MeshVertex`, which
+  would cost every static vertex in the engine 32 bytes to serve the few that are rigged.
 
 ## Environment / IBL
 

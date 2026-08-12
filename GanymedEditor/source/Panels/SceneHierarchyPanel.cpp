@@ -1,4 +1,5 @@
 #include "SceneHierarchyPanel.h"
+#include "../AssetDragDrop.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -11,8 +12,6 @@
 #include "GanymedE/Scripting/ScriptEngine.h"
 
 #include <algorithm>
-#include <cctype>
-#include <filesystem>
 
 namespace GanymedE {
 
@@ -439,6 +438,15 @@ namespace GanymedE {
 				}
 			}
 
+			if (!m_SelectionContext.HasComponent<AnimatorComponent>())
+			{
+				if (ImGui::MenuItem("Animator"))
+				{
+					m_SelectionContext.AddComponent<AnimatorComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
 			if (!m_SelectionContext.HasComponent<ScriptComponent>())
 			{
 				if (ImGui::MenuItem("Script"))
@@ -636,18 +644,70 @@ namespace GanymedE {
 				ImGui::TextDisabled("No mesh assigned");
 			}
 
-			if (ImGui::BeginDragDropTarget())
+			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::StaticMesh);
+			if (IsAssetHandleValid(dropped))
+				component.Mesh = dropped;
+		});
+
+		DrawComponent<AnimatorComponent>("Animator", entity, [entity](auto& component)
+		{
+			Ref<Mesh> mesh = entity.HasComponent<StaticMeshComponent>()
+				? AssetManager::GetAsset<Mesh>(entity.GetComponent<StaticMeshComponent>().Mesh)
+				: nullptr;
+
+			const bool rigged = mesh && mesh->HasSkeleton();
+			if (!rigged)
 			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-				{
-					const char* path = (const char*)payload->Data;
-					std::string ext = std::filesystem::path(path).extension().string();
-					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-					if (ext == ".gltf" || ext == ".glb")
-						component.Mesh = AssetManager::ImportAsset(path);
-				}
-				ImGui::EndDragDropTarget();
+				ImGui::TextDisabled("No rigged mesh on this entity");
 			}
+			else
+			{
+				// A combo over the mesh's own clip names rather than a text field: the name *is*
+				// the reference, and typing it by hand is exactly how you end up silently posed
+				// at bind while wondering why nothing moves.
+				const auto& clips = mesh->GetClips();
+				if (ImGui::BeginCombo("Clip", component.Clip.empty() ? "(none)" : component.Clip.c_str()))
+				{
+					if (ImGui::Selectable("(none)", component.Clip.empty()))
+						component.Clip.clear();
+
+					for (const AnimationClip& clip : clips)
+					{
+						const bool selected = component.Clip == clip.Name;
+						if (ImGui::Selectable(clip.Name.c_str(), selected))
+							component.Clip = clip.Name;
+						if (selected)
+							ImGui::SetItemDefaultFocus();
+					}
+
+					ImGui::EndCombo();
+				}
+
+				if (clips.empty())
+					ImGui::TextDisabled("Mesh is rigged but carries no clips");
+			}
+
+			ImGui::DragFloat("Speed", &component.Speed, 0.01f, -10.0f, 10.0f);
+			ImGui::Checkbox("Playing", &component.Playing);
+			ImGui::SameLine();
+			ImGui::Checkbox("Loop", &component.Loop);
+
+			// Edit mode evaluates the pose but never runs the clock, so this slider is the only
+			// way to move a rig without entering play mode. Scrubbing clears Playing, which
+			// matters in play mode only - there the clock would otherwise overwrite the scrubbed
+			// value on the very next update and the slider would appear not to work at all.
+			const AnimationClip* clip = rigged ? mesh->FindClip(component.Clip) : nullptr;
+			const float duration = clip ? clip->Duration : 0.0f;
+			if (ImGui::DragFloat("Time", &component.Time, 0.01f, 0.0f, duration))
+				component.Playing = false;
+			if (duration > 0.0f)
+			{
+				ImGui::SameLine();
+				ImGui::TextDisabled("/ %.2fs", duration);
+			}
+
+			if (rigged)
+				ImGui::Text("Joints: %u", mesh->GetSkeleton().JointCount());
 		});
 
 		DrawComponent<ScriptComponent>("Script", entity, [](auto& component)
@@ -670,23 +730,14 @@ namespace GanymedE {
 
 			ImGui::TextDisabled("Drop a .lua file here");
 
-			if (ImGui::BeginDragDropTarget())
+			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::Script);
+			if (IsAssetHandleValid(dropped))
 			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-				{
-					const char* path = (const char*)payload->Data;
-					std::string ext = std::filesystem::path(path).extension().string();
-					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-					if (ext == ".lua")
-					{
-						component.Script = AssetManager::ImportAsset(path);
-						// Overrides are keyed by name against the old script's declarations;
-						// carrying them to a different script would apply values it never asked
-						// for. Clearing is the honest option.
-						component.Fields.clear();
-					}
-				}
-				ImGui::EndDragDropTarget();
+				component.Script = dropped;
+				// Overrides are keyed by name against the old script's declarations;
+				// carrying them to a different script would apply values it never asked
+				// for. Clearing is the honest option.
+				component.Fields.clear();
 			}
 
 			DrawScriptFields(component);
@@ -741,18 +792,9 @@ namespace GanymedE {
 				ImGui::ColorEdit3("Ground Color", glm::value_ptr(component.GroundColor));
 			}
 
-			if (ImGui::BeginDragDropTarget())
-			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-				{
-					const char* path = (const char*)payload->Data;
-					std::string ext = std::filesystem::path(path).extension().string();
-					std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-					if (ext == ".hdr")
-						component.Environment = AssetManager::ImportAsset(path);
-				}
-				ImGui::EndDragDropTarget();
-			}
+			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::Environment);
+			if (IsAssetHandleValid(dropped))
+				component.Environment = dropped;
 
 			ImGui::DragFloat("Intensity", &component.Intensity, 0.02f, 0.0f, 20.0f);
 			ImGui::Checkbox("Draw Skybox", &component.DrawSkybox);

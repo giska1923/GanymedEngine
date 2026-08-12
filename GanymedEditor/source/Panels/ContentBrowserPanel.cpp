@@ -107,16 +107,27 @@ namespace GanymedE {
 
 			if (!isDirectory && ImGui::BeginPopupContextItem())
 			{
+				auto relativePath = std::filesystem::relative(path, g_AssetPath);
+
 				if (IsImportableAsset(path))
 				{
 					if (ImGui::MenuItem("Import"))
 					{
-						auto relativePath = std::filesystem::relative(path, g_AssetPath);
 						AssetHandle handle = AssetManager::ImportAsset(relativePath);
 						if (IsAssetHandleValid(handle))
 							GE_CORE_INFO("Imported '{0}'", relativePath.string());
 					}
 				}
+
+				// Only registered assets can be reloaded - there is nothing to evict
+				// for a file the manager has never seen.
+				AssetHandle handle = AssetManager::GetHandle(relativePath);
+				if (IsAssetHandleValid(handle))
+				{
+					if (ImGui::MenuItem("Reload"))
+						AssetManager::Reload(handle);
+				}
+
 				ImGui::EndPopup();
 			}
 

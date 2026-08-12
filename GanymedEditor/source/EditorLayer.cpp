@@ -1,4 +1,6 @@
 #include "EditorLayer.h"
+#include "AssetDragDrop.h"
+
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 
@@ -17,9 +19,6 @@
 
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
-
-#include <algorithm>
-#include <cctype>
 
 namespace GanymedE {
 
@@ -360,30 +359,20 @@ namespace GanymedE {
 		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
 			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
 
-		if (ImGui::BeginDragDropTarget())
+		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh }))
 		{
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-			{
-				const char* path = (const char*)payload->Data;
-				std::filesystem::path fullPath = g_AssetPath / path;
-				std::string ext = fullPath.extension().string();
-				std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+			std::filesystem::path fullPath = g_AssetPath / drop.Path;
 
-				if (ext == ".ganymede")
-				{
-					OpenScene(fullPath);
-				}
-				else if (ext == ".gltf" || ext == ".glb")
-				{
-					if (m_SceneState == SceneState::Edit)
-					{
-						Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
-						if (entity)
-							m_SceneHierarchyPanel.SetSelectedEntity(entity);
-					}
-				}
+			if (drop.Type == AssetType::Scene)
+			{
+				OpenScene(fullPath);
 			}
-			ImGui::EndDragDropTarget();
+			else if (drop.Type == AssetType::StaticMesh && m_SceneState == SceneState::Edit)
+			{
+				Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
+				if (entity)
+					m_SceneHierarchyPanel.SetSelectedEntity(entity);
+			}
 		}
 
 		// Gizmos

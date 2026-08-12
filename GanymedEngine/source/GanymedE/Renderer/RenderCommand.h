@@ -46,6 +46,13 @@ namespace GanymedE {
 		static void DrawIndexed(const Geometry& geometry, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex);
 		static void DrawIndexedInstanced(const Geometry& geometry, uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex,
 			const void* instanceData, uint32_t instanceCount, uint16_t instanceStride);
+
+		// As above, plus a second vertex stream carrying the skin attributes. The
+		// stream must be parallel to stream 0 - it is bound at the same baseVertex,
+		// so a per-vertex mismatch would silently skin with the wrong joints.
+		static void DrawIndexedInstancedSkinned(const Geometry& geometry, const Ref<VertexBuffer>& skinStream,
+			uint32_t indexCount, uint32_t baseIndex, int32_t baseVertex,
+			const void* instanceData, uint32_t instanceCount, uint16_t instanceStride);
 		static void DrawLines(const Geometry& geometry, uint32_t vertexCount);
 	};
 
