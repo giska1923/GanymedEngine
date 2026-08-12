@@ -1,6 +1,6 @@
 # GanymedEngine — Skeletal Animation Roadmap
 
-Status: **Phases 1–4 executed; Phase 5 outstanding.** Written 2026-08-02, against the
+Status: **Phases 1–5 executed; the milestone is complete.** Written 2026-08-02, against the
 post-scripting/post-bgfx engine (branch point: the Linux/macOS build-fix work). Each phase carries
 its own "execution notes" section recording where the plan was wrong or diverged from — read those
 alongside the plan, not instead of it.
@@ -779,6 +779,77 @@ resulting silhouette tracks the pose follows from `vs_ShadowDepthSkinned` runnin
 - A Lua script switches clips on a key press in play mode.
 - A scene with an animator survives save → load → play → stop.
 - `ganymed.d.ts` matches the bindings exactly; every doc claim spot-checked against code.
+
+### Phase 5 execution notes
+
+**The inspector was already done.** Phase 3 built the Animator section — clip combo, Speed, Playing,
+Loop, Time — because it needed a way to drive the component before any of the render path existed.
+Phase 5 added the one behavior 5's own bullet specified and 3 had not: **dragging Time clears
+Playing**. That is a play-mode fix, not an edit-mode one. In edit mode nothing advances the clock so
+there is nothing to pause; in play mode the clock overwrites the scrubbed value on the very next
+update and the slider looks broken.
+
+**`PlayAnimation` is idempotent for the clip already playing — a deliberate divergence from the
+plan.** The plan said "sets Clip, Time=0, Playing=true". Taken literally that breaks the idiom every
+author reaches for first:
+
+```lua
+if grounded then self.entity:PlayAnimation("Idle") else self.entity:PlayAnimation("Run") end
+```
+
+`LuaScriptSystem` runs *before* `AnimationSystem`, so a per-frame call that zeroes `Time` undoes each
+frame's advance before the sampler ever sees it: the character sits pinned one tick into the clip,
+animating nothing, with no warning anywhere. Unity's `Animator.Play` does restart unconditionally,
+but it assumes a state machine above it gating the call; v1 has explicitly parked state machines, so
+the guard belongs in the binding. Switching clips is still the hard cut the plan wanted. Cost:
+"restart the current clip" now takes switching away and back, which is the strictly less common
+operation and a documented one.
+
+**`StopAnimation` freezes rather than rewinds** — the plan did not say which. `Playing = false` only
+stops the clock and `BuildPalette` still runs, so the rig holds its pose. Rewinding would snap the
+character on a call most people read as "pause", and `PlayAnimation` already covers
+restart-from-zero.
+
+**`HasAnimator` was added beyond the six.** Without it `IsAnimationPlaying() == false` cannot be told
+apart from "this entity has no animator", and `HasRigidBody` set the precedent. Every animation call
+no-ops on a missing component rather than asserting, matching the physics bindings —
+`Entity::GetComponent` asserts, and in Release the assert is gone and the read is undefined.
+
+**No clip-name validation at the call site.** `AnimationSystem::ResolveClip` already warns once per
+distinct bad name; a second check would report one typo twice and could not do it reliably anyway,
+since the mesh asset may not be resident when the script runs.
+
+**`/bigobj` was needed, and it is the one build change this phase made.** Seven new sol2 usertype
+members pushed `ScriptBindings.cpp` past the COFF section limit (`C1128`). Set for the whole engine
+project rather than filtered to the file, since it changes only the object format and the binding
+surface will keep growing. Requires project regeneration — recorded in `build-and-tooling.md`.
+
+**Docs**: `scripting.md` (the bindings and the two behavioral choices above), `editor.md` (the scrub
+fix), `build-and-tooling.md` (`/bigobj`). The audit sweep this phase was supposed to perform found
+nothing outstanding — `scene.md` ("seven built-in systems", the component catalog, the serialization
+note), `ecs.md` (the named system chain), `rendering.md` and `assets.md` were all brought current by
+the phases that caused the changes, which is the rule working as intended.
+
+Results (temporary probe in `EditorLayer` plus a Lua probe script, both removed afterwards: a Fox
+entity authored with an animator, serialized, reloaded into a fresh scene, played for 31 frames and
+stopped):
+
+| Check | Result |
+|---|---|
+| Save → load | `Clip`/`Speed`/`Loop`/`Playing` survive; `Time` intentionally not serialized (a scene loads at the head of its clip) |
+| `PlayAnimation("Walk")` called **every frame** | Time advances 0.012 → 0.316 monotonically over 12 frames — the pinning bug does not occur |
+| Clip switch on frame 13 | `Walk` t=0.316 → `Run` t=0.010: hard cut to 0, then advancing |
+| `SetAnimationSpeed` / `SetAnimationLooping` | 1.50 → 2.00 and loop true → false, same frame |
+| `StopAnimation` | Time frozen at 0.1904 for 5 frames, `playing=false`, **palette still 24 joints** — holds the pose, does not snap to bind |
+| `HasAnimator` / `GetCurrentAnimation` / `IsAnimationPlaying` | `true` / `'Survey'` / `true` at `OnCreate`, before any script write |
+| Play → stop | Editor scene still `Clip='Survey' Speed=1.50 Loop=true`; the runtime copy's writes did not leak back |
+| Unresolved-clip warnings | none — all three names resolved against the mesh |
+
+**The key press itself was not the trigger under test.** The probe switched clips on a frame counter
+so the run could be checked without a human at the keyboard; the script also carries the
+`Input.IsKeyPressed(Key.Space)` branch, but `Input` is unchanged by this phase and already verified.
+What the check is actually about — a Lua script switching clips in play mode and the change landing
+on that frame's pose — is measured above.
 
 ---
 
