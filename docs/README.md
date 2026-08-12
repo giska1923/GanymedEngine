@@ -46,7 +46,8 @@ including verification evidence:
 - [`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](toDo&done/ECS_VIEWS_IMPLEMENTATION_GUIDE.md) — the file-by-file plan for the view/access-wrapper ECS (complete)
 - [`BGFX_MIGRATION.md`](toDo&done/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except some Phase 7 hardening)
 - [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
-- [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5, starting with asset-pipeline prep; planned, not started)
+- [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
+- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; planned, not started)
 
 ## Building & running
 
