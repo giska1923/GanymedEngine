@@ -11,9 +11,16 @@ namespace GanymedE {
 		uint32_t Width;
 		uint32_t Height;
 
+		// Borderless fullscreen: an undecorated window sized to the primary monitor's
+		// video mode, not an exclusive-mode swapchain. Width/Height are ignored when
+		// set. Implemented on Windows; Linux/macOS honour it best-effort.
+		bool Fullscreen;
+
 		WindowProps(const std::string& title = "GanymedEngine",
 			uint32_t width = DEFAULT_WINDOW_WIDTH,
-			uint32_t height = DEFAULT_WINDOW_HEIGHT) : Title(title), Width(width), Height(height) {}
+			uint32_t height = DEFAULT_WINDOW_HEIGHT,
+			bool fullscreen = false)
+			: Title(title), Width(width), Height(height), Fullscreen(fullscreen) {}
 	};
 
 	// Interface representing a desktop system based Window

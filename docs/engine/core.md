@@ -22,6 +22,29 @@ namespace GanymedE {
 }
 ```
 
+### ApplicationSpecification
+
+The name-only constructor above delegates to the spec constructor, which is what an app uses when
+it wants anything other than the defaults:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `Name` | `"GanymedEngine"` | Window title |
+| `Width` / `Height` | `DEFAULT_WINDOW_WIDTH/HEIGHT` (1600×900 on Windows, 640×480 elsewhere) | Windowed size; ignored when `Fullscreen` |
+| `Fullscreen` | `false` | Borderless fullscreen — see [platform.md](platform.md#windows) |
+| `EnableImGui` | `true` | `false` builds no `ImGuiLayer` at all |
+
+`EnableImGui = false` is how a non-editor front-end (the standalone runtime) is hosted. It is a spec
+field rather than a virtual hook because the `Application` constructor decides whether to push the
+overlay, and a virtual dispatched from a base constructor sees the base vtable — a `UsesImGui()`
+override could never fire. Two consequences worth knowing:
+
+- `GetImGuiLayer()` returns null, and layers' `OnImGuiRender` simply never runs. **Check the pointer
+  before dereferencing it**; the editor is the only call site that assumes it exists, and it does so
+  legitimately because it *is* the ImGui front-end.
+- Nothing installs ImGui's GLFW callbacks and nothing blocks events, so every event reaches the game
+  layers raw. That is exactly what a shipped game wants and what `Input::` already assumes.
+
 [`EntryPoint.h`](../../GanymedEngine/source/GanymedE/main/EntryPoint.h) initializes logging, stores
 command-line args (`Application::GetCommandLineArgs()` — the editor uses them to open a scene passed
 as `argv[1]`), then wraps startup/run/shutdown in three profiling sessions
@@ -30,12 +53,12 @@ as `argv[1]`), then wraps startup/run/shutdown in three profiling sessions
 [`Application`](../../GanymedEngine/source/GanymedE/main/Application.h) is a singleton
 (`Application::Get()`) that owns:
 
-- the platform `Window` (created via `Window::Create`, event callback bound to
-  `Application::OnEvent`),
-- the `LayerStack` and the always-present `ImGuiLayer` overlay,
+- the platform `Window` (created via `Window::Create` from a `WindowProps` built out of the spec,
+  event callback bound to `Application::OnEvent`),
+- the `LayerStack` and — when `ApplicationSpecification::EnableImGui` — the `ImGuiLayer` overlay,
 - the run loop (`Run()`): timestep from `glfwGetTime()`, `OnUpdate` for every layer (skipped while
-  minimized), then the ImGui begin/render/end bracket, then `Window::OnUpdate` (poll events +
-  present).
+  minimized), then the ImGui begin/render/end bracket **if an `ImGuiLayer` exists**, then
+  `Window::OnUpdate` (poll events + present).
 
 Application-level event handling: window close stops the loop; resize forwards to
 `Renderer::OnWindowResize` (0×0 → minimized, updates are skipped); **F1** toggles the bgfx

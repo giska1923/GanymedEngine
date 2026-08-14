@@ -163,19 +163,20 @@ namespace GanymedE {
 			physics = physicsSystem->GetPhysicsScene();
 
 		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
-		const PhysicsDebugDrawSettings& settings = settingsView.Get()->DebugDraw;
+		const PhysicsSettings& settings = *settingsView.Get();
 
-		// Prefer Jolt's view of the world when enabled; otherwise draw authored collider gizmos
-		if (physics && physics->IsActive() && settings.Enabled)
-			physics->DebugDraw(cameraPosition, settings);
-		else
+		// Prefer Jolt's view of the world when enabled; otherwise draw authored collider
+		// gizmos, but only for a host that asked for them. This used to fall through
+		// unconditionally, which meant any non-editor front-end drew collider wireframes
+		// over the game.
+		if (physics && physics->IsActive() && settings.DebugDraw.Enabled)
+			physics->DebugDraw(cameraPosition, settings.DebugDraw);
+		else if (settings.ShowColliderGizmos)
 			DrawColliderGizmos();
 	}
 
 	void RenderSystem::OnUpdate(Timestep ts)
 	{
-		(void)ts;
-
 		ECS::SingletonAccessView<RenderContext> renderView{ m_Scene };
 		const RenderContext& context = *renderView.Get();
 
@@ -205,6 +206,20 @@ namespace GanymedE {
 			Renderer2D::BeginScene(*fallbackCamera);
 			SubmitSprites();
 			Renderer2D::EndScene();
+		}
+		else
+		{
+			// No primary camera and no fallback: the scene target still gets cleared, so
+			// the frame is the clear colour rather than garbage. Say why, loudly but not
+			// 60 times a second - a per-frame error would bury everything else in the log
+			// while telling you the same thing.
+			m_NoCameraLogTimer += ts;
+			if (m_NoCameraLogTimer >= kNoCameraLogInterval)
+			{
+				m_NoCameraLogTimer = 0.0f;
+				GE_CORE_ERROR("Scene has no primary camera and no fallback view camera - "
+					"rendering the clear colour only. Add a CameraComponent marked Primary.");
+			}
 		}
 	}
 

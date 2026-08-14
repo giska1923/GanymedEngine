@@ -26,8 +26,28 @@ namespace GanymedE {
 		}
 	};
 
+	// Host configuration, chosen by the app before any layer exists.
+	//
+	// A spec rather than a virtual hook on purpose: the ctor decides whether to push
+	// ImGuiLayer, and a virtual dispatched from a base ctor still sees the base vtable,
+	// so a UsesImGui() override could never fire. Configuration is also how production
+	// engines separate host services from front-end chrome.
+	struct ApplicationSpecification
+	{
+		std::string Name = "GanymedEngine";
+		uint32_t Width = DEFAULT_WINDOW_WIDTH;
+		uint32_t Height = DEFAULT_WINDOW_HEIGHT;
+		bool Fullscreen = false;
+
+		// False builds no ImGuiLayer at all. Consequence worth knowing: nothing installs
+		// the ImGui GLFW callbacks or blocks events, so every event reaches the game
+		// layers raw - which is what a shipped runtime wants.
+		bool EnableImGui = true;
+	};
+
 	class GE_API Application {
 	public:
+		explicit Application(const ApplicationSpecification& specification);
 		Application(const std::string& name = "GanymedEngine");
 		virtual ~Application();
 
@@ -40,7 +60,10 @@ namespace GanymedE {
 
 		void Close();
 
+		// Null when the spec disabled ImGui - always check before dereferencing.
 		ImGuiLayer* GetImGuiLayer() { return m_ImGuiLayer; }
+
+		const ApplicationSpecification& GetSpecification() const { return m_Specification; }
 
 		inline static Application& Get() { return *s_instance; }
 		inline Window& GetWindow() { return *m_Window; }
@@ -53,8 +76,9 @@ namespace GanymedE {
 		bool OnWindowResize(WindowResizeEvent& e);
 		bool OnKeyPressed(KeyPressedEvent& e);
 	private:
+		ApplicationSpecification m_Specification;
 		std::unique_ptr<GanymedE::Window> m_Window;
-		ImGuiLayer* m_ImGuiLayer;
+		ImGuiLayer* m_ImGuiLayer = nullptr;
 		bool m_Running = true;
 		bool m_Minimized = false;
 		LayerStack m_LayerStack;

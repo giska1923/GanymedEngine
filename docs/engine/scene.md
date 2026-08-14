@@ -185,6 +185,17 @@ meshes, collider gizmos (or Jolt debug draw when enabled during play), ends the 
 2D pass (sprites) in its own render view. The editor path additionally draws the grid. Its nine view
 declarations are live documentation of exactly what rendering reads.
 
+Two play-mode policies live in this system:
+
+- **Collider gizmos are opt-in.** With Jolt debug draw off, the authored-collider wireframes are
+  drawn only when `PhysicsSettings::ShowColliderGizmos` is set. It defaults **false**, so a shipped
+  game never draws them; the editor sets it true. (This used to fall through unconditionally, which
+  meant any non-editor front-end drew collider wireframes over the game.) Edit mode calls
+  `DrawColliderGizmos()` directly and is unaffected.
+- **No camera is loud, not silent.** With no primary camera *and* no fallback, the frame is the
+  scene target's clear colour and the system logs an error at most once every 5 s. Throttled rather
+  than per-frame: a 60 Hz error would bury everything else in the log to say the same thing.
+
 The mesh view carries `OptRO<AnimatorComponent>`, so one iteration covers both draw paths: an
 entity with an animator, a mesh that `HasSkeleton()`, and a non-empty palette goes to
 `Renderer3D::SubmitSkinnedMesh`, everything else to `SubmitMesh`. A rigged mesh with no animator
@@ -201,8 +212,18 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
 
 - **`RenderContext`** — `MainCamera` + `CameraTransform` (resolved per update by CameraSystem) and
   `EditorViewCamera` (the editor's camera: the view camera in edit mode, the fallback in play
-  mode). Change-tracked (`SingletonTraits<RenderContext>::TrackChanges`).
-- **`PhysicsSettings`** — `DebugDraw` toggles, `FixedTimestep` (1/60), `MaxStepsPerFrame` (5).
+  mode). Change-tracked (`SingletonTraits<RenderContext>::TrackChanges`). *Known misnomer:* now that
+  a non-editor host exists, this field is really "fallback view camera" and is simply null there.
+  Flagged as debt rather than renamed — the rename ripples through docs and editor for zero behaviour
+  change.
+- **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `FixedTimestep` (1/60),
+  `MaxStepsPerFrame` (5).
+
+**Singletons are not carried by `Scene::Copy`.** The copy constructs a fresh `Scene`, whose
+constructor default-constructs its own `ctx()` entries, and then copies entities and components only.
+Anything a host needs true on the play-mode scene must be (re)written after the copy — which is why
+`EditorLayer` pushes `DebugDraw` *and* `ShowColliderGizmos` onto the active scene every play frame
+rather than once on play.
 
 ## Serialization
 

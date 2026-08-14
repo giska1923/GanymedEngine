@@ -62,7 +62,34 @@ namespace GanymedE {
 			// context when the GL backend is picked), so GLFW must not make one.
 			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-			m_Window = glfwCreateWindow((int)props.Width, (int)props.Height, m_Data.Title.c_str(), nullptr, nullptr);
+			// Borderless, not exclusive: an undecorated window covering the primary
+			// monitor. Passing the monitor to glfwCreateWindow would request an
+			// exclusive mode change, which bgfx does not drive and which costs
+			// alt-tab friendliness for nothing at this scale.
+			int monitorX = 0, monitorY = 0;
+			if (props.Fullscreen)
+			{
+				GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+				const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+				if (mode)
+				{
+					glfwGetMonitorPos(monitor, &monitorX, &monitorY);
+					m_Data.Width = (uint32_t)mode->width;
+					m_Data.Height = (uint32_t)mode->height;
+					glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+					GE_CORE_INFO("Borderless fullscreen: {0}x{1} at ({2}, {3})",
+						m_Data.Width, m_Data.Height, monitorX, monitorY);
+				}
+				else
+				{
+					GE_CORE_WARN("Fullscreen requested but no video mode is available; staying windowed");
+				}
+			}
+
+			m_Window = glfwCreateWindow((int)m_Data.Width, (int)m_Data.Height, m_Data.Title.c_str(), nullptr, nullptr);
+
+			if (props.Fullscreen && m_Window)
+				glfwSetWindowPos(m_Window, monitorX, monitorY);
 		}
 
 		m_Context = CreateScope<BgfxContext>(m_Window);

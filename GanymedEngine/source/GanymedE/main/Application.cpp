@@ -18,13 +18,21 @@ namespace GanymedE {
 	ApplicationCommandLineArgs Application::s_CommandLineArgs;
 
 	Application::Application(const std::string& name)
+		: Application(ApplicationSpecification{ name })
+	{
+	}
+
+	Application::Application(const ApplicationSpecification& specification)
+		: m_Specification(specification)
 	{
 		GE_PROFILE_FUNCTION();
 
 		GE_CORE_ASSERT(!s_instance, "Application cannot have two instances!");
 		s_instance = this;
 
-		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(WindowProps(name)));
+		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(
+			WindowProps(m_Specification.Name, m_Specification.Width, m_Specification.Height,
+				m_Specification.Fullscreen)));
 		m_Window->SetEventCallback(BIND_CALLBACK_FN(Application::OnEvent, this));
 
 		Renderer::Init();
@@ -39,8 +47,14 @@ namespace GanymedE {
 		// the viewport once that exists.
 		UIEngine::Init(m_Window->GetWidth(), m_Window->GetHeight());
 
-		m_ImGuiLayer = new ImGuiLayer();
-		PushOverlay(m_ImGuiLayer);
+		// A shipped game has no editor chrome, and ImGui is not passive: it installs its
+		// own GLFW callbacks and blocks events by default. Leaving it out is the whole
+		// opt-out - layers' OnImGuiRender simply never runs.
+		if (m_Specification.EnableImGui)
+		{
+			m_ImGuiLayer = new ImGuiLayer();
+			PushOverlay(m_ImGuiLayer);
+		}
 	}
 
 	Application::~Application()
@@ -158,14 +172,17 @@ namespace GanymedE {
 					layer->OnUpdate(timestep);
 			}
 
-			m_ImGuiLayer->Begin();
+			if (m_ImGuiLayer)
 			{
-				GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
+				m_ImGuiLayer->Begin();
+				{
+					GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
 
-				for (Layer* layer : m_LayerStack)
-					layer->OnImGuiRender();
+					for (Layer* layer : m_LayerStack)
+						layer->OnImGuiRender();
+				}
+				m_ImGuiLayer->End();
 			}
-			m_ImGuiLayer->End();
 
 			m_Window->OnUpdate();
 		}

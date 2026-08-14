@@ -24,7 +24,7 @@ one registry + per-type in-memory caches:
 
 | API | Behavior |
 |---|---|
-| `Init()` / `Shutdown()` | Load / save the registry. The editor calls these in `EditorLayer::OnAttach/OnDetach` |
+| `Init(saveRegistryOnShutdown = true)` / `Shutdown()` | Load the registry; save it on shutdown unless told not to. The editor calls these in `EditorLayer::OnAttach/OnDetach` |
 | `ImportAsset(relativePath)` | Idempotent registration: existing path returns its handle; otherwise mint a UUID, infer the type, persist the registry immediately. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
 | `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D` |
@@ -32,6 +32,12 @@ one registry + per-type in-memory caches:
 
 The registry lives at `assets/AssetRegistry.gr` — YAML, one `{Handle, Type, FilePath}` entry per
 asset. It is data, checked into the repo alongside the assets it describes.
+
+`Init(false)` is for a **shipped game**: it must not write into its own install directory on exit
+(under Program Files that fails outright), and it has nothing to persist anyway — the registry it
+loaded is the one it shipped with. Editors and tools leave the default alone. `Shutdown()` still
+clears the caches either way, and still does so while `Renderer::IsGpuAlive()` so the GPU-resource
+destructors release real bgfx handles.
 
 `GetAsset<T>`'s **primary template is defined**, not just declared: its body is a
 `static_assert(sizeof(T) == 0, ...)`, so an unsupported `T` is a compile error naming the supported

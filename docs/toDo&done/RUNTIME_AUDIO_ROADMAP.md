@@ -1,7 +1,7 @@
 # GanymedEngine — Standalone Runtime + Audio Roadmap
 
-Status: **planned, not started.** Written 2026-08-12, against the post-animation engine (branch
-point: the skeletal-animation milestone, complete). Follows the format of
+Status: **Phase 1 executed; Phases 2–5 planned.** Written 2026-08-12, against the post-animation
+engine (branch point: the skeletal-animation milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md): each phase carries goal, steps, decisions with
 rationale, risks, and a verification table; execution notes get appended as phases run. Read the
 decision notes even if you skip the code sketches.
@@ -229,6 +229,88 @@ Temporary probe in Sandbox (it exists for exactly this; probe removed afterwards
 | Gizmo gate | Sandbox play mode with a collider: no wireframes; editor play mode: wireframes as today |
 | No camera | A scene without a primary camera: clear color + throttled error (count log lines over 30 s — expect ~6, not ~1800) |
 | Registry toggle | Sandbox probe with `saveRegistryOnShutdown = false`: `AssetRegistry.gr` mtime unchanged after exit |
+
+### Phase 1 execution notes
+
+**`WindowProps` already carried `Width`/`Height`.** The plan's "title only, 1600×900 hard default"
+was stale — it parameterizes both, defaulted from `DEFAULT_WINDOW_WIDTH/HEIGHT` in `Core.h` (1600×900
+on Windows, 640×480 elsewhere). Only `Fullscreen` was new, so 1.1 was smaller than budgeted.
+
+**`GetImGuiLayer()` was left unguarded at its one call site, deliberately.** The grep found exactly
+one use outside `Application`: `EditorLayer::OnUpdate`'s `BlockEvents` call. Guarding it would be
+defending against a configuration the editor cannot have — it *is* the ImGui front-end. The null
+possibility is documented on the accessor instead.
+
+**The retargeted final pass takes its rect from `SceneRenderer`'s own size, not a window query.**
+The plan said "read the current window size". In backbuffer mode the host feeds `SetViewportSize`
+the window size on every `WindowResizeEvent`, so the two are identical, and reading the member avoids
+pulling `Application`/`Window` into a renderer TU. The contract ("in backbuffer mode, feed it the
+window size") is stated on `SetOutputToBackbuffer`. The one-frame mismatch the plan worried about is
+real but pre-existing and shared with ImGui: `bgfx::reset` runs in `Window::OnUpdate` *after* the
+frame was submitted, so the frame built at the old size is presented into the new-size backbuffer.
+Transient, self-correcting, not worth engineering around.
+
+**Latent bug found in the code 1.2 touches, and fixed.** The tonemap *target* was chosen on
+`m_Settings.FXAAEnabled` while the FXAA *pass* ran on `FXAAEnabled && m_FXAAShader`. With FXAA
+enabled and its shader failing to load, tonemap wrote the FXAA input and nothing ever wrote the
+composite target — a black viewport with no error. Both decisions now read one `fxaaActive`
+predicate. This mattered here because "which pass is final" is exactly what backbuffer mode keys off.
+
+**In-phase finding the plan asked for: `Scene::Copy` does *not* copy singletons.** It constructs a
+fresh `Scene`, whose constructor `SetSingleton`s defaults, then copies entities and components only
+(`Scene.cpp`, `Copy`). So the play-mode scene starts every run with engine defaults. This is already
+load-bearing today — it is why `EditorLayer` re-copies `DebugDraw` onto the active scene *every play
+frame* rather than once on play. `ShowColliderGizmos = true` was therefore added to that same
+per-frame write, needing no new call site. Recorded in `scene.md` because it is the kind of fact that
+silently breaks the next person's "set it once on scene open".
+
+**`ShowColliderGizmos` went on `PhysicsSettings`, not on `PhysicsDebugDrawSettings`.** The latter is
+the parameter type handed to `PhysicsScene::DebugDraw` — Jolt draw options. Authored-collider
+wireframes are not a Jolt concept, and putting a flag there that the callee ignores would be a small
+lie for the sake of riding the editor's existing struct copy. One extra line in the editor was the
+better trade. No Stats-panel checkbox was added: it would be a knob nobody turns, and edit mode draws
+gizmos unconditionally regardless.
+
+**The no-camera throttle is timestep-driven, not clock-driven.** `RenderSystem::OnUpdate` already
+receives `Timestep` (it was being discarded with `(void)ts`), so the throttle accumulates it rather
+than reaching for `std::chrono` or `glfwGetTime`. The counter is primed *above* the interval so the
+first cameraless frame reports immediately instead of after five seconds of silence.
+
+**One permanent logging addition beyond the plan:** `RmlUiRendererBgfx::BeginFrame` logs once per
+change of target kind ("compositing into the backbuffer" / "an offscreen target"). The plan asked for
+this as probe instrumentation; it is worth keeping, because a UI composited into the wrong target is
+*invisible* rather than visibly wrong, which makes "which branch ran" the first thing you want from
+a log. Tri-state member so it never repeats and never spams on editor resizes.
+
+#### Verification evidence
+
+Probe: a temporary `RuntimeProbe` layer in Sandbox with `EnableImGui = false`, a procedurally built
+scene (sky light, directional light, an HDR sprite at colour 2.4, a box collider, a primary
+perspective camera — no asset-registry dependency), `SetOutputToBackbuffer(true)` +
+`SetTarget(nullptr)`, and `assets/ui/hud.rml`. A wall-clock script drove the run and
+`bgfx::requestScreenShot(BGFX_INVALID_HANDLE, ...)` captured the **backbuffer** to TGA at each step,
+so the visual claims below are pixels, not inference. Probe and its copied `ui/`+`fonts/` assets were
+removed afterwards; x64 Debug, D3D11.
+
+| Check | Evidence |
+|---|---|
+| Editor unchanged | Whole solution builds; editor boots clean (log: ImGui shader loaded, 7 registry assets, `save-on-shutdown on`, IBL baked, **zero** warnings/errors), panels dock, viewport shows the studio-HDRI scene. `SetOutputToBackbuffer` never called there |
+| Backbuffer scene | Screenshot 1 (1600×900, FXAA on, view 25 final) and screenshot 3 (1024×640, FXAA off, **view 24** final) both show the tonemapped, bloomed scene filling the window. Both final-view branches exercised |
+| RmlUi on backbuffer | HUD health bar + score visible over the scene in all four screenshots; log: `RmlUi: compositing into the backbuffer (1600x900)` — the null-target branch, taken for the first time ever |
+| No ImGui | Log: `ImGuiLayer absent`, and no `Loaded shader 'ImGui'` line at all — the ImGui bgfx backend never initialized, so nothing could reach view 200 |
+| Resize | Scripted `glfwSetWindowSize(1024, 640)` → log `resize event 1024x640; SceneRenderer now 1024x640`; bgfx recreated the HDR/ID/depth/tonemap/composite targets at 1024×640 and the bloom chain at 512×320 → 16×10. Screenshot 2 is 1024×640 with the quad still square — no stretching |
+| Gizmo gate | Screenshots 1–3: no wireframe on the collider'd entity. Screenshot 4, after writing `ShowColliderGizmos = true` — the *same singleton write the editor makes each play frame* — shows the green wire box. Gate verified in both directions |
+| No camera | `--no-camera` run: **7** error lines over 31 s across **7228** frames (plan predicted ~6 vs ~1800), clear colour only, clean exit, no crash |
+| Registry toggle | Default run leaves no `Sandbox/assets/AssetRegistry.gr`; the same binary with save-on-shutdown enabled creates it. Editor log still reports `save-on-shutdown on` |
+| Fullscreen (1.1 extra) | `--fullscreen`: log `Borderless fullscreen: 1920x1080 at (0, 0)`, window reports 1920×1080, screenshot 1 is 1920×1080 with correct aspect |
+
+**Not verified by me, needs an interactive pass:** editor play/stop cycling, F1 stats overlay, and
+collider gizmos inside editor play mode. The GUI cannot be driven from here; the gizmo path was
+verified through the identical singleton write instead, and play/stop touches no code changed in this
+phase. Worth ten seconds of clicking before Phase 2.
+
+**Build/tooling note:** the probe added source files, so `premake5 vs2022` was re-run; the tree was
+restored and regenerated afterwards. No premake *script* changes were needed in Phase 1.
 
 ---
 

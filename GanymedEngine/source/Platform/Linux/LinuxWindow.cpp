@@ -64,8 +64,34 @@ namespace GanymedE {
 			// context when the GL backend is picked), so GLFW must not make one.
 			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-			m_Window = glfwCreateWindow((int)props.Width, (int)props.Height, m_Data.Title.c_str(), nullptr, nullptr);
+			// Borderless fullscreen, best-effort: undecorated windows are a hint the
+			// window manager may override on X11/Wayland. Verified on Windows only;
+			// the established per-platform posture (see docs/engine/platform.md).
+			int monitorX = 0, monitorY = 0;
+			if (props.Fullscreen)
+			{
+				GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+				const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+				if (mode)
+				{
+					glfwGetMonitorPos(monitor, &monitorX, &monitorY);
+					m_Data.Width = (uint32_t)mode->width;
+					m_Data.Height = (uint32_t)mode->height;
+					glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+					GE_CORE_INFO("Borderless fullscreen: {0}x{1} at ({2}, {3})",
+						m_Data.Width, m_Data.Height, monitorX, monitorY);
+				}
+				else
+				{
+					GE_CORE_WARN("Fullscreen requested but no video mode is available; staying windowed");
+				}
+			}
+
+			m_Window = glfwCreateWindow((int)m_Data.Width, (int)m_Data.Height, m_Data.Title.c_str(), nullptr, nullptr);
 			++s_GLFWWindowCount;
+
+			if (props.Fullscreen && m_Window)
+				glfwSetWindowPos(m_Window, monitorX, monitorY);
 		}
 
 		m_Context = CreateScope<BgfxContext>(m_Window);

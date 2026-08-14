@@ -55,7 +55,13 @@ namespace GanymedE {
 		void SubmitSprites();
 		void DrawColliderGizmos();
 
-		// Jolt's own debug view when physics is running and enabled, otherwise authored gizmos.
+		// Jolt's own debug view when physics is running and enabled, otherwise authored
+		// gizmos - and those only when PhysicsSettings::ShowColliderGizmos is set.
 		void DrawPhysicsDebugOrGizmos(const glm::vec3& cameraPosition);
+
+		// Throttle for the no-camera error. Primed above the interval so the very first
+		// cameraless frame reports immediately instead of after a five-second silence.
+		static constexpr float kNoCameraLogInterval = 5.0f;
+		float m_NoCameraLogTimer = kNoCameraLogInterval;
 	};
 }

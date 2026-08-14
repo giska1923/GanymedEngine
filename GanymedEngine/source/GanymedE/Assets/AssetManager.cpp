@@ -23,18 +23,22 @@ namespace GanymedE {
 		std::unordered_map<AssetHandle, Ref<Texture2D>> LoadedTextures;
 
 		bool Initialized = false;
+		bool SaveRegistryOnShutdown = true;
 	};
 
 	static AssetManagerData s_Data;
 
-	void AssetManager::Init()
+	void AssetManager::Init(bool saveRegistryOnShutdown)
 	{
 		if (s_Data.Initialized)
 			return;
 
+		s_Data.SaveRegistryOnShutdown = saveRegistryOnShutdown;
+
 		LoadRegistry();
 		s_Data.Initialized = true;
-		GE_CORE_INFO("AssetManager initialized ({0} registered assets)", s_Data.Registry.size());
+		GE_CORE_INFO("AssetManager initialized ({0} registered assets, save-on-shutdown {1})",
+			s_Data.Registry.size(), saveRegistryOnShutdown ? "on" : "off");
 	}
 
 	void AssetManager::Shutdown()
@@ -42,7 +46,9 @@ namespace GanymedE {
 		if (!s_Data.Initialized)
 			return;
 
-		SaveRegistry();
+		if (s_Data.SaveRegistryOnShutdown)
+			SaveRegistry();
+
 		s_Data.Registry.clear();
 		s_Data.PathToHandle.clear();
 		// Runs from EditorLayer::OnDetach while Renderer::IsGpuAlive() is still true,

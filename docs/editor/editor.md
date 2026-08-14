@@ -24,8 +24,10 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 2. `SceneRenderer::BeginFrame` (bind + clear HDR target, entity IDs to −1).
 3. Update the scene: `OnUpdateEditor(ts, editorCamera)` in Edit,
    `OnUpdateRuntime(ts, &editorCamera)` in Play (the editor camera is the fallback when the scene
-   has no primary `CameraComponent`; the physics-debug toggles are copied into the scene's
-   `PhysicsSettings` each frame).
+   has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos = true`**
+   are pushed into the scene's `PhysicsSettings` each frame). The gizmo flag is engine-default
+   **false** so a non-editor front-end draws no collider wireframes — the editor opts in, and it has
+   to do so every frame because `Scene::Copy` does not carry singletons onto the play-mode scene.
 4. **Hover picking**: mouse position → viewport-local coordinates (Y flipped only when
    `bgfx::getCaps()->originBottomLeft` — render-target origin is backend-dependent), then
    `RequestEntityID` + `PollEntityID`. Picking is asynchronous under bgfx (~3 frames latency),

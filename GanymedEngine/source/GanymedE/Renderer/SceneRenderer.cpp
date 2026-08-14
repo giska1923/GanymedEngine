@@ -196,6 +196,12 @@ namespace GanymedE {
 		return m_BloomMips[0];
 	}
 
+	void SceneRenderer::BindFinalPassToBackbuffer(uint16_t viewId) const
+	{
+		bgfx::setViewFrameBuffer(viewId, BGFX_INVALID_HANDLE);
+		bgfx::setViewRect(viewId, 0, 0, (uint16_t)m_Width, (uint16_t)m_Height);
+	}
+
 	void SceneRenderer::EndFrame()
 	{
 		Ref<Framebuffer> bloom;
@@ -204,17 +210,32 @@ namespace GanymedE {
 
 		RenderCommand::SetBlend(false);
 
-		// Tonemap HDR (+ bloom) into the FXAA input, or straight to the composite
-		const Ref<Framebuffer>& tonemapTarget = m_Settings.FXAAEnabled ? m_TonemapFramebuffer : m_CompositeFramebuffer;
-		tonemapTarget->BindToView(RenderPass::Tonemap);
+		// One predicate for both decisions. Keeping "which target does tonemap write"
+		// and "does FXAA run" on different conditions left a hole: with FXAA enabled but
+		// its shader missing, tonemap went to the FXAA input and nothing ever wrote the
+		// composite target, so the final image was black.
+		const bool fxaaActive = m_Settings.FXAAEnabled && m_FXAAShader;
+
+		// Tonemap HDR (+ bloom) into the FXAA input, or straight to the final target
 		RenderCommand::SetViewId(RenderPass::Tonemap);
+		if (fxaaActive)
+			m_TonemapFramebuffer->BindToView(RenderPass::Tonemap);
+		else if (m_OutputToBackbuffer)
+			BindFinalPassToBackbuffer(RenderPass::Tonemap);
+		else
+			m_CompositeFramebuffer->BindToView(RenderPass::Tonemap);
+
 		bgfx::setViewClear(RenderPass::Tonemap, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
 		bgfx::touch(RenderPass::Tonemap); // force the clear even with nothing submitted
 		PostProcess::Tonemap(m_SceneFramebuffer, m_Settings.Exposure, bloom, m_Settings.BloomIntensity);
 
-		if (m_Settings.FXAAEnabled && m_FXAAShader)
+		if (fxaaActive)
 		{
-			m_CompositeFramebuffer->BindToView(RenderPass::FXAA);
+			if (m_OutputToBackbuffer)
+				BindFinalPassToBackbuffer(RenderPass::FXAA);
+			else
+				m_CompositeFramebuffer->BindToView(RenderPass::FXAA);
+
 			RenderCommand::SetViewId(RenderPass::FXAA);
 			bgfx::setViewClear(RenderPass::FXAA, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
 			bgfx::touch(RenderPass::FXAA);
@@ -293,6 +314,12 @@ namespace GanymedE {
 
 	uint32_t SceneRenderer::GetFinalImageRendererID() const
 	{
+		// In backbuffer mode nothing writes the composite target, so this handle names a
+		// texture holding whatever was in it before the switch. Asking for it is a bug at
+		// the call site (an ImGui::Image of the scene), not something to paper over.
+		GE_CORE_ASSERT(!m_OutputToBackbuffer,
+			"GetFinalImageRendererID() is meaningless while output goes to the backbuffer");
+
 		return m_CompositeFramebuffer->GetColorAttachmentRendererID();
 	}
 

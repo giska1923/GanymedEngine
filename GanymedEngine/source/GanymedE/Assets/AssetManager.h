@@ -14,7 +14,11 @@ namespace GanymedE {
 	class AssetManager
 	{
 	public:
-		static void Init();
+		// saveRegistryOnShutdown false makes Shutdown() skip the registry write. A shipped
+		// game must not write into its own install directory on exit - under Program Files
+		// that fails outright - and it has nothing to persist anyway: the registry it
+		// loaded is the one it shipped with.
+		static void Init(bool saveRegistryOnShutdown = true);
 		static void Shutdown();
 
 		// Register an asset by relative path (idempotent). Returns InvalidAssetHandle if unsupported.
