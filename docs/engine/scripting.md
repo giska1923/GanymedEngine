@@ -132,9 +132,9 @@ Copying nine floats beats both problems at script call rates.
 
 Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, `Cross`), `Entity`
 (`GetName`, `GetUUID`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians), `Get/SetScale`,
-`HasRigidBody`, the physics and animation calls below), `Input`, `Key`, `Mouse`, `Log` (routed to
-the **client** logger — script output is game output), `Scene.FindEntityByName`, `UI` (the HUD data
-model — see [ui.md](ui.md)).
+`HasRigidBody`, the physics, animation and audio calls below), `Input`, `Key`, `Mouse`, `Log`
+(routed to the **client** logger — script output is game output), `Scene.FindEntityByName`,
+`Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
 
 > **The `Log` global collides with RmlUi's.** RmlUi's Lua plugin registers its own `Log` usertype,
 > and it loads after `ScriptEngine::Init`, so it shadowed ours until `UIEngine` started calling
@@ -206,6 +206,59 @@ There is no `Get/SetAnimationTime`. Clip progress is what an "is this animation 
 would need, and that belongs with animation events — cut from v1 along with blend trees. The
 inspector's Time slider covers the edit-mode scrubbing case.
 
+### Audio
+
+Split across two routes, and which route a call takes is decided by **where the value lives**, not
+by taste:
+
+| Call | Route |
+|---|---|
+| `PlaySound()`, `StopSound()`, `IsSoundPlaying()` | Through `AudioSystem` — they touch the live voice |
+| `SetSoundVolume(v)`, `SetSoundPitch(p)`, `SetSoundLooping(b)` | Straight to `AudioSourceComponent` |
+| `HasAudioSource()` | Component check |
+
+The first group is the physics-binding shape: the voice is a live foreign resource `AudioSystem`
+owns, reached through `Scene::Systems().Get<AudioSystem>()`, which no-ops outside play. The second
+is the animation-binding shape: those three are authored fields the system re-pushes every frame,
+so writing the component is both simpler and the only thing that *works* — writing the voice
+directly would be overwritten on the next update. `AudioSourceComponent` is untracked, so neither
+group needs `MarkChanged`.
+
+There is deliberately no way to swap a clip or hold a voice id from script. A clip is authored on
+the component (it is baked into the voice at creation, along with spatialisation and streaming),
+and a Lua-held handle to a live engine resource is a lifetime problem the engine would then have to
+police.
+
+**`PlaySound` on an already-playing source is a no-op, not a restart** — the same guarantee, for the
+same reason, as `PlayAnimation` on the clip already selected. `LuaScriptSystem` runs before
+`AudioSystem`, so a per-frame `PlaySound` that restarted would pin the sound at its first sample
+forever. It also builds the voice on first use, so a source authored with `PlayOnStart` off costs
+nothing until a script asks for it. Restart-from-the-top is `StopSound()` then `PlaySound()`; `Stop`
+is pause-with-cursor, not a free.
+
+```lua
+-- The intended idiom: called every frame while the key is held.
+if Input.IsKeyPressed(Key.Space) then
+    self.entity:PlaySound()
+else
+    self.entity:StopSound()
+end
+```
+
+The `Audio` global covers what has no entity behind it:
+
+```lua
+Audio.PlayOneShot("audio/impact.wav", self.entity:GetTranslation())  -- spatialised
+Audio.PlayOneShot("audio/chime.wav")                                 -- flat, for UI
+Audio.SetGroupVolume("Music", 0.0)                                   -- "Master" | "Music" | "SFX"
+Audio.SetMasterVolume(0.8)
+```
+
+One-shot paths are **relative to `assets/` and need no registry entry** — `AudioEngine` takes paths,
+which is what "Audio is path-resolved by design" buys (see [audio.md](audio.md)). The positional
+overload takes a `Vec3` rather than three floats, because every other position in these bindings is
+a `Vec3`. An unknown group name warns and falls back to SFX rather than throwing.
+
 ## Errors
 
 A script error must never cross the C++ boundary. Every call into Lua goes through a
@@ -273,6 +326,13 @@ npm run watch      # recompiles into ../assets/scripts on every save
 mirror of `ScriptBindings.cpp`. **Nothing enforces that they agree** — it is the contract giving you
 IntelliSense and compile errors against the real engine API, so a binding change edits both files or
 the types quietly lie.
+
+They did lie, and in the direction the drift is hardest to notice: `GetLinearVelocity`,
+`SetLinearVelocity`, `AddImpulse` and `AddForce` were bound in C++ from the physics milestone
+onward and never declared here, so calling any of them from TypeScript was a compile error while
+the same call worked fine in hand-written Lua. A *missing* declaration fails loudly at authoring
+time and silently at review time — nobody notices an API they cannot see. Both directions are worth
+diffing when either file changes.
 
 Config decisions worth knowing:
 

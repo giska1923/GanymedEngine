@@ -8,7 +8,7 @@ to `Renderer`: a static facade over one global device, `Init`/`Shutdown` by `App
 in file paths and opaque `VoiceId`s. [`AudioSystem`](#audiosystem) is the only thing in the engine
 that drives it from scene data. Nothing else should create a voice.
 
-Lua bindings are Phase 5 of [`RUNTIME_AUDIO_ROADMAP.md`](../toDo&done/RUNTIME_AUDIO_ROADMAP.md).
+Gameplay reaches both through [Lua](#from-lua).
 
 ## AudioEngine
 
@@ -62,6 +62,12 @@ obligation.
 | `OnUpdate` | Pushes `Volume`/`Pitch`/`Loop` and (for spatial sources) the entity's world position; resolves and pushes the listener pose |
 | `OnRuntimeStop` | Destroys every voice, clears the map, `StopAll()` |
 | `OnUpdateEditor` | **Absent.** Edit mode is silent |
+
+Plus three methods that exist for the script bindings and nothing else — `PlaySound(entity)`,
+`StopSound(entity)`, `IsSoundPlaying(entity)`. They are here rather than on `AudioEngine` so the
+voice map stays the single owner, the same reason scripts reach a Jolt body through
+`PhysicsSystem` rather than holding a `PhysicsScene`. `PlaySound` builds the voice on demand, so a
+source authored with `PlayOnStart` off costs nothing until something asks for it.
 
 **Voices are system state, not component state.** `m_Voices` is an
 `unordered_map<entt::entity, VoiceId>` that lives and dies with the run — the same arrangement
@@ -205,6 +211,28 @@ big engines are wrong: UE and Unity put audio behind the asset system because th
 banks, and a cooked bank is an engine-owned artifact that needs engine-owned lifetime. Ganymed has
 no cooking. The upgrade path stays open because components already reference handles, not paths —
 an `AudioClip` asset can appear the day cooking does, without touching a single scene file.
+
+## From Lua
+
+Seven `Entity` methods and one global table; the full signatures and their reasoning live in
+[scripting.md](scripting.md#audio), and the TypeScript mirror in
+`GanymedEditor/scripts-src/types/ganymed.d.ts`.
+
+```lua
+if Input.IsKeyPressed(Key.Space) then          -- every frame: PlaySound is idempotent,
+    self.entity:PlaySound()                    -- not a restart
+else
+    self.entity:StopSound()
+end
+
+Audio.PlayOneShot("audio/impact.wav", self.entity:GetTranslation())
+Audio.SetGroupVolume("Music", 0.0)
+```
+
+The split that matters: `PlaySound`/`StopSound`/`IsSoundPlaying` go through `AudioSystem` because
+they touch the live voice; `SetSoundVolume`/`SetSoundPitch`/`SetSoundLooping` write
+`AudioSourceComponent`, because those are authored fields the system re-pushes every frame and a
+write to the voice would be overwritten on the next update.
 
 ## Authoring
 

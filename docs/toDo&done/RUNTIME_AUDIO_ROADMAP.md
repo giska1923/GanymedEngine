@@ -1,6 +1,6 @@
 # GanymedEngine — Standalone Runtime + Audio Roadmap
 
-Status: **Phases 1–4 executed; Phase 5 planned.** Written 2026-08-12, against the post-animation
+Status: **Complete — all five phases executed.** Written 2026-08-12, against the post-animation
 engine (branch point: the skeletal-animation milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md): each phase carries goal, steps, decisions with
 rationale, risks, and a verification table; execution notes get appended as phases run. Read the
@@ -1033,6 +1033,112 @@ Each item belongs to the phase that caused it; this is the audit:
 | **Milestone exit** | Fresh clone → scripts → build → `GanymedRuntime.exe`: the demo scene boots to play mode fullscreen, music streams, physics-triggered SFX fires, HUD renders, Esc exits clean. Boot-log table captured in the execution notes |
 | d.ts parity | Every binding present in `ganymed.d.ts`, spot-checked by a probe script using each once |
 | Docs audit | Each doc claim spot-checked against code; the "eight systems" count grep'd |
+
+### Phase 5 execution notes
+
+**The Lua surface is split across two routes, which the plan's one-line "routed through
+`Systems().Get<AudioSystem>()`" does not capture.** `PlaySound`/`StopSound`/`IsSoundPlaying` go
+through the system, because they touch the live voice and the map must stay its single owner — the
+physics-binding shape. `SetSoundVolume`/`SetSoundPitch`/`SetSoundLooping` write
+`AudioSourceComponent` directly — the animation-binding shape — because those are authored fields
+`AudioSystem::OnUpdate` re-pushes every frame, so a write to the voice would be silently overwritten
+on the next update. Which route a setter takes is decided by **where the value lives**, and getting
+it backwards produces a binding that appears to work and then quietly stops.
+
+**`AudioSystem` grew three public methods, and only now.** They were deliberately not added in
+Phase 4: `EnsureVoice` existed and was idempotent, but nothing called it except `OnRuntimeStart`, so
+a public `PlaySound` would have been API with no caller. It has one now, and it is also where the
+plan's "lazily create voices requested since start" actually lives — creation happens *in the
+request*, not in a per-frame scan looking for work.
+
+**`Audio.PlayOneShot` takes a `Vec3`, not `(x, y, z)` as the plan wrote.** Every other position in
+these bindings is a `Vec3` and `Entity:GetTranslation()` returns one, so the natural call is
+`Audio.PlayOneShot(path, self.entity:GetTranslation())`; three floats would force an unpack at every
+call site. One word of the plan, changed for consistency with the surface it joins.
+
+**The `ganymed.d.ts` audit found pre-existing drift, and fixed it.** Diffing signature by signature
+is what 5.3 asks for, and the diff turned up four bindings that have been in `ScriptBindings.cpp`
+since the physics milestone and were never declared: `GetLinearVelocity`, `SetLinearVelocity`,
+`AddImpulse`, `AddForce`. The drift is invisible from either side — the calls work in hand-written
+Lua, and in TypeScript they are simply an API nobody can see, so nothing ever reports it. Declared
+now, with the same reverse check run in both directions (nothing is declared that is not bound).
+Note this is a fix to work outside this phase, made because the phase's assigned task is the audit
+that found it; an audit that only reports is not worth running.
+
+**The demo's audio content is procedurally generated, and says so.** `music.mp3` (32 s, a five-
+partial pad whose every partial is an exact multiple of 1/32 Hz, so the loop is seamless),
+`hum.wav` (2 s, same trick), `impact.wav` (a pitch-dropping sine with a noise transient) and
+`chime.wav`. ~740 KB total, committed. They are placeholders with intent, not sourced audio: the
+milestone needs a game that makes sound, not a soundtrack.
+
+**One-shot content is deliberately absent from the registry.** `impact.wav` and `chime.wav` are
+played by path from Lua and have no registry entry; `music.mp3` and `hum.wav` are referenced by
+handle from components and do. That asymmetry inside one `audio/` folder is the visible consequence
+of Audio being path-resolved by design, and it is worth understanding before someone "fixes" the
+registry by adding the other two.
+
+**The impact script needed a 0.12 s gate, which is content wisdom rather than an engine fact.** A
+box settling on the floor generates a burst of contacts across several frames, not one; the first
+version fired the same thud five or six times and sounded like a machine gun. Recorded because the
+next person to hang a sound off `OnCollisionEnter` will hit it too.
+
+**The demo's lighting was retuned, closing a Phase 2 loose end.** Phase 2 noted the demo looked
+blown out at exposure 1.0 with bloom and deferred it here. Sky light intensity 1.0 → 0.35 and sun
+3.0 → 1.2; the box textures and shadows now read. Exposure itself is a `SceneRenderer` setting, not
+scene data, so light intensities were the only authorable lever.
+
+**`Fullscreen` now ships `true`, changing a Phase 2 default.** The milestone exit criterion is a
+demo that "boots to play mode fullscreen", and a shipped game is not a window. It is one line in
+`runtime.yaml`, Escape is the documented way out, and `runtime.md` says so.
+
+**Verification could not use the editor here either**, for the Phase 4 reason, so the runtime was
+driven with synthetic input (`keybd_event`) instead — which works, unlike `SendKeys` against the
+editor, because the runtime has no ImGui intercepting the keyboard. Two temporary probes, both
+removed: a per-second voice/one-shot counter in `RuntimeLayer::OnUpdate`, and a `B`-key burst of 20
+`Audio.PlayOneShot` calls in `Player.ts`.
+
+**The headless path was forced, not argued.** Phase 3 verified the alive-guard by calling `Shutdown`
+mid-run; the plan's 5.2 asks specifically that a *device-init failure* still boots the game. One
+temporary line (`result = MA_NO_DEVICE;`) after `ma_engine_init`, rebuilt, run: the whole demo boots,
+plays, scripts run, physics fires, the HUD renders, Escape exits 0, and the only difference in the
+log is one error line. Reverted.
+
+**The toolchain needed repairing before it could be used, and it is a real trap.** `scripts-src/
+node_modules` was present but incomplete, and `npm install` reported success while `tstl` died on
+`Cannot find module '…/source-map/source-map.js'`. `npm ci` (which deletes the tree first) fixes it;
+`build-and-tooling.md` now says to use it and why. Separately, node 24 on this machine aborts
+building its Windows certificate store (`Assertion failed: (1) == (X509_STORE_add_cert(...))`) —
+machine-local, worked around with `NODE_OPTIONS=--use-openssl-ca`, also noted.
+
+**Still open from Phase 4, and untouched:** the RmlUi debugger document destroyed by
+`UIEngine::CloseAllDocuments` on the editor's second play, and scene YAML entity order being entt's
+iteration order. Neither is audio's.
+
+**Not verified by me:** audible playback, for the third phase running — everything below is engine
+state, counts, timing and screenshots. Nobody has listened to this milestone. That is the one
+outstanding item on the whole thing, and it takes a person and a pair of speakers: run
+`GanymedRuntime.exe`, hold Space, press M. Also unbuilt: Linux, macOS, and the Dist configuration.
+
+#### Verification evidence
+
+x64 Debug, D3D11, WASAPI. The runtime driven by synthetic keystrokes; the boot table is from a
+final run with both probes removed.
+
+| Check | Evidence |
+|---|---|
+| Lua drives audio | Holding Space called `PlaySound` **591 times** over ~5 s. The engine voice count went 1 → 2 on the first call and stayed at 2; `IsSoundPlaying` was true at calls 1, 120, 240, 360 and 480. No restart, no voice churn — the idempotency contract, measured. Release: `Hum stopped after 591 PlaySound calls, IsSoundPlaying=false`, voice count still 2 (stopped is paused, not freed) |
+| One-shots | `Fired 20 one-shots from Lua` → engine one-shot count **20** on the next tick, **0** the tick after. Separately, the demo's own physics one-shots peak at 3 concurrent as the boxes settle and reap to 0 without any script freeing anything |
+| Group volumes from Lua | `Audio.SetGroupVolume("Music", 0)` and back, logged as `Music muted` / `Music unmuted`, with the music voice still playing throughout (muting a bus is not stopping a voice). `Audio.SetMasterVolume(0.8)` runs from `OnCreate` |
+| **Milestone exit** | Derived trees deleted (`assets/.assets`, `assets/shaders/compiled`), `compile_shaders.bat` re-run (378 binaries), `GanymedRuntime.exe`: boots borderless fullscreen at 1920×1080, re-imports the mesh from the `.glb` and rewrites its cache, rebakes IBL, streams music from the first frame, fires physics-triggered SFX on landing, renders the HUD, exits 0 on Escape. **Zero warnings, zero errors.** Boot log and screenshot below |
+| Boot log | `Window: 1920x1080 (borderless fullscreen)` → config echo → `AssetManager initialized (6 registered assets, registry read-only)` → `Scene … loaded (8 entities)` → `Primary camera: 'Main Camera'` → `Player created` → `Player has an audio source: true` → `Runtime started` → `UI document … loaded` → `--- Boot complete ---` → `RmlUi: compositing into the backbuffer (1920x1080)`, then seven `Impact:` traces as the boxes land |
+| Screenshot | 1920×1080 borderless fullscreen: the retuned lighting, two settled boxes and the bobbing player over a shadowed floor, `Score: 76` top-right and the health bar reading `8 / 100` bottom-left — the HUD data model being written by Lua every frame |
+| Headless audio | One temporary line forcing `ma_engine_init` to fail: `AudioEngine: no audio device (No device) - continuing without sound`, then the identical boot sequence, the same physics and script traces, Escape, exit 0. No `AudioEngine shut down` line, correctly — it never initialised |
+| d.ts parity | Scripted diff of the `Entity` usertype and the `Audio` table against the declarations: 28 bindings, **0 missing**, and nothing declared that is not bound — after adding the four physics declarations the audit found. Every audio binding is exercised at least once by `Player.ts`/`Impact.ts`, and those compile against the `.d.ts`, so for them parity is checked by the TypeScript compiler rather than by eye |
+| Docs audit | `audio.md` (AudioSystem gameplay API + a From Lua section), `scripting.md` (the two-route split, the idempotent-`PlaySound` note, the drift finding), `runtime.md` (the demo scene, controls, the audio-in-the-registry asymmetry, the fullscreen default), `build-and-tooling.md` (`npm ci`, the runtime's authored `audio/`). Counts re-grepped: no "seven systems" left anywhere outside history |
+
+**Build/tooling note:** no new engine source files this phase, so no premake regeneration. New
+content: `GanymedRuntime/assets/audio/` (four files, ~740 KB) and `Impact.lua` in both apps' script
+folders, plus `Impact.ts` in `scripts-src`. `AssetRegistry.gr` gained three entries.
 
 ---
 

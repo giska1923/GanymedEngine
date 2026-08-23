@@ -93,6 +93,44 @@ namespace GanymedE {
 		// that for a re-decode on every replay of, say, a gunshot.
 	}
 
+	void AudioSystem::PlaySound(entt::entity entity)
+	{
+		// try_get rather than a view: this is called from outside the update loop's
+		// iteration (a script, before this system runs) and asks about one entity, which
+		// is what the immediate API is for. It is a read, so it cannot invalidate anything.
+		const AudioSourceComponent* source = m_Scene.Reg().try_get<AudioSourceComponent>(entity);
+		if (!source)
+			return;
+
+		// Creating on demand is what makes a source that never auto-played usable: the
+		// first PlaySound builds the voice, every later one finds it. AudioEngine::Play is
+		// itself idempotent and rewinds a finished voice, so a script may call this every
+		// frame - which is the natural idiom, and the one PlayAnimation learned the hard
+		// way. Restart-from-the-top is StopSound() then PlaySound().
+		const VoiceId voice = EnsureVoice(entity, *source);
+		if (voice == InvalidVoiceId)
+			return;
+
+		AudioEngine::SetVolume(voice, source->Volume);
+		AudioEngine::SetPitch(voice, source->Pitch);
+		AudioEngine::Play(voice);
+	}
+
+	void AudioSystem::StopSound(entt::entity entity)
+	{
+		// Not DestroyVoice: Stop keeps the playback cursor, and keeping the voice makes the
+		// next PlaySound instant instead of a re-decode.
+		auto it = m_Voices.find(entity);
+		if (it != m_Voices.end())
+			AudioEngine::Stop(it->second);
+	}
+
+	bool AudioSystem::IsSoundPlaying(entt::entity entity) const
+	{
+		auto it = m_Voices.find(entity);
+		return it != m_Voices.end() && AudioEngine::IsPlaying(it->second);
+	}
+
 	VoiceId AudioSystem::EnsureVoice(entt::entity entity, const AudioSourceComponent& source)
 	{
 		auto existing = m_Voices.find(entity);

@@ -45,6 +45,22 @@ namespace GanymedE {
 		void OnUpdate(Timestep ts) override;
 		const char* Name() const override { return "AudioSystem"; }
 
+		// ---- Gameplay control, for scripts ----
+		//
+		// This is the route a script takes to start or stop a sound, and it exists so the
+		// voice map stays the single owner - the PhysicsScene arrangement, where scripts
+		// reach the live Jolt body through the system rather than holding one. Volume,
+		// pitch and looping are NOT here: those are authored fields the update loop pushes
+		// every frame, so a script writes the component directly and the next update
+		// carries it (the AnimatorComponent arrangement). Which half a setter belongs to
+		// is decided by where the value lives, not by taste.
+		//
+		// All no-op on an entity with no AudioSourceComponent, on an unloadable clip, and
+		// outside play - a script poking at the wrong entity should not take the game down.
+		void PlaySound(entt::entity entity);
+		void StopSound(entt::entity entity);
+		bool IsSoundPlaying(entt::entity entity) const;
+
 	private:
 		// Idempotent: returns the entity's existing voice, or builds one from the component's
 		// authored flags. InvalidVoiceId when the clip cannot be resolved or loaded, having

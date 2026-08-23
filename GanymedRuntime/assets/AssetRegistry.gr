@@ -8,3 +8,12 @@ Assets:
   - Handle: 1000000000000000003
     Type: 6
     FilePath: scripts/Player.lua
+  - Handle: 1000000000000000004
+    Type: 6
+    FilePath: scripts/Impact.lua
+  - Handle: 1000000000000000005
+    Type: 7
+    FilePath: audio/music.mp3
+  - Handle: 1000000000000000006
+    Type: 7
+    FilePath: audio/hum.wav

@@ -94,7 +94,7 @@ exe that starts and tells you what is wrong beats one that refuses to start.
 | `UIDocument` | `assets/ui/hud.rml` | Empty string = no HUD |
 | `Title` | `GanymedEngine Runtime` | Window title |
 | `Width` / `Height` | 1600 / 900 | Ignored when `Fullscreen`; a zero is rejected with a warning |
-| `Fullscreen` | `false` | Borderless — an undecorated window at the primary monitor's video mode ([platform.md](../engine/platform.md)) |
+| `Fullscreen` | `false` (the shipped demo sets **`true`**) | Borderless — an undecorated window at the primary monitor's video mode ([platform.md](../engine/platform.md)). Escape quits, which is the only way out |
 
 Why a file at all, when there is exactly one scene? Because hard-coding `assets/ui/hud.rml` is
 precisely the editor-ism this app exists to shed (`EditorLayer::OnScenePlay` still does it), and a
@@ -117,9 +117,34 @@ Two consequences worth knowing before adding content:
 - Only the three font faces `UIEngine` actually loads are shipped (`Montserrat-Regular`, `-Bold`,
   `-Italic`, plus the OFL licence). RmlUi hard-requires them: missing fonts render as a silently
   empty UI, not an error.
+- **Audio splits both ways.** `audio/music.mp3` and `audio/hum.wav` are referenced by handle from
+  `AudioSourceComponent`s, so they need registry entries like any other asset. `audio/impact.wav`
+  and `audio/chime.wav` are played by `Audio.PlayOneShot` from Lua, which takes a **path**, so they
+  are deliberately absent from the registry — that asymmetry is the visible consequence of Audio
+  being path-resolved by design ([audio.md](../engine/audio.md)).
 
 `assets/.assets/` (the mesh cache) and `assets/shaders/compiled/` are derived and gitignored.
 `scripts/compile_shaders.bat` writes this app's copy alongside the editor's and Sandbox's.
+
+## The demo scene
+
+`assets/scenes/Demo.ganymede` is the milestone exit artifact for the runtime + audio milestone —
+the thing that proves the engine can ship something a person other than its author can run.
+
+| Entity | What it demonstrates |
+|---|---|
+| Sky Light, Sun | IBL from a committed HDRI; intensities tuned down from the editor defaults, which blow out at exposure 1.0 with bloom |
+| Main Camera | Primary camera **and** the `AudioListenerComponent` — the Unity arrangement |
+| Floor, Falling Box A/B | Jolt: two dynamic bodies land on a static one. Both boxes carry `Impact.lua`, which fires a positional `Audio.PlayOneShot` from `OnCollisionEnter` — physics making a sound |
+| Player | `Player.lua`: WASD movement, the HUD data model, and the audio bindings. Carries its own spatial `AudioSourceComponent` with `PlayOnStart` **off**, so the voice is built by the first `PlaySound` |
+| Music | A streamed, looping `Music`-group source with `PlayOnStart` on. Non-spatial, because music has no position |
+
+Controls: **WASD** to move, **hold Space** to sound the player's hum (calling `PlaySound` every
+frame, which is the intended idiom), **M** to mute and unmute the music bus, **Escape** to quit.
+There is no pause or menu — named as a placeholder, not an oversight.
+
+The boxes' impact script carries a 0.12 s gate: a box settling generates a burst of contacts over
+several frames, and without it the same thud fires five or six times in a row.
 
 ## Divergences from the editor render path, on purpose
 

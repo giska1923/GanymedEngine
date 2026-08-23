@@ -244,9 +244,16 @@ and hand-written Lua is a first-class path.
 
 ```
 cd GanymedEditor/scripts-src
-npm install        # once; needs Node + npm, nothing else in the C++ build depends on it
+npm ci             # once; needs Node + npm, nothing else in the C++ build depends on it
 npm run watch      # recompiles into ../assets/scripts on every save
 ```
+
+`npm ci` rather than `npm install`, and not out of habit: an interrupted install leaves package
+directories present but incomplete, and `npm install` then reports nothing wrong while `tstl` fails
+with `Cannot find module '…/source-map/source-map.js'`. `ci` deletes `node_modules` first, so the
+failure mode does not exist. If node itself dies building its certificate store on Windows
+(`Assertion failed: (1) == (X509_STORE_add_cert(store, cert))` — a machine-local certificate
+problem, not a project one), `NODE_OPTIONS=--use-openssl-ca` uses node's bundled CA list instead.
 
 Unlike shader bytecode, the emitted `assets/scripts/*.lua` **is tracked in git** — the folder also
 holds hand-written scripts, so it cannot be ignored wholesale. `scripts-src/node_modules/` is
@@ -267,8 +274,8 @@ models, scenes, textures, fonts, and the asset registry (`AssetRegistry.gr`). `a
 the binary mesh cache (safe to delete; also gitignored from the browser's perspective — the content
 browser hides it).
 
-`GanymedRuntime/assets/` is a copied snapshot of that content, trimmed to what the game uses (see
-[runtime.md](../runtime/runtime.md)). Sharing or packing a single tree is a non-goal for now. Two
+`GanymedRuntime/assets/` is a copied snapshot of that content, trimmed to what the game uses, plus
+`audio/` — authored for the demo rather than copied (see [runtime.md](../runtime/runtime.md)). Sharing or packing a single tree is a non-goal for now. Two
 `.gitignore` differences matter and are per-path, not globs: the runtime's `AssetRegistry.gr` **is
 tracked** — for a shipped game it is authored content, not a scanned cache
 ([assets.md](assets.md#registry-portability)) — while its `.assets/` mesh cache is not.

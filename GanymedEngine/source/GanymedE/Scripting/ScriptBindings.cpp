@@ -2,6 +2,8 @@
 #include "GanymedE/Scripting/ScriptBindings.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 
+#include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Audio/AudioEngine.h"
 #include "GanymedE/Core/Input.h"
 #include "GanymedE/Core/KeyCodes.h"
 #include "GanymedE/Core/MouseButtonCodes.h"
@@ -10,6 +12,7 @@
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
+#include "GanymedE/Scene/Systems/AudioSystem.h"
 #include "GanymedE/Scene/Systems/PhysicsSystem.h"
 #include "GanymedE/UI/UIEngine.h"
 
@@ -55,6 +58,14 @@ namespace GanymedE {
 
 			PhysicsSystem* system = scene->Systems().Get<PhysicsSystem>();
 			return system ? system->GetPhysicsScene() : nullptr;
+		}
+
+		// The system that owns every voice. Same shape as Physics() above, and for the same
+		// reason: nothing outside AudioSystem may create or destroy a voice.
+		AudioSystem* Audio()
+		{
+			Scene* scene = Context();
+			return scene ? scene->Systems().Get<AudioSystem>() : nullptr;
 		}
 
 		void RegisterVec3(sol::state& lua)
@@ -128,8 +139,9 @@ namespace GanymedE {
 					MarkTransformChanged(e);
 				},
 
-				"HasRigidBody", [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
-				"HasAnimator",  [](Entity& e) { return e.HasComponent<AnimatorComponent>(); },
+				"HasRigidBody",   [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
+				"HasAnimator",    [](Entity& e) { return e.HasComponent<AnimatorComponent>(); },
+				"HasAudioSource", [](Entity& e) { return e.HasComponent<AudioSourceComponent>(); },
 
 				// --- Animation ---
 				// AnimatorComponent is untracked, so unlike the transform setters these need no
@@ -224,6 +236,51 @@ namespace GanymedE {
 				{
 					if (PhysicsScene* physics = Physics())
 						physics->AddForce(e.GetUUID(), force);
+				},
+
+				// --- Audio ---
+				// Split across two routes, and the split is not arbitrary. Play/Stop/IsPlaying
+				// touch the live VOICE, which AudioSystem owns, so they go through the system -
+				// the physics-binding shape. Volume/Pitch/Looping are AUTHORED fields the
+				// system re-pushes every frame, so they write the component directly - the
+				// animation-binding shape, and no MarkChanged because AudioSourceComponent is
+				// untracked. Writing the voice for those instead would be silently undone by
+				// the next update.
+				//
+				// PlaySound on an already-playing source is a no-op, not a restart: scripts
+				// call this every frame from a branch, and restarting each tick would hold the
+				// sound at its first sample forever (LuaScriptSystem runs before AudioSystem).
+				// Restart is StopSound() then PlaySound().
+				"PlaySound", [](Entity& e)
+				{
+					if (AudioSystem* audio = Audio())
+						audio->PlaySound(static_cast<entt::entity>(e));
+				},
+				// Pause, keeping the position - PlaySound resumes from it.
+				"StopSound", [](Entity& e)
+				{
+					if (AudioSystem* audio = Audio())
+						audio->StopSound(static_cast<entt::entity>(e));
+				},
+				"IsSoundPlaying", [](Entity& e)
+				{
+					AudioSystem* audio = Audio();
+					return audio && audio->IsSoundPlaying(static_cast<entt::entity>(e));
+				},
+				"SetSoundVolume", [](Entity& e, float volume)
+				{
+					if (e.HasComponent<AudioSourceComponent>())
+						e.GetComponent<AudioSourceComponent>().Volume = volume;
+				},
+				"SetSoundPitch", [](Entity& e, float pitch)
+				{
+					if (e.HasComponent<AudioSourceComponent>())
+						e.GetComponent<AudioSourceComponent>().Pitch = pitch;
+				},
+				"SetSoundLooping", [](Entity& e, bool loop)
+				{
+					if (e.HasComponent<AudioSourceComponent>())
+						e.GetComponent<AudioSourceComponent>().Loop = loop;
 				},
 
 				sol::meta_function::equal_to, [](const Entity& a, const Entity& b) { return a == b; },
@@ -331,6 +388,47 @@ namespace GanymedE {
 			};
 		}
 
+		void RegisterAudio(sol::state& lua)
+		{
+			// Deliberately four functions. Per-entity sound is the Entity methods above; this
+			// table is for the two things that have no entity to hang off - fire-and-forget
+			// one-shots and the mixer.
+			//
+			// No clip swapping (author it on the component) and no VoiceId in Lua: a script
+			// holding a handle to a live engine resource is a lifetime problem the engine
+			// would then have to police.
+			sol::table audio = lua.create_named_table("Audio");
+
+			// Paths are relative to assets/, the same currency the asset registry and the
+			// content browser speak. A one-shot needs no registry entry - AudioEngine takes
+			// paths, which is the point of Audio being path-resolved (docs/engine/audio.md).
+			//
+			// The positional overload takes a Vec3 rather than three floats, because every
+			// other position in these bindings is a Vec3 and the common call is
+			// Audio.PlayOneShot(path, entity:GetTranslation()).
+			audio["PlayOneShot"] = sol::overload(
+				[](const std::string& path)
+				{
+					AudioEngine::PlayOneShot(GetAssetRoot() / path, AudioGroup::SFX, nullptr, 1.0f);
+				},
+				[](const std::string& path, const glm::vec3& position)
+				{
+					AudioEngine::PlayOneShot(GetAssetRoot() / path, AudioGroup::SFX, &position, 1.0f);
+				});
+
+			audio["SetMasterVolume"] = [](float volume)
+			{
+				AudioEngine::SetGroupVolume(AudioGroup::Master, volume);
+			};
+
+			// "Master" | "Music" | "SFX". An unknown name warns and falls back to SFX rather
+			// than throwing - AudioGroupFromString is the same parser the scene serializer uses.
+			audio["SetGroupVolume"] = [](const std::string& group, float volume)
+			{
+				AudioEngine::SetGroupVolume(AudioGroupFromString(group), volume);
+			};
+		}
+
 		void RegisterUI(sol::state& lua)
 		{
 			// The gameplay-facing half of the RmlUi data model. Setting a value here
@@ -354,6 +452,7 @@ namespace GanymedE {
 		RegisterKeyCodes(lua);
 		RegisterLog(lua);
 		RegisterScene(lua);
+		RegisterAudio(lua);
 		RegisterUI(lua);
 	}
 

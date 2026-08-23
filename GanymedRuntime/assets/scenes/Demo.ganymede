@@ -15,7 +15,7 @@ Entities:
       Environment: 1000000000000000001
       SkyColor: [0.449999988, 0.620000005, 0.899999976]
       GroundColor: [0.280000001, 0.25999999, 0.219999999]
-      Intensity: 1
+      Intensity: 0.349999994
       DrawSkybox: true
   - Entity: 2000000000000000002
     TagComponent:
@@ -30,7 +30,7 @@ Entities:
         []
     DirectionalLightComponent:
       Color: [1, 0.980000019, 0.920000017]
-      Intensity: 3
+      Intensity: 1.20000005
       CastShadows: true
   - Entity: 2000000000000000003
     TagComponent:
@@ -54,6 +54,8 @@ Entities:
         OrthographicFar: 1
       Primary: true
       FixedAspectRatio: false
+    AudioListenerComponent:
+      Primary: true
   - Entity: 2000000000000000004
     TagComponent:
       Tag: Floor
@@ -102,6 +104,8 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0.200000003
+    ScriptComponent:
+      Script: 1000000000000000004
   - Entity: 2000000000000000006
     TagComponent:
       Tag: Falling Box B
@@ -126,6 +130,8 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0.200000003
+    ScriptComponent:
+      Script: 1000000000000000004
   - Entity: 2000000000000000007
     TagComponent:
       Tag: Player
@@ -141,3 +147,32 @@ Entities:
       Mesh: 1000000000000000002
     ScriptComponent:
       Script: 1000000000000000003
+    AudioSourceComponent:
+      Clip: 1000000000000000006
+      Group: SFX
+      Volume: 0.600000024
+      Pitch: 1
+      Loop: true
+      PlayOnStart: false
+      Spatialize: true
+      Stream: false
+  - Entity: 2000000000000000008
+    TagComponent:
+      Tag: Music
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    AudioSourceComponent:
+      Clip: 1000000000000000005
+      Group: Music
+      Volume: 0.5
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: false
+      Stream: true

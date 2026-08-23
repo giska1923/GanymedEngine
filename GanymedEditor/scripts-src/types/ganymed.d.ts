@@ -52,6 +52,7 @@ declare interface Entity {
 
 	HasRigidBody(): boolean;
 	HasAnimator(): boolean;
+	HasAudioSource(): boolean;
 
 	/**
 	 * Switches to `name` and plays it. Switching clips is a hard cut from the start —
@@ -83,6 +84,52 @@ declare interface Entity {
 	 * selected, or — note — the name does not resolve against the mesh.
 	 */
 	GetCurrentAnimation(): string;
+
+	/**
+	 * Physics, routed to the Jolt body rather than to the transform.
+	 *
+	 * Writing a dynamic body's translation does nothing visible — the simulation overwrites
+	 * it every step — so these are the only way to move one. All four no-op on an entity
+	 * with no rigid body, and outside play, when there is no Jolt world at all.
+	 *
+	 * Each wakes the body first: Jolt silently discards a velocity set on a sleeping one.
+	 */
+	GetLinearVelocity(): Vec3;
+	SetLinearVelocity(velocity: Vec3): void;
+	/** A one-shot change in momentum. */
+	AddImpulse(impulse: Vec3): void;
+	/** Consumed by the next step — call it every frame while the push lasts. */
+	AddForce(force: Vec3): void;
+
+	/**
+	 * Starts the entity's AudioSourceComponent, building its voice on first use.
+	 *
+	 * Calling this every frame is safe and is the intended idiom: an already-playing
+	 * source is left alone, not restarted. Restarting each tick would pin the sound at
+	 * its first sample, because scripts run before the audio system each update. To
+	 * restart from the top, call StopSound() then PlaySound().
+	 *
+	 * A source that has played to its end rewinds. No-op without an AudioSourceComponent,
+	 * or when the clip cannot be loaded (the engine warns once, naming the path).
+	 */
+	PlaySound(): void;
+
+	/** Pauses, keeping the playback position — PlaySound() resumes from it. */
+	StopSound(): void;
+
+	IsSoundPlaying(): boolean;
+
+	/**
+	 * Linear, 1.0 = unattenuated. These three write the component, which the audio system
+	 * re-reads every frame, so they apply on the next update and survive a stop/play.
+	 *
+	 * Clip, spatialisation and streaming are NOT settable from script: they are baked into
+	 * the voice when it is created. Author them on the component.
+	 */
+	SetSoundVolume(volume: number): void;
+	/** 1.0 = unmodified. Also changes playback speed. Values <= 0 are ignored. */
+	SetSoundPitch(pitch: number): void;
+	SetSoundLooping(loop: boolean): void;
 }
 
 /** The shape every gameplay script implements. All hooks are optional. */
@@ -171,6 +218,31 @@ declare namespace Log {
 declare namespace Scene {
 	/** Linear scan over tags. Fine for setup; do not call it every frame. */
 	function FindEntityByName(name: string): Entity | undefined;
+}
+
+/**
+ * Sound with no entity behind it: fire-and-forget one-shots, and the mixer.
+ *
+ * Per-entity sound is on Entity (PlaySound/StopSound/…). There is deliberately no way to
+ * swap a clip or hold a voice handle from script — a handle to a live engine resource is a
+ * lifetime problem the engine would then have to police.
+ */
+declare namespace Audio {
+	/**
+	 * Plays a clip once and forgets it; the engine frees it when it finishes. For footsteps
+	 * and impacts, which should not need an entity each.
+	 *
+	 * `path` is relative to `assets/`, e.g. "audio/impact.wav". It needs no registry entry.
+	 * With a position the sound is spatialised against the current listener; without one it
+	 * plays flat, for UI and 2D. Both go to the SFX group.
+	 */
+	function PlayOneShot(path: string): void;
+	function PlayOneShot(path: string, position: Vec3): void;
+
+	function SetMasterVolume(volume: number): void;
+
+	/** group is "Master", "Music" or "SFX". An unknown name warns and falls back to SFX. */
+	function SetGroupVolume(group: string, volume: number): void;
 }
 
 /**

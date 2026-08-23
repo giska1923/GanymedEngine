@@ -17,4 +17,4 @@ Title: Ganymed Runtime Demo
 # video mode. See docs/engine/platform.md.
 Width: 1600
 Height: 900
-Fullscreen: false
+Fullscreen: true
