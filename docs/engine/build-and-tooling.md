@@ -113,12 +113,27 @@ Other build facts that have bitten before (details in
 | ImGui + ImGuizmo | Editor UI + transform gizmo |
 | yaml-cpp | Scene + asset-registry serialization |
 | cgltf | glTF import (header-only) |
+| miniaudio 0.11.25 | Audio playback (header-only — see below) |
 | stb_image | Image loading (header-only) |
 | spdlog | Logging (header-only) |
 | Lua 5.4.8 | Gameplay scripting VM (built as a C static lib) |
 | sol2 3.5.0 | C++ binding layer over Lua (header-only) |
 | RmlUi 6.2 | Game UI (HTML/CSS-style documents); Core + Lua plugin only |
 | FreeType 2.14.3 | RmlUi's font engine (its one hard dependency) |
+
+**miniaudio** is a committed single header (`extern/miniaudio/miniaudio.h`), not a submodule — the
+cgltf precedent. It has one implementation TU, `GanymedE/Audio/miniaudio_impl.cpp`, which is the
+only place in the engine that defines `MINIAUDIO_IMPLEMENTATION`; keeping it alone in a file means
+the ~84k-line implementation costs one TU rather than one per consumer (measured: ~1 s of a ~26 s
+x64 Debug engine build). Its link surface is per-OS and easy to get wrong:
+
+- **Windows** — nothing to add; the WASAPI backend needs no extra import library.
+- **Linux** — miniaudio `dlopen`s ALSA and PulseAudio at runtime, so there is no link-time
+  dependency on either. `dl` and `pthread` are already in every app's link list. If a linker ever
+  asks for `m`, add it there too.
+- **macOS** — `CoreAudio.framework` and `AudioToolbox.framework` must be in the `macosx` links block
+  of **every app** (Sandbox, GanymedEditor, GanymedRuntime), not just the engine: static libraries
+  do not propagate their links off MSVC. Same rule as the bgfx frameworks beside them.
 
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
 `extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`, `extern/RmlUi.lua`, `extern/FreeType.lua`).

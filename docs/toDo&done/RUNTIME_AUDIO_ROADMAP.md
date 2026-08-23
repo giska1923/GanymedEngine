@@ -1,6 +1,6 @@
 # GanymedEngine — Standalone Runtime + Audio Roadmap
 
-Status: **Phases 1–2 executed; Phases 3–5 planned.** Written 2026-08-12, against the post-animation
+Status: **Phases 1–3 executed; Phases 4–5 planned.** Written 2026-08-12, against the post-animation
 engine (branch point: the skeletal-animation milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md): each phase carries goal, steps, decisions with
 rationale, risks, and a verification table; execution notes get appended as phases run. Read the
@@ -636,6 +636,111 @@ Temporary probe (Sandbox layer or editor `OnAttach`, removed afterwards):
 | One-shot reaping | Fire 20 `PlayOneShot`s, wait, log the internal voice-table size back at baseline |
 | Post-shutdown guard | `Play`/`StopAll` after `Shutdown` — no-op, no crash (simulates the layer-detach ordering) |
 | Registry | Drop a `.wav` under `assets/` → `ImportAsset` → registry gains an `Audio` entry; survives a save/load roundtrip |
+
+### Phase 3 execution notes
+
+**miniaudio 0.11.25, committed as one header.** `extern/miniaudio/miniaudio.h`, byte-identical to the
+`0.11.25` tag and to `master` at the time of vendoring. No licence file alongside it — the licence
+(public domain / MIT-0) is in the header's own trailer, and the cgltf precedent is a bare `.h`.
+
+**The plan's stated risk — "the impl TU is a very large preprocessed unit" — was measured and is not
+a problem, but not for the expected reason.** x64 Debug, full engine build 26.1 s. Touching only
+`miniaudio_impl.cpp` costs 3.5 s; touching `AudioEngine.cpp` costs 3.6 s; touching a trivial TU
+(`AssetTypes.cpp`) costs 2.6 s, which is the msbuild+link floor. So the ~84k-line *implementation* is
+worth about **1 s**, and `AudioEngine.cpp` — which includes the header for declarations only — costs
+exactly the same. The 11.5k-line declaration half dominates, so the two-TU split still earns its
+keep, and the `MA_NO_ENCODING`/`MA_NO_GENERATION` trims were dropped: they would have bought a
+fraction of that 1 s in exchange for a cross-TU consistency obligation (both TUs must agree on the
+option macros or struct layouts diverge silently), which is a bad trade at that price.
+
+**Loading is synchronous, and the plan implied otherwise.** The Phase 3 risk list says "miniaudio's
+async decode means 'play' logs before sound is audible", which anticipated `MA_SOUND_FLAG_ASYNC`.
+Rejected, and the reason is Phase 4's: `OnRuntimeStart` has to "warn once per entity **with the
+path**" when a clip fails to load, and with async the load happens on a job thread with no caller
+context, so the error arrives detached from the entity that caused it. Synchronous also matches the
+rest of the asset layer, which has no async anywhere. The cost is a first-use decode hitch, which is
+precisely what the authored `stream` flag exists for, and which is charged once per path — measured
+at 289.8 ms for a 60 s file, then 0.07 ms for the second voice on the same path.
+
+**One-shot reaping: a per-frame tick, which the plan left open.** `AudioEngine::OnUpdate()` is called
+from `Application::Run`, outside the minimised gate. Lazy reaping inside `PlayOneShot` was the
+alternative and it fails on exactly the workload one-shots are for: a game firing footsteps for ten
+minutes and then going quiet would pin every clip it ever played until the next one happened to fire.
+The leak is time-shaped, so the reap has to be too. Three lines in the run loop, one call site.
+
+**miniaudio's own fire-and-forget helper is deliberately unused.** `ma_engine_play_sound` looks like
+exactly what `PlayOneShot` wants — it even recycles its inlined sounds. It forces
+`MA_SOUND_FLAG_NO_SPATIALIZATION` and `MA_SOUND_FLAG_NO_PITCH` and takes no volume, so it cannot
+serve a positioned SFX at all. Recorded because it is the obvious thing to reach for.
+
+**`Play` needed no idempotency code, and Phase 5's requirement is already satisfied.**
+`ma_sound_start` returns early if the sound is already playing, and seeks back to 0 if it has reached
+its end. So a script calling `PlaySound` every frame cannot restart the voice, which is the exact
+failure the `PlayAnimation` execution note found the hard way. There is a comment at the call site
+telling the next reader not to "improve" it into an unconditional seek.
+
+**Five additions to the plan's API sketch, all with a caller in this phase or the next.**
+`SetLooping` (Phase 4's `OnUpdate` pushes Volume/Pitch/**Loop** every frame; the sketch had no way to
+push the third); `IsInitialized` (the UIEngine precedent, and the probe's first assertion); `OnUpdate`
+(the reap tick above); `GetVoiceCount`/`GetOneShotCount` (the phase's own verification table asks for
+"the internal voice-table size back at baseline", which is unobservable without them). Nothing else
+was added.
+
+**`VoiceId` is never reset, including across a re-`Init`** — found by writing the re-init test. The
+first draft reset the counter in `Init`, which meant a `VoiceId` held across a `Shutdown`/`Init` pair
+could name a *different* sound afterwards instead of merely no-opping. One line deleted.
+
+**Both voice containers are node-based, and that is load-bearing.** A `ma_sound` is a node in
+miniaudio's graph and its neighbours hold its address, so it must never be relocated after init:
+`unordered_map<VoiceId, ma_sound>` and `list<ma_sound>`, never a vector. Each sound is also
+initialised *in place* after insertion, for the same reason.
+
+**Spatial panning was measured, not listened to.** The plan's check reads "pan audibly follows",
+which the author of these notes cannot verify. Instead, a throwaway harness initialised `ma_engine`
+in `noDevice` mode with the same listener convention `AudioEngine::SetListener` uses, read the mix
+back with `ma_engine_read_pcm_frames`, and measured per-channel RMS across an emitter sweep. That is
+strictly better evidence than ears: it confirms the handedness claim now in the header — right-handed,
+−Z forward, **+X is the listener's right** — as a number rather than an impression. Table in the
+evidence section and in [`audio.md`](../engine/audio.md).
+
+**The alive guard proved itself in the ordinary shutdown path, not just the scripted one.** In every
+run the log shows `AudioEngine shut down` *before* the probe layer's `OnDetach` calls `StopAll()` —
+the Application destructor body running ahead of the LayerStack unwinding, exactly as decision 10
+predicted. The scripted test (Shutdown mid-run, then call all sixteen public functions) is the
+belt-and-braces version.
+
+**Pre-existing noise, flagged not fixed:** Sandbox ships no `assets/fonts/`, so running anything in
+it logs three RmlUi font-face errors and two ImGui font warnings; and the engine's static-lib link
+prints `LNK4006: __NULL_IMPORT_DESCRIPTOR already defined in gdi32.lib` from `psapi.lib`. Neither is
+in this phase's path. The `pwsh.exe is not recognized` postbuild noise from Phase 2 is still there.
+
+**Not verified by me:** audible playback (everything below is device state, timing and measured
+sample data — no one listened to it), the Linux and macOS builds, and the Dist configuration. The
+macOS framework additions were placed by the same rule as the bgfx frameworks beside them; the Linux
+`m` question is left as the plan wrote it — add it only if a linker asks, since bgfx and Jolt already
+link without it.
+
+#### Verification evidence
+
+x64 Debug, D3D11, WASAPI. All log lines from a temporary `AudioProbe` layer hosted in Sandbox, since
+deleted along with its four generated test files.
+
+| Check | Evidence |
+|---|---|
+| Init | `AudioEngine initialized (WASAPI, 'Speakers (USB Audio Device)', 48000 Hz, 8 channels)`. Clean `AudioEngine shut down`. Re-`Init` in the same process reopens the device and the next voice is id 11, not id 1 |
+| Decode + play | Each format played to completion and `IsPlaying` went true→false at the file's real length, which only happens if the device is genuinely pulling frames: `beep.wav` 1.016 s, `beep.mp3` 1.024 s (encoder padding), `beep.flac` 1.018 s, against a 1.000 s source. `CreateVoice` 6.3 / 8.3 / 9.8 ms. Voice count returned to 0 |
+| Resource-manager dedup | Same 60 s path twice, both decoded: **289.80 ms** then **0.07 ms** (≈4000×), working set +11.0 MiB then +0.0 MiB. Destroying both returned the working set to its pre-decode value, so the resource manager frees at refcount zero |
+| Streaming | Same file, `stream = true`: `CreateVoice` 11.6 ms, working set **+0.2 MiB** (+0.3 after 1.5 s of playback) versus **+11.0 MiB** decoded. 11.0 MiB is 60 s × 48 kHz × 1 ch × f32 — the decode is resampled to the device rate, which is worth knowing before authoring long clips as non-streamed |
+| Spatial | Listener at (0,0,0) facing (0,0,−1), up (0,1,0); emitter swept x −8→+8 at z=−2. Measured balance (R−L)/(R+L): −0.66, −0.65, −0.62, **0.00 at x=0**, +0.62, +0.65, +0.66. Symmetric about the forward axis, +X on the right, and total energy falls with distance under the default inverse attenuation |
+| Groups | A `Music` voice and an `SFX` voice playing together; `SetGroupVolume(Music, 0)` then back to 1.0, then `Master` to 0.25 and back. Every call routed and both voices kept playing throughout (`IsPlaying` true on both) — the audible half is unverified, see above |
+| One-shot reaping | 20 positioned one-shots fired in 8.6 ms plus one 2D one → internal count **21**; after 3 s → **0**. No `DestroyVoice` calls involved |
+| Post-shutdown guard | `Shutdown()` called with a voice still playing → voices 0, one-shots 0, `IsInitialized` false. Then all sixteen public functions called: `Play`, `Stop`, `SetVolume`, `SetPitch`, `SetLooping`, `SetPosition`, `SetListener`, `SetGroupVolume`, `PlayOneShot`, `DestroyVoice`, `StopAll`, `OnUpdate`, `IsPlaying`, `GetVoiceCount`, `GetOneShotCount`, `CreateVoice`. No crash; `CreateVoice` returned 0 and `IsPlaying` false. Then re-`Init` and a `.flac` played normally |
+| Registry | Four files imported → all four typed `Audio` with fresh handles. `Shutdown()` (persists) → `Init()` → handle, type and path all identical: `handle=8651894436568738473 type=Audio path='audio/beep.wav'` |
+| Regression | Whole solution builds (one pre-existing `strncpy` C4996, one pre-existing `LNK4006`). GanymedRuntime boots the Phase 2 demo scene with one added log line and exits 0; GanymedEditor boots, docks, and exits 0. Neither shows a new warning |
+
+**Build/tooling note:** three new engine source files, so `premake5 vs2022` was re-run. Root
+`premake5.lua` gained `IncludeDir["miniaudio"]`; the engine project one `includedirs` entry; the three
+apps two macOS frameworks each. No shader-script change (audio has no shaders).
 
 ---
 

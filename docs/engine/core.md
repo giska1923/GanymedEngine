@@ -57,8 +57,21 @@ as `argv[1]`), then wraps startup/run/shutdown in three profiling sessions
   event callback bound to `Application::OnEvent`),
 - the `LayerStack` and — when `ApplicationSpecification::EnableImGui` — the `ImGuiLayer` overlay,
 - the run loop (`Run()`): timestep from `glfwGetTime()`, `OnUpdate` for every layer (skipped while
-  minimized), then the ImGui begin/render/end bracket **if an `ImGuiLayer` exists**, then
+  minimized), `AudioEngine::OnUpdate` (*not* skipped — a minimized window has not stopped making
+  noise), then the ImGui begin/render/end bracket **if an `ImGuiLayer` exists**, then
   `Window::OnUpdate` (poll events + present).
+
+The constructor brings up the engine's global subsystems in a fixed order — `Renderer::Init` →
+[`AudioEngine::Init`](audio.md) → `ScriptEngine::Init` → `UIEngine::Init` — and the destructor body
+tears them down in the reverse-ish order the dependencies actually require: `UIEngine::Shutdown`
+(its Lua plugin holds references into the VM, and it releases GPU textures) → `ScriptEngine::Shutdown`
+→ `AudioEngine::Shutdown` → `Renderer::Shutdown`. Audio has no dependency in either direction; it is
+placed where it is so the boot log reads in a stable order.
+
+**The destructor body runs before the members unwind**, so the `LayerStack` — and every layer's
+`OnDetach` — happens *after* those shutdowns. That is why `AudioEngine` guards every public call
+with an initialized flag and the GPU-resource destructors check `Renderer::IsGpuAlive()`. Anything a
+layer touches during teardown must be safe to call dead.
 
 Application-level event handling: window close stops the loop; resize forwards to
 `Renderer::OnWindowResize` (0×0 → minimized, updates are skipped); **F1** toggles the bgfx

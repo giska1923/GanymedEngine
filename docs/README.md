@@ -26,6 +26,7 @@ The repository contains four projects:
 | [Rendering](engine/rendering.md) | The bgfx backend: view model, resources, shaders, Renderer2D/3D, shadows, IBL, post stack, async picking |
 | [Assets](engine/assets.md) | AssetManager, the registry, handles, mesh import (cgltf) and the binary mesh cache |
 | [Physics](engine/physics.md) | Jolt integration: PhysicsScene, body lifecycle, fixed timestep, interpolation, collision events, debug draw |
+| [Audio](engine/audio.md) | miniaudio integration: AudioEngine, voices, mixer groups, spatialization, streaming, the Audio asset type |
 | [Scripting](engine/scripting.md) | Lua 5.4 + sol2: ScriptEngine, LuaScriptSystem, the binding rules, error handling, sandboxing |
 | [Game UI](engine/ui.md) | RmlUi: UIEngine, the bgfx render backend, RenderPass::UI, RCSS gotchas, the Debugger |
 | [Platform](engine/platform.md) | GLFW windows per OS, input, BgfxContext (bgfx lifetime), ImGui layer and its bgfx renderer |
@@ -54,7 +55,7 @@ including verification evidence:
 - [`BGFX_MIGRATION.md`](toDo&done/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except some Phase 7 hardening)
 - [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
 - [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
-- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; Phases 1–2 executed — the runtime app boots and plays — Phases 3–5, the audio subsystem, planned)
+- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; Phases 1–3 executed — the runtime app boots and plays, and the engine has an [audio core](engine/audio.md) — Phases 4–5, the ECS surface and Lua bindings, planned)
 
 ## Building & running
 

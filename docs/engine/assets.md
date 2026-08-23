@@ -8,9 +8,11 @@ mesh import pipeline (cgltf + a binary cache).
 [`AssetTypes.h`](../../GanymedEngine/source/GanymedE/Assets/AssetTypes.h):
 
 - `AssetHandle` is a `UUID`; `InvalidAssetHandle` is 0 (`IsAssetHandleValid` checks).
-- `AssetType`: `StaticMesh`, `Environment`, `Texture`, `Material`, `Scene`, `Script` — derived from
-  file extension by `AssetTypeFromExtension` (`.gltf/.glb` → StaticMesh, `.hdr` → Environment,
-  `.png/.jpg/...` → Texture, `.ganymede` → Scene, `.lua` → Script).
+- `AssetType`: `StaticMesh`, `Environment`, `Texture`, `Material`, `Scene`, `Script`, `Audio` — derived
+  from file extension by `AssetTypeFromExtension` (`.gltf/.glb` → StaticMesh, `.hdr` → Environment,
+  `.png/.jpg/...` → Texture, `.ganymede` → Scene, `.lua` → Script, `.wav/.mp3/.flac` → Audio).
+  **Append only** — the enum is persisted by ordinal, so reordering it retypes every asset in every
+  existing registry.
 - `AssetMetadata` = handle + type + file path **relative to `assets/`**.
 
 Components reference handles, never paths (`StaticMeshComponent.Mesh`,
@@ -27,7 +29,7 @@ one registry + per-type in-memory caches:
 | `Init(writableRegistry = true)` / `Shutdown()` | Load the registry; `false` makes every registry write a no-op. The editor calls these in `EditorLayer::OnAttach/OnDetach`, the runtime in `RuntimeLayer::OnAttach/OnDetach` |
 | `ImportAsset(relativePath)` | Idempotent registration: existing path returns its handle; otherwise mint a UUID, infer the type, persist the registry immediately. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
-| `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D` |
+| `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D` — and only those |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
 
 The registry lives at `assets/AssetRegistry.gr` — YAML, one `{Handle, Type, FilePath}` entry per
@@ -43,6 +45,18 @@ outlive it, which is the right lifetime for something nobody authored.
 
 `Shutdown()` clears the caches either way, and does so while `Renderer::IsGpuAlive()` so the
 GPU-resource destructors release real bgfx handles.
+
+### Path-resolved types
+
+`Script` and `Audio` have **no `GetAsset` specialization, and that is deliberate** rather than an
+omission. The manager answers handle → path through `GetMetadata` and the consumer loads the file
+itself: the Lua VM owns its chunks, and miniaudio's resource manager ref-counts and caches decoded
+audio by path (see [audio.md](audio.md)). A cache here would be a second ref-counting owner of the
+same resource, and two caches disagreeing about lifetime is the bug class this avoids.
+
+The `GetAsset` primary template is *defined* with a `static_assert` rather than left undeclared, so
+asking for one of these is a compile error with a message instead of an unresolved external at link
+time.
 
 ### Registry portability
 

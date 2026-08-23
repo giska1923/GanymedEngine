@@ -36,6 +36,12 @@ namespace GanymedE {
 		// compile error with a message, instead of linking fine and failing later with
 		// an unresolved-external. Every new asset type adds one specialization
 		// declaration below, one definition in the .cpp, and one cache map.
+		//
+		// Not every asset type wants one. Script and Audio are path-resolved by
+		// design: the manager answers handle -> path and the consumer loads itself
+		// (Lua owns its chunks, miniaudio's resource manager owns decoded audio).
+		// A cache here would be a second ref-counted owner of the same resource -
+		// see docs/engine/audio.md.
 		template<typename T>
 		static Ref<T> GetAsset(AssetHandle handle)
 		{

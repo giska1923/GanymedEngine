@@ -3,6 +3,7 @@
 #include "GanymedE/events/ApplicationEvent.h"
 #include "GanymedE/events/KeyEvent.h"
 
+#include "GanymedE/Audio/AudioEngine.h"
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 #include "GanymedE/UI/UIEngine.h"
@@ -37,6 +38,12 @@ namespace GanymedE {
 
 		Renderer::Init();
 
+		// No ordering dependency either way - audio touches neither the GPU nor the VM.
+		// It sits here so the boot log reads renderer, audio, scripting, UI, and so that
+		// a device failure is reported before anything slower has run. Failure is not
+		// fatal: the app continues silent (see AudioEngine.h).
+		AudioEngine::Init();
+
 		// Application scope, not the editor's, because the VM belongs to the engine the way the
 		// renderer does — a Scene constructed by any app registers a LuaScriptSystem. It needs no
 		// AssetManager at this point; script assets are only resolved when one is instantiated.
@@ -66,6 +73,10 @@ namespace GanymedE {
 		// while bgfx is still alive. Then the VM, then the GPU.
 		UIEngine::Shutdown();
 		ScriptEngine::Shutdown();
+
+		// Before the LayerStack unwinds, which is why every AudioEngine call is guarded
+		// by an alive flag: a layer stopping its sounds in OnDetach runs after this.
+		AudioEngine::Shutdown();
 
 		Renderer::Shutdown();
 	}
@@ -171,6 +182,10 @@ namespace GanymedE {
 				for (Layer* layer : m_LayerStack)
 					layer->OnUpdate(timestep);
 			}
+
+			// Outside the minimised gate on purpose: a window nobody is looking at has
+			// not stopped making noise, and finished one-shots still need reaping.
+			AudioEngine::OnUpdate();
 
 			if (m_ImGuiLayer)
 			{

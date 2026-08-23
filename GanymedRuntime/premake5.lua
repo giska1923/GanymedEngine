@@ -114,7 +114,11 @@ project "GanymedRuntime"
 			-- compiled in, so its two frameworks are required even though nothing
 			-- here decodes video. See GanymedEditor/premake5.lua.
 			"CoreMedia.framework",
-			"VideoToolbox.framework"
+			"VideoToolbox.framework",
+			-- miniaudio's CoreAudio backend. Static libs do not propagate links off
+			-- MSVC, so every app that links GanymedEngine needs these itself.
+			"CoreAudio.framework",
+			"AudioToolbox.framework"
 		}
 
 	filter "configurations:Debug"

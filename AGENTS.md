@@ -58,6 +58,7 @@ change.** A code change with no doc update is incomplete work, not a follow-up.
 | bgfx backend, shaders, render passes | `docs/engine/rendering.md` |
 | AssetManager, importers, mesh cache | `docs/engine/assets.md` |
 | Jolt integration | `docs/engine/physics.md` |
+| `GanymedEngine/source/GanymedE/Audio/`, miniaudio | `docs/engine/audio.md` |
 | GLFW, input, BgfxContext, ImGui layer | `docs/engine/platform.md` |
 | premake, shaderc toolchain, profiling | `docs/engine/build-and-tooling.md` |
 | Cross-cutting design, module boundaries, frame flow | `docs/engine/architecture.md` |

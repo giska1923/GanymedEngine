@@ -15,6 +15,7 @@ GanymedE/
 ├── Renderer/    bgfx-backed renderer: resources, Renderer2D/3D, SceneRenderer, IBL, cameras
 ├── Assets/      AssetManager (handle registry), MeshCache
 ├── Physics/     PhysicsScene (Jolt, pimpl'd)
+├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
 ├── UI/          UIEngine (RmlUi game UI; the editor's own UI is ImGui — see ui.md)
 ├── Math/        Transform decomposition, AABB + Frustum
@@ -68,6 +69,8 @@ Application::Run loop
 │   ├─ entity-ID pick request/poll         (editor)
 │   └─ SceneRenderer::EndFrame             bloom → tonemap → FXAA → composite
 │
+├─ AudioEngine::OnUpdate                   reap finished one-shots (runs even while minimized)
+│
 ├─ ImGuiLayer::Begin / Layer::OnImGuiRender / ImGuiLayer::End
 │   └─ editor panels, viewport image, gizmos → ImGui draw data → bgfx view 200
 │
@@ -98,6 +101,10 @@ Two ordering facts worth internalizing:
   per-component-type change buffers / graveyards / init-fini buffers, and the UUID→entity map.
   Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`).
 - `PhysicsSystem` owns the `PhysicsScene` (Jolt world) — it exists only between play and stop.
+- `AudioEngine` owns the miniaudio device and every live voice. It is static-lifetime and explicitly
+  `Init()`/`Shutdown()` by `Application`; because that shutdown runs in the destructor *body*, before
+  the LayerStack unwinds, every one of its calls no-ops once shut down — the `IsGpuAlive` pattern
+  again (see [audio.md](audio.md)).
 - Renderer subsystems (`Renderer2D`, `Renderer3D`, `PostProcess`, `MeshShader`) are static-lifetime
   but explicitly `Init()`/`Shutdown()` by `Renderer`, releasing GPU handles while bgfx is alive.
 
@@ -123,7 +130,9 @@ Two ordering facts worth internalizing:
    `RendererAPI`/`GraphicsContext` virtual layers are gone; `Shader`, `Texture2D`, `Framebuffer`
    etc. are concrete wrappers over bgfx handles. `RendererAPI` survives only as a backend enum.
 6. **Plain-data components, engine types firewalled.** Components are plain structs; Jolt types
-   never appear in headers (`PhysicsScene` is pimpl'd); bgfx types appear only in renderer headers.
+   never appear in headers (`PhysicsScene` is pimpl'd); miniaudio types appear in exactly two `.cpp`s
+   and never in a header, not even as a forward declaration; bgfx types appear only in renderer
+   headers.
 
 ## Current limitations / known state
 
