@@ -244,6 +244,15 @@ blocks keyed by component name. Notes:
 - Adding a component type means extending both `SerializeEntity` and `Deserialize` — this is one
   of the two remaining hand-maintained per-component lists (the other is the editor UI).
 - `SerializeRuntime`/`DeserializeRuntime` (binary) are unimplemented stubs.
+- **`Deserialize` never throws.** It checks the file exists, then wraps the parse in one try/catch
+  and returns `false` on any `YAML::Exception`, logging the file and the reason. This matters more
+  than it sounds: yaml-cpp throws not only on malformed documents but on *every* `as<T>()` whose
+  node is missing, mistyped, or out of range — a hand-authored 20-digit UUID overflowing `uint64_t`
+  is how this was found, and unhandled it terminated the process before a single frame. For a
+  shipped game that is the worst available failure mode: no window, no message, just an exit code.
+  The scene is left partially populated rather than rolled back, so the caller chooses whether to
+  discard it; a half-loaded scene is still inspectable in the editor. The split into a private
+  `DeserializeUnchecked` exists only so the try block does not re-indent every component branch.
 
 ## Play mode
 

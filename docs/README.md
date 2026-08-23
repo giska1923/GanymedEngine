@@ -4,12 +4,13 @@ GanymedEngine is a C++17 game engine with a bgfx-based renderer (D3D11/D3D12/Vul
 an entt-based ECS with declared-access views and reactive change tracking, Jolt physics, a glTF
 asset pipeline, and an ImGui/ImGuizmo editor. It builds on Windows, Linux and macOS via premake5.
 
-The repository contains three applications:
+The repository contains four projects:
 
 | Project | What it is |
 |---|---|
 | `GanymedEngine` | The engine static library. All code under `GanymedEngine/source/`. |
 | `GanymedEditor` | The editor application (scene editing, play mode, content browser). |
+| `GanymedRuntime` | The standalone game player: boots a scene into play mode, renders to the backbuffer, no ImGui. |
 | `Sandbox` | A minimal test app (not covered by these docs). |
 
 ## Documentation map
@@ -36,6 +37,12 @@ The repository contains three applications:
 |---|---|
 | [Editor](editor/editor.md) | EditorLayer, the viewport (picking, gizmos, drag-drop), play/stop, panels, keyboard shortcuts |
 
+### Runtime
+
+| Document | Covers |
+|---|---|
+| [Runtime](runtime/runtime.md) | GanymedRuntime: boot sequence, runtime.yaml config, backbuffer render mode, the assets snapshot |
+
 ### Historical / planning documents
 
 `docs/toDo&done/` holds the working documents that drove the engine's big refactors and the plan
@@ -47,7 +54,7 @@ including verification evidence:
 - [`BGFX_MIGRATION.md`](toDo&done/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except some Phase 7 hardening)
 - [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
 - [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
-- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; Phase 1 executed — engine enablers for an ImGui-free, backbuffer-rendering front-end — Phases 2–5 planned)
+- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; Phases 1–2 executed — the runtime app boots and plays — Phases 3–5, the audio subsystem, planned)
 
 ## Building & running
 

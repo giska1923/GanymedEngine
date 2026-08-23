@@ -62,6 +62,7 @@ change.** A code change with no doc update is incomplete work, not a follow-up.
 | premake, shaderc toolchain, profiling | `docs/engine/build-and-tooling.md` |
 | Cross-cutting design, module boundaries, frame flow | `docs/engine/architecture.md` |
 | Anything in `GanymedEditor/` | `docs/editor/editor.md` |
+| Anything in `GanymedRuntime/` | `docs/runtime/runtime.md` |
 
 Rules:
 

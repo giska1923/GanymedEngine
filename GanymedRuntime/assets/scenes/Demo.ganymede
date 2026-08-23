@@ -1,0 +1,143 @@
+Scene: Runtime Demo
+Entities:
+  - Entity: 2000000000000000001
+    TagComponent:
+      Tag: Sky Light
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    SkyLightComponent:
+      Environment: 1000000000000000001
+      SkyColor: [0.449999988, 0.620000005, 0.899999976]
+      GroundColor: [0.280000001, 0.25999999, 0.219999999]
+      Intensity: 1
+      DrawSkybox: true
+  - Entity: 2000000000000000002
+    TagComponent:
+      Tag: Sun
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [-0.87266463, 0.52359879, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    DirectionalLightComponent:
+      Color: [1, 0.980000019, 0.920000017]
+      Intensity: 3
+      CastShadows: true
+  - Entity: 2000000000000000003
+    TagComponent:
+      Tag: Main Camera
+    TransformComponent:
+      Translation: [0, 3.5, 10]
+      Rotation: [-0.200000003, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    CameraComponent:
+      Camera:
+        ProjectionType: 0
+        PerspectiveFOV: 0.785398185
+        PerspectiveNear: 0.100000001
+        PerspectiveFar: 1000
+        OrthographicSize: 10
+        OrthographicNear: -1
+        OrthographicFar: 1
+      Primary: true
+      FixedAspectRatio: false
+  - Entity: 2000000000000000004
+    TagComponent:
+      Tag: Floor
+    TransformComponent:
+      Translation: [0, -2, 0]
+      Rotation: [0, 0, 0]
+      Scale: [16, 0.5, 16]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 1000000000000000002
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+    BoxColliderComponent:
+      HalfExtents: [0.5, 0.5, 0.5]
+      Offset: [0, 0, 0]
+      Friction: 0.5
+      Restitution: 0
+  - Entity: 2000000000000000005
+    TagComponent:
+      Tag: Falling Box A
+    TransformComponent:
+      Translation: [-1.5, 6, -1]
+      Rotation: [0.200000003, 0.400000006, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 1000000000000000002
+    RigidBodyComponent:
+      Type: 1
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+    BoxColliderComponent:
+      HalfExtents: [0.5, 0.5, 0.5]
+      Offset: [0, 0, 0]
+      Friction: 0.5
+      Restitution: 0.200000003
+  - Entity: 2000000000000000006
+    TagComponent:
+      Tag: Falling Box B
+    TransformComponent:
+      Translation: [1.60000002, 9, -0.5]
+      Rotation: [0, 0.300000012, 0.400000006]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 1000000000000000002
+    RigidBodyComponent:
+      Type: 1
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+    BoxColliderComponent:
+      HalfExtents: [0.5, 0.5, 0.5]
+      Offset: [0, 0, 0]
+      Friction: 0.5
+      Restitution: 0.200000003
+  - Entity: 2000000000000000007
+    TagComponent:
+      Tag: Player
+    TransformComponent:
+      Translation: [0, 1, 2]
+      Rotation: [0, 0, 0]
+      Scale: [0.75, 0.75, 0.75]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 1000000000000000002
+    ScriptComponent:
+      Script: 1000000000000000003

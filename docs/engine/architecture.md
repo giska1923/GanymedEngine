@@ -34,6 +34,14 @@ implement `GanymedE::CreateApplication()`, and include
 [`EntryPoint.h`](../../GanymedEngine/source/GanymedE/main/EntryPoint.h) exactly once — the engine
 owns `main()`.
 
+There are two real front-ends, and the engine has **zero editor `#ifdef`s** — the difference is
+configuration, not compilation. `CreateApplication` returns an `Application` built from an
+`ApplicationSpecification`, and `EnableImGui = false` is the whole opt-out that separates
+[`GanymedEditor`](../editor/editor.md) (ImGui chrome, scene rendered into a viewport panel) from
+[`GanymedRuntime`](../runtime/runtime.md) (no ImGui, scene rendered straight to the backbuffer).
+Anything that reads as editor-only behaviour inside the engine is a bug; the collider-gizmo gate on
+`PhysicsSettings::ShowColliderGizmos` is there because it *was* one.
+
 ## The frame, end to end
 
 One iteration of [`Application::Run`](../../GanymedEngine/source/GanymedE/main/Application.cpp):
@@ -84,7 +92,8 @@ Two ordering facts worth internalizing:
   `BgfxContext`, which owns bgfx itself — its destructor lowers `Renderer::IsGpuAlive()` *before*
   `bgfx::shutdown()`, and every GPU-resource destructor checks that flag (statics can outlive
   `main()`; C++ guarantees nothing about their order relative to bgfx teardown).
-- `EditorLayer` owns the `SceneRenderer` (render targets + post stack) and the active `Scene`.
+- The front-end layer — `EditorLayer` or `RuntimeLayer` — owns the `SceneRenderer` (render targets +
+  post stack) and the active `Scene`. Neither the engine nor `Application` holds a scene.
 - `Scene` owns the entt registry, the `SystemManager` (seven built-in systems), the `CommandQueue`,
   per-component-type change buffers / graveyards / init-fini buffers, and the UUID→entity map.
   Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`).
@@ -121,12 +130,12 @@ Two ordering facts worth internalizing:
 - Single-threaded: one scene update per frame on the main thread; bgfx runs in single-threaded
   mode (`renderFrame()` before `init`). The ViewDesc machinery exists so parallelism can be added
   without redesign.
-- Shadows had a known regression at the end of the bgfx migration (empty shadow map — see
-  [`BGFX_MIGRATION.md` §8.8](../toDo&done/BGFX_MIGRATION.md)); verify against current state before
-  relying on the doc.
-- Scripting is C++ `NativeScriptComponent` only (recompile to change behavior);
-  [`Scripting-And-UI-Integration.md`](../toDo&done/Scripting-And-UI-Integration.md) is the planned
-  next phase.
+- Scripting is Lua 5.4 + sol2 (`ScriptComponent`, hot-reloadable, TypeScript-authored via
+  TypeScriptToLua) *and* C++ `NativeScriptComponent`. See [scripting.md](scripting.md).
+  `Scripting-And-UI-Integration.md` is the plan that delivered it, not a plan for the future.
+- Shadows work. `BGFX_MIGRATION.md` §8.8 records an empty-shadow-map regression from the end of
+  that migration; it was fixed, and the animation milestone measured the cascades in use. Read
+  that section as history, not as current state.
 - `GLM_FORCE_DEPTH_ZERO_TO_ONE` is a compile-time, workspace-wide choice. A backend reporting
   `homogeneousDepth == true` (OpenGL) logs an error rather than adapting; the caps-driven
   projection helper is still open (migration §9.3).

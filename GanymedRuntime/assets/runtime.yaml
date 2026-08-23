@@ -1,0 +1,20 @@
+# What GanymedRuntime boots. Read by RuntimeConfig::Load before the window exists.
+#
+# Every key is optional - a missing key keeps the built-in default, and a missing or
+# malformed file boots with all defaults plus a warning. The scene can be overridden
+# on the command line (GanymedRuntime <path/to/scene.ganymede>); nothing else can,
+# because window geometry and the HUD belong to the build rather than to the launch.
+
+StartScene: assets/scenes/Demo.ganymede
+
+# Empty string means "no HUD". Loaded after the scene starts, so a document whose data
+# bindings a script writes on OnCreate has its model populated before first layout.
+UIDocument: assets/ui/hud.rml
+
+Title: Ganymed Runtime Demo
+
+# Ignored when Fullscreen is true: borderless fullscreen takes the primary monitor's
+# video mode. See docs/engine/platform.md.
+Width: 1600
+Height: 900
+Fullscreen: false

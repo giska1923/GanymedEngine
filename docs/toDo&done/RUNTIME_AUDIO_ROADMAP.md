@@ -1,6 +1,6 @@
 # GanymedEngine — Standalone Runtime + Audio Roadmap
 
-Status: **Phase 1 executed; Phases 2–5 planned.** Written 2026-08-12, against the post-animation
+Status: **Phases 1–2 executed; Phases 3–5 planned.** Written 2026-08-12, against the post-animation
 engine (branch point: the skeletal-animation milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md): each phase carries goal, steps, decisions with
 rationale, risks, and a verification table; execution notes get appended as phases run. Read the
@@ -358,7 +358,8 @@ to shed; a CLI-only approach leaves window/title/fullscreen homeless. Missing fi
 In `GanymedRuntime/source/`, beside a ~15-line `RuntimeApp.cpp` shell. `OnAttach`, in order —
 each line is a lesson EditorLayer already learned:
 
-1. `AssetManager::Init(/*saveRegistryOnShutdown=*/false)` — before any deserialize.
+1. `AssetManager::Init(/*writableRegistry=*/false)` — before any deserialize. (Renamed in
+   execution from the plan's `saveRegistryOnShutdown`; see the Phase 2 notes.)
 2. `SceneRenderer(windowW, windowH)`; `SetOutputToBackbuffer(true)`;
    `UIEngine::SetTarget(nullptr)`; `UIEngine::SetViewport(w, h)` (origin stays (0,0) —
    fullscreen).
@@ -409,6 +410,113 @@ architecture.md's app-hosting story anyway, so the section gets rewritten once, 
 | Clean exit | Esc and window-close both: no asserts, no bgfx leak report in the shutdown log, `AssetRegistry.gr` untouched |
 | Fresh-clone drill | Delete `GanymedRuntime/assets/AssetRegistry.gr` + `.assets` + compiled shaders → run scripts → boot: works (the registry-rebuild question answered with evidence) |
 | Editor regression | Full editor smoke after all premake/build changes |
+
+### Phase 2 execution notes
+
+**The registry question the plan asked to answer in-phase: scenes are *not* self-describing, and the
+runtime's `AssetRegistry.gr` is committed.** `.ganymede` stores bare handles; `AssetManager` resolves
+handle→path through the registry and nowhere else. So the plan's named fallback is the answer, and
+the `.gitignore` line it asked for is inverted: only `GanymedRuntime/assets/.assets` (the derived
+mesh cache) is ignored. The framing that makes this coherent rather than grubby is that the same file
+plays two roles — a machine-local database the editor grows as you import, and *authored content* a
+game ships with. `.gitignore` is already per-path, so it says exactly that.
+
+The failure mode was measured, not assumed, because it is worse than "the scene fails to load": with
+the registry moved aside the runtime booted, loaded the scene, reported the right entity count, and
+rendered nothing but the procedural sky gradient. Every mesh and the HDR environment were **silently**
+absent; only `ScriptEngine` complained, because it alone logged the unresolved handle. Screenshot in
+the evidence table.
+
+The path-based `MeshPath`/`ScriptPath`/`EnvironmentPath` fallbacks in the deserializer looked like a
+way to dodge the whole problem — author the runtime scene path-based and let `ImportAsset` mint
+handles at load. Rejected: the editor rewrites to handles on save, so the first time anyone opens the
+demo scene and saves it the portability quietly disappears. A property that breaks on a round-trip
+nobody thinks about is worse than no property.
+
+**A hole in Phase 1's 1.5, found by 2.1 and fixed.** `ImportAsset` calls `SaveRegistry()`
+unconditionally, and it runs *during deserialization* for path-based components — so a "shipped game
+must not write its install directory" flag that only guarded `Shutdown` would have been bypassed
+before the first frame. The guard moved inside `SaveRegistry()` itself, which covers every present
+and future caller, and the parameter was renamed `saveRegistryOnShutdown` → **`writableRegistry`**
+because that is what it actually means. Two call sites, both intentional.
+
+**A real bug in the code Phase 2 passes through: a malformed scene took the process down.**
+Hand-authoring the demo scene produced 20-digit entity UUIDs, which overflow `uint64_t`, and
+yaml-cpp's `as<uint64_t>()` throws on that. `SceneSerializer::Deserialize` had no handler, so the
+exception escaped `OnAttach` → `PushLayer` → `main` and terminated the process: no window, no
+message, exit code −1. For a shipped game that is the worst available failure mode, and the plan's
+own Phase 2 risk list demands the opposite ("make each step log"). `Deserialize` now checks existence
+and wraps the parse in one try/catch, returning false with the file and reason logged; the throwing
+body moved to a private `DeserializeUnchecked` purely so the try block did not re-indent 260 lines of
+component branches. Note this also makes the existing `bool` return meaningful — before, it was false
+only for a missing `Scene:` key, so every caller's error handling was decorative.
+
+**One diagnostic added beyond the plan, and it is the antidote to the plan's own stated risk.**
+"Order-of-init bugs fail as silent black screens" — the no-registry experiment showed the asset layer
+was a source of exactly that: `GetAsset<Mesh>`/`<Environment>`/`<Texture2D>` returned null for an
+unknown handle without a word. They now warn, naming the handle and the expected type, **once per
+handle** (a `WarnedUnknownHandles` set) because `RenderSystem` re-fetches by handle every frame per
+entity and an unguarded warning would arrive at frame rate. Verified: 2 lines for 2 bad handles
+across an 8-second run. This is the `AnimationSystem` unknown-clip posture — loud, not broken.
+
+**`WindowedApp` is scoped to Dist, and the plan's parenthetical about the editor was wrong.**
+`GanymedEditor` is `WindowedApp` under `filter "system:windows"` for *every* configuration, so it has
+no console in Debug either. The runtime keeps `ConsoleApp` outside Dist — but for a duller reason than
+first written: on Windows `Log`'s non-file sink is spdlog's `msvc_sink` (OutputDebugString), so the
+console window is *empty*. The boot log lives in `GanymedE.log` and the debugger's Output pane either
+way. The comment in `GanymedRuntime/premake5.lua` says so rather than implying the console is useful.
+
+**No `.rc`/icon.** The plan offered it as optional; there is no runtime icon asset and inventing one
+is not this phase's work. Named, not done.
+
+**Fonts: three faces, not twenty.** `UIEngine::LoadDefaultFonts` loads Regular, Bold and Italic. The
+snapshot ships those plus the OFL licence rather than the editor's full Montserrat family — the
+"copied snapshot" posture is about *provenance*, not about copying indiscriminately.
+
+**Demo scene content.** No existing scene had a primary camera *and* physics *and* a script —
+`BoxesPhysicsExample` has bodies but no camera and no renderable component at all, so in the editor it
+is visible only as collider gizmos. The demo scene is hand-authored: sky light, sun, primary
+perspective camera, a static floor and two dynamic boxes (all `BoxTextured.glb`, one mesh asset), and
+a Player entity carrying the existing `Player.lua`. Reusing that script rather than writing one was
+deliberate — it is known-good, and it drives `UI.SetHealth`/`UI.SetScore` and reads WASD, so a single
+entity exercises Lua lifecycle, the HUD data model and input forwarding at once. It carries no rigid
+body, because it writes its own translation every frame and physics would fight it.
+
+**Observation, not a Phase 2 bug: the demo looks blown out.** The studio HDRI at exposure 1.0 with
+bloom washes the sky to near-white. The editor's default new scene does the same thing (see the
+Phase 1 notes and the regression screenshot), so this is content/exposure tuning, not the backbuffer
+path. Left alone; Phase 5's demo scene is where it is worth authoring properly.
+
+**Pre-existing noise, flagged not fixed:** every solution build prints `'pwsh.exe' is not recognized`
+from `vendor/premake/premake5.lua`'s postbuild step, and the editor's registry carries two stale
+entries (`assets/models/Fox.glb` with a doubled prefix, and `scripts/_P5Probe.lua` pointing at a
+deleted probe). Neither is in this phase's path.
+
+#### Verification evidence
+
+x64 Debug, D3D11. Screenshots are GDI captures of the real window's client area — what a user would
+see, not a bgfx readback. Runs were driven by a script that starts the exe, resizes or keys it, grabs
+the client rect, and closes it.
+
+| Check | Evidence |
+|---|---|
+| Boot log table | One line per step, in order: `Window: 1600x900`; config echoed (`scene=… ui=… title=… 1600x900 fullscreen=false`); `AssetManager initialized (3 registered assets, registry read-only)`; `Deserializing scene 'Runtime Demo'` + 7 per-entity lines; `Scene … loaded (7 entities)`; `Primary camera: 'Main Camera'`; `Player created: Player (speed=3.0)`; `Runtime started`; `UI document … loaded`; `--- Boot complete ---`; then `Baked IBL environment` and `RmlUi: compositing into the backbuffer (1600x900)`. **Zero** warnings or errors |
+| Play mode is real | Physics: two boxes fall, tumble and settle on the floor with shadows, across screenshots 1→2. Lua: `Player created` is `OnCreate`; the HUD health draining 52 → 4 and score climbing 39 → 80 is `OnUpdate` running every frame; `Player destroyed` on exit is `OnDestroy` |
+| HUD | The health bar and score render over the scene in every screenshot, and the data model is being written by Lua rather than static. Event forwarding proven at the other end by Escape reaching `RuntimeLayer::OnKeyPressed` through `UIEngine::OnEvent` (RmlUi declined it) |
+| Resize | Scripted `MoveWindow` to 1024×640 outer → log `Resized to 1008x601` (client area), screenshot 2 is 1008×601 with the cubes still cubic — no stretch. `RmlUi: compositing into the backbuffer` did **not** repeat, correct for a target-kind that did not change, and no `SetTarget` re-set was needed |
+| Fullscreen | `Fullscreen: true` → `Borderless fullscreen: 1920x1080 at (0, 0)`, `Window: 1920x1080 (borderless fullscreen)`, `RmlUi: … (1920x1080)`, screenshot 3 captured at 1920×1080 with correct aspect and the HUD anchored to the screen edges. Note the config still echoes `1600x900` — Width/Height are ignored under Fullscreen, as documented |
+| No-camera scene | Passed on the command line (so this doubles as the CLI-override test): `Scene overridden on the command line: …NoCamera.ganymede`, 1 entity, `RuntimeLayer` reports the missing camera once at boot, then `RenderSystem` logs at 18:09:19 / :24 / :29 — exactly the 5 s throttle. Clear colour only, exit code 0, no crash |
+| Clean exit | Escape → `Escape pressed - closing`, `Player destroyed`, **exit code 0**, no asserts, no bgfx leak report. `AssetRegistry.gr` mtime unchanged across four runs and still in hand-authored key order (a `SaveRegistry` would have reordered it — `Registry` is an `unordered_map`) |
+| Fresh-clone drill | Deleted both gitignored derived trees (`assets/.assets`, `assets/shaders/compiled`), re-ran `compile_shaders.bat` (378 binaries), booted: mesh re-imported from the `.glb`, IBL rebaked, zero errors. The registry-rebuild question is answered the other way — it is not rebuilt, it is shipped |
+| No-registry (extra) | Registry moved aside: boots, 0 registered assets, scene "loads" with 7 entities, renders **only** the procedural sky/ground gradient, HUD frozen at 100/100. After the new diagnostic: exactly 2 warnings, one per unknown handle |
+| Editor regression | Whole solution builds (one pre-existing `strncpy` C4996 in `SceneHierarchyPanel`). Editor boots clean: panels docked, hierarchy shows the default Sky Light + Sun, Stats panel live, `AssetManager initialized (7 registered assets, registry **writable**)`, registry rewritten on exit, exit code 0, zero warnings or errors |
+
+**Not verified by me:** Linux and macOS builds (the per-OS link lists were copied verbatim from
+`GanymedEditor/premake5.lua`, which is the established posture for those platforms), and the Dist
+configuration's `WindowedApp` path.
+
+**Build/tooling note:** `GanymedRuntime` is a new project, so `premake5 vs2022` was re-run;
+`compile_shaders.bat` now has three targets. Root `premake5.lua` gained one `include` line.
 
 ---
 
@@ -769,8 +877,14 @@ Named so nobody half-builds them in passing:
    behavior visible in the inspector, not dependent on bytes on disk.
 7. **ImGui coupling: spec flag vs subclass hook** → spec flag; a virtual can't fire from the
    base ctor anyway.
-8. **Runtime writes `AssetRegistry.gr` on exit** → no; the `Init(saveRegistryOnShutdown)`
-   toggle. Two lines now vs a Program-Files write failure later.
+8. **Runtime writes `AssetRegistry.gr` on exit** → no; the `Init(writableRegistry)` toggle,
+   guarded inside `SaveRegistry()` so `ImportAsset` is covered too. Two lines now vs a
+   Program-Files write failure later.
+12. **Runtime asset references: committed registry vs path-based scenes** → committed registry
+    (Phase 2). Path-based scenes would make the runtime self-describing, but the editor rewrites
+    them to handles on save, so the property dies on the first round-trip. For a shipped game the
+    registry is authored content; the real fix is per-asset committed metadata (Unity `.meta`),
+    which is an asset-identity milestone of its own.
 9. **Edit-mode audio: silent vs preview** → silent, the systems norm — explicitly contrasted
    with AnimationSystem's documented divergence so both read as decisions.
 10. **AudioEngine shutdown vs layer teardown order** → alive-guard on every API call (the

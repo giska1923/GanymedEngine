@@ -45,7 +45,7 @@ fi
 
 # Every app that loads shaders at runtime gets its own compiled copy,
 # because assets are resolved relative to the working directory.
-TARGETS=("$ROOT/GanymedEditor/assets/shaders/compiled" "$ROOT/Sandbox/assets/shaders/compiled")
+TARGETS=("$ROOT/GanymedEditor/assets/shaders/compiled" "$ROOT/Sandbox/assets/shaders/compiled" "$ROOT/GanymedRuntime/assets/shaders/compiled")
 
 FAILED=0
 BUILT=0

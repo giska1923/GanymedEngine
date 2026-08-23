@@ -1,0 +1,10 @@
+Assets:
+  - Handle: 1000000000000000001
+    Type: 2
+    FilePath: environments/studio_small_08_1k.hdr
+  - Handle: 1000000000000000002
+    Type: 1
+    FilePath: models/BoxTextured.glb
+  - Handle: 1000000000000000003
+    Type: 6
+    FilePath: scripts/Player.lua

@@ -10,6 +10,12 @@ bin/
 GanymedEditor/assets/AssetRegistry.gr
 GanymedEditor/assets/.assets
 
+# The runtime's mesh cache is derived and rebuilds on first load. Its AssetRegistry.gr is
+# NOT ignored, unlike the editor's: scenes store bare asset handles, so a runtime with no
+# registry silently loses every mesh, environment and script. For a shipped game the
+# registry is authored content. See docs/engine/assets.md, "Registry portability".
+GanymedRuntime/assets/.assets
+
 # Premake-generated makefiles (regenerate with scripts/*_GenerateProjects.sh)
 Makefile
 *.make

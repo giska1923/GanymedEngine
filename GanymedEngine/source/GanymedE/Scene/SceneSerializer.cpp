@@ -391,6 +391,32 @@ namespace GanymedE {
 
 	bool SceneSerializer::Deserialize(const std::string& filepath)
 	{
+		if (!std::filesystem::exists(filepath))
+		{
+			GE_CORE_ERROR("Scene '{0}' does not exist", filepath);
+			return false;
+		}
+
+		try
+		{
+			return DeserializeUnchecked(filepath);
+		}
+		catch (const YAML::Exception& e)
+		{
+			// yaml-cpp throws on malformed documents and on every as<T>() whose node is
+			// missing, of the wrong type, or out of range - a 20-digit UUID overflowing
+			// uint64_t is how this was found. Unhandled, that terminated the process
+			// before a single frame, which is the worst possible failure mode for a
+			// shipped game: no window, no message, just an exit code. The scene is
+			// left partially populated on purpose - the caller decides whether to
+			// discard it, and for the editor a half-loaded scene is still inspectable.
+			GE_CORE_ERROR("Scene '{0}' failed to parse: {1}", filepath, e.what());
+			return false;
+		}
+	}
+
+	bool SceneSerializer::DeserializeUnchecked(const std::string& filepath)
+	{
 		std::ifstream stream(filepath);
 		std::stringstream strStream;
 		strStream << stream.rdbuf();
