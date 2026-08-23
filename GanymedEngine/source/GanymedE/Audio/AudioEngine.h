@@ -1,31 +1,13 @@
 #pragma once
 
+#include "GanymedE/Audio/AudioTypes.h"
 #include "GanymedE/Core/Core.h"
 
 #include <glm/glm.hpp>
 
-#include <cstdint>
 #include <filesystem>
 
 namespace GanymedE {
-
-	// Handle to a live sound owned by the AudioEngine. 0 is never issued, so an
-	// unset VoiceId is safely invalid and every call below no-ops on it.
-	using VoiceId = uint32_t;
-
-	inline constexpr VoiceId InvalidVoiceId = 0;
-
-	// The whole mixer. Master is the engine endpoint; Music and SFX are the two
-	// buses hanging off it. Arbitrary bus graphs, sends and ducking are out of
-	// scope - see the milestone plan's "Explicitly not doing".
-	enum class AudioGroup : uint8_t
-	{
-		Master = 0,
-		Music,
-		SFX
-	};
-
-	const char* AudioGroupToString(AudioGroup group);
 
 	// Audio playback, the counterpart to Renderer on the sound side: a global owning
 	// the one miniaudio engine, its two groups, and every live voice.

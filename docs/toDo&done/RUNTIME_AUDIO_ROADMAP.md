@@ -1,6 +1,6 @@
 # GanymedEngine — Standalone Runtime + Audio Roadmap
 
-Status: **Phases 1–3 executed; Phases 4–5 planned.** Written 2026-08-12, against the post-animation
+Status: **Phases 1–4 executed; Phase 5 planned.** Written 2026-08-12, against the post-animation
 engine (branch point: the skeletal-animation milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md): each phase carries goal, steps, decisions with
 rationale, risks, and a verification table; execution notes get appended as phases run. Read the
@@ -866,6 +866,107 @@ Editor play mode, temporary probe logging voice-table size + listener pose per s
 | Serialization | Save → load roundtrips every field including Group-as-string; a pre-milestone scene (no audio components) loads unchanged |
 | Inspector | Drag `.wav` onto the clip field assigns; drag `.lua` is ignored (typed-drop negative test) |
 | Stream flag | A music entity with Stream on: working-set delta vs off (the Phase 3 probe repeated through the component path) |
+
+### Phase 4 execution notes
+
+**`AudioTypes.h` split out of `AudioEngine.h`, which is a small correction to Phase 3.**
+`Components.h` needs `AudioGroup` and nothing else; including the facade would have pulled
+`<filesystem>` and a class full of static methods into every translation unit that touches a scene.
+The split mirrors `AssetTypes.h` / `AssetManager.h` exactly — vocabulary in one header, the facade in
+another. `AudioGroupFromString` was added alongside `ToString` for the serializer; an unknown name
+warns and falls back rather than throwing, so one mistyped group does not cost the whole scene.
+
+**The plan's "lazily create voices requested since start" is not a per-frame scan, and Phase 4 has no
+caller for it at all.** `EnsureVoice(entity, source)` is idempotent and is what a request would call,
+but the only requester in this phase is `OnRuntimeStart`. The lazy path belongs to Phase 5's
+`PlaySound`, where creation happens *in the request* rather than in a poll that looks for work — a
+scan over every source every frame asking "did anyone want you yet?" would be doing the request's job
+badly. `OnUpdate` therefore only pushes state for voices that already exist.
+
+**"Finished non-looping voices: keep paused rather than freed" needed no code, which the plan asked
+to confirm in-phase.** `AudioEngine::Stop` is pause-with-cursor and `ma_sound_start` rewinds a sound
+at its end, so a voice that finishes simply sits there and replays instantly. There is a comment in
+`OnUpdate` saying what is deliberately absent, because "nothing here frees finished voices" is
+exactly the kind of gap a later reader fixes.
+
+**Every audio field is read guarded (`if (node["Volume"])`), diverging from `RigidBodyComponent`'s
+bare `as<T>()` two blocks above it.** Phase 2 established that `Deserialize` wraps the whole parse in
+one try/catch, so a single absent key in a bare read does not skip a field — it throws out and loses
+the file. Audio components are new enough that hand-authoring a scene with one is still normal (the
+Phase 5 demo will be), so the guarded form is worth its verbosity here. The older components were
+left alone: changing them is a separate, wider decision.
+
+**A NaN guard on the listener basis, which is not paranoia.** `UpdateListener` normalises the
+transform's −Z and +Y. An entity scaled to 0 — a completely ordinary way to hide something —
+produces a zero-length axis, `glm::normalize` returns NaN, and that NaN lands in miniaudio's
+spatializer, which runs on the device thread. A poisoned mix surfacing from a background thread
+three subsystems away from the scale field that caused it is a bug worth two lines to never have.
+
+**The editor's play button cannot be driven, so verification used two probes.** It is an
+`ImGui::ImageButton` with no keyboard path, and `SendKeys` reached the window but never the layer
+(ImGui installs its own GLFW callbacks). So: (a) a Sandbox harness that drives a real `Scene` through
+the identical `Copy` → `OnRuntimeStart` → `OnUpdateRuntime` → `OnRuntimeStop` sequence
+`EditorLayer::OnScenePlay/OnSceneStop` run, which is where every programmatic check lives; and (b) a
+temporary timer in `EditorLayer::OnUpdate` calling the real `OnScenePlay`/`OnSceneStop`, to confirm
+the editor's own path agrees. Both removed.
+
+**Measure in Release before optimising, and this phase is the reminder why.** The plan's risk item
+asks to confirm the poll-push has no per-call allocation or lock contention at ~50 sources. Debug
+said **17 µs per source per frame** — alarming. Release says **0.7 µs** (0.038 ms for 52 sources).
+The Debug figure is almost entirely MSVC's checked-iterator `unordered_map` lookups: five per source
+per frame, one in `AudioSystem::OnUpdate` plus one inside each of the four `AudioEngine` setters,
+which each call `FindVoice`. A batched `SetVoiceState(id, volume, pitch, loop, position)` would
+collapse that to one lookup; it is named here and deliberately **not** done, because 0.7 µs is not a
+problem and the API bulge would be paid for a Debug-only number.
+
+**A real, pre-existing bug found in passing: the RmlUi debugger document dies on the second play.**
+`EditorLayer::OnSceneStop` calls `UIEngine::CloseAllDocuments()`, which destroys the document the
+RmlUi `Debugger` plugin owns; the next play logs `RmlUi: A document owned by the Debugger plugin was
+destroyed externally. This is not allowed.` Anyone who presses play twice hits it — it only went
+unnoticed because nobody had cycled play/stop in a scripted loop before. Nothing to do with audio;
+flagged, not fixed. The fix is for `CloseAllDocuments` to skip documents it does not own, or for the
+debugger to be shut down and re-initialised around play.
+
+**A pre-existing property, not a bug, that cost real time to rule out: scene YAML entity order is
+entt's iteration order.** `save → load → save` produces byte-different files of identical length; the
+entity blocks are identical, only their order differs. So a byte compare is the wrong roundtrip test
+(the probe sorts blocks before comparing), and — more usefully — **re-saving an unmodified scene
+produces a large meaningless diff** for anyone versioning scene files. The serializer already sorts
+script `Fields` for exactly this reason; entities are the bigger case and are unsorted. Flagged, out
+of scope.
+
+**Not verified by me:** audible playback, as in Phase 3 — everything below is state, timing, YAML and
+measured memory. The **drag-and-drop interaction and the Add Component menu entries were read, not
+run**: both inspectors were captured on screen with real data (screenshots in the evidence table),
+but dragging a `.wav` onto the clip field, and the negative case of dragging a `.lua`, need a hand on
+a mouse. The type filter behind them is `AssetTypeFromExtension`, which the registry check does
+exercise. Linux, macOS and Dist are unbuilt, as before.
+
+#### Verification evidence
+
+x64 Debug unless stated, D3D11, WASAPI. Programmatic checks from a temporary `AudioProbe` layer in
+Sandbox driving the real play/stop lifecycle; editor checks from a temporary timer in `EditorLayer`.
+Both removed, along with their four generated assets.
+
+| Check | Evidence |
+|---|---|
+| PlayOnStart | Entering play built and started both `PlayOnStart` sources: `play -> engine voices = 2` on the same call as `OnRuntimeStart`, with no intervening frame |
+| Spatial tracking | A looping spatial emitter on an entity moved every frame, listener at the origin: logged world position tracks the entity — `t=0s world=(-8.00, 0.00, -2.00)` through `t=4s world=(4.75, 0.00, -2.00)`. World lags local by exactly one frame (−4.80 local vs −4.85 world), because `TransformSystem` runs before `AudioSystem` and the probe logs before the update — i.e. what gets pushed is the cache as `AudioSystem` finds it, which is this frame's value |
+| Listener component | A listener on a non-camera entity (origin) with the camera at (0,0,12): pushed listener pose is the component's, not the camera's, and no fallback line is logged |
+| Camera fallback | Same scene with the component removed: `No AudioListenerComponent in the scene - listening from the primary camera`, exactly once. Also fired for real in `GanymedRuntime`, whose Phase 2 demo scene has no listener |
+| Multiple listeners | Two primary listeners: `2 primary AudioListenerComponents in the scene - using the first.` — **one** warning for the whole run, first wins |
+| Play/stop hygiene | Five cycles, engine voice count logged at each boundary: `0 → 2 → 0` every time, and `after 5 cycles: engine voices = 0`. The device was opened once at boot and never re-initialised |
+| Scene::Copy cleanliness | Play-mode writes to the runtime copy (`Volume` 0.8→0.13, `Pitch` 1.0→1.77, `Loop` true→false, every frame for 30 frames), then the edit scene re-serialized: **YAML unchanged**, edit-scene values still 0.80 / 1.00 / true. No audio fixup exists in `Scene::Copy` and none is needed |
+| Serialization | `save → load → save`: 1758 vs 1758 bytes, identical block-for-block (byte-different only in entity order, see above). Every field round-tripped including `Group: Music` as a string, `Stream`, `Spatialize`. A pre-milestone scene (`BoxesPhysicsExample.ganymede`, committed before this milestone) loads unchanged: 6 entities, 0 audio components, no warnings |
+| Stream flag | Same scene, same play/stop cycle, one component flag flipped, sampled mid-cycle (a post-stop reading measures nothing — the voice is gone and the buffer freed): streamed +21.8 MiB, decoded +32.6 MiB, so **decoding costs +10.0 MiB** for a 60 s clip. Both figures include the Scene copy and Jolt world; only the difference is audio |
+| Poll-push at scale | 52 sources: `OnUpdateRuntime` 0.087 ms/frame vs 0.049 ms with the audio components stripped → **0.038 ms, 0.7 µs per source** (Release). Debug: 1.445 vs 0.669 ms → 17 µs per source. No allocation, no lock on this path |
+| Inspector | Screenshots of both components with real data: Audio Source showing `Clip: audio/beep.wav`, Clear, the drop hint, `SFX` group combo, Volume 0.800, Pitch 1.000, Loop ✓ / Play On Start ✓ / Spatialize ✓ / Stream ☐ and the apply-on-play hint; Audio Listener showing Primary ✓ and its fallback hint |
+| Editor play/stop | The real `OnScenePlay`/`OnSceneStop`, three cycles: `0 → 2 → 0` each time, exit code 0. This is the path the Sandbox harness models, confirmed against the model |
+| Regression | Whole solution builds (one pre-existing `strncpy` C4996). `GanymedRuntime` boots the Phase 2 demo, adds one listener-fallback line, exits 0. `GanymedEditor` boots and exits 0. No new warnings in either |
+
+**Build/tooling note:** four new engine source files (`AudioTypes.h/.cpp`,
+`Scene/Systems/AudioSystem.h/.cpp`), so `premake5 vs2022` was re-run. No premake edits — the engine
+globs `source/**`. No new dependency, no shader change.
 
 ---
 

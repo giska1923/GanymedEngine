@@ -305,6 +305,37 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		if (entity.HasComponent<AudioSourceComponent>())
+		{
+			out << YAML::Key << "AudioSourceComponent";
+			out << YAML::BeginMap;
+
+			auto& source = entity.GetComponent<AudioSourceComponent>();
+			if (IsAssetHandleValid(source.Clip))
+				out << YAML::Key << "Clip" << YAML::Value << static_cast<uint64_t>(source.Clip);
+
+			// By name, not by ordinal. AudioGroup is not registry-persisted, so nothing forces
+			// stable numbering on it, and a hand-edited scene reading "Music" beats reading 1.
+			out << YAML::Key << "Group" << YAML::Value << AudioGroupToString(source.Group);
+			out << YAML::Key << "Volume" << YAML::Value << source.Volume;
+			out << YAML::Key << "Pitch" << YAML::Value << source.Pitch;
+			out << YAML::Key << "Loop" << YAML::Value << source.Loop;
+			out << YAML::Key << "PlayOnStart" << YAML::Value << source.PlayOnStart;
+			out << YAML::Key << "Spatialize" << YAML::Value << source.Spatialize;
+			out << YAML::Key << "Stream" << YAML::Value << source.Stream;
+
+			out << YAML::EndMap;
+		}
+
+		if (entity.HasComponent<AudioListenerComponent>())
+		{
+			out << YAML::Key << "AudioListenerComponent";
+			out << YAML::BeginMap;
+			out << YAML::Key << "Primary" << YAML::Value
+				<< entity.GetComponent<AudioListenerComponent>().Primary;
+			out << YAML::EndMap;
+		}
+
 		if (entity.HasComponent<RigidBodyComponent>())
 		{
 			out << YAML::Key << "RigidBodyComponent";
@@ -633,6 +664,41 @@ namespace GanymedE {
 					skc.GroundColor = skyLightComponent["GroundColor"].as<glm::vec3>();
 					skc.Intensity = skyLightComponent["Intensity"].as<float>();
 					skc.DrawSkybox = skyLightComponent["DrawSkybox"].as<bool>();
+				}
+
+				auto audioSourceComponent = entity["AudioSourceComponent"];
+				if (audioSourceComponent)
+				{
+					auto& source = deserializedEntity.AddComponent<AudioSourceComponent>();
+
+					// Every field guarded, unlike RigidBodyComponent above. These components are
+					// young enough that hand-authored scenes are still a normal way to make one
+					// (the runtime demo is), and an absent key would otherwise throw out of
+					// as<T>() and take the whole scene load with it.
+					if (auto clip = audioSourceComponent["Clip"])
+						source.Clip = clip.as<uint64_t>();
+					if (auto group = audioSourceComponent["Group"])
+						source.Group = AudioGroupFromString(group.as<std::string>(), source.Group);
+					if (auto volume = audioSourceComponent["Volume"])
+						source.Volume = volume.as<float>();
+					if (auto pitch = audioSourceComponent["Pitch"])
+						source.Pitch = pitch.as<float>();
+					if (auto loop = audioSourceComponent["Loop"])
+						source.Loop = loop.as<bool>();
+					if (auto playOnStart = audioSourceComponent["PlayOnStart"])
+						source.PlayOnStart = playOnStart.as<bool>();
+					if (auto spatialize = audioSourceComponent["Spatialize"])
+						source.Spatialize = spatialize.as<bool>();
+					if (auto stream = audioSourceComponent["Stream"])
+						source.Stream = stream.as<bool>();
+				}
+
+				auto audioListenerComponent = entity["AudioListenerComponent"];
+				if (audioListenerComponent)
+				{
+					auto& listener = deserializedEntity.AddComponent<AudioListenerComponent>();
+					if (auto primary = audioListenerComponent["Primary"])
+						listener.Primary = primary.as<bool>();
 				}
 
 				auto rigidBodyComponent = entity["RigidBodyComponent"];

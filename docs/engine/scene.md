@@ -31,7 +31,7 @@ Key entry points:
 | `MarkChanged<T>(entity)` | Report an out-of-view write of a tracked component (see [ecs.md](ecs.md#accessors-and-the-modify-invariant)) |
 
 `Scene`'s constructor wires the entt signals for tracked/init/fini component types, creates the
-`RenderContext` and `PhysicsSettings` singletons, registers the seven built-in systems, and asserts
+`RenderContext` and `PhysicsSettings` singletons, registers the eight built-in systems, and asserts
 `ValidateOrdering()` passes.
 
 ## Entity
@@ -106,6 +106,24 @@ copyable, no behavior beyond small helpers.
   the same hook names as the native path, driven by `LuaScriptSystem`.
   Details: [scripting.md](scripting.md).
 
+### Audio (pure data — miniaudio never appears here, and neither does the live voice)
+
+- **`AudioSourceComponent`** — an `AssetHandle` to a `.wav/.mp3/.flac` asset, plus `Volume`,
+  `Pitch`, `Loop`, `PlayOnStart`, `Spatialize`, `Stream` and an `AudioGroup`
+  (`Master | Music | SFX`). **No `VoiceId`, no "is playing" flag**: the live voice belongs to
+  `AudioSystem`'s map, keyed by entity, exactly as a Jolt body belongs to `PhysicsScene`. That is
+  the deliberate opposite of `AnimatorComponent::Palette`, and the difference is *what the field
+  is* — a palette is pure data one system produces and another reads, a voice is a foreign
+  resource with a lifecycle. The payoff: `Scene::Copy` needs no audio fixup at all.
+  `Clip`, `Spatialize` and `Stream` are read when the voice is built and ignored afterwards;
+  the rest are pushed every frame.
+- **`AudioListenerComponent`** — one `Primary` bool. Absent from the scene entirely, the primary
+  camera's pose becomes the listener. Details: [audio.md](audio.md).
+
+Both untracked: `AudioSystem` polls them every frame, so change tracking would buy nothing, and
+untracked means a script setter needs no `MarkChanged` to be heard — the `AnimatorComponent`
+precedent.
+
 ### Physics (pure data — Jolt never appears here)
 
 - **`RigidBodyComponent`** — `Static | Dynamic | Kinematic`, mass, linear/angular damping,
@@ -178,6 +196,28 @@ Resolves "which camera renders this frame" once into the `RenderContext` singlet
 clears `MainCamera` (the editor camera renders instead). `MainCamera` points into a live component
 — it is rewritten every update and must never be held across frames.
 
+### AudioSystem — [`Systems/AudioSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/AudioSystem.h)
+Drives the [AudioEngine](audio.md) from the scene. `OnRuntimeStart` builds a voice for every
+`PlayOnStart` source (handle → path through `AssetManager::GetMetadata`, the Script precedent) and
+starts it; `OnUpdate` pushes `Volume`/`Pitch`/`Loop` and, for spatial sources, the entity's world
+position, then resolves the listener; `OnRuntimeStop` destroys every voice and calls `StopAll`.
+Voices live in an `unordered_map<entt::entity, VoiceId>` that exists only between play and stop.
+
+Listener resolution: the first `Primary` `AudioListenerComponent` wins, with a one-time warning if
+there is more than one (the unknown-clip-name posture — loud, not broken). With none in the scene it
+falls back to `RenderContext::CameraTransform`, logged once. **That fallback is why the system is
+registered after `CameraSystem`** even though the two share no component: running after means the
+fallback ears are this frame's pose, not last frame's. `ValidateOrdering` cannot see that
+dependency, so the registration site carries the reason in a comment.
+
+Nothing frees a non-looping voice that reaches its end. `AudioEngine::Stop` is pause-with-cursor and
+`Play` rewinds, so a finished voice costs one paused sound and makes the next play instant — the
+alternative trades that for a re-decode on every replay.
+
+**Edit mode is silent**: there is no `OnUpdateEditor` override at all. This *follows* the engine's
+"systems simulate only in play mode" norm; state it next to `AnimationSystem`, which deliberately
+diverges from that norm so the inspector can scrub a pose. Two decisions, not an accident.
+
 ### RenderSystem — [`Systems/RenderSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/RenderSystem.h)
 Pure submission — everything that used to be inlined in `Scene::OnUpdate*`. Reads `RenderContext`,
 begins Renderer3D with the main camera (or the editor fallback), submits lights, sky/environment,
@@ -240,6 +280,12 @@ blocks keyed by component name. Notes:
   Its property overrides serialize as a `Fields` sequence of `{Name, Type, Value}`, sorted by name
   so a scene file does not churn when a hash map reorders. Each carries its own type because the
   declaring script may not be loadable when the scene is read back.
+- **`AudioGroup` serializes as a name, not an ordinal** (`Group: Music`). It is not persisted in the
+  asset registry the way `AssetType` is, so nothing forces stable numbering on it, and an unknown
+  name warns and falls back rather than throwing. Both audio components read every field guarded
+  (`if (node["Volume"])`) rather than bare `as<T>()` — hand-authored scenes are a normal way to
+  make one, and an absent key in a bare read throws out through `Deserialize` and loses the whole
+  file.
 - `WorldTransformComponent` is intentionally not serialized (derived).
 - Adding a component type means extending both `SerializeEntity` and `Deserialize` — this is one
   of the two remaining hand-maintained per-component lists (the other is the editor UI).
@@ -271,3 +317,9 @@ an explicit fixup sweep after it. There are two: `NativeScriptComponent::Instanc
 instances are recreated on play, and `AnimatorComponent::Palette` is cleared because carrying a
 per-joint matrix array per entity into the new scene buys one frame of stale data. Adding a
 component with runtime-only state means adding a third sweep — nothing enforces this.
+
+The audio components are the worked example of *not* needing one. Putting the live `VoiceId` on
+`AudioSourceComponent` would have made a third sweep mandatory and would have let a copied scene
+double-drive one sound; keeping the voice in `AudioSystem`'s map means the copy is correct with no
+audio code involved at all. Where a component's runtime state goes is a `Scene::Copy` decision as
+much as an ownership one.

@@ -55,7 +55,7 @@ including verification evidence:
 - [`BGFX_MIGRATION.md`](toDo&done/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except some Phase 7 hardening)
 - [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
 - [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
-- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; Phases 1–3 executed — the runtime app boots and plays, and the engine has an [audio core](engine/audio.md) — Phases 4–5, the ECS surface and Lua bindings, planned)
+- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; Phases 1–4 executed — the runtime app boots and plays, and audio is authorable on entities — Phase 5, the Lua bindings and the runtime demo, planned)
 
 ## Building & running
 

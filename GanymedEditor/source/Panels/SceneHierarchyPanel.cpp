@@ -456,6 +456,24 @@ namespace GanymedE {
 				}
 			}
 
+			if (!m_SelectionContext.HasComponent<AudioSourceComponent>())
+			{
+				if (ImGui::MenuItem("Audio Source"))
+				{
+					m_SelectionContext.AddComponent<AudioSourceComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<AudioListenerComponent>())
+			{
+				if (ImGui::MenuItem("Audio Listener"))
+				{
+					m_SelectionContext.AddComponent<AudioListenerComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
 			if (!m_SelectionContext.HasComponent<RigidBodyComponent>())
 			{
 				if (ImGui::MenuItem("Rigid Body"))
@@ -798,6 +816,59 @@ namespace GanymedE {
 
 			ImGui::DragFloat("Intensity", &component.Intensity, 0.02f, 0.0f, 20.0f);
 			ImGui::Checkbox("Draw Skybox", &component.DrawSkybox);
+		});
+
+		DrawComponent<AudioSourceComponent>("Audio Source", entity, [](auto& component)
+		{
+			if (IsAssetHandleValid(component.Clip))
+			{
+				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Clip);
+				if (metadata)
+					ImGui::Text("Clip: %s", metadata->FilePath.c_str());
+				else
+					ImGui::Text("Clip handle: %llu", static_cast<uint64_t>(component.Clip));
+
+				if (ImGui::Button("Clear"))
+					component.Clip = InvalidAssetHandle;
+			}
+			else
+			{
+				ImGui::TextDisabled("No clip assigned");
+			}
+
+			ImGui::TextDisabled("Drop a .wav, .mp3 or .flac file here");
+
+			// Typed drop: AssetTypeFromExtension is the single source of truth for what this
+			// field accepts, so a .lua dragged here is simply ignored.
+			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::Audio);
+			if (IsAssetHandleValid(dropped))
+				component.Clip = dropped;
+
+			const char* groupStrings[] = { "Master", "Music", "SFX" };
+			int group = (int)component.Group;
+			if (ImGui::Combo("Group", &group, groupStrings, 3))
+				component.Group = (AudioGroup)group;
+
+			ImGui::DragFloat("Volume", &component.Volume, 0.01f, 0.0f, 1.0f);
+			ImGui::DragFloat("Pitch", &component.Pitch, 0.01f, 0.25f, 4.0f);
+
+			ImGui::Checkbox("Loop", &component.Loop);
+			ImGui::SameLine();
+			ImGui::Checkbox("Play On Start", &component.PlayOnStart);
+
+			ImGui::Checkbox("Spatialize", &component.Spatialize);
+			ImGui::SameLine();
+			ImGui::Checkbox("Stream", &component.Stream);
+
+			// Worth saying out loud, because the other four fields DO apply live: these three
+			// are baked into the voice when it is created.
+			ImGui::TextDisabled("Clip, Spatialize and Stream apply when play starts");
+		});
+
+		DrawComponent<AudioListenerComponent>("Audio Listener", entity, [](auto& component)
+		{
+			ImGui::Checkbox("Primary", &component.Primary);
+			ImGui::TextDisabled("Falls back to the primary camera when absent");
 		});
 
 		DrawComponent<RigidBodyComponent>("Rigid Body", entity, [](auto& component)

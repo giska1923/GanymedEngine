@@ -49,7 +49,7 @@ is destroyed before the `Window` — so bgfx is still alive. The same guarantee 
 RuntimeLayer::OnUpdate(ts)
 ├─ Renderer2D/3D::ResetStats
 ├─ SceneRenderer::BeginFrame          bind + clear the HDR target
-├─ Scene::OnUpdateRuntime(ts, nullptr)   all seven systems
+├─ Scene::OnUpdateRuntime(ts, nullptr)   all eight systems
 ├─ UIEngine::OnUpdate(ts) / OnRender()   layout, then submit to RenderPass::UI
 └─ SceneRenderer::EndFrame            bloom → tonemap → FXAA, final pass to the backbuffer
 ```

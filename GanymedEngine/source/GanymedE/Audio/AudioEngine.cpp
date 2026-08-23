@@ -90,17 +90,6 @@ namespace GanymedE {
 
 	}
 
-	const char* AudioGroupToString(AudioGroup group)
-	{
-		switch (group)
-		{
-			case AudioGroup::Master: return "Master";
-			case AudioGroup::Music:  return "Music";
-			case AudioGroup::SFX:    return "SFX";
-			default:                 return "Unknown";
-		}
-	}
-
 	void AudioEngine::Init()
 	{
 		if (s_Data.Initialized)

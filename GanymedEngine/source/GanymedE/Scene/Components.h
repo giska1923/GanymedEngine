@@ -8,6 +8,7 @@
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Assets/AssetTypes.h"
+#include "GanymedE/Audio/AudioTypes.h"
 
 #include <unordered_map>
 #include <variant>
@@ -242,6 +243,46 @@ namespace GanymedE {
 		ScriptComponent(const ScriptComponent&) = default;
 		ScriptComponent(AssetHandle script)
 			: Script(script) {}
+	};
+
+	// A sound emitter. Everything here is AUTHORED state - there is deliberately no VoiceId
+	// and no "is playing" flag on the component, because the live voice is a foreign
+	// resource with a lifecycle, not data. AudioSystem owns it in a map keyed by entity,
+	// the way PhysicsSystem owns Jolt bodies; a component carrying one would leak runtime
+	// state into the serializer's field of view, need a Scene::Copy fixup, and let a copied
+	// scene double-drive one sound. With none here, Scene::Copy is trivially correct.
+	//
+	// Clip, Spatialize and Stream are read once, when the voice is created. Changing them
+	// during play does nothing until the voice is rebuilt; Volume, Pitch and Loop are pushed
+	// every frame.
+	struct AudioSourceComponent
+	{
+		AssetHandle Clip = InvalidAssetHandle;   // a .wav/.mp3/.flac asset
+
+		float Volume = 1.0f;
+		float Pitch = 1.0f;
+
+		bool Loop = false;
+		bool PlayOnStart = false;
+		bool Spatialize = true;
+		bool Stream = false;   // decode on the fly (music) instead of into memory (SFX)
+
+		AudioGroup Group = AudioGroup::SFX;
+
+		AudioSourceComponent() = default;
+		AudioSourceComponent(const AudioSourceComponent&) = default;
+	};
+
+	// The ear. Unity's model: a component you place, normally on the camera, exactly one
+	// active. Explicit rather than implicit-on-the-camera because third-person games put the
+	// listener between the camera and the character; a scene with no listener at all falls
+	// back to the primary camera's pose, so the common case still needs no authoring.
+	struct AudioListenerComponent
+	{
+		bool Primary = true;
+
+		AudioListenerComponent() = default;
+		AudioListenerComponent(const AudioListenerComponent&) = default;
 	};
 
 	struct PhysicsMaterial

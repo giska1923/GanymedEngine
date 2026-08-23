@@ -80,6 +80,8 @@ namespace GanymedE {
 		SkyLightComponent,
 		NativeScriptComponent,
 		ScriptComponent,
+		AudioSourceComponent,
+		AudioListenerComponent,
 		RigidBodyComponent,
 		BoxColliderComponent,
 		SphereColliderComponent,

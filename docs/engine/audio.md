@@ -3,10 +3,12 @@
 `GanymedEngine/source/GanymedE/Audio/` — a [miniaudio](https://miniaud.io)-backed playback engine
 with two mixer groups and 3D spatialization, plus the `AssetType::Audio` file types.
 
-`AudioEngine` is the sound-side counterpart to `Renderer`: a static facade over one global device,
-`Init`/`Shutdown` by `Application`, with everything it owns living behind the `.cpp`. There is no
-ECS surface yet — components, a system and Lua bindings are Phases 4–5 of
-[`RUNTIME_AUDIO_ROADMAP.md`](../toDo&done/RUNTIME_AUDIO_ROADMAP.md).
+Two layers, and the split is the point. [`AudioEngine`](#audioengine) is the sound-side counterpart
+to `Renderer`: a static facade over one global device, `Init`/`Shutdown` by `Application`, speaking
+in file paths and opaque `VoiceId`s. [`AudioSystem`](#audiosystem) is the only thing in the engine
+that drives it from scene data. Nothing else should create a voice.
+
+Lua bindings are Phase 5 of [`RUNTIME_AUDIO_ROADMAP.md`](../toDo&done/RUNTIME_AUDIO_ROADMAP.md).
 
 ## AudioEngine
 
@@ -45,6 +47,51 @@ a device failure is reported before anything slower runs.
 
 `VoiceId` is monotonically issued and never reset, not even by a re-`Init`. An id held across a
 `Shutdown`/`Init` pair therefore cannot alias a different sound afterwards; it just no-ops.
+
+## AudioSystem
+
+[`Scene/Systems/AudioSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/AudioSystem.h) —
+the eighth built-in system, registered after `CameraSystem` and before `RenderSystem`. Two views,
+both read-only: emitters (`AudioSourceComponent` + `WorldTransformComponent`) and listeners
+(`AudioListenerComponent` + `WorldTransformComponent`). No reactive views, so no editor drain
+obligation.
+
+| Hook | What it does |
+|---|---|
+| `OnRuntimeStart` | Builds and starts a voice for every `PlayOnStart` source |
+| `OnUpdate` | Pushes `Volume`/`Pitch`/`Loop` and (for spatial sources) the entity's world position; resolves and pushes the listener pose |
+| `OnRuntimeStop` | Destroys every voice, clears the map, `StopAll()` |
+| `OnUpdateEditor` | **Absent.** Edit mode is silent |
+
+**Voices are system state, not component state.** `m_Voices` is an
+`unordered_map<entt::entity, VoiceId>` that lives and dies with the run — the same arrangement
+`PhysicsScene` uses for Jolt bodies, and for the same reason: a voice is a live foreign resource
+with a lifecycle, not data. See [scene.md](scene.md) for why that makes `Scene::Copy` trivially
+correct, and why `AnimatorComponent::Palette` went the other way.
+
+**Clip resolution is the Script precedent.** `AssetManager::GetMetadata(handle)` gives a path;
+`GetAssetRoot() / path` gives the file; `AudioEngine::CreateVoice` loads it. A handle with no
+registry entry warns once per entity naming the handle and the likely cause (a missing or stale
+`AssetRegistry.gr`) — this is where a fresh clone's registry problem surfaces first. A handle that
+resolves but fails to load is already logged by `CreateVoice`, with the full path, so the system
+stays quiet rather than saying less twice.
+
+**Listener**: first `Primary` `AudioListenerComponent` wins; more than one warns once. With none in
+the scene, `RenderContext::CameraTransform` becomes the listener pose, logged once. Forward is the
+transform's −Z and up its +Y, both normalised with a zero-length guard — a NaN from an entity scaled
+to 0 would otherwise reach miniaudio's mixer on a background thread, which is a miserable bug to
+trace.
+
+**Poll, don't track.** Volume, pitch and loop are pushed every frame rather than change-tracked.
+Measured at 52 simultaneous sources: **0.7 µs per source per frame** in Release
+(0.038 ms total), against **17 µs** in Debug — the Debug figure is MSVC's checked-iterator
+`unordered_map` lookups, five per source per frame, not miniaudio. There is no allocation and no
+lock on this path; miniaudio's setters are atomic stores. Tracking would cost more bookkeeping than
+it saves, and polling means a script that writes the component needs no `MarkChanged` to be heard.
+
+**Nothing frees a finished voice.** A non-looping source that reaches its end stays as a paused
+`ma_sound`; `Play` rewinds it. Freeing would trade one idle sound for a re-decode on every replay of
+a gunshot.
 
 ## Groups
 
@@ -103,6 +150,10 @@ Measured on a 60 s mono WAV (5.0 MiB on disk), engine at 48 kHz:
 | decoded (first) | 289.8 ms | +11.0 MiB |
 | decoded (same path again) | 0.07 ms | +0.0 MiB |
 
+Measured again through the component path — the same scene and the same play/stop cycle, one
+`AudioSourceComponent.Stream` flag flipped — decoding costs **+10 MiB** over streaming. That is the
+number an author is actually choosing between.
+
 A size heuristic would guess wrong exactly at the boundary a human never mis-authors (a 4 MB ambience
 loop), and it would make play-mode behavior depend on bytes on disk — invisible from the inspector.
 Intent over inference.
@@ -154,6 +205,18 @@ big engines are wrong: UE and Unity put audio behind the asset system because th
 banks, and a cooked bank is an engine-owned artifact that needs engine-owned lifetime. Ganymed has
 no cooking. The upgrade path stays open because components already reference handles, not paths —
 an `AudioClip` asset can appear the day cooking does, without touching a single scene file.
+
+## Authoring
+
+`Add Component → Audio Source` / `Audio Listener` in the editor
+([editor.md](../editor/editor.md)). The clip field takes a typed drop through
+`EditorUI::AcceptAssetDropHandle(AssetType::Audio)`, so a `.lua` dragged onto it is ignored rather
+than assigned; `AssetTypeFromExtension` is the single source of truth for what the field accepts.
+`.wav/.mp3/.flac` show as typed assets in the content browser and appear in its Import menu.
+
+`Clip`, `Spatialize` and `Stream` are read when the voice is built, so changing them mid-play does
+nothing until the voice is rebuilt — the inspector says so under the checkboxes. `Volume`, `Pitch`
+and `Loop` apply live.
 
 ## miniaudio
 
