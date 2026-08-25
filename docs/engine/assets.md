@@ -60,6 +60,8 @@ a user-visible action:
 | `EditorUI::AcceptAssetDropHandle` | A drop onto a component's handle field |
 | `EditorLayer` viewport drop | A mesh drop: the mesh handle plus every texture its import minted |
 | `ContentBrowserPanel` → Import | The one asset the menu item registered |
+| `SceneHierarchyPanel` → Create Prefab / Instantiate Prefab | The `.gprefab` the action just wrote or resolved |
+| `EditorLayer` default-scene setup | The environment the fresh scene imports |
 | `AssetManager::Shutdown` | Anything an unflushed path missed |
 
 The alternative — dirty flag plus a single flush at `Shutdown` — was rejected: an editor crash
@@ -148,11 +150,11 @@ Load paths:
 - **Environment** — `Environment::Create` (runs the IBL bake; see
   [rendering.md](rendering.md#environment--ibl)).
 - **Texture2D** — `TextureImporter::LoadFromFile` against the asset root, unflipped.
-- Material/Scene/Script are registered types without a `GetAsset` path (scenes load via
-  `SceneSerializer`; scripts by path in `ScriptEngine`, since there is no runtime object to cache —
-  see [scripting.md](scripting.md)).
+- Scene/Script/Audio/Prefab are registered types without a `GetAsset` path (scenes load via
+  `SceneSerializer`, prefabs via `PrefabSerializer`; scripts by path in `ScriptEngine`, since there
+  is no runtime object to cache — see [scripting.md](scripting.md)).
 
-Cache lookups on all three paths are plain `unordered_map` hits, deliberately: `RenderSystem`
+Cache lookups on all four paths are plain `unordered_map` hits, deliberately: `RenderSystem`
 re-fetches by handle every frame for every entity.
 
 ## Materials (`.gmat`)

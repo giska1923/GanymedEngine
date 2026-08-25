@@ -312,6 +312,18 @@ namespace GanymedE {
 				ImGui::EndMenu();
 			}
 
+			// Which scene is open, and whether it has unsaved changes.
+			//
+			// Dirtiness comes from the undo stack's *position* rather than a flag, so undoing
+			// back to the saved state correctly clears the asterisk - the property an ad-hoc
+			// dirty bool always gets wrong. Asset edits (.gmat fields, prefab Apply) do not
+			// touch the scene stack and deliberately do not set it: they are asset dirt, and the
+			// .gmat editor's own Save button is their indicator.
+			ImGui::Separator();
+			const std::string sceneName = m_EditorScenePath.empty()
+				? std::string("Untitled") : m_EditorScenePath.filename().string();
+			ImGui::TextUnformatted((sceneName + (m_UndoStack.IsDirtySinceSave() ? "*" : "")).c_str());
+
 			ImGui::EndMenuBar();
 		}
 

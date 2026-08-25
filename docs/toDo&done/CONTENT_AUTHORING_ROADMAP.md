@@ -1,6 +1,6 @@
 # GanymedEngine — Content Authoring Roadmap
 
-Status: **Phases 1-4 complete; Phase 5 planned.** Written 2026-08-25, against the post-runtime/post-audio
+Status: **Complete — all five phases executed.** Written 2026-08-25, against the post-runtime/post-audio
 engine (branch point: the standalone-runtime + audio milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md) and
 [`RUNTIME_AUDIO_ROADMAP.md`](RUNTIME_AUDIO_ROADMAP.md): each phase carries goal, steps, decisions
@@ -1105,6 +1105,72 @@ match the tree.
 | Dirty indicator | Edit → asterisk; Ctrl+Z back to saved mark → clears (the stack-position property, interactively); save → clears; `.gmat` edit alone → does **not** set it |
 | Doc audit | Every claim in the touched docs spot-checked against code; stale-claims grep for the rewritten sections |
 | Full regression | Editor smoke (open/edit/play/stop/save), Sandbox boot, GanymedRuntime demo scene boot — all clean logs |
+
+### Phase 5 execution notes
+
+Executed 2026-08-26. x64 Debug and Release, MSBuild; engine, editor, runtime and Sandbox build clean
+with no new warnings. No new files, so no project regeneration. **12/12 cross-feature checks pass**;
+probe removed.
+
+**The milestone exit proof holds, driven through the editor's real entry points.** The sequence is
+not a reconstruction of what the UI would do - it calls `SceneHierarchyPanel::InstantiatePrefab`,
+`DuplicateSelectedEntity` and `DeleteSelectedEntity`, so every operation pushes the command the UI
+itself pushes. In one run: instantiate a prefab, override a material slot on one of its *children*,
+move the instance root, duplicate the whole instance, delete the duplicate's subtree - then undo the
+lot and save, **byte-identical to the pre-sequence save**; redo the lot and save, **byte-identical
+to the post-sequence save**. The duplicate is itself a prefab instance, which is the one property
+that ties Phase 2's `DuplicateEntity` whitelist to Phase 4's component.
+
+Two steps could not go through the UI and are named as such: the gizmo move pushes the same
+`ComponentEditCommand<TransformComponent>` the gizmo's falling edge pushes, because ImGuizmo cannot
+be driven programmatically; and the material-slot assignment pushes the same
+`ComponentEditCommand<StaticMeshComponent>` the inspector's commit boundary produces.
+
+**The dirty indicator went in the menu bar, not the title bar - a deliberate deviation.** The plan
+said "an asterisk in the title bar / viewport tab". Neither was reachable cheaply: `Window` has no
+`SetTitle`, and adding one means touching the interface plus three near-identical GLFW
+implementations (Windows/Linux/macOS) for a cosmetic editor feature; renaming the `Viewport` ImGui
+window would change its ID and break the saved docking layout. The menu bar costs nothing, is
+visible without leaving the app, and carries the scene *name* alongside the asterisk - which the
+editor previously showed nowhere at all, so "which scene am I editing?" is now answerable too.
+Behaviour is exactly as specified: set on edit, cleared by saving, and cleared by undoing back to
+the saved mark (stack position, not a flag). Verified including the caveat that matters - a `.gmat`
+edit alone does **not** set it, because that is asset dirt and the material editor's own Save button
+is its indicator.
+
+**A real defect found in the docs sweep, not by a test.** `SceneHierarchyPanel.cpp` had become a
+*binary* file: two raw NUL bytes sat in the `FileDialogs::OpenFile("...\0...\0")` filter string
+where the two-character `\0` escape belonged, introduced by an escaping slip when that menu item was
+added. It compiled and linked fine - MSVC embedded the NULs, which is what the escape would have
+produced anyway - so no test could have caught it. What it broke is everything else: `grep` reported
+"Binary file matches", git would treat the file as binary for diffs and merges, and other compilers
+are entitled to reject a raw NUL in a source file. Found by grepping the tree to audit doc claims
+against code, which is the sweep doing its actual job. Fixed, whole tree re-scanned for NULs (none
+remain), editor rebuilt from scratch.
+
+**Docs audited against code rather than re-read.** The checks that found something: `assets.md`
+still claimed "Material/Scene/Script are registered types without a `GetAsset` path" (Material has
+one since Phase 3, and Prefab is new) and its flush-point table was two entries short of the six
+`FlushRegistry` call sites now in the tree; `ecs.md`'s "adding a component type" list did not
+mention that `ComponentList` membership now also buys `DuplicateEntity`, undo snapshots and prefab
+copying, and its `EnableInit`/`EnableFini` lines still named only `NativeScriptComponent` when
+`ScriptComponent` has carried both since the scripting milestone - a stale claim that predates this
+milestone entirely. `docs/README.md`'s one-line summaries for Scene, Assets and Editor were updated
+to name prefabs, `.gmat` and undo. The shortcut table in `editor.md` was verified line by line
+against `HandleShortcuts`.
+
+**Full regression.** Editor boots and runs clean (0 errors). GanymedRuntime boots its demo scene
+clean (0 errors) and leaves `assets/` byte-identical. Sandbox boots with **three pre-existing
+errors**, unrelated to this milestone: RmlUi cannot find `assets/fonts/montserrat/*.ttf` because
+Sandbox's asset directory has never contained a `fonts/` folder - `UIEngine::Init` loads those
+unconditionally and neither it nor Sandbox's content was touched here. Flagged, not fixed: it is a
+Sandbox content gap, and Sandbox is deliberately undocumented.
+
+**Milestone complete.** All five phases executed, 137 scripted checks across the five probes, every
+probe removed. What an author can now do that they could not before: iterate on a scene for an hour
+with Ctrl+Z behind them, share a reusable entity subtree as a `.gprefab`, and give two instances of
+one mesh two different looks - with saves that produce the same bytes for the same content, so the
+diff of a scene file finally means something.
 
 ---
 

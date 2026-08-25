@@ -47,15 +47,17 @@ using ComponentList = TypeList<TransformComponent, WorldTransformComponent, Rela
 
 **Adding a component type** means:
 1. Define the struct in `Scene/Components.h` (plain data, copyable).
-2. Add it to `ComponentList`. This automatically gives it: `Scene::Copy` support, a slot in the
+2. Add it to `ComponentList`. This automatically gives it: `Scene::Copy` support,
+   `Scene::DuplicateEntity` support, inclusion in the editor's undo snapshots
+   (`EntitySnapshot` is a tuple over this list), the prefab format's subtree copy, a slot in the
    `ViewDesc` bitmask space, and signal hookup if flagged below.
 3. Optionally specialize `ComponentTraits<T>` to opt into features:
    - `TrackChanges` — writes must go through `Modify()`; enables `ChangeView<ReactRO<T>...>`.
      Currently: `TransformComponent`, `RelationshipComponent`.
    - `EnableInit` — component creation is recorded; enables `InitView`. Currently:
-     `NativeScriptComponent`.
+     `NativeScriptComponent`, `ScriptComponent`.
    - `EnableFini` — removed instances are buried in a graveyard for one frame; enables `FiniView`.
-     Currently: `NativeScriptComponent`.
+     Currently: `NativeScriptComponent`, `ScriptComponent`.
 4. Add serialization in `SceneSerializer.cpp` and editor UI in `SceneHierarchyPanel.cpp` (these two
    are still per-component by hand).
 5. If a `Scene` needs post-add fixup, declare a `Scene::OnComponentAdded<T>` specialization in

@@ -18,9 +18,9 @@ The repository contains four projects:
 | [Architecture overview](engine/architecture.md) | The big picture: module layout, frame flow, ownership, design principles                                                                                  |
 | [Core](engine/core.md)                          | Application, entry point, layers, events, input, window abstraction, logging, UUID, assert/profiling macros                                               |
 | [ECS](engine/ecs.md)                            | The view/access-wrapper ECS on top of entt: wrappers, accessors, change tracking, reactive views, systems, command queue, singletons, scheduling metadata |
-| [Scene](engine/scene.md)                        | Scene, Entity, the component catalog, hierarchy, built-in systems, scene singletons, serialization, play-mode copy                                        |
+| [Scene](engine/scene.md)                        | Scene, Entity, the component catalog, hierarchy, built-in systems, scene singletons, serialization, `.gprefab` prefabs, play-mode copy                    |
 | [Rendering](engine/rendering.md)                | The bgfx backend: view model, resources, shaders, Renderer2D/3D, shadows, IBL, post stack, async picking                                                  |
-| [Assets](engine/assets.md)                      | AssetManager, the registry, handles, mesh import (cgltf) and the binary mesh cache                                                                        |
+| [Assets](engine/assets.md)                      | AssetManager, the registry, handles, mesh import (cgltf), the binary mesh cache, and `.gmat` material assets                                              |
 | [Physics](engine/physics.md)                    | Jolt integration: PhysicsScene, body lifecycle, fixed timestep, interpolation, collision events, debug draw                                               |
 | [Audio](engine/audio.md)                        | miniaudio integration: AudioEngine, voices, mixer groups, spatialization, streaming, the Audio asset type                                                 |
 | [Scripting](engine/scripting.md)                | Lua 5.4 + sol2: ScriptEngine, LuaScriptSystem, the binding rules, error handling, sandboxing                                                              |
@@ -32,7 +32,7 @@ The repository contains four projects:
 
 | Document                   | Covers                                                                                        |
 | -------------------------- | --------------------------------------------------------------------------------------------- |
-| [Editor](editor/editor.md) | EditorLayer, the viewport (picking, gizmos, drag-drop), play/stop, panels, keyboard shortcuts |
+| [Editor](editor/editor.md) | EditorLayer, the viewport (picking, gizmos, drag-drop), play/stop, panels, keyboard shortcuts, undo/redo, prefab authoring |
 
 ### Runtime
 
@@ -52,7 +52,7 @@ including verification evidence:
 - [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
 - [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
 - [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; **complete** — phases 1–5 executed, read the per-phase execution notes)
-- [`CONTENT_AUTHORING_ROADMAP.md`](toDo&done/CONTENT_AUTHORING_ROADMAP.md) — the content authoring milestone (editor undo/redo, linked prefabs, `.gmat` material assets, serialization hygiene; planned, not started)
+- [`CONTENT_AUTHORING_ROADMAP.md`](toDo&done/CONTENT_AUTHORING_ROADMAP.md) — the content authoring milestone (serialization hygiene, editor undo/redo, `.gmat` material assets, linked prefabs; complete — see [editor.md](editor/editor.md), [scene.md](engine/scene.md) and [assets.md](engine/assets.md))
 
 ## Building & running
 
