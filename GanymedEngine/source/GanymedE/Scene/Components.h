@@ -116,6 +116,25 @@ namespace GanymedE {
 			: Mesh(mesh) {}
 	};
 
+	// Marks an entity as the root of a linked prefab instance.
+	//
+	// Only the root carries it - the descendants are ordinary entities, which is what makes
+	// structural editing inside an instance free: add, remove and re-parent children at will,
+	// because nothing tracks divergence. "Apply to prefab" captures whatever the subtree is now
+	// and "Revert instance" discards it. Per-field overrides would need a serialization-diff
+	// engine, which is a milestone of its own rather than a feature.
+	//
+	// Inert at runtime: it exists so the editor can find the source file again.
+	struct PrefabInstanceComponent
+	{
+		AssetHandle Source = InvalidAssetHandle;
+
+		PrefabInstanceComponent() = default;
+		PrefabInstanceComponent(const PrefabInstanceComponent&) = default;
+		PrefabInstanceComponent(AssetHandle source)
+			: Source(source) {}
+	};
+
 	// Plays one of the clips carried by the entity's StaticMeshComponent mesh. There is no
 	// SkinnedMeshComponent: an entity is skinned iff its mesh asset HasSkeleton() and it has an
 	// animator, so a second mesh component would duplicate drag-drop, serialization, inspector and

@@ -1,6 +1,6 @@
 # GanymedEngine — Content Authoring Roadmap
 
-Status: **Phases 1-3 complete; Phases 4-5 planned.** Written 2026-08-25, against the post-runtime/post-audio
+Status: **Phases 1-4 complete; Phase 5 planned.** Written 2026-08-25, against the post-runtime/post-audio
 engine (branch point: the standalone-runtime + audio milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md) and
 [`RUNTIME_AUDIO_ROADMAP.md`](RUNTIME_AUDIO_ROADMAP.md): each phase carries goal, steps, decisions
@@ -994,6 +994,79 @@ instance-owned on Apply.
 | Missing-source resilience | Delete the `.gprefab`, load the scene → instance loads as plain entities + one warning; Revert on it → error log, no crash, subtree untouched |
 | Drag-drop matrix | Interactive: `.gprefab`/`.glb`/`.ganymede` each dropped on the viewport route correctly (three types through the list overload); negatives ignored |
 | Runtime | GanymedRuntime loads a scene containing instances: renders/plays correctly, `PrefabInstanceComponent` inert (no editor ops, no writes) |
+
+### Phase 4 execution notes
+
+Executed 2026-08-26. x64 Debug, MSBuild; engine, editor, runtime and Sandbox build clean with no new
+warnings. **New files (`Scene/PrefabSerializer.h/.cpp`, `Scene/SceneYaml.h`), so `premake5 vs2022`
+was re-run.** Verification ran from a temporary `Phase4Probe` block. **31/31 checks pass**; probe
+removed.
+
+**Instantiation needed no new remap machinery, because Phase 1 already built it.** The plan said to
+`DeserializeEntity` each block and then remap through Phase 2's `DuplicateEntity` machinery. What
+actually works is simpler: mint a fresh UUID per block, pass it to `DeserializeEntity`, then call
+`SceneSerializer::ResolveHierarchy` - the exact pass a scene load runs, doing the exact job needed
+(translate the file's `Parent`/`Children` to the UUIDs the entities were really created with). This
+is the direct payoff of Phase 1's decision to make that pass uniform rather than a rare repair
+path: a path only taken on unusual input would not have been trustworthy here.
+
+**Canonical renumbering happens in a scratch `Scene`, not in place.** Renumbering the live scene,
+serializing, and putting the UUIDs back would avoid an allocation. It would also mean that any
+throw or early return in between leaves the *real* scene carrying UUIDs 1..N - unrecoverable
+corruption, in exchange for one editor click's worth of work. The scratch copy also gets the
+nesting rule for free: `PrefabInstanceComponent` is stripped from the copy, so a subtree containing
+an instance saves as plain entities rather than smuggling a nested prefab into a v1 file.
+
+**A shared YAML dialect header was extracted.** The `convert<glm::vec3>` / `convert<glm::vec4>`
+specializations were file-local to `SceneSerializer.cpp`, so `PrefabSerializer` could not read a
+transform. They now live in `Scene/SceneYaml.h` with the emitter operators. This is a small Phase 1
+refactor, done for the right reason: the two serializers write the same blocks, so the encoding of a
+vec3 should have one definition rather than two that can silently drift.
+
+**Canonical determinism, measured across scenes rather than argued.** Two different scenes whose
+subtrees hold identical content - different entity UUIDs, same components - write **byte-identical**
+files; instantiating one and applying it back unchanged reproduces the file byte for byte. The DFS
+order in the file was checked by name, not just by count: `1=PrefabRoot 2=ChildA 3=Grandchild
+4=ChildB`, which is the contiguous-subtree property the canonical order exists for.
+
+**The remap whitelist was tested with something to get wrong.** The probe's subject subtree carries
+`StaticMesh.Mesh`, `MaterialOverrides` (including a deliberately unset slot), `SkyLight.Environment`,
+`Script.Script` and `AudioSource.Clip`. All came through byte-equal across a save and an
+instantiate, every entity UUID came out fresh with none of them a canonical 1..4, and the hierarchy
+walked clean with exactly one root.
+
+**A probe assertion was wrong before the code was.** The first run failed "UUIDs are 1..N in DFS
+order" - the check searched for `"- Entity: 1\n"` while the file, like every other serializer output
+here, is CRLF from a text-mode `ofstream`. The file was correct; the test was not. Worth recording
+because it is the second time this milestone that a red result came from the harness rather than the
+feature, and both times the cheap move was to look at the artifact before touching the code.
+
+**A portability break I introduced and caught before it shipped.** The "is this path inside
+`assets/`" guard in `CreatePrefabFrom` was written as `relativePath.native().rfind(L"..", 0)`.
+`std::filesystem::path::native()` is `wstring` on Windows and `string` on POSIX, so the wide literal
+would simply not have compiled on the Linux and macOS targets - which this project has makefiles for
+and which nothing in a Windows build would have caught. It is `generic_string()` now.
+
+**Apply is deferred to a modal outside the popup that requests it.** ImGui cannot open a modal from
+inside the context-menu popup that triggers it, so the request is recorded as a UUID and the modal
+is drawn at the end of the panel's frame. The modal names the file, says the write cannot be undone,
+and says that other instances will not follow - that last line is the one that stops "Apply" from
+reading like "propagate", which is what every author will assume it means.
+
+**Revert restores the old subtree if instantiation fails**, rather than leaving a hole where the
+instance was. Cheap, and the alternative failure mode - a missing or corrupt file silently deleting
+an instance - is exactly the kind of thing that makes people distrust an editor.
+
+**Runtime posture verified two ways.** A boot against a hand-written scene carrying a
+`PrefabInstanceComponent` loads it, runs, and leaves every file under `GanymedRuntime/assets/`
+byte-identical (the only logged errors are "no primary camera", which that throwaway test scene
+genuinely lacks). The component has no system and nothing reads it outside the editor, so "inert" is
+structural rather than a claim.
+
+**Interactive checks not run:** the drag-drop matrix (`.gprefab` / `.glb` / `.ganymede` each landing
+correctly on the one viewport target, and negatives ignored) and the Apply modal's actual buttons.
+The list-overload mechanism they depend on is the one already in use for the two existing types, and
+the probe covers everything the drop handler calls once it fires.
 
 ---
 

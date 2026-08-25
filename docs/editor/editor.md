@@ -134,6 +134,39 @@ scene copy are structurally unrecordable rather than filtered downstream. The st
 play/stop (`m_EditorScene` is the same object) and is cleared by New/Open Scene, where every UUID
 in it stops meaning anything.
 
+## Prefabs
+
+An authored subtree becomes a `.gprefab` asset; instances spawn from it, remember it, and can be
+re-applied or reverted. The format and its ownership rules are in
+[scene.md](../engine/scene.md#prefabs-gprefab); what follows is the editor half.
+
+| Operation | Where | Undoable |
+|---|---|---|
+| **Create Prefab…** | Entity context menu | The file write is not; linking the source entity is (it is a component add) |
+| **Instantiate** | Drop a `.gprefab` on the viewport, or the hierarchy's blank-space menu | Yes — a subtree add |
+| **Apply to Prefab…** | Instance context menu, and a button in the inspector | **No** — it is an asset write |
+| **Revert Instance** | Same two places | Yes — one composite command |
+
+**Create** links the source entity to the file it just wrote, so the thing you made a prefab *from*
+becomes an instance of it. That is the Unity behaviour authors expect. The path must be inside
+`assets/`; a prefab outside the asset root has no registry identity, so nothing could reference it.
+
+**Apply** is the milestone's one silently destructive click — it overwrites an asset, and undo
+covers scene edits only — so it is the one operation behind a confirmation modal. The modal names
+the file and says the thing an author would otherwise have to discover: **other instances already in
+the scene do not update**. There is no propagation in v1.
+
+**Revert** deletes everything below the root and rebuilds it from the file, keeping the root entity
+itself: its UUID, so references to it survive, and its transform, because placement belongs to the
+instance. It is a scene edit, so it *is* undoable — as a single `CompositeCommand` holding the
+delete of the old subtree and the add of the new one, which is why one Ctrl+Z takes you back to the
+pre-revert state rather than halfway. If instantiation fails, the captured subtree is restored
+rather than leaving a hole.
+
+Structural freedom inside an instance is **allowed and unmarked**: add, remove and re-parent
+children at will. Selection is single-entity, so "create from selection" means the selected entity's
+subtree — no multi-select semantics were invented.
+
 ### Play / Stop (toolbar)
 
 ```
@@ -304,7 +337,7 @@ too (it previously wasn't used here at all: each site hand-rolled
 | Call | Returns |
 |---|---|
 | `AcceptAssetDrop(type)` | `optional<path>` — the dropped path relative to `assets/`, iff its type matches |
-| `AcceptAssetDrop({types...})` | `AssetDrop { Type, Path }`, falsy when nothing matched — for targets accepting several types |
+| `AcceptAssetDrop({types...})` | `AssetDrop { Type, Path }`, falsy when nothing matched — for targets accepting several types. The viewport uses it for Scene / StaticMesh / Prefab, where the list form is **mandatory**: ImGui clears the payload as soon as one target delivers it, so three single-type calls would let only the first ever fire |
 | `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent) + `FlushRegistry` on match, else `InvalidAssetHandle` |
 
 Call it immediately after the widget that should accept the drop; it wraps
@@ -326,7 +359,7 @@ so the first call always wins the delivery and the second type would never fire.
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
 | New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |
 | New shortcut | `EditorLayer::HandleShortcuts` (editor-global) or `OnKeyPressed` (viewport-gated, like the gizmo keys) |
-| New undoable operation | An `EditorCommand` subclass in `EditorUndo.h`, pushed where the operation happens |
+| New undoable operation | An `EditorCommand` subclass in `EditorUndo.h`, pushed where the operation happens; `CompositeCommand` when several steps must undo as one |
 | New scene-wide toggle | Prefer a singleton in `SceneSingletons.h`, edit it from the Stats panel like `PhysicsSettings` |
 
 Remember the editor-code rules: panels may use the immediate Entity API (they run outside the

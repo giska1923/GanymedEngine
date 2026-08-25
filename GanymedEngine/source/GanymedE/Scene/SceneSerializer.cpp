@@ -3,6 +3,7 @@
 
 #include "Entity.h"
 #include "Components.h"
+#include "SceneYaml.h"
 
 #include "GanymedE/Assets/AssetManager.h"
 
@@ -10,74 +11,7 @@
 
 #include <yaml-cpp/yaml.h>
 
-namespace YAML {
-
-	template<>
-	struct convert<glm::vec3>
-	{
-		static Node encode(const glm::vec3& rhs)
-		{
-			Node node;
-			node.push_back(rhs.x);
-			node.push_back(rhs.y);
-			node.push_back(rhs.z);
-			return node;
-		}
-
-		static bool decode(const Node& node, glm::vec3& rhs)
-		{
-			if (!node.IsSequence() || node.size() != 3)
-				return false;
-
-			rhs.x = node[0].as<float>();
-			rhs.y = node[1].as<float>();
-			rhs.z = node[2].as<float>();
-			return true;
-		}
-	};
-
-	template<>
-	struct convert<glm::vec4>
-	{
-		static Node encode(const glm::vec4& rhs)
-		{
-			Node node;
-			node.push_back(rhs.x);
-			node.push_back(rhs.y);
-			node.push_back(rhs.z);
-			node.push_back(rhs.w);
-			return node;
-		}
-
-		static bool decode(const Node& node, glm::vec4& rhs)
-		{
-			if (!node.IsSequence() || node.size() != 4)
-				return false;
-
-			rhs.x = node[0].as<float>();
-			rhs.y = node[1].as<float>();
-			rhs.z = node[2].as<float>();
-			rhs.w = node[3].as<float>();
-			return true;
-		}
-	};
-
-}
 namespace GanymedE {
-
-	YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec3& v)
-	{
-		out << YAML::Flow;
-		out << YAML::BeginSeq << v.x << v.y << v.z << YAML::EndSeq;
-		return out;
-	}
-
-	YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec4& v)
-	{
-		out << YAML::Flow;
-		out << YAML::BeginSeq << v.x << v.y << v.z << v.w << YAML::EndSeq;
-		return out;
-	}
 
 	SceneSerializer::SceneSerializer(const Ref<Scene>& scene)
 		: m_Scene(scene)
@@ -126,6 +60,18 @@ namespace GanymedE {
 			for (UUID child : rc.Children)
 				out << static_cast<uint64_t>(child);
 			out << YAML::EndSeq;
+
+			out << YAML::EndMap;
+		}
+
+		if (entity.HasComponent<PrefabInstanceComponent>())
+		{
+			out << YAML::Key << "PrefabInstanceComponent";
+			out << YAML::BeginMap;
+
+			auto& prefab = entity.GetComponent<PrefabInstanceComponent>();
+			if (IsAssetHandleValid(prefab.Source))
+				out << YAML::Key << "Source" << YAML::Value << static_cast<uint64_t>(prefab.Source);
 
 			out << YAML::EndMap;
 		}
@@ -620,6 +566,14 @@ namespace GanymedE {
 				for (auto child : children)
 					rc.Children.push_back(child.as<uint64_t>());
 			}
+		}
+
+		auto prefabInstanceComponent = entityNode["PrefabInstanceComponent"];
+		if (prefabInstanceComponent)
+		{
+			auto& prefab = deserializedEntity.AddComponent<PrefabInstanceComponent>();
+			if (auto source = prefabInstanceComponent["Source"])
+				prefab.Source = AssetHandle{ source.as<uint64_t>() };
 		}
 
 		auto cameraComponent = entityNode["CameraComponent"];

@@ -22,7 +22,8 @@ namespace GanymedE {
 		Script,
 		// Append only: this enum is persisted by ordinal in AssetRegistry.gr, so
 		// reordering it silently retypes every asset in every existing registry.
-		Audio
+		Audio,
+		Prefab
 	};
 
 	inline bool IsAssetHandleValid(AssetHandle handle)

@@ -7,6 +7,7 @@
 
 #include "../EditorUndo.h"
 
+#include <filesystem>
 #include <string>
 
 namespace GanymedE {
@@ -32,6 +33,10 @@ namespace GanymedE {
 		// Driven by the editor's Ctrl+D / Delete shortcuts as well as the context menus.
 		void DuplicateSelectedEntity();
 		void DeleteSelectedEntity();
+
+		// Instantiates a .gprefab into the current scene (viewport drop, or the hierarchy's
+		// blank-space menu) and selects the new instance root.
+		Entity InstantiatePrefab(const std::filesystem::path& relativePath);
 	private:
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
@@ -56,6 +61,13 @@ namespace GanymedE {
 		void ValidateSelection();
 
 		void DeleteEntity(Entity entity);
+
+		// ---- Prefabs ----
+		void CreatePrefabFrom(Entity entity);
+		void ApplyToPrefab(Entity instanceRoot);
+		void RevertInstance(Entity instanceRoot);
+		void DrawPrefabControls(Entity entity);
+		void DrawApplyPrefabModal();
 		void Reparent(Entity child, Entity parent);
 		void PushAddedEntities(std::string label, Entity root);
 
@@ -69,6 +81,12 @@ namespace GanymedE {
 		// Deleting inside the hierarchy walk would destroy entities the enclosing entt view is
 		// still iterating; the request is serviced after the walk instead.
 		UUID m_EntityToDelete = UUID{ 0 };
+
+		// "Apply to prefab" overwrites an asset and is not undoable, so it is the one operation
+		// in the editor behind a confirmation. Deferred to the end of the frame because the
+		// modal cannot open from inside the context-menu popup that requests it.
+		UUID m_PendingApply = UUID{ 0 };
+		bool m_OpenApplyModal = false;
 
 		// The one inspector edit in flight. ImGui has a single active item, so one slot is
 		// enough for the whole panel.

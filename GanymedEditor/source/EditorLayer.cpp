@@ -8,6 +8,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "GanymedE/Scene/SceneSerializer.h"
+#include "GanymedE/Scene/PrefabSerializer.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/MaterialSerializer.h"
@@ -396,13 +397,20 @@ namespace GanymedE {
 		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
 			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
 
-		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh }))
+		// Three types through one target. The initializer_list overload is mandatory here, not a
+		// convenience: ImGui clears the drag payload as soon as one BeginDragDropTarget delivers
+		// it, so calling AcceptAssetDrop once per type would let only the first type ever fire.
+		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh, AssetType::Prefab }))
 		{
 			std::filesystem::path fullPath = g_AssetPath / drop.Path;
 
 			if (drop.Type == AssetType::Scene)
 			{
 				OpenScene(fullPath);
+			}
+			else if (drop.Type == AssetType::Prefab && m_SceneState == SceneState::Edit)
+			{
+				m_SceneHierarchyPanel.InstantiatePrefab(drop.Path);
 			}
 			else if (drop.Type == AssetType::StaticMesh && m_SceneState == SceneState::Edit)
 			{

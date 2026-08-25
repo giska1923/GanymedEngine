@@ -37,6 +37,7 @@ namespace GanymedE {
 			case AssetType::Material:    return ImVec4(0.85f, 0.55f, 1.0f, 1.0f);
 			case AssetType::Script:      return ImVec4(1.0f, 0.95f, 0.5f, 1.0f);
 			case AssetType::Audio:       return ImVec4(0.55f, 1.0f, 0.95f, 1.0f);
+			case AssetType::Prefab:      return ImVec4(0.6f, 0.85f, 0.85f, 1.0f);
 			default:                     return ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
 		}
 	}
@@ -46,7 +47,8 @@ namespace GanymedE {
 		AssetType type = AssetTypeFromExtension(path.extension().string());
 		return type == AssetType::StaticMesh || type == AssetType::Environment
 			|| type == AssetType::Texture || type == AssetType::Material
-			|| type == AssetType::Script || type == AssetType::Audio;
+			|| type == AssetType::Script || type == AssetType::Audio
+			|| type == AssetType::Prefab;
 	}
 
 	void ContentBrowserPanel::OnImGuiRender()

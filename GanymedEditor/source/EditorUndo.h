@@ -272,6 +272,31 @@ namespace GanymedE {
 		void Redo(Scene& scene) override { RemoveSubtree(scene, m_Snapshots); }
 	};
 
+	// Several commands that undo and redo as one. Children run forward on Redo and in reverse on
+	// Undo, which is what makes "delete this subtree, then put that one in its place" - prefab
+	// Revert - a single Ctrl+Z.
+	class CompositeCommand : public EditorCommand
+	{
+	public:
+		CompositeCommand(std::string label, std::vector<Scope<EditorCommand>> children)
+			: EditorCommand(std::move(label)), m_Children(std::move(children)) {}
+
+		void Undo(Scene& scene) override
+		{
+			for (auto it = m_Children.rbegin(); it != m_Children.rend(); ++it)
+				(*it)->Undo(scene);
+		}
+
+		void Redo(Scene& scene) override
+		{
+			for (auto& child : m_Children)
+				child->Redo(scene);
+		}
+
+	private:
+		std::vector<Scope<EditorCommand>> m_Children;
+	};
+
 	// The old sibling index is recorded explicitly because nothing else remembers it:
 	// Scene::SetParent push_backs, so undoing a reparent without it silently moves the entity
 	// to the end of its old parent's Children - and since Phase 1, sibling order decides the

@@ -87,11 +87,14 @@ GPU-resource destructors release real bgfx handles.
 
 ### Path-resolved types
 
-`Script` and `Audio` have **no `GetAsset` specialization, and that is deliberate** rather than an
-omission. The manager answers handle → path through `GetMetadata` and the consumer loads the file
+`Script`, `Audio` and `Prefab` have **no `GetAsset` specialization, and that is deliberate** rather
+than an omission. The manager answers handle → path through `GetMetadata` and the consumer loads the file
 itself: the Lua VM owns its chunks, and miniaudio's resource manager ref-counts and caches decoded
 audio by path (see [audio.md](audio.md)). A cache here would be a second ref-counting owner of the
-same resource, and two caches disagreeing about lifetime is the bug class this avoids.
+same resource, and two caches disagreeing about lifetime is the bug class this avoids. A prefab is
+there for a different reason: instantiating one is a rare editor action reading a small YAML, and a
+cached parsed form would add a staleness surface — Apply rewrites the file, and the next instantiate
+has to see it — for no measurable win.
 
 The `GetAsset` primary template is *defined* with a `static_assert` rather than left undeclared, so
 asking for one of these is a compile error with a message instead of an unresolved external at link

@@ -22,6 +22,8 @@ namespace GanymedE {
 			return AssetType::Material;
 		if (ext == ".ganymede")
 			return AssetType::Scene;
+		if (ext == ".gprefab")
+			return AssetType::Prefab;
 		if (ext == ".lua")
 			return AssetType::Script;
 		// miniaudio's built-in decoders. .ogg is deliberately absent - Vorbis needs
@@ -43,6 +45,7 @@ namespace GanymedE {
 			case AssetType::Scene:        return "Scene";
 			case AssetType::Script:       return "Script";
 			case AssetType::Audio:        return "Audio";
+			case AssetType::Prefab:       return "Prefab";
 			default:                      return "None";
 		}
 	}

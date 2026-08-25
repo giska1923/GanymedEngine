@@ -324,6 +324,9 @@ blocks keyed by component name. Notes:
   Its property overrides serialize as a `Fields` sequence of `{Name, Type, Value}`, sorted by name
   so a scene file does not churn when a hash map reorders. Each carries its own type because the
   declaring script may not be loadable when the scene is read back.
+- `PrefabInstanceComponent` serializes its `Source` handle, omitted when unset. A scene whose
+  prefab file has since been deleted still loads: the instances become plain entities carrying a
+  handle that resolves to nothing, and the editor reports it when you try to Apply or Revert.
 - **`AudioGroup` serializes as a name, not an ordinal** (`Group: Music`). It is not persisted in the
   asset registry the way `AssetType` is, so nothing forces stable numbering on it, and an unknown
   name warns and falls back rather than throwing. Both audio components read every field guarded
@@ -350,6 +353,58 @@ blocks keyed by component name. Notes:
   The scene is left partially populated rather than rolled back, so the caller chooses whether to
   discard it; a half-loaded scene is still inspectable in the editor. The split into a private
   `DeserializeUnchecked` exists only so the try block does not re-indent every component branch.
+
+## Prefabs (`.gprefab`)
+
+[`PrefabSerializer`](../../GanymedEngine/source/GanymedE/Scene/PrefabSerializer.h) writes an
+authored entity subtree. The file is the **scene format's entity list under a `Prefab:` root**:
+same component blocks, written by `SceneSerializer::SerializeEntity`, read by
+`DeserializeEntity`, ordered by the same hierarchy DFS. One schema, two containers — which is what
+splitting the serializer into per-entity halves was for. `SceneYaml.h` holds the glm conversions
+both share, so the encoding of a vec3 has one definition rather than two that can drift.
+
+**UUIDs in the file are canonical: 1..N in DFS order, not the instance's own.** With preserved
+UUIDs, applying identical content from two different instances produces two different files — a lie
+in the diff. With canonical ones, identical content means identical bytes, and Apply is diff-stable
+from any instance; the file also carries no trace of which scene birthed it. This is the fileID
+stability Unity gets from its own local-ID scheme, reached the cheap way. Cost, accepted: an Apply
+that only *reorders* children renumbers everything below the moved block — but sibling order is
+content (it decides scene save order too), so that is a real change, not noise.
+
+Only `IDComponent` and `RelationshipComponent` are renumbered. `AssetHandle` *is* `UUID`, so a
+blanket remap would corrupt `StaticMesh.Mesh` and its `MaterialOverrides`, `SkyLight.Environment`,
+`Script.Script` and `AudioSource.Clip` into handles no registry knows.
+
+The renumbering happens in a **scratch `Scene`**, not in place. Renumbering the live scene and
+putting it back would be faster; a throw or an early return in between would leave the real scene
+carrying canonical UUIDs, which is unrecoverable corruption traded for one click's worth of
+allocation.
+
+**Instantiation reuses the scene loader wholesale.** Each block goes through `DeserializeEntity`
+with a freshly minted UUID, then `ResolveHierarchy` translates the file's `Parent`/`Children` to
+the created ones — the exact pass a scene load runs. Nothing prefab-specific was needed, which is
+the payoff for making that pass uniform rather than a rare repair path. The canonical 1..N would
+collide with the second instance in the same scene, so a fresh UUID per entity is mandatory, not an
+optimization.
+
+**Root transform ownership is symmetric.** The file stores the root transform captured at creation
+(the spawn default) and *instantiate* applies it; thereafter the root's placement belongs to the
+scene. So **Apply does not write the instance's root transform into the file**, and **Revert does
+not overwrite the instance's root transform**. Everything below the root is wholly file-owned on
+Revert and wholly instance-owned on Apply. This is the Unity norm: placement is per-instance.
+
+**`PrefabInstanceComponent { AssetHandle Source }`** marks the instance *root only*. Descendants are
+ordinary entities, which is what makes structural editing inside an instance free — add, remove and
+re-parent children at will; Apply captures whatever the subtree is now, Revert discards it. There is
+no divergence tracking, because per-field overrides are a serialization-diff engine and that is a
+milestone rather than a feature. The component is inert at runtime: it exists so the editor can find
+the source file again. An instance marker is stripped when a subtree is *saved* as a prefab —
+nesting is not supported in v1, so a prefab file describes plain entities.
+
+`AssetType::Prefab` is **appended as ordinal 8**, after `Audio`. Prefabs are **path-resolved with no
+`GetAsset<Prefab>`** — the Script/Audio precedent: instantiation is a rare editor action reading a
+small YAML, and a cached parsed form would add a staleness surface (Apply rewrites the file; the
+next instantiate must see it) for no measurable win.
 
 ## Play mode
 
