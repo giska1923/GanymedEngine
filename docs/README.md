@@ -52,6 +52,7 @@ including verification evidence:
 - [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
 - [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
 - [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; **complete** — phases 1–5 executed, read the per-phase execution notes)
+- [`CONTENT_AUTHORING_ROADMAP.md`](toDo&done/CONTENT_AUTHORING_ROADMAP.md) — the content authoring milestone (editor undo/redo, linked prefabs, `.gmat` material assets, serialization hygiene; planned, not started)
 
 ## Building & running
 
