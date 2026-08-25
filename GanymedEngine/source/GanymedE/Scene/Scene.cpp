@@ -331,8 +331,16 @@ namespace GanymedE {
 		for (UUID childID : children)
 		{
 			Entity child = FindEntityByUUID(childID);
-			if (child)
-				child.GetComponent<RelationshipComponent>().Parent = UUID{ 0 };
+			if (!child)
+				continue;
+
+			child.GetComponent<RelationshipComponent>().Parent = UUID{ 0 };
+
+			// The orphan's world transform just changed - it lost a parent's contribution -
+			// but writing Parent through GetComponent is invisible to change tracking, so
+			// TransformSystem never learned. The cache stayed at the old parented value
+			// until something else happened to dirty the entity.
+			MarkChanged<RelationshipComponent>(child);
 		}
 
 		m_EntityMap.erase(entityID);

@@ -203,8 +203,39 @@ namespace GanymedE {
 
 	void UIEngine::CloseAllDocuments()
 	{
-		if (IsInitialized())
-			s_Data->Context->UnloadAllDocuments();
+		if (!IsInitialized())
+			return;
+
+		// Unload the game's documents, never the debugger's.
+		//
+		// UnloadAllDocuments() destroyed the five documents Rml::Debugger owns as well.
+		// DebuggerPlugin reacts by nulling its element pointers (ReleaseElements) while
+		// staying registered as a plugin, so the next Debugger::SetVisible() dereferenced
+		// a null menu_element - the editor crashed on the second play/stop cycle with the
+		// debugger open. Skipping them by id prefix keeps them alive, which makes that
+		// deref unreachable rather than merely guarded, and the debugger keeps its state
+		// across play/stop instead of resetting.
+		//
+		// "rmlui-debug-" is the discriminator RmlUi's own debugger uses to exclude its
+		// documents from element picking and outline rendering (Source/Debugger/
+		// DebuggerPlugin.cpp, ElementInfo.cpp) - a de-facto contract of the library, not
+		// one invented here. Verified against RmlUi 6.2. In a build without the debugger
+		// no document matches and the loop is plain "unload everything", so Debug and
+		// Release take the same code path.
+		Rml::Context* context = s_Data->Context;
+		int unloaded = 0;
+		for (int i = context->GetNumDocuments() - 1; i >= 0; --i)   // reverse: unloading mutates the list
+		{
+			Rml::ElementDocument* document = context->GetDocument(i);
+			if (!document || document->GetId().rfind("rmlui-debug-", 0) == 0)
+				continue;
+
+			context->UnloadDocument(document);
+			++unloaded;
+		}
+
+		GE_CORE_TRACE("UIEngine: unloaded {0} document(s), {1} kept (debugger)",
+			unloaded, context->GetNumDocuments());
 	}
 
 	void UIEngine::SetViewport(uint32_t width, uint32_t height)

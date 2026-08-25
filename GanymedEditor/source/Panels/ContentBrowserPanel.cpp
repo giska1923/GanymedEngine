@@ -117,6 +117,8 @@ namespace GanymedE {
 						AssetHandle handle = AssetManager::ImportAsset(relativePath);
 						if (IsAssetHandleValid(handle))
 							GE_CORE_INFO("Imported '{0}'", relativePath.string());
+
+						AssetManager::FlushRegistry();
 					}
 				}
 

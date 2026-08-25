@@ -1,6 +1,6 @@
 # GanymedEngine — Content Authoring Roadmap
 
-Status: **Planned — no phase executed.** Written 2026-08-25, against the post-runtime/post-audio
+Status: **Phase 1 complete; Phases 2-5 planned.** Written 2026-08-25, against the post-runtime/post-audio
 engine (branch point: the standalone-runtime + audio milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md) and
 [`RUNTIME_AUDIO_ROADMAP.md`](RUNTIME_AUDIO_ROADMAP.md): each phase carries goal, steps, decisions
@@ -262,6 +262,104 @@ interactive checks named as such. x64 Debug.
 | Registry hardening | Truncate `.gr` mid-file → editor boots, one error log, empty registry, no crash. Stale entries gone (`grep _P5Probe` → nothing) |
 | Atomic write | The kill-between-write-and-rename case is not scriptable; assert the rename path in code review + confirm a normal save leaves no `.tmp` |
 | RmlUi debugger | Interactive: open the debugger, play → stop → SetVisible → play → stop ×3 — no error log, no crash, debugger contents alive. Release build: play/stop clean, HUD documents unloaded on stop (log document count) |
+
+### Phase 1 execution notes
+
+Executed 2026-08-25. x64 Debug and Release, MSBuild; engine, editor, runtime and Sandbox all build
+clean. Verification ran from a temporary `Phase1Probe` block in `EditorLayer::OnAttach` (25 scripted
+checks, `Application::Close()` at the end so a run is a single scripted command); probe removed.
+**25/25 pass in Debug, 25/25 in Release.**
+
+**`DeserializeEntity` takes the UUID as a third parameter, not the two the plan sketched.** The
+signature is `static Entity DeserializeEntity(const YAML::Node&, Scene&, UUID)`. Who decides an
+entity's UUID differs per container — a scene keeps the file's and remaps collisions, a prefab
+instance always mints a fresh one — so leaving that decision inside the function would have forced
+Phase 4 to either re-implement it or pass a flag. Both halves are public statics taking their scene
+explicitly, for the same reason: a `.gprefab` is read into a scene the serializer does not own.
+
+**The collision fixup became a uniform pass, not a patch-up after a rare event.** The plan said
+"record old→new and patch `Parent`/`Children` in the affected `RelationshipComponent`s". What
+landed is `ResolveHierarchy(scene, created, fileUUIDs)`, which runs on *every* load and translates
+every reference from file UUIDs to created UUIDs. With no collisions it is the identity, so nothing
+is special-cased — and a repair path that only executes on rare input is a path that rots. It also
+made the disambiguation honest: when a file genuinely repeats a UUID, "which instance did this
+`Children` entry mean?" has no general answer, so `Children` is treated as authoritative (each slot
+claims one instance in order) and `Parent` follows from the claim. An entity naming a parent that
+does not list it keeps a translated reference and warns — the same inconsistency the save-time
+unreachable warning trips on, reported from both ends.
+
+**The plan's "extraction is a no-op" check could not be run as specified, and was replaced by two
+stronger ones.** It asked to compare post-extraction canonical saves against *pre-extraction*
+canonical saves — but canonical ordering is part of this same change, so no pre-extraction canonical
+save exists. Instead: (a) the extracted 274-line body was diffed textually against
+`HEAD:SceneSerializer.cpp` lines 476-749, dedented, modulo three documented renames — **identical**,
+which makes the extraction provably behavior-free rather than probably; and (b) the pre-change
+binary was rebuilt (revert, patch in a minimal save-every-scene probe, build, run, restore) and its
+output compared block-by-block against the new canonical saves. `BoxesPhysicsExample` and
+`Phase5Test` (48 entities, 10 component types) are **block-sorted byte-identical** old vs new; the
+other two match once entity-UUID lines are stripped, for the reason below.
+
+**None of the four committed scenes has a single parented entity.** The DFS walk therefore had no
+real data to exercise, so the probe builds its own: two roots, a three-level subtree, entities
+created in a scrambled order so entt's packed order cannot accidentally agree with the expected
+file order. Verified roots-by-UUID + contiguous subtrees + authored sibling order, that swapping a
+`Children` vector swaps the file blocks, and that clearing a parent's `Children` leaves its former
+children reachable from no root — both are still written, each with a warning, which is the safety
+net doing its job.
+
+**`3DExample.ganymede` and `Example.ganymede` are exactly the legacy case the collision path exists
+for**: each contains the hardcoded UUID `12837192831273` three times, so every load remaps three
+entities to fresh random UUIDs. Consequence worth stating: the first canonical save of either
+rewrites those UUIDs, and two loads of the same file produce different UUIDs. Nothing was severed —
+both scenes are flat — but they are the reason those two files cannot be byte-compared across
+binaries. Re-saving them once would canonicalize them permanently; not done here, because it is a
+content commit and belongs with whatever change actually edits them.
+
+**The editor's `AssetRegistry.gr` is gitignored, so the stale-entry removal is not "a committed data
+fix" as the plan called it.** `.gitignore:10` excludes `GanymedEditor/assets/AssetRegistry.gr`;
+only the runtime's registry is tracked, and it has neither stale entry. The two entries (the
+doubled-prefix `assets/models/Fox.glb` and `scripts/_P5Probe.lua`) were removed locally after
+confirming nothing references either handle and neither path exists.
+
+**Added beyond the plan: an unreadable registry is moved aside, not overwritten.** Parse hardening
+as specified (log, empty registry, keep running) left the failure only half-handled — the session's
+first import would then flush a nearly-empty registry over the corrupt file, and the handle mappings
+a hand-repair could have recovered are gone. `LoadRegistry` now renames it to `AssetRegistry.gr.bad`
+first. This needed the `ifstream` scoped closed before the rename: Windows refuses to rename an open
+file, and the first attempt silently logged "rename failed" — which is why the message names that
+outcome explicitly rather than claiming a quarantine that may not have happened.
+
+**Registry write counting needed a log line, so `SaveRegistry` and `CloseAllDocuments` each gained
+one `GE_CORE_TRACE`.** Both are kept: "the registry was written, with N entries" and "N documents
+unloaded, M kept (debugger)" are the two facts you want when either behavior surprises you, and the
+verification table asks for exactly those counts. Measured from an empty registry: an editor boot
+writes the file **twice**, once per user-visible action (default environment, then the scene load's
+path-based import), where every import used to write it. A boot that imports nothing now writes it
+**zero** times — `Shutdown` used to write unconditionally.
+
+**Small plan inaccuracy:** `ImportAsset` had *one* `SaveRegistry()` call inside it, reached from
+eight `ImportAsset` call sites — not "eight unconditional `SaveRegistry()` calls". The fix is the
+same.
+
+**`AssetHandle` has no `operator<`.** Sorting registry entries by handle needed
+`static_cast<uint64_t>`; `UUID` defines `==`/`!=` and a `std::hash` specialization but no ordering.
+Phases 2 and 4 will meet this again wherever they want an ordered container keyed by UUID. Adding
+`operator<` to `UUID` would be a one-line fix and is deliberately not done here — it is not this
+phase's file.
+
+**RmlUi: `Context::UnloadDocument` per document, not `ElementDocument::Close`.** `Close()` defers
+the unload to the next context update, which would have changed when documents disappear;
+`UnloadDocument` is what `UnloadAllDocuments` called per document and removes it from the root
+immediately, rebuilding the hover chain itself. The debugger owns **six** documents, not the five
+the plan estimated. The crash reproduces with no UI interaction at all — `SetDebuggerVisible(true)`
+is the same call the Ctrl+U menu item makes — so this check is scripted rather than interactive:
+three cycles of load-document → debugger visible → `CloseAllDocuments` → `SetVisible` again, clean
+in Debug (`1 unloaded, 6 kept`) and in Release (`1 unloaded, 0 kept`), no `destroyed externally`
+error, no crash.
+
+**Cosmetic finding, flagged not fixed:** `3DExample.ganymede`'s scene name is
+`UntitledAdd commentMore actions` — GitHub review-UI text pasted into the file at some point. It is
+harmless (the name is only logged) and lives in a file this phase deliberately does not rewrite.
 
 ---
 

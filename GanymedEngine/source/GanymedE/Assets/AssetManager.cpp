@@ -25,6 +25,9 @@ namespace GanymedE {
 		bool Initialized = false;
 		bool WritableRegistry = true;
 
+		// Set by ImportAsset, cleared by a successful write. See FlushRegistry.
+		bool RegistryDirty = false;
+
 		// Handles already reported as unknown. RenderSystem re-fetches assets by handle
 		// every frame per entity, so an unguarded warning here would arrive at frame
 		// rate; once per handle is the AnimationSystem unknown-clip posture - loud, not
@@ -70,7 +73,7 @@ namespace GanymedE {
 		if (!s_Data.Initialized)
 			return;
 
-		SaveRegistry();
+		FlushRegistry();
 
 		s_Data.Registry.clear();
 		s_Data.PathToHandle.clear();
@@ -109,7 +112,7 @@ namespace GanymedE {
 		GE_CORE_INFO("Imported asset '{0}' as {1} (handle {2})",
 			pathKey, AssetTypeToString(type), static_cast<uint64_t>(metadata.Handle));
 
-		SaveRegistry();
+		s_Data.RegistryDirty = true;
 		return metadata.Handle;
 	}
 
@@ -308,15 +311,46 @@ namespace GanymedE {
 		if (!std::filesystem::exists(registryPath))
 			return;
 
-		std::ifstream stream(registryPath);
-		if (!stream)
-			return;
-
 		std::stringstream buffer;
-		buffer << stream.rdbuf();
+		{
+			// Scoped so the handle is closed before the catch below can rename the file:
+			// Windows refuses to rename a file that is still open.
+			std::ifstream stream(registryPath);
+			if (!stream)
+				return;
 
-		YAML::Node root = YAML::Load(buffer.str());
-		YAML::Node assets = root["Assets"];
+			buffer << stream.rdbuf();
+		}
+
+		YAML::Node assets;
+		try
+		{
+			// Same posture as SceneSerializer::Deserialize: a malformed registry is content
+			// to report, not a reason to take the process down. Unhandled, a truncated .gr
+			// terminated the process out of Init - before a window existed to say why.
+			YAML::Node root = YAML::Load(buffer.str());
+			assets = root["Assets"];
+		}
+		catch (const YAML::Exception& e)
+		{
+			// Move the unreadable file aside rather than leave it in place. The first
+			// import of the session would otherwise flush a nearly-empty registry over
+			// it, and the handle mappings a hand-repair could have recovered are gone -
+			// every scene in the project pointing at assets nothing can resolve.
+			std::filesystem::path quarantine = registryPath;
+			quarantine += ".bad";
+
+			std::error_code ec;
+			std::filesystem::rename(registryPath, quarantine, ec);
+
+			GE_CORE_ERROR("Asset registry '{0}' failed to parse: {1} - continuing with an "
+				"empty registry. Assets referenced by handle will not resolve until it is "
+				"repaired or regenerated; the unreadable file was kept as '{2}'{3}.",
+				registryPath.string(), e.what(), quarantine.string(),
+				ec ? " (rename failed - it will be overwritten by the next import)" : "");
+			return;
+		}
+
 		if (!assets)
 			return;
 
@@ -330,6 +364,20 @@ namespace GanymedE {
 			metadata.Type = (AssetType)assetNode["Type"].as<uint16_t>();
 			metadata.FilePath = assetNode["FilePath"].as<std::string>();
 
+			// Two handles for one path means one of them is unreachable through
+			// GetHandle/ImportAsset - the losing entry is dead weight that only ever
+			// surfaces as an asset that silently fails to resolve. Keep the first and
+			// say so; do not drop the entry, since a scene may still reference it.
+			auto existing = s_Data.PathToHandle.find(metadata.FilePath);
+			if (existing != s_Data.PathToHandle.end())
+			{
+				GE_CORE_WARN("Asset registry has duplicate entries for '{0}' (handles {1} and "
+					"{2}); keeping {1}", metadata.FilePath,
+					static_cast<uint64_t>(existing->second), static_cast<uint64_t>(metadata.Handle));
+				s_Data.Registry[metadata.Handle] = metadata;
+				continue;
+			}
+
 			s_Data.Registry[metadata.Handle] = metadata;
 			s_Data.PathToHandle[metadata.FilePath] = metadata.Handle;
 		}
@@ -338,9 +386,9 @@ namespace GanymedE {
 	void AssetManager::SaveRegistry()
 	{
 		// Guarded here rather than at the call sites so no future caller can bypass it.
-		// ImportAsset saves too, and it runs during scene deserialization for path-based
-		// components - which is how a read-only install would otherwise have written its
-		// registry long before Shutdown ever asked.
+		// FlushRegistry saves too, and it runs at the end of scene deserialization for
+		// path-based components - which is how a read-only install would otherwise have
+		// written its registry long before Shutdown ever asked.
 		if (!s_Data.WritableRegistry)
 			return;
 
@@ -348,24 +396,83 @@ namespace GanymedE {
 		std::error_code ec;
 		std::filesystem::create_directories(registryPath.parent_path(), ec);
 
+		// Sorted by path, not by the map's iteration order: Registry is keyed on a random
+		// uint64 under an identity hash, so a rehash reorders every entry and rewrites the
+		// whole file for one import. Sorted output makes the file a stable diff and makes
+		// "save twice, compare" a usable check.
+		std::vector<const AssetMetadata*> entries;
+		entries.reserve(s_Data.Registry.size());
+		for (const auto& [handle, metadata] : s_Data.Registry)
+			entries.push_back(&metadata);
+
+		std::sort(entries.begin(), entries.end(),
+			[](const AssetMetadata* a, const AssetMetadata* b)
+			{
+				if (a->FilePath != b->FilePath)
+					return a->FilePath < b->FilePath;
+				// duplicate paths still order deterministically (AssetHandle has no operator<)
+				return static_cast<uint64_t>(a->Handle) < static_cast<uint64_t>(b->Handle);
+			});
+
 		YAML::Emitter out;
 		out << YAML::BeginMap;
 		out << YAML::Key << "Assets" << YAML::Value << YAML::BeginSeq;
 
-		for (const auto& [handle, metadata] : s_Data.Registry)
+		for (const AssetMetadata* metadata : entries)
 		{
 			out << YAML::BeginMap;
-			out << YAML::Key << "Handle" << YAML::Value << static_cast<uint64_t>(handle);
-			out << YAML::Key << "Type" << YAML::Value << (uint16_t)metadata.Type;
-			out << YAML::Key << "FilePath" << YAML::Value << metadata.FilePath;
+			out << YAML::Key << "Handle" << YAML::Value << static_cast<uint64_t>(metadata->Handle);
+			out << YAML::Key << "Type" << YAML::Value << (uint16_t)metadata->Type;
+			out << YAML::Key << "FilePath" << YAML::Value << metadata->FilePath;
 			out << YAML::EndMap;
 		}
 
 		out << YAML::EndSeq;
 		out << YAML::EndMap;
 
-		std::ofstream fout(registryPath);
-		fout << out.c_str();
+		// Write-then-rename. std::ofstream truncates on open, so a crash between the open
+		// and the flush used to leave a zero-length registry - every handle in every scene
+		// dead, with no way to tell that from "never imported anything". The rename is
+		// atomic on both NTFS and POSIX, so the file is either the old one or the new one.
+		std::filesystem::path tempPath = registryPath;
+		tempPath += ".tmp";
+
+		{
+			std::ofstream fout(tempPath);
+			if (!fout)
+			{
+				GE_CORE_ERROR("Could not open '{0}' for writing - asset registry not saved",
+					tempPath.string());
+				return;
+			}
+
+			fout << out.c_str();
+		}
+
+		std::filesystem::rename(tempPath, registryPath, ec);
+		if (ec)
+		{
+			GE_CORE_ERROR("Could not replace '{0}' - asset registry not saved: {1}",
+				registryPath.string(), ec.message());
+			std::filesystem::remove(tempPath, ec);
+			return;
+		}
+
+		s_Data.RegistryDirty = false;
+		GE_CORE_TRACE("Asset registry written ({0} entries)", entries.size());
+	}
+
+	void AssetManager::FlushRegistry()
+	{
+		if (!s_Data.RegistryDirty)
+			return;
+
+		SaveRegistry();
+	}
+
+	bool AssetManager::IsRegistryWritable()
+	{
+		return s_Data.WritableRegistry;
 	}
 
 }

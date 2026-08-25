@@ -21,7 +21,7 @@ Key entry points:
 | Method | Notes |
 |---|---|
 | `CreateEntity(name)` / `CreateEntityWithUUID(uuid, name)` | Every entity gets `IDComponent`, `TransformComponent`, `WorldTransformComponent`, `RelationshipComponent`, `TagComponent` |
-| `DestroyEntity(entity)` | Detaches from parent, unparents children (they stay as roots), erases the UUID mapping, destroys. Asserts if called during a system update — use `Commands().DestroyEntity()` there |
+| `DestroyEntity(entity)` | Detaches from parent, unparents children (they stay as roots — each orphan gets `MarkChanged<RelationshipComponent>`, or its cached world transform would keep the destroyed parent's contribution), erases the UUID mapping, destroys. Asserts if called during a system update — use `Commands().DestroyEntity()` there |
 | `OnRuntimeStart/Stop` | Forwarded to the systems (start runs in reverse registration order — see [ecs.md](ecs.md#systemmanager)) |
 | `OnUpdateRuntime(ts, fallbackCamera)` / `OnUpdateEditor(ts, camera)` | FrameBegin → systems → FrameEnd; the editor camera is passed via the `RenderContext` singleton |
 | `OnViewportResize(w, h)` | Updates all non-fixed-aspect `CameraComponent`s |
@@ -271,8 +271,36 @@ rather than once on play.
 `.ganymede` files: a `Scene` name plus an `Entities` sequence, each entity a map of component
 blocks keyed by component name. Notes:
 
+- **Save order is canonical: roots sorted by UUID, then depth-first through each root's `Children`
+  in authored sibling order.** Saving the same scene twice produces byte-identical files, and a
+  play/stop cycle does not change them. Before this the order was `view<IDComponent>` — entt's
+  packed order, which entt 3.16 iterates backwards and `Scene::Copy` reshuffles wholesale, so
+  re-saving an untouched scene produced a large meaningless diff and "did this edit change
+  anything?" was unanswerable.
+
+  A flat UUID sort would also be deterministic and would give tighter diffs (entities never move
+  in the file, so a reparent touches only Relationship fields). DFS was chosen anyway: a subtree
+  comes out as a *contiguous block*, which is the layout `.gprefab` needs, so both formats share
+  one canonical order instead of having two; and sibling order is authored, user-visible state, so
+  letting it order the file makes the layout content rather than an artifact. The cost, accepted:
+  reparenting moves a block in the diff. Godot orders scene files by node path for the same
+  reasons; Unity instead leans on stable fileIDs and keeps insertion order.
+
+  The walk carries a visited set, so a corrupted hierarchy (a cycle, a child listed under two
+  parents) terminates. Any entity reachable from no root is appended in UUID order **with a
+  warning** — that combination is deliberate: corruption becomes visible instead of becoming
+  silent data loss.
 - Entity identity is the real UUID; deserialization mints a fresh UUID on `0` or collision
-  (legacy scenes serialized one hardcoded ID for every entity).
+  (legacy scenes serialized one hardcoded ID for every entity), and **`ResolveHierarchy` then
+  re-points every `Parent`/`Children` reference at the UUIDs the entities were actually created
+  with**. `DeserializeEntity` writes the *file's* UUIDs into `RelationshipComponent` verbatim and
+  the batch owner resolves them once all the entities exist. Without that pass a remapped entity
+  kept a hierarchy naming its old UUID, and those references silently resolved to whichever entity
+  won the original — a severed or mis-attached subtree with no diagnostic. The pass runs on every
+  load, not only after a collision: with no remapping it is the identity, and a repair path that
+  only runs on rare input is a path that rots. `Children` is authoritative (a child claimed by a
+  parent's list takes that parent); an entity naming a parent that does not list it keeps a
+  translated reference and warns.
 - Asset references serialize as **handles** (`uint64_t`); `MeshPath`/`EnvironmentPath`/`ScriptPath`
   string fallbacks are still read for backward compatibility and imported into the registry on load.
   Unlike meshes, a deserialized `ScriptComponent` handle is *not* warmed through `GetAsset<>` —
@@ -287,8 +315,15 @@ blocks keyed by component name. Notes:
   make one, and an absent key in a bare read throws out through `Deserialize` and loses the whole
   file.
 - `WorldTransformComponent` is intentionally not serialized (derived).
-- Adding a component type means extending both `SerializeEntity` and `Deserialize` — this is one
-  of the two remaining hand-maintained per-component lists (the other is the editor UI).
+- Adding a component type means extending both `SerializeEntity` and `DeserializeEntity` — this is
+  one of the two remaining hand-maintained per-component lists (the other is the editor UI).
+- **The per-entity halves are public statics**: `SerializeEntity(YAML::Emitter&, Entity)` and
+  `DeserializeEntity(const YAML::Node&, Scene&, UUID)`. `Deserialize` is a loop over the second
+  plus `ResolveHierarchy`. They are static and take their scene explicitly because a `.gprefab` is
+  the same entity blocks under a different root, read into a scene the serializer does not own.
+  `DeserializeEntity` does not read the UUID from the node: who owns that decision differs per
+  container — a scene keeps the file's UUID and remaps collisions, a prefab instance always mints
+  a fresh one.
 - `SerializeRuntime`/`DeserializeRuntime` (binary) are unimplemented stubs.
 - **`Deserialize` never throws.** It checks the file exists, then wraps the parse in one try/catch
   and returns `false` on any `YAML::Exception`, logging the file and the reason. This matters more

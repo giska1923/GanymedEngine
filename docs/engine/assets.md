@@ -27,21 +27,60 @@ one registry + per-type in-memory caches:
 | API | Behavior |
 |---|---|
 | `Init(writableRegistry = true)` / `Shutdown()` | Load the registry; `false` makes every registry write a no-op. The editor calls these in `EditorLayer::OnAttach/OnDetach`, the runtime in `RuntimeLayer::OnAttach/OnDetach` |
-| `ImportAsset(relativePath)` | Idempotent registration: existing path returns its handle; otherwise mint a UUID, infer the type, persist the registry immediately. Unsupported extensions log a warning and return the invalid handle |
+| `ImportAsset(relativePath)` | Idempotent registration: existing path returns its handle; otherwise mint a UUID, infer the type, mark the registry dirty. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
 | `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D` — and only those |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
+| `FlushRegistry()` | Write the registry if an import dirtied it (see *Registry writes*) |
+| `IsRegistryWritable()` | "This process may write into `assets/`" — one flag, one meaning, for the registry and every future asset-file writer |
 
 The registry lives at `assets/AssetRegistry.gr` — YAML, one `{Handle, Type, FilePath}` entry per
-asset.
+asset, **sorted by `FilePath`**. Sorting is not cosmetic: `Registry` is keyed on a random `uint64`
+under an identity hash, so a rehash reordered every entry and one import rewrote the whole file.
+Sorted output makes the registry a stable diff and makes "write it twice, compare" a usable check.
 
 `Init(false)` is for a **shipped game**: it must not write into its own install directory (under
 Program Files that fails outright), and it has nothing to persist anyway. The guard lives inside
-`SaveRegistry()` rather than at its call sites, so it covers `ImportAsset` too — that matters,
-because `ImportAsset` persists eagerly and runs *during scene deserialization* for path-based
-components, which is how a read-only install would otherwise have written its registry long before
-`Shutdown()` was ever asked. Handles minted in a read-only session still work; they just do not
-outlive it, which is the right lifetime for something nobody authored.
+`SaveRegistry()` rather than at its call sites, so no future caller can bypass it — and that
+matters, because imports happen *during scene deserialization* for path-based components, which is
+how a read-only install would otherwise have written its registry long before `Shutdown()` was ever
+asked. `IsRegistryWritable()` exposes the same flag for code that writes other files into
+`assets/`; asset writers use that one gate rather than each inventing a parallel guard. Handles
+minted in a read-only session still work; they just do not outlive it, which is the right lifetime
+for something nobody authored.
+
+### Registry writes
+
+`ImportAsset` sets a dirty flag; `FlushRegistry()` writes if it is set. Flush points are the end of
+a user-visible action:
+
+| Flush point | Covers |
+|---|---|
+| `SceneSerializer::Deserialize` (end) | Every handle minted by a path-based component while the scene loaded |
+| `EditorUI::AcceptAssetDropHandle` | A drop onto a component's handle field |
+| `EditorLayer` viewport drop | A mesh drop: the mesh handle plus every texture its import minted |
+| `ContentBrowserPanel` → Import | The one asset the menu item registered |
+| `AssetManager::Shutdown` | Anything an unflushed path missed |
+
+The alternative — dirty flag plus a single flush at `Shutdown` — was rejected: an editor crash
+mid-session should not cost an afternoon of imports. A *missed* flush point costs a write deferred
+to `Shutdown`, which is the acceptable direction for this to fail in. Measured, from an empty
+registry: an editor boot that imports the default environment and one path-based mesh writes the
+file exactly twice — once per action — where every import used to write it.
+
+The write is **emit to `AssetRegistry.gr.tmp`, then rename over**. `std::ofstream` truncates on
+open, so a crash between open and flush used to leave a zero-length registry: every handle in every
+scene dead, and indistinguishable from "never imported anything". The rename is atomic on NTFS and
+POSIX, so the file is either the old one or the new one.
+
+`LoadRegistry` wraps its parse in one try/catch — the `SceneSerializer::Deserialize` posture, and
+for the same reason: unhandled, a truncated `.gr` terminated the process out of `Init`, before a
+window existed to say why. On a parse failure it logs, **moves the unreadable file aside as
+`AssetRegistry.gr.bad`**, and continues with an empty registry. The quarantine is the point: the
+session's first import would otherwise flush a nearly-empty registry over the file, destroying the
+handle mappings a hand-repair could have recovered. Duplicate `FilePath` entries warn and keep the
+first — the loser is unreachable through `GetHandle`/`ImportAsset` and only ever surfaces as an
+asset that silently fails to resolve.
 
 `Shutdown()` clears the caches either way, and does so while `Renderer::IsGpuAlive()` so the
 GPU-resource destructors release real bgfx handles.
@@ -71,7 +110,7 @@ The two apps therefore treat the same file differently, and `.gitignore` says so
 |---|---|---|
 | Tracked in git | No | **Yes** |
 | Role | Machine-local database the editor grows as you import | Authored content, shipped with the game |
-| Written at runtime | Yes (`ImportAsset`, `Shutdown`) | No (`Init(false)`) |
+| Written at runtime | Yes (at the flush points above) | No (`Init(false)`) |
 
 What happens when it is missing was measured, not assumed: a runtime booted without its registry
 loads its scene, reports the right entity count, and renders **nothing but the procedural sky** —

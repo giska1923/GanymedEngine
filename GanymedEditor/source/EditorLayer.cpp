@@ -380,6 +380,9 @@ namespace GanymedE {
 				Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
 				if (entity)
 					m_SceneHierarchyPanel.SetSelectedEntity(entity);
+
+				// One write for the mesh handle and every texture handle its import minted.
+				AssetManager::FlushRegistry();
 			}
 		}
 
@@ -608,6 +611,7 @@ namespace GanymedE {
 		auto& skyLight = sky.AddComponent<SkyLightComponent>();
 		skyLight.Environment = AssetManager::ImportAsset("environments/studio_small_08_1k.hdr");
 		skyLight.Intensity = 1.0f;
+		AssetManager::FlushRegistry();
 	}
 
 	void EditorLayer::OpenScene()

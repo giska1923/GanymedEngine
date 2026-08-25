@@ -169,7 +169,9 @@ one of the two remaining hand-maintained per-component lists (the other is the s
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
 - Right-click on an importable file (mesh/environment/texture/material/script/audio) → **Import**, registering
-  it with the `AssetManager` (idempotent; persists `AssetRegistry.gr` immediately).
+  it with the `AssetManager` (idempotent), then `FlushRegistry()` — registry writes are batched per
+  user action rather than per import, see
+  [assets.md](../engine/assets.md#registry-writes).
 - Right-click on an already-registered file → **Reload**, evicting it from the manager's cache so the
   next fetch re-reads it from disk. For a mesh this also drops its textures and deletes the
   `.meshcache`, i.e. a full reimport. Edits land in the viewport on the next frame because
@@ -188,7 +190,7 @@ too (it previously wasn't used here at all: each site hand-rolled
 |---|---|
 | `AcceptAssetDrop(type)` | `optional<path>` — the dropped path relative to `assets/`, iff its type matches |
 | `AcceptAssetDrop({types...})` | `AssetDrop { Type, Path }`, falsy when nothing matched — for targets accepting several types |
-| `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent) on match, else `InvalidAssetHandle` |
+| `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent) + `FlushRegistry` on match, else `InvalidAssetHandle` |
 
 Call it immediately after the widget that should accept the drop; it wraps
 `BeginDragDropTarget` / `AcceptDragDropPayload("CONTENT_BROWSER_ITEM")` / `EndDragDropTarget`.

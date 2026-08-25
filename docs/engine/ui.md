@@ -108,6 +108,24 @@ Debugger** or **Ctrl+U**. Debug builds only; the Debugger sources are not compil
 When a document renders nothing, that inspector is usually the fastest way to find out why —
 `display: inline` and a zero-width box look identical to "not loaded" from the outside.
 
+**`CloseAllDocuments` skips the debugger's own documents, by id prefix.** It used to call
+`Context::UnloadAllDocuments()`, which destroyed the six documents `Rml::Debugger` owns along with
+the game's. The plugin reacts by logging an error and nulling its element pointers while staying
+registered, so the next `Debugger::SetVisible()` dereferenced a null `menu_element` — the editor
+crashed on the second play/stop cycle with the debugger open. The loop now walks the context in
+reverse (unloading mutates the list) and unloads everything whose id does not start with
+`rmlui-debug-`.
+
+`rmlui-debug-` is the discriminator RmlUi's own debugger uses internally to exclude its documents
+from element picking and outline rendering, so this leans on a de-facto contract of the library
+rather than inventing one; verified against RmlUi 6.2. Skipping them makes the null deref
+*unreachable* rather than merely guarded, and the debugger keeps its open/closed state across
+play/stop instead of resetting. The alternative — a `GE_DEBUG`-bracketed
+`Debugger::Shutdown`/`Initialise` around the unload — fixes the crash but tears down and rebuilds
+debugger state every stop: more code, worse behavior, and two code paths. With the prefix skip
+there are simply no matching documents in Release, so the loop degenerates to "unload everything"
+and Debug and Release take the same path.
+
 ## Input routing
 
 `UIEngine::OnEvent` translates engine events into `Context::Process*` calls. The editor forwards

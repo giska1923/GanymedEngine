@@ -58,6 +58,19 @@ namespace GanymedE {
 		static void LoadRegistry();
 		static void SaveRegistry();
 
+		// Writes the registry only if an ImportAsset has dirtied it since the last write.
+		// ImportAsset no longer saves on every call - a scene load or a mesh drop mints a
+		// handful of handles and used to rewrite the whole file once per handle. Flush at
+		// the end of a user-visible action instead (drop handled, import menu clicked,
+		// scene deserialized) so a crash mid-session costs at most the current action's
+		// imports, not the afternoon's - see docs/engine/assets.md, "Registry flush points".
+		static void FlushRegistry();
+
+		// "This process may write into assets/." False in the shipped runtime, which treats
+		// assets/ as read-only content. The registry guard and every future asset-file
+		// writer share this one flag rather than each inventing a parallel one.
+		static bool IsRegistryWritable();
+
 	private:
 		static Ref<Mesh> LoadMesh(AssetHandle handle);
 		static Ref<Environment> LoadEnvironment(AssetHandle handle);
