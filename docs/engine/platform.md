@@ -25,6 +25,21 @@ the other platforms):
 - Shutdown order matters: the context (i.e. bgfx) is destroyed **before** `glfwDestroyWindow`,
   because bgfx holds the native window handle.
 
+### Borderless fullscreen
+
+`WindowProps::Fullscreen` (fed from `ApplicationSpecification::Fullscreen`) creates an
+**undecorated window sized to the primary monitor's video mode and positioned at its origin** — not
+an exclusive-mode swapchain. `Width`/`Height` are ignored; the resolved size is written back into
+`WindowData` before `BgfxContext::Init`, so bgfx and `UIEngine::Init` both see the real size, and it
+is logged (`Borderless fullscreen: WxH at (x, y)`). If `glfwGetVideoMode` returns nothing the
+request degrades to windowed with a warning.
+
+Passing the monitor to `glfwCreateWindow` would request a real mode change, which bgfx does not
+drive and which costs alt-tab friendliness for nothing at this scale. Exclusive fullscreen is out of
+scope (see the roadmap's "not doing" list). Verified on Windows; Linux and macOS carry the same code
+best-effort — an undecorated window is a hint a window manager may override on X11/Wayland, and on
+macOS it sits under the menu bar rather than over it.
+
 ## BgfxContext
 
 [`BgfxContext`](../../GanymedEngine/source/Platform/Bgfx/BgfxContext.h) owns bgfx's lifetime and
@@ -63,7 +78,9 @@ implementation, so the old interface (and `OpenGLContext`) was deleted with it.
 Two halves:
 
 - [`ImGuiLayer`](../../GanymedEngine/source/GanymedE/ImGui/ImGuiLayer.h) (engine, an overlay
-  pushed by `Application`) owns the ImGui context: docking enabled, dark theme
+  pushed by `Application` **when `ApplicationSpecification::EnableImGui` is set** — a non-editor
+  front-end runs with no ImGui at all, so nothing here initializes and
+  `Application::GetImGuiLayer()` is null) owns the ImGui context: docking enabled, dark theme
   (`SetDarkThemeColors`), font loading with a graceful fallback to the built-in font when
   `assets/fonts` is missing (a hard assert killed Sandbox once). `Begin()`/`End()` bracket each
   frame's UI; `OnEvent` marks events handled when ImGui wants the mouse/keyboard **unless**

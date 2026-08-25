@@ -63,6 +63,12 @@ namespace GanymedE {
 		uint32_t m_Width = 0;
 		uint32_t m_Height = 0;
 
+		// Which target the UI view was pointed at last frame: 1 offscreen, 0 backbuffer,
+		// -1 never. Only there to log the transitions once each - a UI composited into the
+		// wrong target is invisible rather than visibly wrong, so "which branch ran" is
+		// the first thing you want to know from a log.
+		int m_TargetKind = -1;
+
 		bool m_ScissorEnabled = false;
 		Rml::Rectanglei m_Scissor;
 	};

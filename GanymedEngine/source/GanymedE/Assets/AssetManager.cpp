@@ -23,18 +23,46 @@ namespace GanymedE {
 		std::unordered_map<AssetHandle, Ref<Texture2D>> LoadedTextures;
 
 		bool Initialized = false;
+		bool WritableRegistry = true;
+
+		// Handles already reported as unknown. RenderSystem re-fetches assets by handle
+		// every frame per entity, so an unguarded warning here would arrive at frame
+		// rate; once per handle is the AnimationSystem unknown-clip posture - loud, not
+		// broken.
+		std::unordered_set<AssetHandle> WarnedUnknownHandles;
 	};
 
 	static AssetManagerData s_Data;
 
-	void AssetManager::Init()
+	namespace {
+
+		// A valid handle with no registry entry means the scene references an asset this
+		// install does not know about - almost always a missing or stale AssetRegistry.gr.
+		// Worth saying out loud: the consequence is an entity that renders nothing, which
+		// is indistinguishable from a bad transform or an unlit material until you know.
+		void WarnUnknownHandle(AssetHandle handle, const char* expected)
+		{
+			if (!s_Data.WarnedUnknownHandles.insert(handle).second)
+				return;
+
+			GE_CORE_WARN("Asset handle {0} is not in the registry (expected: {1}) - nothing "
+				"will be loaded for it. A missing or stale assets/AssetRegistry.gr is the "
+				"usual cause.", static_cast<uint64_t>(handle), expected);
+		}
+
+	}
+
+	void AssetManager::Init(bool writableRegistry)
 	{
 		if (s_Data.Initialized)
 			return;
 
+		s_Data.WritableRegistry = writableRegistry;
+
 		LoadRegistry();
 		s_Data.Initialized = true;
-		GE_CORE_INFO("AssetManager initialized ({0} registered assets)", s_Data.Registry.size());
+		GE_CORE_INFO("AssetManager initialized ({0} registered assets, registry {1})",
+			s_Data.Registry.size(), writableRegistry ? "writable" : "read-only");
 	}
 
 	void AssetManager::Shutdown()
@@ -43,8 +71,10 @@ namespace GanymedE {
 			return;
 
 		SaveRegistry();
+
 		s_Data.Registry.clear();
 		s_Data.PathToHandle.clear();
+		s_Data.WarnedUnknownHandles.clear();
 		// Runs from EditorLayer::OnDetach while Renderer::IsGpuAlive() is still true,
 		// so the GPU-resource destructors release real bgfx handles rather than
 		// tripping the is-alive guard.
@@ -116,7 +146,12 @@ namespace GanymedE {
 			return cached->second;
 
 		const AssetMetadata* metadata = GetMetadata(handle);
-		if (!metadata || metadata->Type != AssetType::StaticMesh)
+		if (!metadata)
+		{
+			WarnUnknownHandle(handle, "static mesh");
+			return nullptr;
+		}
+		if (metadata->Type != AssetType::StaticMesh)
 			return nullptr;
 
 		std::filesystem::path relativePath = metadata->FilePath;
@@ -146,7 +181,12 @@ namespace GanymedE {
 			return cached->second;
 
 		const AssetMetadata* metadata = GetMetadata(handle);
-		if (!metadata || metadata->Type != AssetType::Environment)
+		if (!metadata)
+		{
+			WarnUnknownHandle(handle, "environment");
+			return nullptr;
+		}
+		if (metadata->Type != AssetType::Environment)
 			return nullptr;
 
 		std::filesystem::path fullPath = GetAssetRoot() / metadata->FilePath;
@@ -172,7 +212,12 @@ namespace GanymedE {
 		}
 
 		const AssetMetadata* metadata = GetMetadata(handle);
-		if (!metadata || metadata->Type != AssetType::Texture)
+		if (!metadata)
+		{
+			WarnUnknownHandle(handle, "texture");
+			return nullptr;
+		}
+		if (metadata->Type != AssetType::Texture)
 			return nullptr;
 
 		std::filesystem::path fullPath = GetAssetRoot() / metadata->FilePath;
@@ -292,6 +337,13 @@ namespace GanymedE {
 
 	void AssetManager::SaveRegistry()
 	{
+		// Guarded here rather than at the call sites so no future caller can bypass it.
+		// ImportAsset saves too, and it runs during scene deserialization for path-based
+		// components - which is how a read-only install would otherwise have written its
+		// registry long before Shutdown ever asked.
+		if (!s_Data.WritableRegistry)
+			return;
+
 		std::filesystem::path registryPath = GetAssetRoot() / "AssetRegistry.gr";
 		std::error_code ec;
 		std::filesystem::create_directories(registryPath.parent_path(), ec);

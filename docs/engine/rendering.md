@@ -276,6 +276,9 @@ scene HDR (RGBA16F + entityID + D24S8)
   → game UI (RmlUi, RenderPass::UI = 28) composited into that same LDR target
 ```
 
+(Or, with `SetOutputToBackbuffer(true)`, the final post pass and the UI both land on the backbuffer
+instead — see [Backbuffer output mode](#backbuffer-output-mode).)
+
 The UI pass sits after Composite purely by view ID, which is what keeps it in display space
 instead of being tonemapped with the scene — see [ui.md](ui.md). Note that
 `SetViewportSize` rebuilds the post-stack targets, so anything holding the composite framebuffer
@@ -288,6 +291,47 @@ editable live in the editor Stats panel. Bloom mip views must ascend in executio
 upsample chain running backwards was a real bug); all fullscreen passes flip V on top-down
 backends (`#if !BGFX_SHADER_LANGUAGE_GLSL` in the vertex shaders) — an odd number of unflipped
 passes mirrors the output (migration §8.8).
+
+Which pass is *final* is decided once, from `FXAAEnabled && the FXAA shader loaded`. Both the
+"where does tonemap write" and "does FXAA run" decisions read that single predicate: splitting them
+left a hole where FXAA enabled with a missing shader sent tonemap to the FXAA input and left the
+composite target unwritten, i.e. a black image.
+
+### Backbuffer output mode
+
+`SetOutputToBackbuffer(true)` sends the **final** pass to the backbuffer instead of the composite
+framebuffer — FXAA at view 25 when active, tonemap at view 24 when not. It replaces
+`Framebuffer::BindToView` with `setViewFrameBuffer(view, BGFX_INVALID_HANDLE)` +
+`setViewRect(view, 0, 0, w, h)`. A host in this mode also passes `nullptr` to `UIEngine::SetTarget`,
+which routes RmlUi's view 28 at the backbuffer too. View order stays monotonic: 0 (context touch) <
+24/25 (final post) < 28 (UI). This is the mode `GanymedRuntime` runs in; the editor never touches it.
+
+Consequences:
+
+- The intermediate targets (HDR, bloom chain, tonemap) are still allocated at `SetViewportSize`'s
+  dimensions, so **the host must feed it the window size** — the final view rect comes from there.
+  There is no resolution-scaling knob hiding in this switch.
+- `GetFinalImageRendererID()` asserts: nothing writes the composite target in this mode, so the
+  handle names a texture holding whatever was in it before the switch.
+- The editor's "composite framebuffer is a different object after resize, re-point the UI at it"
+  hazard disappears, because the UI target is null.
+- The picking `RED_INTEGER` attachment is still allocated even with no picking consumer. Dead cost,
+  accepted for v1.
+
+**Retarget rather than a dedicated present pass** — the divergence from the production norm.
+Unity/Unreal both end on a present/upscale pass because it carries resolution scaling, HDR-display
+output, and platform present semantics. None of those exist here yet, and a present pass would cost a
+new view ID *above* `RenderPass::UI = 28` (since it must composite a UI'd image) plus a new shader:
+`vs_Blit.sc` expects `a_texcoord0` while the PostProcess fullscreen quad supplies only
+`a_Position` as Float2, so it would have to derive UV from position like `vs_FXAA`/`vs_Tonemap` — a
+new program and a new flip-parity surface. The escape hatch is named and deferred to whenever
+resolution scaling arrives.
+
+**Known GL caveat, not engineered around.** `vs_Tonemap`/`vs_FXAA` carry the V-flip branch written
+for offscreen targets, and bgfx flips offscreen versus backbuffer on GL backends. So the same pass
+retargeted at the backbuffer may render **upside-down on GL** while being correct on
+D3D/Vulkan/Metal. The primary platform is D3D and the probe verified it there; if you hit a mirrored
+image on GL, this is why — the fix is a caps-driven flip in those two vertex shaders, not a redesign.
 
 ### Entity picking (async)
 

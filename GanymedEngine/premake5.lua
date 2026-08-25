@@ -60,6 +60,7 @@ project "GanymedEngine"
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.yaml_cpp}",
 		"%{IncludeDir.cgltf}",
+		"%{IncludeDir.miniaudio}",
 		"%{IncludeDir.Jolt}",
 		"%{IncludeDir.bx}",
 		"%{IncludeDir.bimg}",

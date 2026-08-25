@@ -33,6 +33,13 @@ namespace GanymedE {
 	{
 		PhysicsDebugDrawSettings DebugDraw;
 
+		// Authored collider wireframes during play, when Jolt debug draw is off.
+		// Default false because a shipped game must not draw them over the scene; the
+		// editor opts in. Nothing carries this across Scene::Copy (singletons are not
+		// copied - the new Scene's ctor default-constructs its own), so the editor
+		// re-asserts it on the play scene every frame alongside DebugDraw.
+		bool ShowColliderGizmos = false;
+
 		float FixedTimestep = 1.0f / 60.0f;
 		int MaxStepsPerFrame = 5;          // spiral-of-death guard
 	};

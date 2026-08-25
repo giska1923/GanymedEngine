@@ -9,8 +9,8 @@
   `make -j$(nproc) config=debug`.
 - macOS: `scripts/macOS_GenerateProjects.sh` → Xcode workspace.
 
-Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor` and `Sandbox`
-(executables linking the engine), plus the dependency group built from source via their own
+Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor`, `GanymedRuntime`
+and `Sandbox` (executables linking the engine), plus the dependency group built from source via their own
 premake scripts in `GanymedEngine/extern/*.lua`: GLFW, ImGui (+ImGuizmo), yaml-cpp, Jolt,
 bx/bimg/bgfx, Lua. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug renderer), `Release`,
 `Dist` (no Jolt debug renderer). Output goes to `bin/<config>-<os>-<arch>/<project>/`,
@@ -64,6 +64,18 @@ Other build facts that have bitten before (details in
   and a workspace-wide `WindowedApp` makes the xcode4 exporter emit a `.app` bundle — which
   Xcode 14+ refuses to code sign without an `Info.plist` premake never generates, and whose
   launcher rewrites the working directory the relative asset paths rely on.
+- `GanymedRuntime` does the same thing but **scoped to `Dist`**, so Debug and Release keep a
+  console. Note what that console does *not* buy on Windows: `Log`'s non-file sink there is
+  spdlog's `msvc_sink` (OutputDebugString), so the window stays empty and the boot log goes to
+  `GanymedE.log` and the debugger's Output pane. Keeping `ConsoleApp` outside Dist is about
+  matching the other projects and leaving somewhere for ad-hoc stdio, not about reading the log.
+- **The three per-OS link lists in an app's premake file are copied, never retyped.** Static
+  libraries do not propagate their links outside Visual Studio, so each executable repeats the
+  dependency list — and off MSVC the *order* is load-bearing: GNU ld walks archives once, left to
+  right, pulling only objects that resolve symbols undefined so far, so a library must precede the
+  ones it depends on (RmlUi before Lua and FreeType, bgfx before bimg and bx). The lists in
+  `GanymedEditor`, `GanymedRuntime` and `Sandbox` must stay in step; a divergence links fine on
+  Windows and fails on Linux with symbols that are plainly present in the archive list.
 - **Angled includes on the xcode4 exporter.** premake maps `includedirs` to
   `USER_HEADER_SEARCH_PATHS` and emits `ALWAYS_SEARCH_USER_PATHS = NO`, and clang searches user
   paths for *quoted* includes only — so on Xcode, a dependency that reaches for its own public
@@ -101,12 +113,27 @@ Other build facts that have bitten before (details in
 | ImGui + ImGuizmo | Editor UI + transform gizmo |
 | yaml-cpp | Scene + asset-registry serialization |
 | cgltf | glTF import (header-only) |
+| miniaudio 0.11.25 | Audio playback (header-only — see below) |
 | stb_image | Image loading (header-only) |
 | spdlog | Logging (header-only) |
 | Lua 5.4.8 | Gameplay scripting VM (built as a C static lib) |
 | sol2 3.5.0 | C++ binding layer over Lua (header-only) |
 | RmlUi 6.2 | Game UI (HTML/CSS-style documents); Core + Lua plugin only |
 | FreeType 2.14.3 | RmlUi's font engine (its one hard dependency) |
+
+**miniaudio** is a committed single header (`extern/miniaudio/miniaudio.h`), not a submodule — the
+cgltf precedent. It has one implementation TU, `GanymedE/Audio/miniaudio_impl.cpp`, which is the
+only place in the engine that defines `MINIAUDIO_IMPLEMENTATION`; keeping it alone in a file means
+the ~84k-line implementation costs one TU rather than one per consumer (measured: ~1 s of a ~26 s
+x64 Debug engine build). Its link surface is per-OS and easy to get wrong:
+
+- **Windows** — nothing to add; the WASAPI backend needs no extra import library.
+- **Linux** — miniaudio `dlopen`s ALSA and PulseAudio at runtime, so there is no link-time
+  dependency on either. `dl` and `pthread` are already in every app's link list. If a linker ever
+  asks for `m`, add it there too.
+- **macOS** — `CoreAudio.framework` and `AudioToolbox.framework` must be in the `macosx` links block
+  of **every app** (Sandbox, GanymedEditor, GanymedRuntime), not just the engine: static libraries
+  do not propagate their links off MSVC. Same rule as the bgfx frameworks beside them.
 
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
 `extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`, `extern/RmlUi.lua`, `extern/FreeType.lua`).
@@ -139,8 +166,14 @@ Shaders are **compiled offline**; the compiled `.bin` files are gitignored. On a
 scripts\build_shader_tools.bat    # builds bgfx's shaderc via its GENie build (once per machine)
                                   # → staged at scripts/tools/<os>/shaderc
 scripts\compile_shaders.bat       # every .sc in assets/shaders/src → dx11 / spirv / glsl profiles
-                                  # → GanymedEditor/assets/shaders/compiled/<profile>/ and Sandbox's copy
+                                  # → <profile>/ under each app's assets/shaders/compiled/
 ```
+
+The script carries a hard-coded `TARGETS` list — one entry per app that loads shaders at runtime,
+currently `GanymedEditor`, `Sandbox` and `GanymedRuntime` — because assets resolve relative to the
+working directory, so each app needs its own copy. **A new app means a fourth entry in both
+`compile_shaders.bat` and `compile_shaders.sh`;** forget it and that app loads no shaders and draws
+nothing but the clear colour.
 
 `.sh` twins exist for Linux/macOS (`build_shader_tools.sh`, `compile_shaders.sh`). The profile-folder
 ↔ backend mapping must match `ProfileDirectory()` in
@@ -211,9 +244,16 @@ and hand-written Lua is a first-class path.
 
 ```
 cd GanymedEditor/scripts-src
-npm install        # once; needs Node + npm, nothing else in the C++ build depends on it
+npm ci             # once; needs Node + npm, nothing else in the C++ build depends on it
 npm run watch      # recompiles into ../assets/scripts on every save
 ```
+
+`npm ci` rather than `npm install`, and not out of habit: an interrupted install leaves package
+directories present but incomplete, and `npm install` then reports nothing wrong while `tstl` fails
+with `Cannot find module '…/source-map/source-map.js'`. `ci` deletes `node_modules` first, so the
+failure mode does not exist. If node itself dies building its certificate store on Windows
+(`Assertion failed: (1) == (X509_STORE_add_cert(store, cert))` — a machine-local certificate
+problem, not a project one), `NODE_OPTIONS=--use-openssl-ca` uses node's bundled CA list instead.
 
 Unlike shader bytecode, the emitted `assets/scripts/*.lua` **is tracked in git** — the folder also
 holds hand-written scripts, so it cannot be ignored wholesale. `scripts-src/node_modules/` is
@@ -228,10 +268,23 @@ Take the pair the lockfile records rather than upgrading TypeScript on its own. 
 ## Assets
 
 Each app resolves `assets/` **relative to its working directory** — run the editor from
-`GanymedEditor/`. `GanymedEditor/assets/` holds shaders (`src/` + gitignored `compiled/`),
-environments, models, scenes, textures, fonts, and the asset registry (`AssetRegistry.gr`).
-`assets/.assets/` is the binary mesh cache (safe to delete; also gitignored from the browser's
-perspective — the content browser hides it).
+`GanymedEditor/`, the runtime from `GanymedRuntime/` (`debugdir "%{prj.location}"` sets this for the
+debugger). `GanymedEditor/assets/` holds shaders (`src/` + gitignored `compiled/`), environments,
+models, scenes, textures, fonts, and the asset registry (`AssetRegistry.gr`). `assets/.assets/` is
+the binary mesh cache (safe to delete; also gitignored from the browser's perspective — the content
+browser hides it).
+
+`GanymedRuntime/assets/` is a copied snapshot of that content, trimmed to what the game uses, plus
+`audio/` — authored for the demo rather than copied (see [runtime.md](../runtime/runtime.md)). Sharing or packing a single tree is a non-goal for now. Two
+`.gitignore` differences matter and are per-path, not globs: the runtime's `AssetRegistry.gr` **is
+tracked** — for a shipped game it is authored content, not a scanned cache
+([assets.md](assets.md#registry-portability)) — while its `.assets/` mesh cache is not.
+
+One inconsistency worth knowing rather than tripping over: `MeshCache::Write` is *not* covered by
+`AssetManager::Init(false)`, so a read-only-registry app still writes `.assets/` on a cold mesh
+import. It is a derived cache rather than an authored database, and gating it would mean re-parsing
+every `.glb` on every boot; the real answer is cooking meshes ahead of ship, which is its own
+milestone.
 
 ## Profiling & debug tooling
 

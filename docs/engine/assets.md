@@ -8,9 +8,11 @@ mesh import pipeline (cgltf + a binary cache).
 [`AssetTypes.h`](../../GanymedEngine/source/GanymedE/Assets/AssetTypes.h):
 
 - `AssetHandle` is a `UUID`; `InvalidAssetHandle` is 0 (`IsAssetHandleValid` checks).
-- `AssetType`: `StaticMesh`, `Environment`, `Texture`, `Material`, `Scene`, `Script` — derived from
-  file extension by `AssetTypeFromExtension` (`.gltf/.glb` → StaticMesh, `.hdr` → Environment,
-  `.png/.jpg/...` → Texture, `.ganymede` → Scene, `.lua` → Script).
+- `AssetType`: `StaticMesh`, `Environment`, `Texture`, `Material`, `Scene`, `Script`, `Audio` — derived
+  from file extension by `AssetTypeFromExtension` (`.gltf/.glb` → StaticMesh, `.hdr` → Environment,
+  `.png/.jpg/...` → Texture, `.ganymede` → Scene, `.lua` → Script, `.wav/.mp3/.flac` → Audio).
+  **Append only** — the enum is persisted by ordinal, so reordering it retypes every asset in every
+  existing registry.
 - `AssetMetadata` = handle + type + file path **relative to `assets/`**.
 
 Components reference handles, never paths (`StaticMeshComponent.Mesh`,
@@ -24,14 +26,68 @@ one registry + per-type in-memory caches:
 
 | API | Behavior |
 |---|---|
-| `Init()` / `Shutdown()` | Load / save the registry. The editor calls these in `EditorLayer::OnAttach/OnDetach` |
+| `Init(writableRegistry = true)` / `Shutdown()` | Load the registry; `false` makes every registry write a no-op. The editor calls these in `EditorLayer::OnAttach/OnDetach`, the runtime in `RuntimeLayer::OnAttach/OnDetach` |
 | `ImportAsset(relativePath)` | Idempotent registration: existing path returns its handle; otherwise mint a UUID, infer the type, persist the registry immediately. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
-| `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D` |
+| `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D` — and only those |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
 
 The registry lives at `assets/AssetRegistry.gr` — YAML, one `{Handle, Type, FilePath}` entry per
-asset. It is data, checked into the repo alongside the assets it describes.
+asset.
+
+`Init(false)` is for a **shipped game**: it must not write into its own install directory (under
+Program Files that fails outright), and it has nothing to persist anyway. The guard lives inside
+`SaveRegistry()` rather than at its call sites, so it covers `ImportAsset` too — that matters,
+because `ImportAsset` persists eagerly and runs *during scene deserialization* for path-based
+components, which is how a read-only install would otherwise have written its registry long before
+`Shutdown()` was ever asked. Handles minted in a read-only session still work; they just do not
+outlive it, which is the right lifetime for something nobody authored.
+
+`Shutdown()` clears the caches either way, and does so while `Renderer::IsGpuAlive()` so the
+GPU-resource destructors release real bgfx handles.
+
+### Path-resolved types
+
+`Script` and `Audio` have **no `GetAsset` specialization, and that is deliberate** rather than an
+omission. The manager answers handle → path through `GetMetadata` and the consumer loads the file
+itself: the Lua VM owns its chunks, and miniaudio's resource manager ref-counts and caches decoded
+audio by path (see [audio.md](audio.md)). A cache here would be a second ref-counting owner of the
+same resource, and two caches disagreeing about lifetime is the bug class this avoids.
+
+The `GetAsset` primary template is *defined* with a `static_assert` rather than left undeclared, so
+asking for one of these is a compile error with a message instead of an unresolved external at link
+time.
+
+### Registry portability
+
+**A scene is unusable without the registry that resolves its handles.** Scenes store bare handles,
+`GetAsset<T>` resolves handle → path through the registry and nowhere else, and a handle with no
+entry loads nothing. So the registry is not an incidental cache — it is half of every scene
+reference, and the two halves have to travel together.
+
+The two apps therefore treat the same file differently, and `.gitignore` says so per-path:
+
+| | `GanymedEditor/assets/AssetRegistry.gr` | `GanymedRuntime/assets/AssetRegistry.gr` |
+|---|---|---|
+| Tracked in git | No | **Yes** |
+| Role | Machine-local database the editor grows as you import | Authored content, shipped with the game |
+| Written at runtime | Yes (`ImportAsset`, `Shutdown`) | No (`Init(false)`) |
+
+What happens when it is missing was measured, not assumed: a runtime booted without its registry
+loads its scene, reports the right entity count, and renders **nothing but the procedural sky** —
+every mesh and the HDR environment silently absent. Only `ScriptEngine` complained, because it
+alone logged the unresolved handle.
+
+That asymmetry is fixed: the three `GetAsset<T>` loaders now warn when a *valid* handle has no
+registry entry, naming the handle and the expected type. It fires **once per handle**
+(`WarnedUnknownHandles`), because `RenderSystem` re-fetches assets by handle every frame per entity
+and an unguarded warning would arrive at frame rate — the same loud-but-not-broken posture
+`AnimationSystem` takes for an unknown clip name.
+
+The deeper gap is unfixed and worth naming: handle→path lives in *one* file per app rather than
+next to each asset, so it cannot merge, and a hand-edited scene can reference a handle no registry
+knows. The production answer is per-asset committed metadata (Unity's `.meta` files carry the GUID
+beside the asset). That is a change to the asset layer's identity model, not a Phase 2 fix.
 
 `GetAsset<T>`'s **primary template is defined**, not just declared: its body is a
 `static_assert(sizeof(T) == 0, ...)`, so an unsupported `T` is a compile error naming the supported

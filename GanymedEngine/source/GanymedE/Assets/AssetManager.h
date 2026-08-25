@@ -14,7 +14,15 @@ namespace GanymedE {
 	class AssetManager
 	{
 	public:
-		static void Init();
+		// writableRegistry false makes every registry write a no-op: Shutdown() skips its
+		// save, and so does ImportAsset. A shipped game must not write into its own
+		// install directory - under Program Files that fails outright - and it has nothing
+		// to persist anyway, because for a runtime the registry is shipped content rather
+		// than a scanned cache (docs/engine/assets.md, "Registry portability").
+		//
+		// Handles minted by ImportAsset still work for the session; they just do not
+		// outlive it, which is the correct lifetime for something nobody authored.
+		static void Init(bool writableRegistry = true);
 		static void Shutdown();
 
 		// Register an asset by relative path (idempotent). Returns InvalidAssetHandle if unsupported.
@@ -28,6 +36,12 @@ namespace GanymedE {
 		// compile error with a message, instead of linking fine and failing later with
 		// an unresolved-external. Every new asset type adds one specialization
 		// declaration below, one definition in the .cpp, and one cache map.
+		//
+		// Not every asset type wants one. Script and Audio are path-resolved by
+		// design: the manager answers handle -> path and the consumer loads itself
+		// (Lua owns its chunks, miniaudio's resource manager owns decoded audio).
+		// A cache here would be a second ref-counted owner of the same resource -
+		// see docs/engine/audio.md.
 		template<typename T>
 		static Ref<T> GetAsset(AssetHandle handle)
 		{

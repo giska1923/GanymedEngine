@@ -98,6 +98,14 @@ namespace GanymedE {
 		// Sequential: UI paints back-to-front and bgfx must not reorder within the view.
 		bgfx::setViewMode(view, bgfx::ViewMode::Sequential);
 
+		const int targetKind = target ? 1 : 0;
+		if (targetKind != m_TargetKind)
+		{
+			m_TargetKind = targetKind;
+			GE_CORE_INFO("RmlUi: compositing into {0} ({1}x{2})",
+				target ? "an offscreen target" : "the backbuffer", width, height);
+		}
+
 		if (target)
 			target->BindToView(view);
 		else

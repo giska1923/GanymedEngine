@@ -19,7 +19,10 @@ namespace GanymedE {
 		Texture,
 		Material,
 		Scene,
-		Script
+		Script,
+		// Append only: this enum is persisted by ordinal in AssetRegistry.gr, so
+		// reordering it silently retypes every asset in every existing registry.
+		Audio
 	};
 
 	inline bool IsAssetHandleValid(AssetHandle handle)

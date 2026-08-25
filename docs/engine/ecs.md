@@ -216,7 +216,7 @@ public:
 
 Owned by `Scene`; registration order **is** execution order. The built-in registration (in
 `Scene`'s constructor) is: `PhysicsSystem` → `NativeScriptSystem` → `LuaScriptSystem` →
-`AnimationSystem` → `TransformSystem` → `CameraSystem` → `RenderSystem`.
+`AnimationSystem` → `TransformSystem` → `CameraSystem` → `AudioSystem` → `RenderSystem`.
 
 - **Lifecycle runs opposite to update order**: `OnRuntimeStart` iterates in reverse so scripts are
   instantiated *before* `PhysicsScene::Start` builds bodies (a rigid body added in a script's
@@ -237,6 +237,13 @@ Owned by `Scene`; registration order **is** execution order. The built-in regist
   palette: move `AnimationSystem` after it and the assert fires. Note what that took — the
   constraint existed from the moment the palette did, but nothing could check it until a reader
   *declared* the component.
+
+  `AudioSystem`'s slot is the same shape one step further out: its read of `WorldTransformComponent`
+  after `TransformSystem` *is* checked, but its placement after `CameraSystem` is not — that
+  dependency runs through the `RenderContext` singleton (the listener falls back to the camera
+  pose), and singleton access is outside what `ViewDesc` compares. Ordering constraints that travel
+  through singletons are invisible here by construction; they get a comment at the registration
+  site instead.
 - `Get<S>()` gives direct system access — used only where no data path exists yet (the renderer
   fetching the live `PhysicsScene` for Jolt debug draw).
 

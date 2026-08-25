@@ -15,6 +15,7 @@ GanymedE/
 ├── Renderer/    bgfx-backed renderer: resources, Renderer2D/3D, SceneRenderer, IBL, cameras
 ├── Assets/      AssetManager (handle registry), MeshCache
 ├── Physics/     PhysicsScene (Jolt, pimpl'd)
+├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
 ├── UI/          UIEngine (RmlUi game UI; the editor's own UI is ImGui — see ui.md)
 ├── Math/        Transform decomposition, AABB + Frustum
@@ -33,6 +34,14 @@ Client applications include the umbrella header [`GanymedE.h`](../../GanymedEngi
 implement `GanymedE::CreateApplication()`, and include
 [`EntryPoint.h`](../../GanymedEngine/source/GanymedE/main/EntryPoint.h) exactly once — the engine
 owns `main()`.
+
+There are two real front-ends, and the engine has **zero editor `#ifdef`s** — the difference is
+configuration, not compilation. `CreateApplication` returns an `Application` built from an
+`ApplicationSpecification`, and `EnableImGui = false` is the whole opt-out that separates
+[`GanymedEditor`](../editor/editor.md) (ImGui chrome, scene rendered into a viewport panel) from
+[`GanymedRuntime`](../runtime/runtime.md) (no ImGui, scene rendered straight to the backbuffer).
+Anything that reads as editor-only behaviour inside the engine is a bug; the collider-gizmo gate on
+`PhysicsSettings::ShowColliderGizmos` is there because it *was* one.
 
 ## The frame, end to end
 
@@ -55,10 +64,13 @@ Application::Run loop
 │   │   │   ├─ AnimationSystem             sample clips → joint palette on AnimatorComponent
 │   │   │   ├─ TransformSystem             recompute dirty world transforms (ChangeView)
 │   │   │   ├─ CameraSystem                resolve primary camera → RenderContext singleton
+│   │   │   ├─ AudioSystem                 push voice state + emitter/listener poses to AudioEngine
 │   │   │   └─ RenderSystem                submit lights/sky/meshes/sprites/gizmos to Renderer2D/3D
 │   │   └─ FrameEnd                        clear init/fini buffers + graveyards
 │   ├─ entity-ID pick request/poll         (editor)
 │   └─ SceneRenderer::EndFrame             bloom → tonemap → FXAA → composite
+│
+├─ AudioEngine::OnUpdate                   reap finished one-shots (runs even while minimized)
 │
 ├─ ImGuiLayer::Begin / Layer::OnImGuiRender / ImGuiLayer::End
 │   └─ editor panels, viewport image, gizmos → ImGui draw data → bgfx view 200
@@ -84,11 +96,16 @@ Two ordering facts worth internalizing:
   `BgfxContext`, which owns bgfx itself — its destructor lowers `Renderer::IsGpuAlive()` *before*
   `bgfx::shutdown()`, and every GPU-resource destructor checks that flag (statics can outlive
   `main()`; C++ guarantees nothing about their order relative to bgfx teardown).
-- `EditorLayer` owns the `SceneRenderer` (render targets + post stack) and the active `Scene`.
-- `Scene` owns the entt registry, the `SystemManager` (seven built-in systems), the `CommandQueue`,
+- The front-end layer — `EditorLayer` or `RuntimeLayer` — owns the `SceneRenderer` (render targets +
+  post stack) and the active `Scene`. Neither the engine nor `Application` holds a scene.
+- `Scene` owns the entt registry, the `SystemManager` (eight built-in systems), the `CommandQueue`,
   per-component-type change buffers / graveyards / init-fini buffers, and the UUID→entity map.
   Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`).
 - `PhysicsSystem` owns the `PhysicsScene` (Jolt world) — it exists only between play and stop.
+- `AudioEngine` owns the miniaudio device and every live voice. It is static-lifetime and explicitly
+  `Init()`/`Shutdown()` by `Application`; because that shutdown runs in the destructor *body*, before
+  the LayerStack unwinds, every one of its calls no-ops once shut down — the `IsGpuAlive` pattern
+  again (see [audio.md](audio.md)).
 - Renderer subsystems (`Renderer2D`, `Renderer3D`, `PostProcess`, `MeshShader`) are static-lifetime
   but explicitly `Init()`/`Shutdown()` by `Renderer`, releasing GPU handles while bgfx is alive.
 
@@ -114,19 +131,21 @@ Two ordering facts worth internalizing:
    `RendererAPI`/`GraphicsContext` virtual layers are gone; `Shader`, `Texture2D`, `Framebuffer`
    etc. are concrete wrappers over bgfx handles. `RendererAPI` survives only as a backend enum.
 6. **Plain-data components, engine types firewalled.** Components are plain structs; Jolt types
-   never appear in headers (`PhysicsScene` is pimpl'd); bgfx types appear only in renderer headers.
+   never appear in headers (`PhysicsScene` is pimpl'd); miniaudio types appear in exactly two `.cpp`s
+   and never in a header, not even as a forward declaration; bgfx types appear only in renderer
+   headers.
 
 ## Current limitations / known state
 
 - Single-threaded: one scene update per frame on the main thread; bgfx runs in single-threaded
   mode (`renderFrame()` before `init`). The ViewDesc machinery exists so parallelism can be added
   without redesign.
-- Shadows had a known regression at the end of the bgfx migration (empty shadow map — see
-  [`BGFX_MIGRATION.md` §8.8](../toDo&done/BGFX_MIGRATION.md)); verify against current state before
-  relying on the doc.
-- Scripting is C++ `NativeScriptComponent` only (recompile to change behavior);
-  [`Scripting-And-UI-Integration.md`](../toDo&done/Scripting-And-UI-Integration.md) is the planned
-  next phase.
+- Scripting is Lua 5.4 + sol2 (`ScriptComponent`, hot-reloadable, TypeScript-authored via
+  TypeScriptToLua) *and* C++ `NativeScriptComponent`. See [scripting.md](scripting.md).
+  `Scripting-And-UI-Integration.md` is the plan that delivered it, not a plan for the future.
+- Shadows work. `BGFX_MIGRATION.md` §8.8 records an empty-shadow-map regression from the end of
+  that migration; it was fixed, and the animation milestone measured the cascades in use. Read
+  that section as history, not as current state.
 - `GLM_FORCE_DEPTH_ZERO_TO_ONE` is a compile-time, workspace-wide choice. A backend reporting
   `homogeneousDepth == true` (OpenGL) logs an error rather than adapting; the caps-driven
   projection helper is still open (migration §9.3).

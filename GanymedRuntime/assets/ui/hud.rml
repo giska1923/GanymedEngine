@@ -1,0 +1,21 @@
+<rml>
+<head>
+	<title>HUD</title>
+	<!-- rml.rcss first: it supplies the element defaults RmlUi does not ship
+	     (notably div { display: block }). Without it every box collapses. -->
+	<link type="text/rcss" href="rml.rcss"/>
+	<link type="text/rcss" href="hud.rcss"/>
+</head>
+<!-- data-model="hud" binds to the model UIEngine creates in Init. It must exist
+     before this document loads, or the {{expressions}} render as literal text. -->
+<!-- id is what `rmlui.contexts["main"].documents["hud"]` looks up from Lua. Do not
+     rely on documents[n] instead: in Debug builds the RmlUi Debugger injects six
+     documents of its own ahead of this one. -->
+<body id="hud" data-model="hud">
+	<div id="health-bar">
+		<div id="health-fill" data-style-width="health + '%'"></div>
+		<span id="health-text">{{health | round}} / 100</span>
+	</div>
+	<div id="score">Score: {{score}}</div>
+</body>
+</rml>

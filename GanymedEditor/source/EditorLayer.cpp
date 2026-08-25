@@ -110,7 +110,15 @@ namespace GanymedE {
 			{
 				// Fall back to the editor camera when the scene has no primary Camera
 				m_EditorCamera.OnUpdate(ts);
-				m_ActiveScene->GetPhysicsDebugDrawSettings() = m_PhysicsDebugDraw;
+
+				PhysicsSettings& physicsSettings = m_ActiveScene->GetSingleton<PhysicsSettings>();
+				physicsSettings.DebugDraw = m_PhysicsDebugDraw;
+				// Editor-only opt-in: the engine defaults this off so a shipped game never
+				// draws authored collider wireframes. Pushed every frame for the same reason
+				// DebugDraw is - Scene::Copy does not carry singletons, so the play scene
+				// starts each run with engine defaults.
+				physicsSettings.ShowColliderGizmos = true;
+
 				m_ActiveScene->OnUpdateRuntime(ts, &m_EditorCamera);
 
 				// Update order matters even though the render order does not:

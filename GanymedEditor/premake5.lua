@@ -113,7 +113,11 @@ project "GanymedEditor"
 			-- that is always compiled in - there is no config switch for it - so its two
 			-- frameworks are required even though nothing here decodes video.
 			"CoreMedia.framework",
-			"VideoToolbox.framework"
+			"VideoToolbox.framework",
+			-- miniaudio's CoreAudio backend. Static libs do not propagate links off
+			-- MSVC, so every app that links GanymedEngine needs these itself.
+			"CoreAudio.framework",
+			"AudioToolbox.framework"
 		}
 
 	filter "configurations:Debug"

@@ -7,6 +7,7 @@
 #include "GanymedE/ECS/ComponentTraits.h"
 #include "GanymedE/ECS/System.h"
 #include "GanymedE/Scene/Systems/AnimationSystem.h"
+#include "GanymedE/Scene/Systems/AudioSystem.h"
 #include "GanymedE/Scene/Systems/CameraSystem.h"
 #include "GanymedE/Scene/Systems/LuaScriptSystem.h"
 #include "GanymedE/Scene/Systems/NativeScriptSystem.h"
@@ -60,6 +61,12 @@ namespace GanymedE {
 		m_Systems->Add<AnimationSystem>(*this);
 		m_Systems->Add<TransformSystem>(*this);   // after anything that moves entities...
 		m_Systems->Add<CameraSystem>(*this);      // ...and before anything that reads world space
+		// After CameraSystem for a reason ValidateOrdering cannot see: AudioSystem shares no
+		// component with it, but its listener FALLBACK reads the camera pose CameraSystem just
+		// resolved into RenderContext, so running after means the fallback ears are this
+		// frame's. After RenderSystem would be equally correct - Render reads nothing of audio -
+		// but would break the "Render is last" reading of this list for no gain.
+		m_Systems->Add<AudioSystem>(*this);
 		m_Systems->Add<RenderSystem>(*this);
 
 		// The views the systems declare imply an ordering; check the order above actually honours

@@ -24,8 +24,10 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 2. `SceneRenderer::BeginFrame` (bind + clear HDR target, entity IDs to −1).
 3. Update the scene: `OnUpdateEditor(ts, editorCamera)` in Edit,
    `OnUpdateRuntime(ts, &editorCamera)` in Play (the editor camera is the fallback when the scene
-   has no primary `CameraComponent`; the physics-debug toggles are copied into the scene's
-   `PhysicsSettings` each frame).
+   has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos = true`**
+   are pushed into the scene's `PhysicsSettings` each frame). The gizmo flag is engine-default
+   **false** so a non-editor front-end draws no collider wireframes — the editor opts in, and it has
+   to do so every frame because `Scene::Copy` does not carry singletons onto the play-mode scene.
 4. **Hover picking**: mouse position → viewport-local coordinates (Y flipped only when
    `bgfx::getCaps()->originBottomLeft` — render-target origin is backend-dependent), then
    `RequestEntityID` + `PollEntityID`. Picking is asynchronous under bgfx (~3 frames latency),
@@ -113,7 +115,8 @@ API — legal because panels run outside the system update.
 ### Properties (drawn by the same panel)
 
 Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, animator, script, rigid body, colliders); one collapsible section per component
+lights, sky light, animator, script, audio source, audio listener, rigid body, colliders); one
+collapsible section per component
 (`DrawComponent<T>` helper with a remove-component menu). Notable behaviors:
 
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons) and call
@@ -141,6 +144,15 @@ lights, sky light, animator, script, rigid body, colliders); one collapsible sec
   previous play session. See [scripting.md](../engine/scripting.md).
 - Sky light: environment asset (`AcceptAssetDropHandle(Environment)`), sky/ground colors, intensity,
   DrawSkybox.
+- Audio source: the clip asset (handle + path) with a Clear button — assign with
+  `AcceptAssetDropHandle(Audio)`, the helper's first client outside the three it was written for.
+  Then a Group combo (Master/Music/SFX), Volume 0–1, Pitch 0.25–4, and Loop / Play On Start /
+  Spatialize / Stream. The hint line under them says **"Clip, Spatialize and Stream apply when play
+  starts"**, because those three are baked into the voice at creation while the other four are
+  pushed every frame — without it, toggling Spatialize during play and hearing nothing reads as a
+  bug. See [audio.md](../engine/audio.md).
+- Audio listener: a Primary checkbox and a hint that the primary camera is the fallback when the
+  component is absent.
 - Colliders: dimensions, offset, friction/restitution.
 
 Adding a component type means extending this panel's Add-Component popup and `DrawComponents` —
@@ -152,11 +164,11 @@ one of the two remaining hand-maintained per-component lists (the other is the s
 `assets/` (the `.assets/` mesh-cache directory is hidden):
 
 - Directory/file icons, tinted by asset type (mesh blue, environment orange, scene green, texture
-  pink, material purple, script yellow). Double-click enters directories; the `<-` button goes up but can never
+  pink, material purple, script yellow, audio cyan). Double-click enters directories; the `<-` button goes up but can never
   escape the asset root (path-normalized check).
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
-- Right-click on an importable file (mesh/environment/texture/material/script) → **Import**, registering
+- Right-click on an importable file (mesh/environment/texture/material/script/audio) → **Import**, registering
   it with the `AssetManager` (idempotent; persists `AssetRegistry.gr` immediately).
 - Right-click on an already-registered file → **Reload**, evicting it from the manager's cache so the
   next fetch re-reads it from disk. For a mesh this also drops its textures and deletes the

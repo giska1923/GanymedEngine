@@ -23,7 +23,7 @@ if not exist "%SHADERC%" (
 
 REM Every app that loads shaders at runtime gets its own compiled copy,
 REM because assets are resolved relative to the working directory.
-set TARGETS=%ROOT%\GanymedEditor\assets\shaders\compiled %ROOT%\Sandbox\assets\shaders\compiled
+set TARGETS=%ROOT%\GanymedEditor\assets\shaders\compiled %ROOT%\Sandbox\assets\shaders\compiled %ROOT%\GanymedRuntime\assets\shaders\compiled
 
 set FAILED=0
 set BUILT=0

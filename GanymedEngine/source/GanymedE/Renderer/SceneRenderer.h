@@ -34,6 +34,25 @@ namespace GanymedE {
 
 		void SetViewportSize(uint32_t width, uint32_t height);
 
+		// Send the post stack's FINAL pass to the backbuffer instead of the composite
+		// framebuffer. For a front-end that owns the whole window (the standalone
+		// runtime) rather than showing the scene inside a panel.
+		//
+		// This retargets the existing last pass - FXAA when enabled, tonemap when not -
+		// rather than adding a present/blit pass. A dedicated present pass is the
+		// production norm (Unity/Unreal both end on one) because it carries resolution
+		// scaling and HDR-display duties; none of those exist here yet, and it would
+		// cost a new view ID above RenderPass::UI plus a new shader, because
+		// vs_Blit.sc wants a_texcoord0 while the fullscreen quad only supplies
+		// a_Position. See docs/engine/rendering.md for the escape hatch.
+		//
+		// Contract: in backbuffer mode the host must keep SetViewportSize fed with the
+		// WINDOW size, because the final view rect is taken from it. The intermediate
+		// targets (HDR, bloom chain, tonemap) are still allocated at that size, so
+		// there is no resolution-scaling knob hiding in here.
+		void SetOutputToBackbuffer(bool enabled) { m_OutputToBackbuffer = enabled; }
+		bool IsOutputToBackbuffer() const { return m_OutputToBackbuffer; }
+
 		// Binds and clears the HDR scene target (color, depth, entity IDs).
 		// Render the scene (Renderer3D/Renderer2D) between Begin and End.
 		void BeginFrame();
@@ -54,6 +73,7 @@ namespace GanymedE {
 		// so a stale pixel never overwrites a newer one.
 		bool PollEntityID(int& outEntityID);
 
+		// Asserts in backbuffer mode: nothing writes the composite target there.
 		uint32_t GetFinalImageRendererID() const;
 		const Ref<Framebuffer>& GetSceneFramebuffer() const { return m_SceneFramebuffer; }
 
@@ -61,6 +81,9 @@ namespace GanymedE {
 		// shows. Exposed so the game UI can composite into it: RenderPass::UI sorts
 		// after Composite, so anything drawn there lands on the finished image in
 		// display space rather than being tonemapped with the scene.
+		//
+		// Unused in backbuffer mode - a host in that mode passes nullptr to
+		// UIEngine::SetTarget so the UI view lands on the backbuffer too.
 		const Ref<Framebuffer>& GetCompositeFramebuffer() const { return m_CompositeFramebuffer; }
 
 		SceneRendererSettings& GetSettings() { return m_Settings; }
@@ -73,7 +96,12 @@ namespace GanymedE {
 		// Returns the framebuffer holding the final blurred bloom (half resolution)
 		Ref<Framebuffer> RenderBloom();
 	private:
+		// Points a view at the backbuffer and sizes it to the window. The counterpart to
+		// Framebuffer::BindToView, which does the same for an offscreen target.
+		void BindFinalPassToBackbuffer(uint16_t viewId) const;
+	private:
 		uint32_t m_Width = 0, m_Height = 0;
+		bool m_OutputToBackbuffer = false;
 		SceneRendererSettings m_Settings;
 
 		Ref<Framebuffer> m_SceneFramebuffer;     // HDR: RGBA16F + entity ID + depth

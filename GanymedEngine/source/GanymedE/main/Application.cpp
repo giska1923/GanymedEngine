@@ -3,6 +3,7 @@
 #include "GanymedE/events/ApplicationEvent.h"
 #include "GanymedE/events/KeyEvent.h"
 
+#include "GanymedE/Audio/AudioEngine.h"
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 #include "GanymedE/UI/UIEngine.h"
@@ -18,16 +19,30 @@ namespace GanymedE {
 	ApplicationCommandLineArgs Application::s_CommandLineArgs;
 
 	Application::Application(const std::string& name)
+		: Application(ApplicationSpecification{ name })
+	{
+	}
+
+	Application::Application(const ApplicationSpecification& specification)
+		: m_Specification(specification)
 	{
 		GE_PROFILE_FUNCTION();
 
 		GE_CORE_ASSERT(!s_instance, "Application cannot have two instances!");
 		s_instance = this;
 
-		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(WindowProps(name)));
+		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(
+			WindowProps(m_Specification.Name, m_Specification.Width, m_Specification.Height,
+				m_Specification.Fullscreen)));
 		m_Window->SetEventCallback(BIND_CALLBACK_FN(Application::OnEvent, this));
 
 		Renderer::Init();
+
+		// No ordering dependency either way - audio touches neither the GPU nor the VM.
+		// It sits here so the boot log reads renderer, audio, scripting, UI, and so that
+		// a device failure is reported before anything slower has run. Failure is not
+		// fatal: the app continues silent (see AudioEngine.h).
+		AudioEngine::Init();
 
 		// Application scope, not the editor's, because the VM belongs to the engine the way the
 		// renderer does — a Scene constructed by any app registers a LuaScriptSystem. It needs no
@@ -39,8 +54,14 @@ namespace GanymedE {
 		// the viewport once that exists.
 		UIEngine::Init(m_Window->GetWidth(), m_Window->GetHeight());
 
-		m_ImGuiLayer = new ImGuiLayer();
-		PushOverlay(m_ImGuiLayer);
+		// A shipped game has no editor chrome, and ImGui is not passive: it installs its
+		// own GLFW callbacks and blocks events by default. Leaving it out is the whole
+		// opt-out - layers' OnImGuiRender simply never runs.
+		if (m_Specification.EnableImGui)
+		{
+			m_ImGuiLayer = new ImGuiLayer();
+			PushOverlay(m_ImGuiLayer);
+		}
 	}
 
 	Application::~Application()
@@ -52,6 +73,10 @@ namespace GanymedE {
 		// while bgfx is still alive. Then the VM, then the GPU.
 		UIEngine::Shutdown();
 		ScriptEngine::Shutdown();
+
+		// Before the LayerStack unwinds, which is why every AudioEngine call is guarded
+		// by an alive flag: a layer stopping its sounds in OnDetach runs after this.
+		AudioEngine::Shutdown();
 
 		Renderer::Shutdown();
 	}
@@ -158,14 +183,21 @@ namespace GanymedE {
 					layer->OnUpdate(timestep);
 			}
 
-			m_ImGuiLayer->Begin();
-			{
-				GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
+			// Outside the minimised gate on purpose: a window nobody is looking at has
+			// not stopped making noise, and finished one-shots still need reaping.
+			AudioEngine::OnUpdate();
 
-				for (Layer* layer : m_LayerStack)
-					layer->OnImGuiRender();
+			if (m_ImGuiLayer)
+			{
+				m_ImGuiLayer->Begin();
+				{
+					GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
+
+					for (Layer* layer : m_LayerStack)
+						layer->OnImGuiRender();
+				}
+				m_ImGuiLayer->End();
 			}
-			m_ImGuiLayer->End();
 
 			m_Window->OnUpdate();
 		}

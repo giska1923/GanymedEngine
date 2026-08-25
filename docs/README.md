@@ -4,12 +4,13 @@ GanymedEngine is a C++17 game engine with a bgfx-based renderer (D3D11/D3D12/Vul
 an entt-based ECS with declared-access views and reactive change tracking, Jolt physics, a glTF
 asset pipeline, and an ImGui/ImGuizmo editor. It builds on Windows, Linux and macOS via premake5.
 
-The repository contains three applications:
+The repository contains four projects:
 
 | Project | What it is |
 |---|---|
 | `GanymedEngine` | The engine static library. All code under `GanymedEngine/source/`. |
 | `GanymedEditor` | The editor application (scene editing, play mode, content browser). |
+| `GanymedRuntime` | The standalone game player: boots a scene into play mode, renders to the backbuffer, no ImGui. |
 | `Sandbox` | A minimal test app (not covered by these docs). |
 
 ## Documentation map
@@ -25,6 +26,7 @@ The repository contains three applications:
 | [Rendering](engine/rendering.md) | The bgfx backend: view model, resources, shaders, Renderer2D/3D, shadows, IBL, post stack, async picking |
 | [Assets](engine/assets.md) | AssetManager, the registry, handles, mesh import (cgltf) and the binary mesh cache |
 | [Physics](engine/physics.md) | Jolt integration: PhysicsScene, body lifecycle, fixed timestep, interpolation, collision events, debug draw |
+| [Audio](engine/audio.md) | miniaudio integration: AudioEngine, voices, mixer groups, spatialization, streaming, the Audio asset type |
 | [Scripting](engine/scripting.md) | Lua 5.4 + sol2: ScriptEngine, LuaScriptSystem, the binding rules, error handling, sandboxing |
 | [Game UI](engine/ui.md) | RmlUi: UIEngine, the bgfx render backend, RenderPass::UI, RCSS gotchas, the Debugger |
 | [Platform](engine/platform.md) | GLFW windows per OS, input, BgfxContext (bgfx lifetime), ImGui layer and its bgfx renderer |
@@ -36,6 +38,12 @@ The repository contains three applications:
 |---|---|
 | [Editor](editor/editor.md) | EditorLayer, the viewport (picking, gizmos, drag-drop), play/stop, panels, keyboard shortcuts |
 
+### Runtime
+
+| Document | Covers |
+|---|---|
+| [Runtime](runtime/runtime.md) | GanymedRuntime: boot sequence, runtime.yaml config, backbuffer render mode, the assets snapshot |
+
 ### Historical / planning documents
 
 `docs/toDo&done/` holds the working documents that drove the engine's big refactors and the plan
@@ -46,7 +54,8 @@ including verification evidence:
 - [`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](toDo&done/ECS_VIEWS_IMPLEMENTATION_GUIDE.md) — the file-by-file plan for the view/access-wrapper ECS (complete)
 - [`BGFX_MIGRATION.md`](toDo&done/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except some Phase 7 hardening)
 - [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
-- [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5, starting with asset-pipeline prep; planned, not started)
+- [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
+- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; **complete** — phases 1–5 executed, read the per-phase execution notes)
 
 ## Building & running
 

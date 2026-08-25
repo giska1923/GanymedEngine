@@ -90,7 +90,11 @@ project "Sandbox"
 			"MetalKit.framework",
 			-- Required by bgfx's Metal video decoder; see GanymedEditor/premake5.lua
 			"CoreMedia.framework",
-			"VideoToolbox.framework"
+			"VideoToolbox.framework",
+			-- miniaudio's CoreAudio backend. Static libs do not propagate links off
+			-- MSVC, so every app that links GanymedEngine needs these itself.
+			"CoreAudio.framework",
+			"AudioToolbox.framework"
 		}
 
 	filter "configurations:Debug"
