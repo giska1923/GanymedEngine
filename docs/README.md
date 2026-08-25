@@ -1,53 +1,49 @@
 # GanymedEngine Documentation
 
-GanymedEngine is a C++17 game engine with a bgfx-based renderer (D3D11/D3D12/Vulkan/Metal/OpenGL),
-an entt-based ECS with declared-access views and reactive change tracking, Jolt physics, a glTF
-asset pipeline, and an ImGui/ImGuizmo editor. It builds on Windows, Linux and macOS via premake5.
-
 The repository contains four projects:
 
-| Project | What it is |
-|---|---|
-| `GanymedEngine` | The engine static library. All code under `GanymedEngine/source/`. |
-| `GanymedEditor` | The editor application (scene editing, play mode, content browser). |
+| Project          | What it is                                                                                     |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| `GanymedEngine`  | The engine static library. All code under `GanymedEngine/source/`.                             |
+| `GanymedEditor`  | The editor application (scene editing, play mode, content browser).                            |
 | `GanymedRuntime` | The standalone game player: boots a scene into play mode, renders to the backbuffer, no ImGui. |
-| `Sandbox` | A minimal test app (not covered by these docs). |
+| `Sandbox`        | A minimal test app (not covered by these docs).                                                |
 
 ## Documentation map
 
 ### Engine
 
-| Document | Covers |
-|---|---|
-| [Architecture overview](engine/architecture.md) | The big picture: module layout, frame flow, ownership, design principles |
-| [Core](engine/core.md) | Application, entry point, layers, events, input, window abstraction, logging, UUID, assert/profiling macros |
-| [ECS](engine/ecs.md) | The view/access-wrapper ECS on top of entt: wrappers, accessors, change tracking, reactive views, systems, command queue, singletons, scheduling metadata |
-| [Scene](engine/scene.md) | Scene, Entity, the component catalog, hierarchy, built-in systems, scene singletons, serialization, play-mode copy |
-| [Rendering](engine/rendering.md) | The bgfx backend: view model, resources, shaders, Renderer2D/3D, shadows, IBL, post stack, async picking |
-| [Assets](engine/assets.md) | AssetManager, the registry, handles, mesh import (cgltf) and the binary mesh cache |
-| [Physics](engine/physics.md) | Jolt integration: PhysicsScene, body lifecycle, fixed timestep, interpolation, collision events, debug draw |
-| [Audio](engine/audio.md) | miniaudio integration: AudioEngine, voices, mixer groups, spatialization, streaming, the Audio asset type |
-| [Scripting](engine/scripting.md) | Lua 5.4 + sol2: ScriptEngine, LuaScriptSystem, the binding rules, error handling, sandboxing |
-| [Game UI](engine/ui.md) | RmlUi: UIEngine, the bgfx render backend, RenderPass::UI, RCSS gotchas, the Debugger |
-| [Platform](engine/platform.md) | GLFW windows per OS, input, BgfxContext (bgfx lifetime), ImGui layer and its bgfx renderer |
-| [Build & tooling](engine/build-and-tooling.md) | premake workspace, dependencies, the shader toolchain (shaderc), profiling, compile-time tests |
+| Document                                        | Covers                                                                                                                                                    |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Architecture overview](engine/architecture.md) | The big picture: module layout, frame flow, ownership, design principles                                                                                  |
+| [Core](engine/core.md)                          | Application, entry point, layers, events, input, window abstraction, logging, UUID, assert/profiling macros                                               |
+| [ECS](engine/ecs.md)                            | The view/access-wrapper ECS on top of entt: wrappers, accessors, change tracking, reactive views, systems, command queue, singletons, scheduling metadata |
+| [Scene](engine/scene.md)                        | Scene, Entity, the component catalog, hierarchy, built-in systems, scene singletons, serialization, play-mode copy                                        |
+| [Rendering](engine/rendering.md)                | The bgfx backend: view model, resources, shaders, Renderer2D/3D, shadows, IBL, post stack, async picking                                                  |
+| [Assets](engine/assets.md)                      | AssetManager, the registry, handles, mesh import (cgltf) and the binary mesh cache                                                                        |
+| [Physics](engine/physics.md)                    | Jolt integration: PhysicsScene, body lifecycle, fixed timestep, interpolation, collision events, debug draw                                               |
+| [Audio](engine/audio.md)                        | miniaudio integration: AudioEngine, voices, mixer groups, spatialization, streaming, the Audio asset type                                                 |
+| [Scripting](engine/scripting.md)                | Lua 5.4 + sol2: ScriptEngine, LuaScriptSystem, the binding rules, error handling, sandboxing                                                              |
+| [Game UI](engine/ui.md)                         | RmlUi: UIEngine, the bgfx render backend, RenderPass::UI, RCSS gotchas, the Debugger                                                                      |
+| [Platform](engine/platform.md)                  | GLFW windows per OS, input, BgfxContext (bgfx lifetime), ImGui layer and its bgfx renderer                                                                |
+| [Build & tooling](engine/build-and-tooling.md)  | premake workspace, dependencies, the shader toolchain (shaderc), profiling, compile-time tests                                                            |
 
 ### Editor
 
-| Document | Covers |
-|---|---|
+| Document                   | Covers                                                                                        |
+| -------------------------- | --------------------------------------------------------------------------------------------- |
 | [Editor](editor/editor.md) | EditorLayer, the viewport (picking, gizmos, drag-drop), play/stop, panels, keyboard shortcuts |
 
 ### Runtime
 
-| Document | Covers |
-|---|---|
+| Document                      | Covers                                                                                          |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- |
 | [Runtime](runtime/runtime.md) | GanymedRuntime: boot sequence, runtime.yaml config, backbuffer render mode, the assets snapshot |
 
 ### Historical / planning documents
 
 `docs/toDo&done/` holds the working documents that drove the engine's big refactors and the plan
-for the current milestone. They are kept because they record *why* things are the way they are,
+for the current milestone. They are kept because they record _why_ things are the way they are,
 including verification evidence:
 
 - [`3D_ROADMAP.md`](toDo&done/3D_ROADMAP.md) — the original 2D→3D plan (phases 0–8, essentially complete)

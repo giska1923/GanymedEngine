@@ -1,6 +1,8 @@
 # GanymedEngine
 
-GanymedEngine is C++ game engine.
+GanymedEngine is a C++17 game engine with a bgfx-based renderer (D3D11/D3D12/Vulkan/Metal/OpenGL),
+an entt-based ECS with declared-access views and reactive change tracking, Jolt physics, a glTF
+asset pipeline, and an ImGui/ImGuizmo editor. It builds on Windows, Linux and macOS via premake5.
 
 Documentation for the engine, the editor and the standalone runtime lives in
 [docs/](docs/README.md). The runtime (`GanymedRuntime`) boots a scene straight into play mode with
