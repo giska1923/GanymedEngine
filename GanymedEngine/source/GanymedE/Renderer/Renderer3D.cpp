@@ -342,7 +342,19 @@ namespace GanymedE {
 		s_Data.LightBuffer.AmbientGround = glm::vec4(0.0f, 0.0f, 0.0f, 2.0f);
 	}
 
-	void Renderer3D::SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID)
+	// One place decides which material a submesh draws with, so the static and skinned paths
+	// cannot drift apart.
+	static Ref<Material> ResolveMaterial(const Ref<Mesh>& mesh, uint32_t materialIndex,
+		const Ref<Material>* overrides, uint32_t overrideCount)
+	{
+		if (overrides && materialIndex < overrideCount && overrides[materialIndex])
+			return overrides[materialIndex];
+
+		return mesh->GetMaterial(materialIndex);
+	}
+
+	void Renderer3D::SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID,
+		const Ref<Material>* materialOverrides, uint32_t overrideCount)
 	{
 		if (!mesh)
 			return;
@@ -350,7 +362,8 @@ namespace GanymedE {
 		const auto& submeshes = mesh->GetSubmeshes();
 		for (uint32_t i = 0; i < (uint32_t)submeshes.size(); i++)
 		{
-			Ref<Material> material = mesh->GetMaterial(submeshes[i].MaterialIndex);
+			Ref<Material> material = ResolveMaterial(mesh, submeshes[i].MaterialIndex,
+				materialOverrides, overrideCount);
 			SubmitMesh(mesh, i, material, transform, entityID);
 		}
 	}
@@ -403,7 +416,8 @@ namespace GanymedE {
 	}
 
 	void Renderer3D::SubmitSkinnedMesh(const Ref<Mesh>& mesh, const glm::mat4& transform,
-		const glm::mat4* palette, uint32_t jointCount, int entityID)
+		const glm::mat4* palette, uint32_t jointCount, int entityID,
+		const Ref<Material>* materialOverrides, uint32_t overrideCount)
 	{
 		if (!mesh)
 			return;
@@ -414,7 +428,7 @@ namespace GanymedE {
 		if (!palette || jointCount == 0 || !mesh->GetSkinVertexBuffer()
 			|| !s_Data.SkinnedShader || !s_Data.SkinnedShader->IsValid())
 		{
-			SubmitMesh(mesh, transform, entityID);
+			SubmitMesh(mesh, transform, entityID, materialOverrides, overrideCount);
 			return;
 		}
 
@@ -429,7 +443,8 @@ namespace GanymedE {
 		const auto& submeshes = mesh->GetSubmeshes();
 		for (uint32_t i = 0; i < (uint32_t)submeshes.size(); i++)
 		{
-			Ref<Material> material = mesh->GetMaterial(submeshes[i].MaterialIndex);
+			Ref<Material> material = ResolveMaterial(mesh, submeshes[i].MaterialIndex,
+				materialOverrides, overrideCount);
 			DrawCommand* cmd = PushDrawCommand(mesh, i, material, transform, entityID);
 
 			// A file can mix rigged and rigid primitives under one skin; only the

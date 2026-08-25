@@ -220,11 +220,21 @@ Notable behaviors:
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons, which returns
   `bool`) and call `MarkChanged<TransformComponent>` only when a row reported an edit. Rotation is
   written back **only** on an actual edit, for the round-trip reason above.
-- Static mesh: the material fields edit the mesh's *shared* `Material` objects, not the component,
-  so they deliberately do not report an edit — the change is global and unpersisted, and a command
-  claiming to own it would lie about its scope. Phase 3 of the content-authoring milestone
-  replaces that block with per-entity `.gmat` override slots, which are component state and pick
-  up undo for free.
+- Static mesh: shows the mesh asset (assign with `AcceptAssetDropHandle(StaticMesh)`), then **one
+  row per renderer slot**. Each row shows either the assigned `.gmat` or `(default: <imported
+  name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes the override.
+  Both are ordinary component edits, so undo covers them with no new code. Assigning a different
+  mesh clears the overrides — the new mesh has its own slot count and its own material identities,
+  so keeping them would apply material 2 of one mesh to material 2 of an unrelated one (the
+  `ScriptComponent::Fields` precedent).
+
+  Below an assigned slot sits the **inline `.gmat` editor**: scalar and flag fields, texture maps
+  assigned by dropping a texture asset, plus **Save** and **Revert**. Those edits are live on the
+  shared `Ref`, so they show up immediately in every entity and every scene using that material —
+  the header text says so, because a global edit that looks local is the worst version of this UI.
+  They are also **not undoable**: undo covers scene edits only, and Save / Revert (Revert is
+  `AssetManager::Reload`) are the asset-level transaction model instead. Only the slot assignment
+  and Clear contribute to the section's `edited` return.
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
 - Static mesh: shows the mesh asset (handle + path) — assign with
   `AcceptAssetDropHandle(StaticMesh)`.

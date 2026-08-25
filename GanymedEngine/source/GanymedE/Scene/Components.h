@@ -99,6 +99,17 @@ namespace GanymedE {
 	{
 		AssetHandle Mesh = InvalidAssetHandle;
 
+		// Per renderer slot, parallel to the mesh's own material list (the index is
+		// Submesh::MaterialIndex). InvalidAssetHandle - or an index past the end - means "use
+		// the material that came with the mesh", so an entity with no overrides renders exactly
+		// as it did before this existed.
+		//
+		// This is the additive half of the material model: the mesh asset keeps its imported
+		// materials untouched inside its own cache, and .gmat is a layer on top. See
+		// docs/engine/assets.md for why that shape was chosen over meshes referencing .gmat
+		// directly the way Unreal does.
+		std::vector<AssetHandle> MaterialOverrides;
+
 		StaticMeshComponent() = default;
 		StaticMeshComponent(const StaticMeshComponent&) = default;
 		StaticMeshComponent(AssetHandle mesh)

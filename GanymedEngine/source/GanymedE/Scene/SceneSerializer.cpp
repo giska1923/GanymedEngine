@@ -175,6 +175,23 @@ namespace GanymedE {
 			if (IsAssetHandleValid(smc.Mesh))
 				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(smc.Mesh);
 
+			// Written only when at least one slot is actually overridden. Emitting an empty
+			// sequence for every mesh entity would rewrite every committed scene file for no
+			// content change, which is exactly what Phase 1's canonical saves exist to prevent.
+			bool hasOverride = false;
+			for (AssetHandle handle : smc.MaterialOverrides)
+				hasOverride = hasOverride || IsAssetHandleValid(handle);
+
+			if (hasOverride)
+			{
+				// Handles, not paths: the scene-to-registry currency. Trailing unset slots are
+				// kept rather than trimmed, because the index *is* the slot.
+				out << YAML::Key << "MaterialOverrides" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+				for (AssetHandle handle : smc.MaterialOverrides)
+					out << static_cast<uint64_t>(handle);
+				out << YAML::EndSeq;
+			}
+
 			out << YAML::EndMap;
 		}
 
@@ -649,6 +666,15 @@ namespace GanymedE {
 				auto meshPath = staticMeshComponent["MeshPath"];
 				if (meshPath)
 					smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
+			}
+
+			auto overrides = staticMeshComponent["MaterialOverrides"];
+			if (overrides && overrides.IsSequence())
+			{
+				smc.MaterialOverrides.clear();
+				smc.MaterialOverrides.reserve(overrides.size());
+				for (auto slot : overrides)
+					smc.MaterialOverrides.push_back(AssetHandle{ slot.as<uint64_t>() });
 			}
 		}
 

@@ -4,7 +4,11 @@
 #include "GanymedE/ECS/Views.h"
 #include "GanymedE/Scene/Components.h"
 
+#include <vector>
+
 namespace GanymedE {
+
+	class Material;
 
 	// Everything that used to be inlined in Scene::OnUpdateRuntime / OnUpdateEditor: the primary
 	// camera search, lights and sky, meshes, sprites, and collider gizmos.
@@ -58,6 +62,10 @@ namespace GanymedE {
 		// Jolt's own debug view when physics is running and enabled, otherwise authored
 		// gizmos - and those only when PhysicsSettings::ShowColliderGizmos is set.
 		void DrawPhysicsDebugOrGizmos(const glm::vec3& cameraPosition);
+
+		// Reused across entities within one SubmitMeshes pass, so resolving material overrides
+		// costs no allocation after the first frame that needs it.
+		std::vector<Ref<Material>> m_ResolvedOverrides;
 
 		// Throttle for the no-camera error. Primed above the interval so the very first
 		// cameraless frame reports immediately instead of after a five-second silence.

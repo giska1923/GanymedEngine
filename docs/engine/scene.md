@@ -313,6 +313,10 @@ blocks keyed by component name. Notes:
   only runs on rare input is a path that rots. `Children` is authoritative (a child claimed by a
   parent's list takes that parent); an entity naming a parent that does not list it keeps a
   translated reference and warns.
+- `StaticMeshComponent::MaterialOverrides` serializes as a flow sequence of handles, and **only
+  when at least one slot is set**. Emitting an empty sequence for every mesh entity would rewrite
+  every committed scene for no content change, which is what canonical saves exist to prevent.
+  Trailing unset slots are kept rather than trimmed: the index *is* the slot.
 - Asset references serialize as **handles** (`uint64_t`); `MeshPath`/`EnvironmentPath`/`ScriptPath`
   string fallbacks are still read for backward compatibility and imported into the registry on load.
   Unlike meshes, a deserialized `ScriptComponent` handle is *not* warmed through `GetAsset<>` —

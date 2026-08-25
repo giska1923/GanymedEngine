@@ -2,9 +2,11 @@
 #include "AssetManager.h"
 
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/MaterialSerializer.h"
 #include "GanymedE/Assets/MeshCache.h"
 #include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Renderer/Environment.h"
+#include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Renderer/Texture.h"
 
@@ -21,6 +23,7 @@ namespace GanymedE {
 		std::unordered_map<AssetHandle, Ref<Mesh>> LoadedMeshes;
 		std::unordered_map<AssetHandle, Ref<Environment>> LoadedEnvironments;
 		std::unordered_map<AssetHandle, Ref<Texture2D>> LoadedTextures;
+		std::unordered_map<AssetHandle, Ref<Material>> LoadedMaterials;
 
 		bool Initialized = false;
 		bool WritableRegistry = true;
@@ -84,6 +87,7 @@ namespace GanymedE {
 		s_Data.LoadedMeshes.clear();
 		s_Data.LoadedEnvironments.clear();
 		s_Data.LoadedTextures.clear();
+		s_Data.LoadedMaterials.clear();
 		s_Data.Initialized = false;
 	}
 
@@ -169,9 +173,44 @@ namespace GanymedE {
 		}
 
 		if (mesh)
+		{
 			s_Data.LoadedMeshes[handle] = mesh;
 
+			// Here rather than inside MeshImporter, because this is the one point both the cold
+			// import and the cache replay pass through - a cached mesh must still get its
+			// sidecars, or deleting .meshcache would be the only way to regenerate them.
+			MaterialSerializer::GenerateSidecars(mesh, relativePath);
+		}
+
 		return mesh;
+	}
+
+	// Cached, not path-resolved (the Script/Audio pattern), and the caching is load-bearing
+	// rather than a performance choice: instancing merges draws on Ref<Material> *identity*, so
+	// two entities sharing one .gmat handle must receive the same Ref or every batch shatters.
+	Ref<Material> AssetManager::LoadMaterial(AssetHandle handle)
+	{
+		if (!IsAssetHandleValid(handle))
+			return nullptr;
+
+		auto cached = s_Data.LoadedMaterials.find(handle);
+		if (cached != s_Data.LoadedMaterials.end())
+			return cached->second;
+
+		const AssetMetadata* metadata = GetMetadata(handle);
+		if (!metadata)
+		{
+			WarnUnknownHandle(handle, "material");
+			return nullptr;
+		}
+		if (metadata->Type != AssetType::Material)
+			return nullptr;
+
+		Ref<Material> material = MaterialSerializer::Load(GetAssetRoot() / metadata->FilePath);
+		if (material)
+			s_Data.LoadedMaterials[handle] = material;
+
+		return material;
 	}
 
 	Ref<Environment> AssetManager::LoadEnvironment(AssetHandle handle)
@@ -249,6 +288,12 @@ namespace GanymedE {
 		return LoadTexture(handle);
 	}
 
+	template<>
+	Ref<Material> AssetManager::GetAsset<Material>(AssetHandle handle)
+	{
+		return LoadMaterial(handle);
+	}
+
 	void AssetManager::Reload(AssetHandle handle)
 	{
 		const AssetMetadata* metadata = GetMetadata(handle);
@@ -264,6 +309,31 @@ namespace GanymedE {
 			case AssetType::Environment:
 				s_Data.LoadedEnvironments.erase(handle);
 				break;
+
+			case AssetType::Material:
+			{
+				// Textures first, for the same reason the mesh branch does it: the reloaded
+				// material would otherwise rebind the stale cached ones through LoadMaterialMap.
+				auto cached = s_Data.LoadedMaterials.find(handle);
+				if (cached != s_Data.LoadedMaterials.end() && cached->second)
+				{
+					for (const std::string* mapPath : {
+						&cached->second->GetAlbedoMapPath(),
+						&cached->second->GetNormalMapPath(),
+						&cached->second->GetMetallicRoughnessMapPath() })
+					{
+						if (mapPath->empty())
+							continue;
+
+						AssetHandle textureHandle = GetHandle(*mapPath);
+						if (IsAssetHandleValid(textureHandle))
+							s_Data.LoadedTextures.erase(textureHandle);
+					}
+				}
+
+				s_Data.LoadedMaterials.erase(handle);
+				break;
+			}
 
 			case AssetType::StaticMesh:
 			{
@@ -298,7 +368,7 @@ namespace GanymedE {
 			}
 
 			default:
-				// Material/Scene/Script have no GetAsset cache to evict.
+				// Scene/Script/Audio have no GetAsset cache to evict.
 				return;
 		}
 

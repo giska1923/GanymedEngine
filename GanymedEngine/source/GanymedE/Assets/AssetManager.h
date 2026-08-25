@@ -8,6 +8,7 @@
 namespace GanymedE {
 
 	class Environment;
+	class Material;
 	class Mesh;
 	class Texture2D;
 
@@ -46,7 +47,7 @@ namespace GanymedE {
 		static Ref<T> GetAsset(AssetHandle handle)
 		{
 			static_assert(sizeof(T) == 0,
-				"AssetManager::GetAsset<T> is only specialized for Mesh, Environment, Texture2D");
+				"AssetManager::GetAsset<T> is only specialized for Mesh, Environment, Texture2D, Material");
 			return nullptr;
 		}
 
@@ -75,6 +76,7 @@ namespace GanymedE {
 		static Ref<Mesh> LoadMesh(AssetHandle handle);
 		static Ref<Environment> LoadEnvironment(AssetHandle handle);
 		static Ref<Texture2D> LoadTexture(AssetHandle handle);
+		static Ref<Material> LoadMaterial(AssetHandle handle);
 	};
 
 	// Declared here rather than only defined in the .cpp: a specialization must be
@@ -83,5 +85,6 @@ namespace GanymedE {
 	template<> Ref<Mesh>        AssetManager::GetAsset<Mesh>(AssetHandle handle);
 	template<> Ref<Environment> AssetManager::GetAsset<Environment>(AssetHandle handle);
 	template<> Ref<Texture2D>   AssetManager::GetAsset<Texture2D>(AssetHandle handle);
+	template<> Ref<Material>    AssetManager::GetAsset<Material>(AssetHandle handle);
 
 }

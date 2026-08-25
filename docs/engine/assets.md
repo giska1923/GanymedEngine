@@ -29,7 +29,7 @@ one registry + per-type in-memory caches:
 | `Init(writableRegistry = true)` / `Shutdown()` | Load the registry; `false` makes every registry write a no-op. The editor calls these in `EditorLayer::OnAttach/OnDetach`, the runtime in `RuntimeLayer::OnAttach/OnDetach` |
 | `ImportAsset(relativePath)` | Idempotent registration: existing path returns its handle; otherwise mint a UUID, infer the type, mark the registry dirty. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
-| `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D` — and only those |
+| `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
 | `FlushRegistry()` | Write the registry if an import dirtied it (see *Registry writes*) |
 | `IsRegistryWritable()` | "This process may write into `assets/`" — one flag, one meaning, for the registry and every future asset-file writer |
@@ -136,7 +136,12 @@ otherwise implicitly instantiate the primary template. Adding an asset type ther
 declaration in the header, one definition in the `.cpp`, one `Loaded*` cache map.
 
 Load paths:
-- **Mesh** — try `MeshCache` first; on miss, `MeshImporter::Load` then write the cache.
+- **Mesh** — try `MeshCache` first; on miss, `MeshImporter::Load` then write the cache. Either way,
+  `MaterialSerializer::GenerateSidecars` runs afterwards (see *Materials*).
+- **Material** — `MaterialSerializer::Load` on the `.gmat`. Cached rather than path-resolved, and
+  the caching is load-bearing rather than a performance choice: instancing merges draws on
+  `Ref<Material>` *identity*, so two entities sharing one `.gmat` handle have to receive the same
+  `Ref` or every batch shatters.
 - **Environment** — `Environment::Create` (runs the IBL bake; see
   [rendering.md](rendering.md#environment--ibl)).
 - **Texture2D** — `TextureImporter::LoadFromFile` against the asset root, unflipped.
@@ -146,6 +151,84 @@ Load paths:
 
 Cache lookups on all three paths are plain `unordered_map` hits, deliberately: `RenderSystem`
 re-fetches by handle every frame for every entity.
+
+## Materials (`.gmat`)
+
+A material is an asset: importable, editable, savable, reloadable. Two entities sharing one mesh
+can look different without touching the mesh or its cache.
+
+**The shape: `.gmat` is an additive override layer, not a replacement.** The mesh asset keeps the
+materials it imported, untouched, inside itself and its `.meshcache`. Importing a mesh *also*
+generates one `.gmat` sidecar per material slot, and `MeshImporter::Instantiate` fills the new
+entity's `StaticMeshComponent::MaterialOverrides` with those handles — so a drag-dropped mesh
+authors against `.gmat` from birth, while an entity with no overrides (every scene that predates
+this) renders bit-identically to before.
+
+This diverges from the fuller Unreal norm, where mesh assets reference material assets directly and
+there are no "built-in" materials. That shape needs the mesh cache to depend on `.gmat` mtimes, and
+`MeshCache` v6 serializes materials inline keyed on the *source* mtime only — so editing a `.gmat`
+would either silently not invalidate the cache, or require a dependency-tracking index the engine
+does not have. The additive shape costs one duplicated default (the mesh's material and its sidecar
+start identical) and buys three things: no cache-format change, no risk to existing scenes, and
+**no reverse-dependency index anywhere**. That last one is the shape's best property and worth
+stating plainly: `Reload(.gmat)` needs no material→mesh map because meshes never reference `.gmat`.
+Only override slots do, and `RenderSystem` re-fetches by handle every frame, so eviction lands in
+the viewport on the next frame for free.
+
+### Format
+
+YAML under a `Material:` root, in a fixed key order — a write → read → write round trip is
+byte-identical, the same discipline canonical scene saves are held to.
+
+```yaml
+Material:
+  Name: Texture
+  Albedo: [1, 1, 1, 1]
+  Metallic: 0
+  Roughness: 1
+  AlbedoMap: models/BoxTextured_textures/albedo_0.png
+  TwoSided: false
+  Transparent: false
+```
+
+Map keys are omitted when unset (an empty scalar reads back as a null node, and `as<std::string>()`
+throws on those). The shader is **implicit**: every `.gmat` binds `MeshShader::Get()`, injected by
+the loader because `Material::Bind` asserts on a null shader and there is nothing else to choose
+until shader variants exist.
+
+**Textures are stored as paths, not handles**, and that split is deliberate: a `.gmat` has to be
+self-describing and hand-mergeable, and a bare handle means nothing without the registry that minted
+it, while a path survives a fresh clone (the shipped-registry lesson from the runtime milestone).
+Handles stay the scene↔registry currency; paths are the asset↔asset currency. The loader resolves
+each path through `LoadMaterialMap`, so materials naming one image share a decode.
+
+A malformed or missing `.gmat` logs and returns null — the `SceneSerializer::Deserialize` posture.
+
+### Sidecar generation and embedded-texture extraction
+
+Runs from `AssetManager::LoadMesh`, after either load path succeeds — that is the one point cold
+import and cache replay both pass through, so a cached mesh still gets its sidecars instead of
+needing its `.meshcache` deleted first. Gated on `IsRegistryWritable()`: the runtime never writes
+into `assets/`.
+
+- One `.gmat` per material slot at `<meshdir>/<meshstem>_mat<i>_<name>.gmat`, **iff absent**. The
+  *index* is the identity, not the name — glTF material names are optional, non-unique and
+  unsanitized, and `Submesh::MaterialIndex` already speaks index; the name rides along for humans
+  and is sanitized to `[A-Za-z0-9_-]`. *Iff absent* is what makes user edits sacred: a re-import,
+  or a cache rebuild, never clobbers an authored material.
+- Textures embedded in a `.glb` are extracted once to
+  `<meshdir>/<meshstem>_textures/<map>_<i>.<ext>` and `ImportAsset`ed like any other texture. The
+  bytes are already a compressed image, so extraction is a byte copy with no encoder involved — but
+  the extension is sniffed from the magic bytes rather than assumed, because the registry types
+  assets by extension and a `.png` holding JPEG bytes would be a lie on disk (both occur in the
+  sample meshes). Extraction is what makes the `.gmat` self-describing: a material referencing bytes
+  inside another asset's blob could be neither hand-edited nor re-pointed.
+- Consequence to expect: a `.glb` import now mints texture *and* material registry entries, all in
+  one batched write.
+
+`MaterialSerializer::SidecarPath` is the single source of the naming rule, shared by the generator
+and by `MeshImporter::Instantiate`. If those two ever disagreed, entities would author against
+files nothing generates.
 
 ## Texture loading
 
@@ -192,8 +275,9 @@ cache, since it has no asset identity and no reason to be evictable.
 | Type | Action |
 |---|---|
 | Texture, Environment | Erase from the per-type map. |
+| Material | Two steps, in this order: (1) erase its three maps from `LoadedTextures` (same reason as the mesh branch); (2) erase from `LoadedMaterials`. |
 | StaticMesh | Three steps, **in this order**: (1) walk the cached mesh's materials' `Get*MapPath()`s, resolve each through `GetHandle`, erase those from `LoadedTextures`; (2) erase from `LoadedMeshes`; (3) `MeshCache::Invalidate` — delete the `.meshcache` file. |
-| Material, Scene, Script | Nothing; these have no `GetAsset` cache. |
+| Scene, Script, Audio | Nothing; these have no `GetAsset` cache. |
 
 Step (1) is not optional: skip it and the reimported mesh silently rebinds the stale cached textures
 through `LoadMaterialMap`. Step (3) is what makes Reload mean *reimport now* rather than *recheck the

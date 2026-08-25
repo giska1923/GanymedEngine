@@ -1,6 +1,6 @@
 # GanymedEngine — Content Authoring Roadmap
 
-Status: **Phases 1-2 complete; Phases 3-5 planned.** Written 2026-08-25, against the post-runtime/post-audio
+Status: **Phases 1-3 complete; Phases 4-5 planned.** Written 2026-08-25, against the post-runtime/post-audio
 engine (branch point: the standalone-runtime + audio milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md) and
 [`RUNTIME_AUDIO_ROADMAP.md`](RUNTIME_AUDIO_ROADMAP.md): each phase carries goal, steps, decisions
@@ -809,6 +809,85 @@ Probes in `EditorLayer::OnAttach`/`OnUpdate` + bgfx stats, removed afterwards.
 | Reload propagation | Edit `.gmat` on disk externally, Reload from content browser → next-frame update on every entity using it; bgfx `numTextures` stable across 5 reloads (textures evicted, not leaked) |
 | Undo interplay | Slot assign → Ctrl+Z → slot cleared; Ctrl+Y → restored (the free-coverage claim, measured) |
 | Runtime posture | GanymedRuntime boots a scene with overrides: renders correctly, writes **nothing** into `assets/` (dir mtime sweep) |
+
+### Phase 3 execution notes
+
+Executed 2026-08-26. x64 Debug, MSBuild; engine, editor, runtime and Sandbox build clean with no new
+warnings. **New files (`GanymedE/Assets/MaterialSerializer.h/.cpp`), so `premake5 vs2022` was
+re-run.** Verification ran from two temporary probes - a scripted `Phase3Probe` block and a
+frame-stepped render probe reading `Renderer3D::GetStats()` after real frames. **31/31 checks pass**;
+probes removed.
+
+**The plan's "no callers" claim about the per-submesh `SubmitMesh` overload was wrong, and the seam
+landed somewhere better.** That overload has always had a caller: `SubmitMesh(mesh, transform,
+entityID)` loops submeshes through it. More importantly, driving it from `RenderSystem` as the plan
+sketched **cannot support skinned meshes at all** - `SubmitSkinnedMesh` stages its joint palette
+through `Renderer3D`-internal storage, so a caller cannot reproduce its loop, and an overridden
+rigged character would have silently kept its imported materials. What landed instead: both
+`SubmitMesh` and `SubmitSkinnedMesh` take an optional `(const Ref<Material>* overrides, uint32_t
+count)` array indexed by `Submesh::MaterialIndex`, and one `ResolveMaterial` helper serves both
+paths. `RenderSystem` resolves handles to `Ref`s once per entity into a reused scratch vector. Less
+code at the call site, no duplicated submesh loop, and the skinned path is covered.
+
+**Embedded textures needed no encoder, but did need a magic-byte sniff.** glTF stores embedded
+images as already-compressed PNG/JPEG bytes, so "extraction" is a byte copy. The plan specified
+`.png` for the output; that would have been a lie on disk for half the sample content - `BoxTextured.glb`
+embeds PNG and `CesiumMan.glb` embeds JPEG, and both showed up in the generated registry as
+`albedo_0.png` and `albedo_0.jpg` respectively once the sniff was in. It matters because the registry
+types assets by extension. Anything that is neither PNG nor JPEG warns and is not extracted, leaving
+the slot on the mesh default rather than writing a file nothing can read.
+
+**Sidecar generation hangs off `AssetManager::LoadMesh`, not `MeshImporter`.** That is the one point
+both the cold import and the `MeshCache` replay converge on. Putting it in `MeshImporter::Load` would
+have meant a cached mesh never regenerates its sidecars, so deleting `.meshcache` would be the only
+way to recover a deleted `.gmat` - and the whole idempotence design exists so that deleting things is
+recoverable.
+
+**Extraction only runs on the write path.** A mesh whose sidecars already exist never re-touches its
+texture directory, which makes the idempotence check meaningful rather than merely "the file compare
+passed". Verified explicitly: appending a marker to a generated `.gmat`, then `Reload`ing the mesh
+(which deletes the `.meshcache` and forces a genuine cold re-import) leaves the file byte-identical
+with an unchanged mtime.
+
+**Batching was measured, not trusted.** Four boxes sharing one mesh: 7 draws / 5 instanced with no
+overrides, **identical** with all four pointed at one shared `.gmat`, and exactly **+1 draw** when
+one entity moves to a second `.gmat`. That is the `Ref`-identity property the cached loader exists to
+provide, confirmed end to end rather than argued from the instancing code.
+
+**The transparent-override repartition works and is worth one more warning than the plan gave it.**
+Setting `Transparent` on an override moves that submesh into the transparent pass *and* removes it
+from the shadow-caster list, because the partition reads `cmd.Material->IsTransparent()` and the
+material it reads is now the override. Both directions verified. The consequence for authors is that
+a material swap can change a scene's shadows, which is recorded in `rendering.md` beside the
+partition.
+
+**Assigning a different mesh clears the entity's overrides.** Slot *i* of one mesh has nothing to do
+with slot *i* of another, so carrying overrides across a mesh swap would apply an arbitrary material
+to arbitrary geometry. This is the `ScriptComponent::Fields` decision applied to a second component.
+
+**Not done, deliberately: `.gmat` on the viewport drop target.** The plan lists it in 3.6, but names
+only the mechanism (the `initializer_list` overload), never a behaviour - there is no obvious meaning
+for dropping a material onto empty space, and "assign to whatever is under the cursor" is UI invented
+rather than specified. Slot assignment in the inspector is the specified interaction and it works.
+Phase 4 adds `.gprefab` to that target, where the behaviour *is* defined; the list overload is still
+the right mechanism when it does.
+
+**Runtime posture verified by content hash, not by inspection.** A full runtime boot that loads its
+demo scene leaves all 145 files under `GanymedRuntime/assets/` byte-identical - no sidecars, no
+extracted textures, no registry write - with zero errors logged. `IsRegistryWritable()` is the single
+gate, shared with the registry writer, exactly as Phase 1 set up.
+
+**Generated sidecars are currently untracked files, and whether to commit them is an open decision.**
+Importing the editor's sample meshes now produces `assets/models/*.gmat` and
+`assets/models/*_textures/`. They are authorable content, so committing them is the defensible
+default (that is what makes a hand-edited material travel with the project); the alternative is a
+`.gitignore` rule that quietly re-generates defaults per machine and loses every edit on clone. Not
+decided here because it is a repository-policy call, not a code one.
+
+**Interactive checks not run:** the visual ones - two entities with visibly different albedo, picking
+still working on both, existing scenes pixel-unchanged, a `.gmat` edited externally updating on the
+next frame. The measurable halves of each are covered above (draw counts, pass partition, reload
+eviction and re-read, byte-identical scene saves), but "it looks right" needs eyes.
 
 ---
 

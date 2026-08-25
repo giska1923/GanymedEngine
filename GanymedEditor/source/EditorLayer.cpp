@@ -9,6 +9,10 @@
 
 #include "GanymedE/Scene/SceneSerializer.h"
 #include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/MaterialSerializer.h"
+#include "GanymedE/Renderer/Material.h"
+#include "GanymedE/Renderer/MeshShader.h"
 
 #include "GanymedE/Utils/PlatformUtils.h"
 #include "GanymedE/Math/Math.h"
@@ -165,6 +169,7 @@ namespace GanymedE {
 		// Post stack: bloom -> tonemap -> FXAA into the composite shown in the viewport
 		m_SceneRenderer->EndFrame();
 	}
+
 
 	void EditorLayer::OnImGuiRender()
 	{
