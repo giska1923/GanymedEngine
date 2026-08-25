@@ -3,6 +3,8 @@
 #include <entt/entt.hpp>
 
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Timestep.h"
@@ -31,6 +33,21 @@ namespace GanymedE {
 		Entity CreateEntity(const std::string& name = std::string());
 		Entity CreateEntityWithUUID(UUID uuid, const std::string& name = std::string());
 		void DestroyEntity(Entity entity);
+
+		// Deep-copies an entity and its descendants with fresh UUIDs, attaching the copy as a
+		// sibling of the source. Returns the new subtree root, or an invalid Entity.
+		//
+		// Only IDComponent and RelationshipComponent are remapped. That whitelist is the point:
+		// AssetHandle *is* UUID (same C++ type), so a "rewrite every UUID-typed field" pass would
+		// corrupt StaticMesh.Mesh, SkyLight.Environment, Script.Script and AudioSource.Clip into
+		// handles no registry knows.
+		Entity DuplicateEntity(Entity source);
+
+		// Appends `root` and its descendants to `out`, depth-first through each Children vector in
+		// authored order - the canonical order the scene and prefab formats both save in.
+		// `visited` guards against a corrupted hierarchy (a cycle, or a child listed under two
+		// parents) turning this into an infinite walk: the first visit owns the entity.
+		void CollectSubtree(Entity root, std::vector<Entity>& out, std::unordered_set<UUID>& visited);
 
 		void OnRuntimeStart();
 		void OnRuntimeStop();

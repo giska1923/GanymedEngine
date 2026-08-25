@@ -60,10 +60,79 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 | Alt+LMB drag / MMB drag / scroll | Orbit / pan / zoom the editor camera |
 | LMB in viewport | Select hovered entity (ignored over the gizmo or with Alt held) |
 | Q / W / E / R | Gizmo: hide / translate / rotate / scale (ignored while using the gizmo or RMB-flying) |
-| Ctrl+N / Ctrl+O / Ctrl+Shift+S | New / Open / Save-As scene |
+| Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z | Undo / redo (Edit state only) |
+| Ctrl+D / Delete | Duplicate / delete the selected entity, subtree included (Edit state only) |
+| Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene |
 | Ctrl (held while dragging gizmo) | Snapping |
 | Ctrl+U | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only) |
 | F1 | bgfx stats overlay |
+
+**Two shortcut layers, on purpose.** Q/W/E/R and Ctrl+U go through the engine event path
+(`EditorLayer::OnKeyPressed`), which `ImGuiLayer::BlockEvents` gates on viewport focus/hover.
+Everything else - undo, redo, duplicate, delete, and the file shortcuts - is polled inside the
+ImGui frame by `EditorLayer::HandleShortcuts` using `ImGui::IsKeyChordPressed`, so it fires
+wherever the mouse is.
+
+The file shortcuts used to live on the engine path too, and dead-zoned over every panel: Ctrl+Z
+above the Properties panel simply did nothing. Relaxing `BlockEvents` was the alternative and is
+worse - it would leak *every* key into the engine path while typing in a panel, firing camera
+keys and gizmo-mode switches mid-rename. A command layer above widget focus is the production
+norm, and polling ImGui inside the ImGui frame is that layer at this scale. Q/W/E/R stay
+viewport-gated deliberately for the same reason.
+
+`HandleShortcuts` returns early on `ImGui::GetIO().WantTextInput`: while a text field is focused,
+Ctrl+Z is ImGui's own text undo, which is what every editor does.
+
+## Undo / redo
+
+[`EditorUndo.h`](../../GanymedEditor/source/EditorUndo.h) - `EditorCommand`, `EditorUndoStack`,
+and the command types. `EditorLayer` owns the stack; the hierarchy panel records into it.
+
+**Scope: scene edits only.** Inspector property edits, add/remove component, create / delete /
+duplicate entity, re-parenting and gizmo drags are undoable. Asset-level edits are deliberately
+not - a scene-local stack would lie about their scope, since undoing one would silently change
+every scene using that asset. Unity draws the same line for most asset properties; Unreal's
+transaction system does cover assets, and Ganymed diverges toward Unity's model because it has no
+per-asset dirty/transaction infrastructure.
+
+The stack lives editor-side rather than in the engine: the runtime has no consumer for undo. This
+mirrors how `EditorCamera` lives engine-side while the *editing model* does not.
+
+| Piece | Notes |
+|---|---|
+| `EditorUndoStack` | Linear, capped at 100, `Push` clears the redo stack. `MarkSaved`/`IsDirtySinceSave` track dirtiness by stack *position*, so undoing back to the saved state correctly clears it |
+| `ComponentEditCommand<T>` | Before/after values. The after-value is filled in at the commit boundary, not at construction |
+| `AddComponentCommand<T>` / `RemoveComponentCommand<T>` | Remove stores the whole value, so undo is a re-add rather than a default-construct |
+| `AddEntitiesCommand` / `DeleteEntitiesCommand` | One subtree-snapshot mechanism, differing only in which way `Undo` runs. Create, duplicate and delete are all built on it |
+| `ReparentCommand` | Records the **old sibling index** explicitly - `Scene::SetParent` push_backs, and since the canonical save order is a hierarchy DFS, sibling order is content |
+
+**Every command keys entities by UUID**, resolved through `Scene::FindEntityByUUID`. `entt::entity`
+handles are not validity-checked by `Entity::operator bool` and do not survive a destroy/recreate
+cycle, so a raw handle in an undo record is a dangling reference waiting for a redo. A command
+whose UUID no longer resolves warns and does nothing.
+
+**Snapshots are in-memory component tuples, not YAML.** `EntitySnapshot` holds a
+`tuple<optional<Ts>...>` over `ComponentList`, filled through `ForEachType`. That is lossless -
+it round-trips `AnimatorComponent::Time`, which the serializer deliberately drops, and it
+preserves the *absence* of a `ScriptComponent` field override, which means something different
+from "present and equal to the default". It also keeps undo correctness from depending on
+serializer completeness, and a new component type joins undo for free; the YAML path could not
+promise that, since its per-component lists are hand-maintained.
+
+Restoring a tracked component calls `Scene::MarkChanged<T>` - writing one behind the change
+tracker's back is the silent-staleness trap, where the value moves and the cached world transform
+keeps its pre-undo matrix.
+
+**The selection is the one thing keyed by handle, not UUID**, so it is validated once a frame
+(`ValidateSelection`). Undo can destroy the selected entity behind the panel's back — Ctrl+Z on a
+"Create Entity" is exactly that — and `Entity::operator bool` does not check registry validity, so
+the stale handle would look live all the way into `GetComponent`.
+
+**Scope guards.** Recording happens only when the panel holds a non-null stack pointer, and
+`EditorLayer::RetargetPanels` passes `nullptr` in Play state - so play-mode edits to the throwaway
+scene copy are structurally unrecordable rather than filtered downstream. The stack survives
+play/stop (`m_EditorScene` is the same object) and is cleared by New/Open Scene, where every UUID
+in it stops meaning anything.
 
 ### Play / Stop (toolbar)
 
@@ -107,20 +176,55 @@ API — legal because panels run outside the system update.
 
 - Select by click; click empty space to deselect.
 - **Drag-drop re-parenting**: drag an entity onto another → `Scene::SetParent` (cycle-safe); onto
-  empty space → `Unparent`.
-- Right-click empty space → Create Empty Entity; right-click an entity → Delete (children survive
-  as roots).
+  empty space → unparent. Both record a `ReparentCommand`, but only after confirming the parent
+  actually changed: `SetParent` silently no-ops on a cycle, and recording a move that did not
+  happen would corrupt sibling order on undo.
+- Right-click empty space → Create Empty Entity; right-click an entity → Delete.
+- **Editor delete takes the whole subtree.** `Scene::DestroyEntity` keeps its orphan-the-children
+  semantics as engine API, but no production editor deletes that way - Unity, Unreal and Godot all
+  take the subtree - and the safety argument for orphaning ("you would lose the children")
+  evaporates once the delete is one Ctrl+Z away.
+- Deletion is deferred to after the hierarchy walk. Destroying a subtree mid-walk would invalidate
+  the entt view the enclosing loop is iterating.
 - ImGui IDs use the entt handle, not the UUID — old scene files could contain colliding UUIDs.
 
 ### Properties (drawn by the same panel)
 
 Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, animator, script, audio source, audio listener, rigid body, colliders); one
-collapsible section per component
-(`DrawComponent<T>` helper with a remove-component menu). Notable behaviors:
+lights, sky light, animator, script, audio source, audio listener, rigid body, colliders, one
+`DrawAddComponentEntry<T>` line each); one collapsible section per component
+(`DrawComponent<T>` helper with a remove-component menu).
 
-- Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons) and call
-  `MarkChanged<TransformComponent>` only when a value actually changed.
+**The section contract**: `uiFunction` is `bool(T&)` — "did any widget in this section edit the
+component this frame", the OR of the returns the widgets already produce. The rule it establishes,
+which every section lambda must follow: *an inspector lambda mutates the component only when a
+widget actually reported an edit, and returns true when it does.*
+
+That contract is what makes undo possible without value diffing. Diffing would need 16
+`operator==`s and would still be wrong: the Transform section round-trips rotation through degrees
+and back, which can change bits with no user input at all, so a diff scheme mints a phantom
+command for merely selecting an entity. "The widget said so" is ground truth ImGui already
+computes.
+
+**The commit boundary.** A two-second drag writes the component on ~120 frames; undo wants one
+command per gesture. `DrawComponent<T>` reads ImGui's active item before and after the section's
+widgets: the frame an item inside the section becomes active starts a *pending* edit and that
+frame's pre-copy is the before-value; the frame it stops being active commits, capturing the
+after-value then. Widgets with no active phase — a drag-drop assignment landing on the section —
+report their edit and commit in the same frame. A pending edit no frame of which reported an edit
+is dropped, which is what makes a click-without-drag and an opened-then-closed combo free. If the
+section stops being drawn mid-gesture, an end-of-frame flush commits what was recorded.
+
+Notable behaviors:
+
+- Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons, which returns
+  `bool`) and call `MarkChanged<TransformComponent>` only when a row reported an edit. Rotation is
+  written back **only** on an actual edit, for the round-trip reason above.
+- Static mesh: the material fields edit the mesh's *shared* `Material` objects, not the component,
+  so they deliberately do not report an edit — the change is global and unpersisted, and a command
+  claiming to own it would lie about its scope. Phase 3 of the content-authoring milestone
+  replaces that block with per-entity `.gmat` override slots, which are component state and pick
+  up undo for free.
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
 - Static mesh: shows the mesh asset (handle + path) — assign with
   `AcceptAssetDropHandle(StaticMesh)`.
@@ -156,7 +260,8 @@ collapsible section per component
 - Colliders: dimensions, offset, friction/restitution.
 
 Adding a component type means extending this panel's Add-Component popup and `DrawComponents` —
-one of the two remaining hand-maintained per-component lists (the other is the serializer).
+one of the two remaining hand-maintained per-component lists (the other is the serializer). Undo
+needs nothing: it is driven by `ComponentList`, so a new component type joins it automatically.
 
 ## Content Browser panel
 
@@ -210,9 +315,12 @@ so the first call always wins the delivery and the second type would never fire.
 | New panel | Create under `Panels/`, own it in `EditorLayer`, call `OnImGuiRender`, dock it in the DockBuilder block |
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
 | New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |
-| New shortcut | `EditorLayer::OnKeyPressed` |
+| New shortcut | `EditorLayer::HandleShortcuts` (editor-global) or `OnKeyPressed` (viewport-gated, like the gizmo keys) |
+| New undoable operation | An `EditorCommand` subclass in `EditorUndo.h`, pushed where the operation happens |
 | New scene-wide toggle | Prefer a singleton in `SceneSingletons.h`, edit it from the Stats panel like `PhysicsSettings` |
 
-Remember the two editor-code rules: panels may use the immediate Entity API (they run outside the
-update loop — the asserts in `Entity` enforce this), and any direct write to a tracked component
-must be followed by `Scene::MarkChanged<T>`.
+Remember the editor-code rules: panels may use the immediate Entity API (they run outside the
+update loop — the asserts in `Entity` enforce this), any direct write to a tracked component must
+be followed by `Scene::MarkChanged<T>`, an inspector lambda mutates its component only on a real
+widget edit and returns true when it does, and anything that changes the scene should push an
+`EditorCommand`.

@@ -25,10 +25,21 @@ Key entry points:
 | `OnRuntimeStart/Stop` | Forwarded to the systems (start runs in reverse registration order — see [ecs.md](ecs.md#systemmanager)) |
 | `OnUpdateRuntime(ts, fallbackCamera)` / `OnUpdateEditor(ts, camera)` | FrameBegin → systems → FrameEnd; the editor camera is passed via the `RenderContext` singleton |
 | `OnViewportResize(w, h)` | Updates all non-fixed-aspect `CameraComponent`s |
+| `DuplicateEntity(source)` | Deep-copies an entity and its descendants with **fresh** UUIDs, attaching the copy as a *sibling* of the source. Only `IDComponent` and `RelationshipComponent` are remapped — see below |
+| `CollectSubtree(root, out, visited)` | `root` plus its descendants, depth-first through each `Children` in authored order: the canonical order the scene and prefab formats both save in. The visited set keeps a corrupted hierarchy from becoming an infinite walk |
 | `Copy(other)` | Play-mode snapshot: recreate entities by UUID, then copy every `ComponentList` component via `ForEachType`; script `Instance` pointers are nulled so runtime instances are recreated on play |
 | `GetWorldSpaceTransform(entity)` | Walks the parent chain from locals — for **editor/tooling** (gizmos). Renderable code reads the cached `WorldTransformComponent` instead |
 | `SetParent(child, parent)` / `Unparent(child)` | Maintains both sides of the relationship, rejects self/descendant parenting, and calls `MarkChanged<RelationshipComponent>` so the transform cache reacts |
 | `MarkChanged<T>(entity)` | Report an out-of-view write of a tracked component (see [ecs.md](ecs.md#accessors-and-the-modify-invariant)) |
+
+**The `DuplicateEntity` whitelist is the point, not an optimization.** `AssetHandle` *is* `UUID` —
+the same C++ type — so a "rewrite every UUID-typed field" pass would happily renumber
+`StaticMesh.Mesh`, `SkyLight.Environment`, `Script.Script` and `AudioSource.Clip` into handles no
+registry knows, and the entity would render nothing with no diagnostic. Here the whitelist is
+structural rather than a list to maintain: `IDComponent` comes from `CreateEntityWithUUID`,
+`RelationshipComponent` is rewritten explicitly afterwards, and every other component is copied
+verbatim by the `ForEachType(ComponentList)` loop. The copy is made in two passes because a
+parent's `Children` names entities created later in the walk.
 
 `Scene`'s constructor wires the entt signals for tracked/init/fini component types, creates the
 `RenderContext` and `PhysicsSettings` singletons, registers the eight built-in systems, and asserts
@@ -286,8 +297,9 @@ blocks keyed by component name. Notes:
   reparenting moves a block in the diff. Godot orders scene files by node path for the same
   reasons; Unity instead leans on stable fileIDs and keeps insertion order.
 
-  The walk carries a visited set, so a corrupted hierarchy (a cycle, a child listed under two
-  parents) terminates. Any entity reachable from no root is appended in UUID order **with a
+  The walk itself is `Scene::CollectSubtree` — hierarchy traversal is a scene concern, and undo's
+  subtree snapshots and `DuplicateEntity` need the same order. It carries a visited set, so a
+  corrupted hierarchy (a cycle, a child listed under two parents) terminates. Any entity reachable from no root is appended in UUID order **with a
   warning** — that combination is deliberate: corruption becomes visible instead of becoming
   silent data loss.
 - Entity identity is the real UUID; deserialization mints a fresh UUID on `0` or collision

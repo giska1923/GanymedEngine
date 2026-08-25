@@ -1,6 +1,6 @@
 # GanymedEngine — Content Authoring Roadmap
 
-Status: **Phase 1 complete; Phases 2-5 planned.** Written 2026-08-25, against the post-runtime/post-audio
+Status: **Phases 1-2 complete; Phases 3-5 planned.** Written 2026-08-25, against the post-runtime/post-audio
 engine (branch point: the standalone-runtime + audio milestone, complete). Follows the format of
 [`ANIMATION_ROADMAP.md`](ANIMATION_ROADMAP.md) and
 [`RUNTIME_AUDIO_ROADMAP.md`](RUNTIME_AUDIO_ROADMAP.md): each phase carries goal, steps, decisions
@@ -555,6 +555,109 @@ deterministic saves. Interactive checks named as such.
 | Scene-switch guard | Ops → OpenScene → CanUndo() == false; no stale-UUID warnings on further edits |
 | Stack cap | 150 scripted ops → stack holds 100, oldest dropped (log command count) |
 | Dead-UUID resilience | Push edit command, delete the entity via a *non-command* path, Ctrl+Z → one warning, no crash |
+
+### Phase 2 execution notes
+
+Executed 2026-08-25. x64 Debug, MSBuild; engine, editor, runtime and Sandbox build clean with no
+new warnings. **New files were added (`GanymedEditor/source/EditorUndo.h/.cpp`), so `premake5
+vs2022` was re-run.** Verification ran from two temporary probes - a `Phase2Probe` block driving
+commands against scenes built in code, and a frame-counted block in `EditorLayer::OnUpdate` for
+the real play/stop and scene-switch paths. **26/26 scripted checks pass**; probes removed.
+
+**The round-trip theorem holds.** 30 scripted ops - component edits across eight component types,
+add/remove component, three creates, two duplicates (one of a whole subtree), six reparents
+including sibling-order-sensitive cases, four subtree deletes - then save, undo ×30, save, redo
+×30, save. The pre-edit and post-undo files are byte-identical, and so are the post-edit and
+post-redo files. That check is only meaningful because Phase 1 made saves canonical, which was the
+argument for doing hygiene first.
+
+**Three command classes collapsed into one mechanism.** The plan listed `CreateEntityCommand`,
+`DeleteEntityCommand` and `DuplicateEntityCommand` separately. They are all "a subtree appeared or
+disappeared", differing only in which direction `Undo` runs, so what landed is
+`EntitySubtreeCommand` with `AddEntitiesCommand` / `DeleteEntitiesCommand` over it. Redoing an add
+replays the snapshot rather than re-running the operation, which is what guarantees identical
+UUIDs on every redo - re-running `DuplicateEntity` would mint new ones and break the redo half of
+the round trip. Phase 4 gets prefab instantiate and Revert from the same two classes.
+
+**`Scene::CollectSubtree` moved out of `SceneSerializer` and onto `Scene`.** Phase 1 put the
+canonical DFS walk in the serializer; `DuplicateEntity` and undo's subtree snapshots need exactly
+the same walk, and hierarchy traversal is a scene concern rather than a serialization one. The
+serializer now calls `m_Scene->CollectSubtree`. Phase 1's docs were corrected in place.
+
+**The commit-boundary protocol landed as planned, and the popup case fell out for free.** Reading
+ImGui's `ActiveId` before and after each section gives: first frame active inside the section
+starts a pending edit, first frame not active commits it, and a pending edit that no frame
+reported an edit for is dropped. That last rule is what makes the multi-frame cases correct
+without special-casing them - a combo opens (active set, no edit), the popup stays open for
+frames (pending dropped), then a `Selectable` is pressed and released (new pending, one command).
+A checkbox is the same shape across its press and release frames. Drop assignments never take
+`ActiveId` in the inspector at all, because the drag source is the content browser item, so they
+fall to the immediate-push branch and commit on the drop frame.
+
+**The `bool(T&)` contract cost less than budgeted and paid a second time.** All 16 lambdas were
+converted, plus `DrawVec3Control` and `DrawScriptFields`. While in there, the Add Component popup
+went from 14 hand-rolled `HasComponent`/`MenuItem`/`AddComponent` blocks to 14
+`DrawAddComponentEntry<T>` lines - the same change that had to record an `AddComponentCommand`
+anyway, and the repetition was the risk the review checklist was worried about.
+
+**The Transform phantom-edit trap was real and is fixed at the source.** The lambda used to write
+`component.Rotation = glm::radians(glm::degrees(component.Rotation))` unconditionally, and the
+round-trip is not exact. Under the `bool(T&)` contract that could not mint a command on its own,
+but the pre-existing `MarkChanged` guard was already dishonest about it - selecting an entity
+could dirty its transform. Rotation is now written back only when `DrawVec3Control` reports an
+edit, which makes both the guard and the undo boundary correct.
+
+**The StaticMesh section's material fields deliberately report `false`.** They edit the mesh's
+shared `Material` objects, not the component - the change is global, unpersisted, and visible in
+every scene using that mesh. An undo command claiming to own it would lie about its scope
+(Decision 2), so the section returns true only for the mesh-handle assignment. Phase 3 replaces
+that block with `.gmat` override slots, which are component state and pick up undo for free.
+
+**Editor delete became recursive, and had to become deferred at the same time.** Destroying a
+subtree from inside `DrawEntityNode` would destroy entities the enclosing entt view is still
+iterating - the old single-entity delete had the same hazard latently and got away with it. The
+request is now recorded as a UUID and serviced after the walk.
+
+**`RemoveSubtree` destroys children-first, which is not optional.** `Scene::DestroyEntity`
+unparents a destroyed entity's children to root rather than destroying them, so removing the
+parent first would strand the rest of the subtree as roots for the remainder of the loop.
+
+**A probe bug worth recording, because it is the exact hazard the design documents.** The first
+run of the layer probe crashed on `Assertion failed: Entity does not have component!` - it held an
+`Entity` handle across an undo that destroyed that entity, then called `GetUUID()` on it.
+`Entity::operator bool` does not check registry validity, so the handle looked live. This is
+precisely why every command keys on UUID rather than `entt::entity`; the assert caught it in the
+test code rather than in the feature.
+
+**A real crash found in review and fixed, with the bug reproduced before and after.** Undo can
+destroy the entity the hierarchy panel has selected - Ctrl+Z on a "Create Entity" is exactly that
+- and the selection is the one piece of editor state that has to hold an `Entity` rather than a
+UUID. `Entity::operator bool` does not check registry validity, so the dead handle looked live all
+the way into `GetComponent` and the next frame's Properties panel asserted (`Entity does not have
+component!`, exit code 3, confirmed by removing the guard and re-running).
+`SceneHierarchyPanel::ValidateSelection` now checks `registry.valid()` once a frame. This is the
+same hazard that took down the layer probe, arriving through the feature instead of the test.
+
+**`EditorCommand::Label()` returns `const std::string&`, not `const char*`.** Labels like
+`Delete 'Fox'` are composed per command, so they need storage. The label is carried rather than
+derived because the entity it names may no longer exist when it is read.
+
+**Duplicated entities keep the source's name.** Unity would append a suffix. Inventing a naming
+scheme is not this phase's job and two identically named siblings are at worst mildly confusing,
+so this is flagged rather than decided - it is a one-line change in `Scene::DuplicateEntity` if it
+turns out to annoy.
+
+**An Edit menu was added.** Undo / Redo / Duplicate / Delete with their shortcuts, plus a plain
+**Save** entry, because a shortcut with no discoverable menu entry is not a feature anyone finds.
+Plain save needed `m_EditorScenePath`, which the editor did not track at all before - it only had
+Save-As.
+
+**Interactive checks not run, and they are the ones a script cannot reach.** Gizmo drag
+granularity, inspector drag granularity, ImGui's text undo inside the Tag field, and Ctrl+Z with
+the Properties panel focused all need a human at the keyboard, since ImGui cannot be driven
+programmatically (established in the audio milestone). The log evidence they need is already
+permanent: `EditorUndoStack::Push` traces every command with its label and the resulting depth, so
+one drag producing one `Undo: pushed 'Edit Transform'` line is directly readable in `GanymedE.log`.
 
 ---
 

@@ -51,7 +51,7 @@ namespace GanymedE {
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		RetargetPanels();
 
 		// Optional scene on the command line: GanymedEditor <path/to/scene.ganymede>
 		const auto& args = Application::GetCommandLineArgs();
@@ -264,10 +264,34 @@ namespace GanymedE {
 				if (ImGui::MenuItem("Open...", "Ctrl+O"))
 					OpenScene();
 
+				if (ImGui::MenuItem("Save", "Ctrl+S"))
+					SaveScene();
+
 				if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
 					SaveSceneAs();
 
 				if (ImGui::MenuItem("Exit")) Application::Get().Close();
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Edit"))
+			{
+				const bool editing = m_SceneState == SceneState::Edit;
+				if (ImGui::MenuItem("Undo", "Ctrl+Z", false, editing && m_UndoStack.CanUndo()))
+					m_UndoStack.Undo(*m_EditorScene);
+
+				if (ImGui::MenuItem("Redo", "Ctrl+Y", false, editing && m_UndoStack.CanRedo()))
+					m_UndoStack.Redo(*m_EditorScene);
+
+				ImGui::Separator();
+
+				const bool hasSelection = editing && m_SceneHierarchyPanel.GetSelectedEntity();
+				if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection))
+					m_SceneHierarchyPanel.DuplicateSelectedEntity();
+
+				if (ImGui::MenuItem("Delete", "Del", false, hasSelection))
+					m_SceneHierarchyPanel.DeleteSelectedEntity();
+
 				ImGui::EndMenu();
 			}
 
@@ -419,6 +443,16 @@ namespace GanymedE {
 
 			if (ImGuizmo::IsUsing())
 			{
+				// Rising edge. This is the last moment the pre-drag transform still exists:
+				// rotation below is accumulated as a delta against the current value, so one
+				// frame later there is nothing left to reconstruct it from.
+				if (!m_GizmoUsing)
+				{
+					m_GizmoUsing = true;
+					m_GizmoEntity = selectedEntity.GetUUID();
+					m_GizmoBefore = tc;
+				}
+
 				// Convert manipulated world transform back to local
 				UUID parentID = selectedEntity.GetComponent<RelationshipComponent>().Parent;
 				if (parentID != UUID{ 0 })
@@ -443,12 +477,78 @@ namespace GanymedE {
 			}
 		}
 
+		// Falling edge, checked outside the gizmo block so a drag that ends with the selection
+		// gone (or the gizmo hidden) still commits its one command.
+		if (m_GizmoUsing && !ImGuizmo::IsUsing())
+		{
+			m_GizmoUsing = false;
+
+			Entity dragged = m_EditorScene ? m_EditorScene->FindEntityByUUID(m_GizmoEntity) : Entity{};
+			if (dragged && m_SceneState == SceneState::Edit && dragged.HasComponent<TransformComponent>())
+			{
+				m_UndoStack.Push(CreateScope<ComponentEditCommand<TransformComponent>>(
+					"Gizmo Transform", m_GizmoEntity, m_GizmoBefore,
+					dragged.GetComponent<TransformComponent>()));
+			}
+		}
+
 		ImGui::End();
 		ImGui::PopStyleVar();
 
 		UI_Toolbar();
 
+		HandleShortcuts();
+
 		ImGui::End();
+	}
+
+	// Editor-global shortcuts, polled here rather than routed through OnKeyPressed.
+	//
+	// The engine event path cannot serve them: ImGuiLayer::BlockEvents is driven by viewport
+	// focus/hover, so OnKeyPressed never fires while the Properties or Content Browser panel
+	// has the mouse - Ctrl+Z over the inspector simply did nothing. Relaxing that policy was
+	// the other option and is worse: it would leak *every* key into the engine path while
+	// typing in a panel, so camera keys and the Q/W/E/R gizmo switches would fire mid-rename.
+	// A command layer sitting above widget focus is the production norm; at Ganymed's scale,
+	// polling ImGui inside the ImGui frame is that layer.
+	//
+	// WantTextInput is the one gate: while a text field is focused, Ctrl+Z belongs to ImGui's
+	// own text undo, which is what every editor does.
+	void EditorLayer::HandleShortcuts()
+	{
+		if (ImGui::GetIO().WantTextInput)
+			return;
+
+		// File shortcuts live here too. They used to be in OnKeyPressed and dead-zoned over
+		// every panel for exactly the same reason.
+		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N))
+			NewScene();
+
+		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O))
+			OpenScene();
+
+		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S))
+			SaveSceneAs();
+		else if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S))
+			SaveScene();
+
+		if (m_SceneState != SceneState::Edit || !m_EditorScene)
+			return;
+
+		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
+			m_UndoStack.Undo(*m_EditorScene);
+
+		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y)
+			|| ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
+		{
+			m_UndoStack.Redo(*m_EditorScene);
+		}
+
+		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D))
+			m_SceneHierarchyPanel.DuplicateSelectedEntity();
+
+		if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+			m_SceneHierarchyPanel.DeleteSelectedEntity();
 	}
 
 	void EditorLayer::UI_Toolbar()
@@ -512,32 +612,12 @@ namespace GanymedE {
 		if (e.GetRepeatCount() > 0)
 			return false;
 
+		// Ctrl+N/O/S and the undo shortcuts live in HandleShortcuts, above the widget-focus
+		// layer. What stays here is deliberately viewport-gated: switching gizmo mode because
+		// a name contains a W would be a regression, not a fix.
 		bool control = Input::IsKeyPressed(Key::LeftControl) || Input::IsKeyPressed(Key::RightControl);
-		bool shift = Input::IsKeyPressed(Key::LeftShift) || Input::IsKeyPressed(Key::RightShift);
 		switch (e.GetKeyCode())
 		{
-		case Key::N:
-		{
-			if (control)
-				NewScene();
-
-			break;
-		}
-		case Key::O:
-		{
-			if (control)
-				OpenScene();
-
-			break;
-		}
-		case Key::S:
-		{
-			if (control && shift)
-				SaveSceneAs();
-
-			break;
-		}
-
 		// Gizmos
 		case Key::U:
 		{
@@ -584,14 +664,27 @@ namespace GanymedE {
 		return false;
 	}
 
+	void EditorLayer::RetargetPanels()
+	{
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+
+		// Nothing to record into during play: the active scene is a throwaway copy, and a
+		// command naming its entities would be replayed against the editor scene on stop.
+		m_SceneHierarchyPanel.SetUndoStack(m_SceneState == SceneState::Edit ? &m_UndoStack : nullptr);
+	}
+
 	void EditorLayer::NewScene()
 	{
 		m_EditorScene = CreateRef<Scene>();
 		SetupDefaultEnvironment(m_EditorScene);
 		m_ActiveScene = m_EditorScene;
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_EditorScenePath.clear();
 		m_SceneState = SceneState::Edit;
+
+		// Every UUID on the stack names an entity in a Scene object that no longer exists.
+		m_UndoStack.Clear();
+		RetargetPanels();
 	}
 
 	void EditorLayer::SetupDefaultEnvironment(const Ref<Scene>& scene)
@@ -635,21 +728,42 @@ namespace GanymedE {
 		m_EditorScene = CreateRef<Scene>();
 		m_ActiveScene = m_EditorScene;
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_SceneState = SceneState::Edit;
+
+		m_UndoStack.Clear();
+		RetargetPanels();
 
 		SceneSerializer serializer(m_ActiveScene);
 		serializer.Deserialize(path.string());
-		m_SceneState = SceneState::Edit;
+		m_EditorScenePath = path;
+	}
+
+	void EditorLayer::SaveScene()
+	{
+		if (m_EditorScenePath.empty())
+		{
+			SaveSceneAs();
+			return;
+		}
+
+		SaveSceneTo(m_EditorScenePath);
 	}
 
 	void EditorLayer::SaveSceneAs()
 	{
 		std::string filepath = FileDialogs::SaveFile("GanymedE Scene (*.ganymede)\0*.ganymede\0");
 		if (!filepath.empty())
-		{
-			SceneSerializer serializer(m_SceneState == SceneState::Edit ? m_ActiveScene : m_EditorScene);
-			serializer.Serialize(filepath);
-		}
+			SaveSceneTo(filepath);
+	}
+
+	void EditorLayer::SaveSceneTo(const std::filesystem::path& path)
+	{
+		// Always the editor scene: saving the play-mode copy would persist simulation state.
+		SceneSerializer serializer(m_SceneState == SceneState::Edit ? m_ActiveScene : m_EditorScene);
+		serializer.Serialize(path.string());
+
+		m_EditorScenePath = path;
+		m_UndoStack.MarkSaved();
 	}
 
 	void EditorLayer::OnScenePlay()
@@ -658,9 +772,9 @@ namespace GanymedE {
 		m_ActiveScene = Scene::Copy(m_EditorScene);
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 		m_ActiveScene->OnRuntimeStart();
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-		m_SceneHierarchyPanel.SetSelectedEntity({});
 		m_SceneState = SceneState::Play;
+		RetargetPanels();
+		m_SceneHierarchyPanel.SetSelectedEntity({});
 
 		// Hard-coded for now. Making this a scene property is the obvious next
 		// step, but it needs a UI-document asset type to hang off.
@@ -674,8 +788,11 @@ namespace GanymedE {
 		m_ActiveScene->OnRuntimeStop();
 		m_ActiveScene = m_EditorScene;
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-		m_SceneHierarchyPanel.SetSelectedEntity({});
 		m_SceneState = SceneState::Edit;
+
+		// The stack survives the round trip: m_EditorScene is the same object it was before
+		// play, so every UUID it records still resolves.
+		RetargetPanels();
+		m_SceneHierarchyPanel.SetSelectedEntity({});
 	}
 }

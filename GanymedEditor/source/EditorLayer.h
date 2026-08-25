@@ -26,7 +26,17 @@ namespace GanymedE {
 		void NewScene();
 		void OpenScene();
 		void OpenScene(const std::filesystem::path& path);
+		void SaveScene();       // to the current path; falls back to Save As when there is none
 		void SaveSceneAs();
+		void SaveSceneTo(const std::filesystem::path& path);
+
+		// Editor-global shortcuts, polled inside the ImGui frame rather than routed through the
+		// engine event path - see the comment on the definition.
+		void HandleShortcuts();
+
+		// Points the hierarchy panel at the scene it should edit, and at the undo stack it
+		// should record into (null in Play, so play-mode edits cannot be recorded at all).
+		void RetargetPanels();
 
 		void OnScenePlay();
 		void OnSceneStop();
@@ -42,6 +52,12 @@ namespace GanymedE {
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;
+		std::filesystem::path m_EditorScenePath;   // empty until the scene has been opened or saved
+
+		// Scene edits only, and only in Edit state. The stack survives play/stop because
+		// m_EditorScene does; it is cleared on New/Open, where every UUID in it stops meaning
+		// anything.
+		EditorUndoStack m_UndoStack;
 
 		EditorCamera m_EditorCamera;
 
@@ -55,6 +71,13 @@ namespace GanymedE {
 		glm::vec2 m_ViewportBounds[2];
 
 		int m_GizmoType; // ImGuizmo::OPERATION; -1 = hidden, W/E/R switch, Q hides
+
+		// A gizmo drag writes the transform every frame and accumulates rotation as a delta, so
+		// the pre-drag value cannot be reconstructed after the fact - it is snapshotted on the
+		// rising edge of ImGuizmo::IsUsing() and committed on the falling one.
+		bool m_GizmoUsing = false;
+		UUID m_GizmoEntity = UUID{ 0 };
+		TransformComponent m_GizmoBefore;
 
 		enum class SceneState
 		{

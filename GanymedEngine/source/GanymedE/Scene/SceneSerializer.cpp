@@ -392,28 +392,6 @@ namespace GanymedE {
 		out << YAML::EndMap; // Entity
 	}
 
-	void SceneSerializer::CollectSubtree(Scene& scene, Entity root, std::vector<Entity>& out,
-		std::unordered_set<uint64_t>& visited)
-	{
-		if (!root)
-			return;
-
-		if (!visited.insert(static_cast<uint64_t>(root.GetUUID())).second)
-			return;
-
-		out.push_back(root);
-
-		if (!root.HasComponent<RelationshipComponent>())
-			return;
-
-		// By value: the recursion only reads, but a Children vector reached through a
-		// component reference is exactly the kind of thing a later caller ends up
-		// mutating mid-walk (the DrawEntityNode lesson).
-		std::vector<UUID> children = root.GetComponent<RelationshipComponent>().Children;
-		for (UUID childID : children)
-			CollectSubtree(scene, scene.FindEntityByUUID(childID), out, visited);
-	}
-
 	void SceneSerializer::Serialize(const std::string& filepath)
 	{
 		// Canonical order: roots sorted by UUID, then depth-first through each root's
@@ -451,9 +429,9 @@ namespace GanymedE {
 			});
 
 		std::vector<Entity> ordered;
-		std::unordered_set<uint64_t> visited;
+		std::unordered_set<UUID> visited;
 		for (Entity root : roots)
-			CollectSubtree(*m_Scene, root, ordered, visited);
+			m_Scene->CollectSubtree(root, ordered, visited);
 
 		// Safety net. An entity reachable from no root should not exist - it means a
 		// parent's Children vector disagrees with a child's Parent, or a cycle. Writing
@@ -463,7 +441,7 @@ namespace GanymedE {
 		for (auto entityID : view)
 		{
 			Entity entity = { entityID, m_Scene.get() };
-			if (entity && visited.find(static_cast<uint64_t>(entity.GetUUID())) == visited.end())
+			if (entity && visited.find(entity.GetUUID()) == visited.end())
 				unreachable.push_back(entity);
 		}
 
@@ -476,7 +454,7 @@ namespace GanymedE {
 
 			for (Entity entity : unreachable)
 			{
-				if (visited.find(static_cast<uint64_t>(entity.GetUUID())) != visited.end())
+				if (visited.find(entity.GetUUID()) != visited.end())
 					continue;   // already picked up as a descendant of an earlier one
 
 				GE_CORE_WARN("Entity {0} ('{1}') is reachable from no root - its parent's "
@@ -485,7 +463,7 @@ namespace GanymedE {
 					entity.HasComponent<TagComponent>() ? entity.GetComponent<TagComponent>().Tag : std::string(),
 					filepath);
 
-				CollectSubtree(*m_Scene, entity, ordered, visited);
+				m_Scene->CollectSubtree(entity, ordered, visited);
 			}
 		}
 
