@@ -24,7 +24,14 @@ namespace GanymedE {
 
 		static void SubmitMesh(const Ref<Mesh>& mesh, uint32_t submeshIndex, const Ref<Material>& material,
 			const glm::mat4& transform, int entityID = -1);
-		static void SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID = -1);
+
+		// `materialOverrides` is indexed by Submesh::MaterialIndex, not by submesh: a null entry
+		// or an index past `overrideCount` falls back to the mesh's own material. Passing the
+		// array down rather than looping submeshes at the call site is what lets the skinned
+		// path honour overrides too - its palette staging is internal, so a caller cannot
+		// reproduce it.
+		static void SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID = -1,
+			const Ref<Material>* materialOverrides = nullptr, uint32_t overrideCount = 0);
 
 		// Draws the mesh with a joint palette (AnimatorComponent::Palette) instead of
 		// the static path. The palette is copied here, so the caller may reuse or
@@ -32,7 +39,8 @@ namespace GanymedE {
 		// one draw call with its own palette upload - so this falls back to
 		// SubmitMesh when there is nothing to skin with.
 		static void SubmitSkinnedMesh(const Ref<Mesh>& mesh, const glm::mat4& transform,
-			const glm::mat4* palette, uint32_t jointCount, int entityID = -1);
+			const glm::mat4* palette, uint32_t jointCount, int entityID = -1,
+			const Ref<Material>* materialOverrides = nullptr, uint32_t overrideCount = 0);
 
 		// Analytic lights (submit between BeginScene and EndScene)
 		static void SubmitDirectionalLight(const glm::vec3& direction, const glm::vec3& color, float intensity, bool castShadows);

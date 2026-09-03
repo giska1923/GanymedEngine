@@ -331,12 +331,123 @@ namespace GanymedE {
 		for (UUID childID : children)
 		{
 			Entity child = FindEntityByUUID(childID);
-			if (child)
-				child.GetComponent<RelationshipComponent>().Parent = UUID{ 0 };
+			if (!child)
+				continue;
+
+			child.GetComponent<RelationshipComponent>().Parent = UUID{ 0 };
+
+			// The orphan's world transform just changed - it lost a parent's contribution -
+			// but writing Parent through GetComponent is invisible to change tracking, so
+			// TransformSystem never learned. The cache stayed at the old parented value
+			// until something else happened to dirty the entity.
+			MarkChanged<RelationshipComponent>(child);
 		}
 
 		m_EntityMap.erase(entityID);
 		m_Registry.destroy(entity);
+	}
+
+	void Scene::CollectSubtree(Entity root, std::vector<Entity>& out, std::unordered_set<UUID>& visited)
+	{
+		if (!root)
+			return;
+
+		if (!visited.insert(root.GetUUID()).second)
+			return;
+
+		out.push_back(root);
+
+		if (!root.HasComponent<RelationshipComponent>())
+			return;
+
+		// By value: nothing here mutates the vector, but a Children vector reached through a
+		// component reference is exactly the kind of thing a caller ends up mutating mid-walk
+		// (the DrawEntityNode lesson).
+		std::vector<UUID> children = root.GetComponent<RelationshipComponent>().Children;
+		for (UUID childID : children)
+			CollectSubtree(FindEntityByUUID(childID), out, visited);
+	}
+
+	Entity Scene::DuplicateEntity(Entity source)
+	{
+		GE_CORE_ASSERT(!m_IsUpdating,
+			"Immediate DuplicateEntity during system update - structural changes must be deferred");
+
+		if (!source)
+			return {};
+
+		std::vector<Entity> subtree;
+		std::unordered_set<UUID> visited;
+		CollectSubtree(source, subtree, visited);
+
+		// Two passes: every copy has to exist before any Relationship can be rewritten, since a
+		// parent's Children names entities created later in the walk.
+		std::unordered_map<UUID, UUID> remap;
+		std::vector<Entity> copies;
+		copies.reserve(subtree.size());
+
+		for (Entity original : subtree)
+		{
+			Entity copy = CreateEntityWithUUID(UUID(), original.GetComponent<TagComponent>().Tag);
+			remap[original.GetUUID()] = copy.GetUUID();
+			copies.push_back(copy);
+		}
+
+		for (size_t i = 0; i < subtree.size(); i++)
+		{
+			auto src = (entt::entity)subtree[i];
+			auto dst = (entt::entity)copies[i];
+
+			// Verbatim for everything in ComponentList - which is what keeps the AssetHandle
+			// fields intact. IDComponent and TagComponent are outside the list by design and are
+			// handled above.
+			ForEachType(ComponentList{}, [&](auto typeTag)
+			{
+				using T = typename decltype(typeTag)::Type;
+				if (auto* component = m_Registry.try_get<T>(src))
+					m_Registry.emplace_or_replace<T>(dst, *component);
+			});
+
+			// RelationshipComponent came across pointing at the *originals*. Rewrite it in the
+			// copy's own terms; a child outside the subtree cannot exist, so an unmapped entry is
+			// dropped rather than left dangling.
+			auto& relationship = m_Registry.get<RelationshipComponent>(dst);
+
+			std::vector<UUID> children;
+			children.reserve(relationship.Children.size());
+			for (UUID childID : relationship.Children)
+			{
+				auto it = remap.find(childID);
+				if (it != remap.end())
+					children.push_back(it->second);
+			}
+			relationship.Children = std::move(children);
+
+			// The subtree root's parent is outside the copy, so it resolves to none here and is
+			// re-attached below.
+			auto parentIt = remap.find(relationship.Parent);
+			relationship.Parent = parentIt != remap.end() ? parentIt->second : UUID{ 0 };
+
+			// A native script instance is owned by the original; two components pointing at one
+			// ScriptableEntity is a double delete waiting for the second teardown. Scene::Copy
+			// nulls it for the same reason.
+			if (auto* nsc = m_Registry.try_get<NativeScriptComponent>(dst))
+				nsc->Instance = nullptr;
+
+			// emplace_or_replace does not fire the on_construct signal the change tracker hooks,
+			// so the copies would otherwise never reach TransformSystem and would render at
+			// whatever the cache was seeded with.
+			MarkChanged<TransformComponent>(copies[i]);
+			MarkChanged<RelationshipComponent>(copies[i]);
+		}
+
+		// A duplicate is a *sibling* of its source, not a child of it.
+		Entity root = copies.front();
+		UUID sourceParent = source.GetComponent<RelationshipComponent>().Parent;
+		if (sourceParent != UUID{ 0 })
+			SetParent(root, FindEntityByUUID(sourceParent));
+
+		return root;
 	}
 
 	void Scene::OnUpdateRuntime(Timestep ts, EditorCamera* fallbackCamera)

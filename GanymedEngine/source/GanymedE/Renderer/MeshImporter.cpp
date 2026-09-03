@@ -7,6 +7,7 @@
 #include "Texture.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/MaterialSerializer.h"
 #include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/Entity.h"
@@ -787,6 +788,26 @@ namespace GanymedE {
 		Entity entity = scene->CreateEntity(path.stem().string());
 		auto& smc = entity.AddComponent<StaticMeshComponent>();
 		smc.Mesh = handle;
+
+		// Point the new entity at the sidecars the load above just generated, so a
+		// drag-dropped mesh authors against .gmat from birth rather than needing a manual
+		// assignment per slot. The path rule is MaterialSerializer::SidecarPath in both
+		// places - the generator and this - so they cannot disagree about a name.
+		//
+		// ImportAsset is idempotent and returns the invalid handle for a file that is not
+		// there, which is the correct outcome for a read-only install: the slot stays unset
+		// and the mesh's own material renders.
+		const auto& materials = mesh->GetMaterials();
+		smc.MaterialOverrides.reserve(materials.size());
+		for (uint32_t i = 0; i < (uint32_t)materials.size(); i++)
+		{
+			const std::string name = materials[i] ? materials[i]->GetName() : std::string();
+			const std::filesystem::path sidecar = MaterialSerializer::SidecarPath(relativePath, i, name);
+
+			smc.MaterialOverrides.push_back(std::filesystem::exists(GetAssetRoot() / sidecar)
+				? AssetManager::ImportAsset(sidecar) : InvalidAssetHandle);
+		}
+
 		return entity;
 	}
 

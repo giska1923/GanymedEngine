@@ -241,7 +241,9 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
   that cache explicit ownership released before bgfx dies) + albedo color/metallic/roughness
   scalars, albedo/normal/metallic-roughness maps (paths, or embedded compressed bytes for
   glb-embedded textures so `MeshCache` can persist them), two-sided and transparent flags.
-  `Bind()` uploads the scalars and binds the maps to slots 0–2 (white fallback).
+  `Bind()` uploads the scalars and binds the maps to slots 0–2 (white fallback). A material can
+  come from a mesh's own import *or* from a `.gmat` asset — see
+  [assets.md](assets.md#materials-gmat); the renderer does not care which.
 - [`Mesh`](../../GanymedEngine/source/GanymedE/Renderer/Mesh.h) — interleaved
   `MeshVertex{Position, Normal, Tangent, TexCoord}` + 32-bit indices + `Submesh` table
   (base vertex/index, count, material index, local transform, name, local AABB, `IsSkinned`) +
@@ -250,6 +252,34 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
   (`GetSkinVertexBuffer()`, null when there is no skin data) from `SkinVertex{JointIndices,
   JointWeights}`; the skin attributes ride a second stream rather than widening `MeshVertex`, which
   would cost every static vertex in the engine 32 bytes to serve the few that are rigged.
+
+### Per-entity material overrides
+
+`SubmitMesh` and `SubmitSkinnedMesh` both take an optional `(const Ref<Material>* overrides,
+uint32_t count)` pair, indexed by `Submesh::MaterialIndex` — a null entry, or an index past the
+end, falls back to the mesh's own material. `RenderSystem` resolves
+`StaticMeshComponent::MaterialOverrides` from handles to `Ref`s once per entity per frame and
+passes the array down.
+
+Passing the array down rather than looping submeshes at the call site is what lets the **skinned**
+path honour overrides too: its palette staging is internal to `Renderer3D`, so a caller cannot
+reproduce the loop. One `ResolveMaterial` helper serves both paths, so they cannot drift.
+
+Three consequences worth encoding rather than discovering:
+
+- **Batching is by `Ref` identity.** N entities sharing one `.gmat` handle receive one `Ref` from
+  the asset cache and merge into the same instanced run; assigning a different `.gmat` to one entity
+  splits exactly that entity out. Measured, not assumed: four boxes on one mesh draw the same
+  whether they use the mesh default or one shared `.gmat`, and moving one onto a second `.gmat`
+  costs exactly one more draw.
+- **An override's `Transparent` flag repartitions that submesh.** It moves to the transparent pass
+  *and* stops being a shadow caster — the partition reads `cmd.Material->IsTransparent()`, and the
+  material it reads is now the override. That is the feature, not a bug, but it means a material
+  swap can change a scene's shadows.
+- **The `boundMaterial` raw-pointer cache now sees interleaved override and default materials.**
+  Its invalidation rules are unchanged (a skinned draw always rebinds, and it invalidates the cache
+  behind it), and the mixed case is verified rather than assumed: a scene of default, overridden and
+  skinned draws renders a stable draw count across 100 frames.
 
 ## Environment / IBL
 

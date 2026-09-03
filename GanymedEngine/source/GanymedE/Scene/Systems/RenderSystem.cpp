@@ -83,6 +83,22 @@ namespace GanymedE {
 			if (!mesh)
 				continue;
 
+			// Resolved per frame by handle, like every other asset reference here. That is what
+			// makes AssetManager::Reload on a .gmat land in the viewport on the next frame with
+			// no reverse material-to-mesh index anywhere in the engine.
+			//
+			// The scratch vector is reused across entities: an inspector-heavy scene would
+			// otherwise allocate once per mesh per frame.
+			m_ResolvedOverrides.clear();
+			for (AssetHandle handle : meshComponent.MaterialOverrides)
+			{
+				m_ResolvedOverrides.push_back(IsAssetHandleValid(handle)
+					? AssetManager::GetAsset<Material>(handle) : nullptr);
+			}
+
+			const Ref<Material>* overrides = m_ResolvedOverrides.empty() ? nullptr : m_ResolvedOverrides.data();
+			const uint32_t overrideCount = (uint32_t)m_ResolvedOverrides.size();
+
 			// An entity is skinned iff its mesh has a skeleton and it has an animator -
 			// the same gate the AnimationSystem poses on. A rigged mesh with no animator
 			// draws as static geometry in its bind pose, which is the sane default for
@@ -90,11 +106,12 @@ namespace GanymedE {
 			if (animator && mesh->HasSkeleton() && !animator->Palette.empty())
 			{
 				Renderer3D::SubmitSkinnedMesh(mesh, worldTransform.World,
-					animator->Palette.data(), (uint32_t)animator->Palette.size(), (int)entity);
+					animator->Palette.data(), (uint32_t)animator->Palette.size(), (int)entity,
+					overrides, overrideCount);
 			}
 			else
 			{
-				Renderer3D::SubmitMesh(mesh, worldTransform.World, (int)entity);
+				Renderer3D::SubmitMesh(mesh, worldTransform.World, (int)entity, overrides, overrideCount);
 			}
 		}
 	}

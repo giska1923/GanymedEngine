@@ -99,10 +99,40 @@ namespace GanymedE {
 	{
 		AssetHandle Mesh = InvalidAssetHandle;
 
+		// Per renderer slot, parallel to the mesh's own material list (the index is
+		// Submesh::MaterialIndex). InvalidAssetHandle - or an index past the end - means "use
+		// the material that came with the mesh", so an entity with no overrides renders exactly
+		// as it did before this existed.
+		//
+		// This is the additive half of the material model: the mesh asset keeps its imported
+		// materials untouched inside its own cache, and .gmat is a layer on top. See
+		// docs/engine/assets.md for why that shape was chosen over meshes referencing .gmat
+		// directly the way Unreal does.
+		std::vector<AssetHandle> MaterialOverrides;
+
 		StaticMeshComponent() = default;
 		StaticMeshComponent(const StaticMeshComponent&) = default;
 		StaticMeshComponent(AssetHandle mesh)
 			: Mesh(mesh) {}
+	};
+
+	// Marks an entity as the root of a linked prefab instance.
+	//
+	// Only the root carries it - the descendants are ordinary entities, which is what makes
+	// structural editing inside an instance free: add, remove and re-parent children at will,
+	// because nothing tracks divergence. "Apply to prefab" captures whatever the subtree is now
+	// and "Revert instance" discards it. Per-field overrides would need a serialization-diff
+	// engine, which is a milestone of its own rather than a feature.
+	//
+	// Inert at runtime: it exists so the editor can find the source file again.
+	struct PrefabInstanceComponent
+	{
+		AssetHandle Source = InvalidAssetHandle;
+
+		PrefabInstanceComponent() = default;
+		PrefabInstanceComponent(const PrefabInstanceComponent&) = default;
+		PrefabInstanceComponent(AssetHandle source)
+			: Source(source) {}
 	};
 
 	// Plays one of the clips carried by the entity's StaticMeshComponent mesh. There is no

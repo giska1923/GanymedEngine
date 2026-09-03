@@ -3,6 +3,7 @@
 
 #include "Entity.h"
 #include "Components.h"
+#include "SceneYaml.h"
 
 #include "GanymedE/Assets/AssetManager.h"
 
@@ -10,81 +11,14 @@
 
 #include <yaml-cpp/yaml.h>
 
-namespace YAML {
-
-	template<>
-	struct convert<glm::vec3>
-	{
-		static Node encode(const glm::vec3& rhs)
-		{
-			Node node;
-			node.push_back(rhs.x);
-			node.push_back(rhs.y);
-			node.push_back(rhs.z);
-			return node;
-		}
-
-		static bool decode(const Node& node, glm::vec3& rhs)
-		{
-			if (!node.IsSequence() || node.size() != 3)
-				return false;
-
-			rhs.x = node[0].as<float>();
-			rhs.y = node[1].as<float>();
-			rhs.z = node[2].as<float>();
-			return true;
-		}
-	};
-
-	template<>
-	struct convert<glm::vec4>
-	{
-		static Node encode(const glm::vec4& rhs)
-		{
-			Node node;
-			node.push_back(rhs.x);
-			node.push_back(rhs.y);
-			node.push_back(rhs.z);
-			node.push_back(rhs.w);
-			return node;
-		}
-
-		static bool decode(const Node& node, glm::vec4& rhs)
-		{
-			if (!node.IsSequence() || node.size() != 4)
-				return false;
-
-			rhs.x = node[0].as<float>();
-			rhs.y = node[1].as<float>();
-			rhs.z = node[2].as<float>();
-			rhs.w = node[3].as<float>();
-			return true;
-		}
-	};
-
-}
 namespace GanymedE {
-
-	YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec3& v)
-	{
-		out << YAML::Flow;
-		out << YAML::BeginSeq << v.x << v.y << v.z << YAML::EndSeq;
-		return out;
-	}
-
-	YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec4& v)
-	{
-		out << YAML::Flow;
-		out << YAML::BeginSeq << v.x << v.y << v.z << v.w << YAML::EndSeq;
-		return out;
-	}
 
 	SceneSerializer::SceneSerializer(const Ref<Scene>& scene)
 		: m_Scene(scene)
 	{
 	}
 
-	static void SerializeEntity(YAML::Emitter& out, Entity entity)
+	void SceneSerializer::SerializeEntity(YAML::Emitter& out, Entity entity)
 	{
 		GE_CORE_ASSERT(entity.HasComponent<IDComponent>(), "Entity missing IDComponent");
 
@@ -126,6 +60,18 @@ namespace GanymedE {
 			for (UUID child : rc.Children)
 				out << static_cast<uint64_t>(child);
 			out << YAML::EndSeq;
+
+			out << YAML::EndMap;
+		}
+
+		if (entity.HasComponent<PrefabInstanceComponent>())
+		{
+			out << YAML::Key << "PrefabInstanceComponent";
+			out << YAML::BeginMap;
+
+			auto& prefab = entity.GetComponent<PrefabInstanceComponent>();
+			if (IsAssetHandleValid(prefab.Source))
+				out << YAML::Key << "Source" << YAML::Value << static_cast<uint64_t>(prefab.Source);
 
 			out << YAML::EndMap;
 		}
@@ -174,6 +120,23 @@ namespace GanymedE {
 			auto& smc = entity.GetComponent<StaticMeshComponent>();
 			if (IsAssetHandleValid(smc.Mesh))
 				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(smc.Mesh);
+
+			// Written only when at least one slot is actually overridden. Emitting an empty
+			// sequence for every mesh entity would rewrite every committed scene file for no
+			// content change, which is exactly what Phase 1's canonical saves exist to prevent.
+			bool hasOverride = false;
+			for (AssetHandle handle : smc.MaterialOverrides)
+				hasOverride = hasOverride || IsAssetHandleValid(handle);
+
+			if (hasOverride)
+			{
+				// Handles, not paths: the scene-to-registry currency. Trailing unset slots are
+				// kept rather than trimmed, because the index *is* the slot.
+				out << YAML::Key << "MaterialOverrides" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+				for (AssetHandle handle : smc.MaterialOverrides)
+					out << static_cast<uint64_t>(handle);
+				out << YAML::EndSeq;
+			}
 
 			out << YAML::EndMap;
 		}
@@ -394,10 +357,23 @@ namespace GanymedE {
 
 	void SceneSerializer::Serialize(const std::string& filepath)
 	{
-		YAML::Emitter out;
-		out << YAML::BeginMap;
-		out << YAML::Key << "Scene" << YAML::Value << "Untitled";
-		out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
+		// Canonical order: roots sorted by UUID, then depth-first through each root's
+		// Children in authored order.
+		//
+		// The order used to be whatever entt's packed array happened to be, which entt
+		// 3.16 iterates backwards and a play/stop cycle reshuffles wholesale - saving the
+		// same untouched scene twice produced two different files, so "did this edit
+		// change anything?" was unanswerable and every save was a full-file diff.
+		//
+		// A flat UUID sort would also be deterministic, and would give tighter diffs
+		// (entities never move in the file, so a reparent touches only Relationship
+		// fields). DFS wins anyway because a subtree comes out as a contiguous block,
+		// which is the layout .gprefab needs - one canonical order for both formats
+		// rather than two - and because sibling order is authored, user-visible state, so
+		// letting it order the file makes the layout content rather than an artifact.
+		// The cost, accepted: reparenting moves a block in the diff. Godot orders scene
+		// files by node path for the same reasons; Unity instead leans on stable fileIDs.
+		std::vector<Entity> roots;
 		auto view = m_Scene->m_Registry.view<IDComponent>();
 		for (auto entityID : view)
 		{
@@ -405,8 +381,63 @@ namespace GanymedE {
 			if (!entity)
 				continue;
 
-			SerializeEntity(out, entity);
+			const auto* relationship = m_Scene->m_Registry.try_get<RelationshipComponent>(entityID);
+			if (!relationship || relationship->Parent == UUID{ 0 })
+				roots.push_back(entity);
 		}
+
+		std::sort(roots.begin(), roots.end(), [](Entity a, Entity b)
+			{
+				return static_cast<uint64_t>(a.GetUUID()) < static_cast<uint64_t>(b.GetUUID());
+			});
+
+		std::vector<Entity> ordered;
+		std::unordered_set<UUID> visited;
+		for (Entity root : roots)
+			m_Scene->CollectSubtree(root, ordered, visited);
+
+		// Safety net. An entity reachable from no root should not exist - it means a
+		// parent's Children vector disagrees with a child's Parent, or a cycle. Writing
+		// it anyway keeps a broken hierarchy from becoming silent data loss, and the
+		// warning is what makes the corruption visible.
+		std::vector<Entity> unreachable;
+		for (auto entityID : view)
+		{
+			Entity entity = { entityID, m_Scene.get() };
+			if (entity && visited.find(entity.GetUUID()) == visited.end())
+				unreachable.push_back(entity);
+		}
+
+		if (!unreachable.empty())
+		{
+			std::sort(unreachable.begin(), unreachable.end(), [](Entity a, Entity b)
+				{
+					return static_cast<uint64_t>(a.GetUUID()) < static_cast<uint64_t>(b.GetUUID());
+				});
+
+			for (Entity entity : unreachable)
+			{
+				if (visited.find(entity.GetUUID()) != visited.end())
+					continue;   // already picked up as a descendant of an earlier one
+
+				GE_CORE_WARN("Entity {0} ('{1}') is reachable from no root - its parent's "
+					"Children vector does not list it. Appending it to '{2}' in UUID order.",
+					static_cast<uint64_t>(entity.GetUUID()),
+					entity.HasComponent<TagComponent>() ? entity.GetComponent<TagComponent>().Tag : std::string(),
+					filepath);
+
+				m_Scene->CollectSubtree(entity, ordered, visited);
+			}
+		}
+
+		YAML::Emitter out;
+		out << YAML::BeginMap;
+		out << YAML::Key << "Scene" << YAML::Value << "Untitled";
+		out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
+
+		for (Entity entity : ordered)
+			SerializeEntity(out, entity);
+
 		out << YAML::EndSeq;
 		out << YAML::EndMap;
 
@@ -464,293 +495,418 @@ namespace GanymedE {
 		{
 			std::unordered_set<uint64_t> usedUUIDs;
 
-			for (auto entity : entities)
-			{
-				uint64_t uuid = entity["Entity"].as<uint64_t>();
+			// Parallel arrays in file order: what each entity became, and what it was
+			// called in the file. ResolveHierarchy needs both to translate Parent and
+			// Children, which DeserializeEntity leaves holding the file's UUIDs.
+			std::vector<Entity> created;
+			std::vector<UUID> fileUUIDs;
 
-				// Older scenes serialized a hardcoded ID for every entity — mint a fresh UUID on collision
+			for (auto entityNode : entities)
+			{
+				uint64_t fileUUID = entityNode["Entity"].as<uint64_t>();
+
+				// Older scenes serialized a hardcoded ID for every entity - mint a fresh UUID on collision
+				uint64_t uuid = fileUUID;
 				if (uuid == 0 || usedUUIDs.find(uuid) != usedUUIDs.end())
+				{
 					uuid = static_cast<uint64_t>(UUID());
+					GE_CORE_WARN("Scene '{0}' reuses entity UUID {1}; the duplicate was remapped to {2}",
+						filepath, fileUUID, uuid);
+				}
 				usedUUIDs.insert(uuid);
 
-				std::string name;
-				auto tagComponent = entity["TagComponent"];
-				if (tagComponent)
-					name = tagComponent["Tag"].as<std::string>();
+				Entity deserialized = DeserializeEntity(entityNode, *m_Scene, uuid);
+				if (!deserialized)
+					continue;
 
-				GE_CORE_TRACE("Deserialized entity with ID = {0}, name = {1}", uuid, name);
+				created.push_back(deserialized);
+				fileUUIDs.push_back(fileUUID);
+			}
 
-				Entity deserializedEntity = m_Scene->CreateEntityWithUUID(uuid, name);
+			ResolveHierarchy(*m_Scene, created, fileUUIDs);
+		}
 
-				auto transformComponent = entity["TransformComponent"];
-				if (transformComponent)
+		// Path-based components in the file mint handles as they load; this is the flush
+		// point for the batch (AssetManager::FlushRegistry).
+		AssetManager::FlushRegistry();
+
+		return true;
+	}
+
+	Entity SceneSerializer::DeserializeEntity(const YAML::Node& entityNode, Scene& scene, UUID uuid)
+	{
+		std::string name;
+		auto tagComponent = entityNode["TagComponent"];
+		if (tagComponent)
+			name = tagComponent["Tag"].as<std::string>();
+
+		GE_CORE_TRACE("Deserialized entity with ID = {0}, name = {1}", static_cast<uint64_t>(uuid), name);
+
+		Entity deserializedEntity = scene.CreateEntityWithUUID(uuid, name);
+
+		auto transformComponent = entityNode["TransformComponent"];
+		if (transformComponent)
+		{
+			// Entities always have transforms
+			auto& tc = deserializedEntity.GetComponent<TransformComponent>();
+			tc.Translation = transformComponent["Translation"].as<glm::vec3>();
+			tc.Rotation = transformComponent["Rotation"].as<glm::vec3>();
+			tc.Scale = transformComponent["Scale"].as<glm::vec3>();
+		}
+
+		auto relationshipComponent = entityNode["RelationshipComponent"];
+		if (relationshipComponent)
+		{
+			auto& rc = deserializedEntity.GetComponent<RelationshipComponent>();
+			rc.Parent = relationshipComponent["Parent"].as<uint64_t>();
+			rc.Children.clear();
+			auto children = relationshipComponent["Children"];
+			if (children)
+			{
+				for (auto child : children)
+					rc.Children.push_back(child.as<uint64_t>());
+			}
+		}
+
+		auto prefabInstanceComponent = entityNode["PrefabInstanceComponent"];
+		if (prefabInstanceComponent)
+		{
+			auto& prefab = deserializedEntity.AddComponent<PrefabInstanceComponent>();
+			if (auto source = prefabInstanceComponent["Source"])
+				prefab.Source = AssetHandle{ source.as<uint64_t>() };
+		}
+
+		auto cameraComponent = entityNode["CameraComponent"];
+		if (cameraComponent)
+		{
+			auto& cc = deserializedEntity.AddComponent<CameraComponent>();
+
+			auto cameraProps = cameraComponent["Camera"];
+			cc.Camera.SetProjectionType((SceneCamera::ProjectionType)cameraProps["ProjectionType"].as<int>());
+
+			cc.Camera.SetPerspectiveVerticalFOV(cameraProps["PerspectiveFOV"].as<float>());
+			cc.Camera.SetPerspectiveNearClip(cameraProps["PerspectiveNear"].as<float>());
+			cc.Camera.SetPerspectiveFarClip(cameraProps["PerspectiveFar"].as<float>());
+
+			cc.Camera.SetOrthographicSize(cameraProps["OrthographicSize"].as<float>());
+			cc.Camera.SetOrthographicNearClip(cameraProps["OrthographicNear"].as<float>());
+			cc.Camera.SetOrthographicFarClip(cameraProps["OrthographicFar"].as<float>());
+
+			cc.Primary = cameraComponent["Primary"].as<bool>();
+			cc.FixedAspectRatio = cameraComponent["FixedAspectRatio"].as<bool>();
+		}
+
+		auto spriteRendererComponent = entityNode["SpriteRendererComponent"];
+		if (spriteRendererComponent)
+		{
+			auto& src = deserializedEntity.AddComponent<SpriteRendererComponent>();
+			src.Color = spriteRendererComponent["Color"].as<glm::vec4>();
+		}
+
+		auto staticMeshComponent = entityNode["StaticMeshComponent"];
+		if (staticMeshComponent)
+		{
+			auto& smc = deserializedEntity.AddComponent<StaticMeshComponent>();
+
+			auto meshHandle = staticMeshComponent["Mesh"];
+			if (meshHandle)
+			{
+				smc.Mesh = meshHandle.as<uint64_t>();
+				AssetManager::GetAsset<Mesh>(smc.Mesh);
+			}
+			else
+			{
+				// Backward compatibility with path-based scenes
+				auto meshPath = staticMeshComponent["MeshPath"];
+				if (meshPath)
+					smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
+			}
+
+			auto overrides = staticMeshComponent["MaterialOverrides"];
+			if (overrides && overrides.IsSequence())
+			{
+				smc.MaterialOverrides.clear();
+				smc.MaterialOverrides.reserve(overrides.size());
+				for (auto slot : overrides)
+					smc.MaterialOverrides.push_back(AssetHandle{ slot.as<uint64_t>() });
+			}
+		}
+
+		auto animatorComponent = entityNode["AnimatorComponent"];
+		if (animatorComponent)
+		{
+			auto& animator = deserializedEntity.AddComponent<AnimatorComponent>();
+
+			auto clip = animatorComponent["Clip"];
+			if (clip)
+				animator.Clip = clip.as<std::string>();
+
+			animator.Speed = animatorComponent["Speed"].as<float>();
+			animator.Playing = animatorComponent["Playing"].as<bool>();
+			animator.Loop = animatorComponent["Loop"].as<bool>();
+		}
+
+		auto scriptComponent = entityNode["ScriptComponent"];
+		if (scriptComponent)
+		{
+			auto& sc = deserializedEntity.AddComponent<ScriptComponent>();
+
+			auto scriptHandle = scriptComponent["Script"];
+			if (scriptHandle)
+			{
+				// No GetAsset<> call to match the mesh path above: a script has no runtime
+				// object to warm, and ScriptEngine loads the chunk itself on instantiation.
+				sc.Script = scriptHandle.as<uint64_t>();
+			}
+			else
+			{
+				// Backward compatibility with path-based scenes
+				auto scriptPath = scriptComponent["ScriptPath"];
+				if (scriptPath)
+					sc.Script = AssetManager::ImportAsset(scriptPath.as<std::string>());
+			}
+
+			if (auto fields = scriptComponent["Fields"])
+			{
+				for (auto field : fields)
 				{
-					// Entities always have transforms
-					auto& tc = deserializedEntity.GetComponent<TransformComponent>();
-					tc.Translation = transformComponent["Translation"].as<glm::vec3>();
-					tc.Rotation = transformComponent["Rotation"].as<glm::vec3>();
-					tc.Scale = transformComponent["Scale"].as<glm::vec3>();
-				}
+					auto name = field["Name"];
+					auto type = field["Type"];
+					auto value = field["Value"];
+					if (!name || !type || !value)
+						continue;
 
-				auto relationshipComponent = entity["RelationshipComponent"];
-				if (relationshipComponent)
-				{
-					auto& rc = deserializedEntity.GetComponent<RelationshipComponent>();
-					rc.Parent = relationshipComponent["Parent"].as<uint64_t>();
-					rc.Children.clear();
-					auto children = relationshipComponent["Children"];
-					if (children)
-					{
-						for (auto child : children)
-							rc.Children.push_back(child.as<uint64_t>());
-					}
-				}
-
-				auto cameraComponent = entity["CameraComponent"];
-				if (cameraComponent)
-				{
-					auto& cc = deserializedEntity.AddComponent<CameraComponent>();
-
-					auto cameraProps = cameraComponent["Camera"];
-					cc.Camera.SetProjectionType((SceneCamera::ProjectionType)cameraProps["ProjectionType"].as<int>());
-
-					cc.Camera.SetPerspectiveVerticalFOV(cameraProps["PerspectiveFOV"].as<float>());
-					cc.Camera.SetPerspectiveNearClip(cameraProps["PerspectiveNear"].as<float>());
-					cc.Camera.SetPerspectiveFarClip(cameraProps["PerspectiveFar"].as<float>());
-
-					cc.Camera.SetOrthographicSize(cameraProps["OrthographicSize"].as<float>());
-					cc.Camera.SetOrthographicNearClip(cameraProps["OrthographicNear"].as<float>());
-					cc.Camera.SetOrthographicFarClip(cameraProps["OrthographicFar"].as<float>());
-
-					cc.Primary = cameraComponent["Primary"].as<bool>();
-					cc.FixedAspectRatio = cameraComponent["FixedAspectRatio"].as<bool>();
-				}
-
-				auto spriteRendererComponent = entity["SpriteRendererComponent"];
-				if (spriteRendererComponent)
-				{
-					auto& src = deserializedEntity.AddComponent<SpriteRendererComponent>();
-					src.Color = spriteRendererComponent["Color"].as<glm::vec4>();
-				}
-
-				auto staticMeshComponent = entity["StaticMeshComponent"];
-				if (staticMeshComponent)
-				{
-					auto& smc = deserializedEntity.AddComponent<StaticMeshComponent>();
-
-					auto meshHandle = staticMeshComponent["Mesh"];
-					if (meshHandle)
-					{
-						smc.Mesh = meshHandle.as<uint64_t>();
-						AssetManager::GetAsset<Mesh>(smc.Mesh);
-					}
+					const std::string typeName = type.as<std::string>();
+					if (typeName == "Bool")
+						sc.Fields[name.as<std::string>()] = value.as<bool>();
+					// "Int" is accepted but folded into a double - see ScriptFieldValue.
+					else if (typeName == "Int" || typeName == "Float")
+						sc.Fields[name.as<std::string>()] = value.as<double>();
+					else if (typeName == "String")
+						sc.Fields[name.as<std::string>()] = value.as<std::string>();
+					else if (typeName == "Vec3")
+						sc.Fields[name.as<std::string>()] = value.as<glm::vec3>();
 					else
-					{
-						// Backward compatibility with path-based scenes
-						auto meshPath = staticMeshComponent["MeshPath"];
-						if (meshPath)
-							smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
-					}
-				}
-
-				auto animatorComponent = entity["AnimatorComponent"];
-				if (animatorComponent)
-				{
-					auto& animator = deserializedEntity.AddComponent<AnimatorComponent>();
-
-					auto clip = animatorComponent["Clip"];
-					if (clip)
-						animator.Clip = clip.as<std::string>();
-
-					animator.Speed = animatorComponent["Speed"].as<float>();
-					animator.Playing = animatorComponent["Playing"].as<bool>();
-					animator.Loop = animatorComponent["Loop"].as<bool>();
-				}
-
-				auto scriptComponent = entity["ScriptComponent"];
-				if (scriptComponent)
-				{
-					auto& sc = deserializedEntity.AddComponent<ScriptComponent>();
-
-					auto scriptHandle = scriptComponent["Script"];
-					if (scriptHandle)
-					{
-						// No GetAsset<> call to match the mesh path above: a script has no runtime
-						// object to warm, and ScriptEngine loads the chunk itself on instantiation.
-						sc.Script = scriptHandle.as<uint64_t>();
-					}
-					else
-					{
-						// Backward compatibility with path-based scenes
-						auto scriptPath = scriptComponent["ScriptPath"];
-						if (scriptPath)
-							sc.Script = AssetManager::ImportAsset(scriptPath.as<std::string>());
-					}
-
-					if (auto fields = scriptComponent["Fields"])
-					{
-						for (auto field : fields)
-						{
-							auto name = field["Name"];
-							auto type = field["Type"];
-							auto value = field["Value"];
-							if (!name || !type || !value)
-								continue;
-
-							const std::string typeName = type.as<std::string>();
-							if (typeName == "Bool")
-								sc.Fields[name.as<std::string>()] = value.as<bool>();
-							// "Int" is accepted but folded into a double - see ScriptFieldValue.
-							else if (typeName == "Int" || typeName == "Float")
-								sc.Fields[name.as<std::string>()] = value.as<double>();
-							else if (typeName == "String")
-								sc.Fields[name.as<std::string>()] = value.as<std::string>();
-							else if (typeName == "Vec3")
-								sc.Fields[name.as<std::string>()] = value.as<glm::vec3>();
-							else
-								GE_CORE_WARN("SceneSerializer: unknown script field type '{0}' "
-									"for '{1}'", typeName, name.as<std::string>());
-						}
-					}
-				}
-
-				auto directionalLightComponent = entity["DirectionalLightComponent"];
-				if (directionalLightComponent)
-				{
-					auto& dlc = deserializedEntity.AddComponent<DirectionalLightComponent>();
-					dlc.Color = directionalLightComponent["Color"].as<glm::vec3>();
-					dlc.Intensity = directionalLightComponent["Intensity"].as<float>();
-					dlc.CastShadows = directionalLightComponent["CastShadows"].as<bool>();
-				}
-
-				auto pointLightComponent = entity["PointLightComponent"];
-				if (pointLightComponent)
-				{
-					auto& plc = deserializedEntity.AddComponent<PointLightComponent>();
-					plc.Color = pointLightComponent["Color"].as<glm::vec3>();
-					plc.Intensity = pointLightComponent["Intensity"].as<float>();
-					plc.Radius = pointLightComponent["Radius"].as<float>();
-					plc.Falloff = pointLightComponent["Falloff"].as<float>();
-				}
-
-				auto spotLightComponent = entity["SpotLightComponent"];
-				if (spotLightComponent)
-				{
-					auto& slc = deserializedEntity.AddComponent<SpotLightComponent>();
-					slc.Color = spotLightComponent["Color"].as<glm::vec3>();
-					slc.Intensity = spotLightComponent["Intensity"].as<float>();
-					slc.Range = spotLightComponent["Range"].as<float>();
-					slc.InnerConeAngle = spotLightComponent["InnerConeAngle"].as<float>();
-					slc.OuterConeAngle = spotLightComponent["OuterConeAngle"].as<float>();
-					slc.Falloff = spotLightComponent["Falloff"].as<float>();
-				}
-
-				auto skyLightComponent = entity["SkyLightComponent"];
-				if (skyLightComponent)
-				{
-					auto& skc = deserializedEntity.AddComponent<SkyLightComponent>();
-
-					auto envHandle = skyLightComponent["Environment"];
-					if (envHandle)
-						skc.Environment = envHandle.as<uint64_t>();
-					else
-					{
-						// Backward compatibility with path-based scenes
-						auto envPath = skyLightComponent["EnvironmentPath"];
-						if (envPath)
-							skc.Environment = AssetManager::ImportAsset(envPath.as<std::string>());
-					}
-					skc.SkyColor = skyLightComponent["SkyColor"].as<glm::vec3>();
-					skc.GroundColor = skyLightComponent["GroundColor"].as<glm::vec3>();
-					skc.Intensity = skyLightComponent["Intensity"].as<float>();
-					skc.DrawSkybox = skyLightComponent["DrawSkybox"].as<bool>();
-				}
-
-				auto audioSourceComponent = entity["AudioSourceComponent"];
-				if (audioSourceComponent)
-				{
-					auto& source = deserializedEntity.AddComponent<AudioSourceComponent>();
-
-					// Every field guarded, unlike RigidBodyComponent above. These components are
-					// young enough that hand-authored scenes are still a normal way to make one
-					// (the runtime demo is), and an absent key would otherwise throw out of
-					// as<T>() and take the whole scene load with it.
-					if (auto clip = audioSourceComponent["Clip"])
-						source.Clip = clip.as<uint64_t>();
-					if (auto group = audioSourceComponent["Group"])
-						source.Group = AudioGroupFromString(group.as<std::string>(), source.Group);
-					if (auto volume = audioSourceComponent["Volume"])
-						source.Volume = volume.as<float>();
-					if (auto pitch = audioSourceComponent["Pitch"])
-						source.Pitch = pitch.as<float>();
-					if (auto loop = audioSourceComponent["Loop"])
-						source.Loop = loop.as<bool>();
-					if (auto playOnStart = audioSourceComponent["PlayOnStart"])
-						source.PlayOnStart = playOnStart.as<bool>();
-					if (auto spatialize = audioSourceComponent["Spatialize"])
-						source.Spatialize = spatialize.as<bool>();
-					if (auto stream = audioSourceComponent["Stream"])
-						source.Stream = stream.as<bool>();
-				}
-
-				auto audioListenerComponent = entity["AudioListenerComponent"];
-				if (audioListenerComponent)
-				{
-					auto& listener = deserializedEntity.AddComponent<AudioListenerComponent>();
-					if (auto primary = audioListenerComponent["Primary"])
-						listener.Primary = primary.as<bool>();
-				}
-
-				auto rigidBodyComponent = entity["RigidBodyComponent"];
-				if (rigidBodyComponent)
-				{
-					auto& rb = deserializedEntity.AddComponent<RigidBodyComponent>();
-					rb.Type = (RigidBodyType)rigidBodyComponent["Type"].as<int>();
-					rb.Mass = rigidBodyComponent["Mass"].as<float>();
-					rb.LinearDamping = rigidBodyComponent["LinearDamping"].as<float>();
-					rb.AngularDamping = rigidBodyComponent["AngularDamping"].as<float>();
-					rb.UseGravity = rigidBodyComponent["UseGravity"].as<bool>();
-				}
-
-				auto readPhysicsMaterial = [](const YAML::Node& node, PhysicsMaterial& mat)
-				{
-					if (node["Friction"])
-						mat.Friction = node["Friction"].as<float>();
-					if (node["Restitution"])
-						mat.Restitution = node["Restitution"].as<float>();
-				};
-
-				auto boxColliderComponent = entity["BoxColliderComponent"];
-				if (boxColliderComponent)
-				{
-					auto& col = deserializedEntity.AddComponent<BoxColliderComponent>();
-					col.HalfExtents = boxColliderComponent["HalfExtents"].as<glm::vec3>();
-					col.Offset = boxColliderComponent["Offset"].as<glm::vec3>();
-					readPhysicsMaterial(boxColliderComponent, col.Material);
-				}
-
-				auto sphereColliderComponent = entity["SphereColliderComponent"];
-				if (sphereColliderComponent)
-				{
-					auto& col = deserializedEntity.AddComponent<SphereColliderComponent>();
-					col.Radius = sphereColliderComponent["Radius"].as<float>();
-					col.Offset = sphereColliderComponent["Offset"].as<glm::vec3>();
-					readPhysicsMaterial(sphereColliderComponent, col.Material);
-				}
-
-				auto capsuleColliderComponent = entity["CapsuleColliderComponent"];
-				if (capsuleColliderComponent)
-				{
-					auto& col = deserializedEntity.AddComponent<CapsuleColliderComponent>();
-					col.Radius = capsuleColliderComponent["Radius"].as<float>();
-					col.HalfHeight = capsuleColliderComponent["HalfHeight"].as<float>();
-					col.Offset = capsuleColliderComponent["Offset"].as<glm::vec3>();
-					readPhysicsMaterial(capsuleColliderComponent, col.Material);
+						GE_CORE_WARN("SceneSerializer: unknown script field type '{0}' "
+							"for '{1}'", typeName, name.as<std::string>());
 				}
 			}
 		}
 
-		return true;
+		auto directionalLightComponent = entityNode["DirectionalLightComponent"];
+		if (directionalLightComponent)
+		{
+			auto& dlc = deserializedEntity.AddComponent<DirectionalLightComponent>();
+			dlc.Color = directionalLightComponent["Color"].as<glm::vec3>();
+			dlc.Intensity = directionalLightComponent["Intensity"].as<float>();
+			dlc.CastShadows = directionalLightComponent["CastShadows"].as<bool>();
+		}
+
+		auto pointLightComponent = entityNode["PointLightComponent"];
+		if (pointLightComponent)
+		{
+			auto& plc = deserializedEntity.AddComponent<PointLightComponent>();
+			plc.Color = pointLightComponent["Color"].as<glm::vec3>();
+			plc.Intensity = pointLightComponent["Intensity"].as<float>();
+			plc.Radius = pointLightComponent["Radius"].as<float>();
+			plc.Falloff = pointLightComponent["Falloff"].as<float>();
+		}
+
+		auto spotLightComponent = entityNode["SpotLightComponent"];
+		if (spotLightComponent)
+		{
+			auto& slc = deserializedEntity.AddComponent<SpotLightComponent>();
+			slc.Color = spotLightComponent["Color"].as<glm::vec3>();
+			slc.Intensity = spotLightComponent["Intensity"].as<float>();
+			slc.Range = spotLightComponent["Range"].as<float>();
+			slc.InnerConeAngle = spotLightComponent["InnerConeAngle"].as<float>();
+			slc.OuterConeAngle = spotLightComponent["OuterConeAngle"].as<float>();
+			slc.Falloff = spotLightComponent["Falloff"].as<float>();
+		}
+
+		auto skyLightComponent = entityNode["SkyLightComponent"];
+		if (skyLightComponent)
+		{
+			auto& skc = deserializedEntity.AddComponent<SkyLightComponent>();
+
+			auto envHandle = skyLightComponent["Environment"];
+			if (envHandle)
+				skc.Environment = envHandle.as<uint64_t>();
+			else
+			{
+				// Backward compatibility with path-based scenes
+				auto envPath = skyLightComponent["EnvironmentPath"];
+				if (envPath)
+					skc.Environment = AssetManager::ImportAsset(envPath.as<std::string>());
+			}
+			skc.SkyColor = skyLightComponent["SkyColor"].as<glm::vec3>();
+			skc.GroundColor = skyLightComponent["GroundColor"].as<glm::vec3>();
+			skc.Intensity = skyLightComponent["Intensity"].as<float>();
+			skc.DrawSkybox = skyLightComponent["DrawSkybox"].as<bool>();
+		}
+
+		auto audioSourceComponent = entityNode["AudioSourceComponent"];
+		if (audioSourceComponent)
+		{
+			auto& source = deserializedEntity.AddComponent<AudioSourceComponent>();
+
+			// Every field guarded, unlike RigidBodyComponent above. These components are
+			// young enough that hand-authored scenes are still a normal way to make one
+			// (the runtime demo is), and an absent key would otherwise throw out of
+			// as<T>() and take the whole scene load with it.
+			if (auto clip = audioSourceComponent["Clip"])
+				source.Clip = clip.as<uint64_t>();
+			if (auto group = audioSourceComponent["Group"])
+				source.Group = AudioGroupFromString(group.as<std::string>(), source.Group);
+			if (auto volume = audioSourceComponent["Volume"])
+				source.Volume = volume.as<float>();
+			if (auto pitch = audioSourceComponent["Pitch"])
+				source.Pitch = pitch.as<float>();
+			if (auto loop = audioSourceComponent["Loop"])
+				source.Loop = loop.as<bool>();
+			if (auto playOnStart = audioSourceComponent["PlayOnStart"])
+				source.PlayOnStart = playOnStart.as<bool>();
+			if (auto spatialize = audioSourceComponent["Spatialize"])
+				source.Spatialize = spatialize.as<bool>();
+			if (auto stream = audioSourceComponent["Stream"])
+				source.Stream = stream.as<bool>();
+		}
+
+		auto audioListenerComponent = entityNode["AudioListenerComponent"];
+		if (audioListenerComponent)
+		{
+			auto& listener = deserializedEntity.AddComponent<AudioListenerComponent>();
+			if (auto primary = audioListenerComponent["Primary"])
+				listener.Primary = primary.as<bool>();
+		}
+
+		auto rigidBodyComponent = entityNode["RigidBodyComponent"];
+		if (rigidBodyComponent)
+		{
+			auto& rb = deserializedEntity.AddComponent<RigidBodyComponent>();
+			rb.Type = (RigidBodyType)rigidBodyComponent["Type"].as<int>();
+			rb.Mass = rigidBodyComponent["Mass"].as<float>();
+			rb.LinearDamping = rigidBodyComponent["LinearDamping"].as<float>();
+			rb.AngularDamping = rigidBodyComponent["AngularDamping"].as<float>();
+			rb.UseGravity = rigidBodyComponent["UseGravity"].as<bool>();
+		}
+
+		auto readPhysicsMaterial = [](const YAML::Node& node, PhysicsMaterial& mat)
+		{
+			if (node["Friction"])
+				mat.Friction = node["Friction"].as<float>();
+			if (node["Restitution"])
+				mat.Restitution = node["Restitution"].as<float>();
+		};
+
+		auto boxColliderComponent = entityNode["BoxColliderComponent"];
+		if (boxColliderComponent)
+		{
+			auto& col = deserializedEntity.AddComponent<BoxColliderComponent>();
+			col.HalfExtents = boxColliderComponent["HalfExtents"].as<glm::vec3>();
+			col.Offset = boxColliderComponent["Offset"].as<glm::vec3>();
+			readPhysicsMaterial(boxColliderComponent, col.Material);
+		}
+
+		auto sphereColliderComponent = entityNode["SphereColliderComponent"];
+		if (sphereColliderComponent)
+		{
+			auto& col = deserializedEntity.AddComponent<SphereColliderComponent>();
+			col.Radius = sphereColliderComponent["Radius"].as<float>();
+			col.Offset = sphereColliderComponent["Offset"].as<glm::vec3>();
+			readPhysicsMaterial(sphereColliderComponent, col.Material);
+		}
+
+		auto capsuleColliderComponent = entityNode["CapsuleColliderComponent"];
+		if (capsuleColliderComponent)
+		{
+			auto& col = deserializedEntity.AddComponent<CapsuleColliderComponent>();
+			col.Radius = capsuleColliderComponent["Radius"].as<float>();
+			col.HalfHeight = capsuleColliderComponent["HalfHeight"].as<float>();
+			col.Offset = capsuleColliderComponent["Offset"].as<glm::vec3>();
+			readPhysicsMaterial(capsuleColliderComponent, col.Material);
+		}
+
+		return deserializedEntity;
+	}
+
+	void SceneSerializer::ResolveHierarchy(Scene& scene, const std::vector<Entity>& created,
+		const std::vector<UUID>& fileUUIDs)
+	{
+		GE_CORE_ASSERT(created.size() == fileUUIDs.size(), "ResolveHierarchy arrays must be parallel");
+
+		// Runs on every load, not only after a collision: with no remapping the mapping is
+		// the identity and this is a no-op that also happens to report dangling references.
+		// A rarely-taken repair path is a path that rots.
+		//
+		// The bug this fixes: the loader mints a fresh UUID for a duplicated one, but
+		// Parent/Children elsewhere in the file still name the old one. Those references
+		// then resolved to whichever entity won the original UUID, silently severing the
+		// remapped entity from its hierarchy - or attaching it to a stranger.
+		std::unordered_map<uint64_t, std::vector<UUID>> fileToNew;
+		for (size_t i = 0; i < created.size(); ++i)
+			fileToNew[static_cast<uint64_t>(fileUUIDs[i])].push_back(created[i].GetUUID());
+
+		// Children first, and one file UUID hands out its instances in order: when a file
+		// really does contain the same UUID twice, each child slot claims a different
+		// entity. The Children vectors are authoritative because sibling order is content.
+		std::unordered_map<uint64_t, size_t> claims;
+		std::unordered_map<uint64_t, UUID> ownerOf;   // child UUID -> the parent that claimed it
+
+		for (Entity entity : created)
+		{
+			auto& relationship = entity.GetComponent<RelationshipComponent>();
+
+			std::vector<UUID> resolved;
+			resolved.reserve(relationship.Children.size());
+
+			for (UUID childFileID : relationship.Children)
+			{
+				auto it = fileToNew.find(static_cast<uint64_t>(childFileID));
+				if (it == fileToNew.end())
+				{
+					GE_CORE_WARN("Entity {0} lists child {1}, which no entity in the file "
+						"claims - dropping the reference.",
+						static_cast<uint64_t>(entity.GetUUID()), static_cast<uint64_t>(childFileID));
+					continue;
+				}
+
+				size_t& claim = claims[static_cast<uint64_t>(childFileID)];
+				UUID childID = it->second[claim < it->second.size() ? claim : it->second.size() - 1];
+				++claim;
+
+				resolved.push_back(childID);
+				ownerOf[static_cast<uint64_t>(childID)] = entity.GetUUID();
+			}
+
+			relationship.Children = std::move(resolved);
+		}
+
+		for (Entity entity : created)
+		{
+			auto& relationship = entity.GetComponent<RelationshipComponent>();
+
+			// Claimed by a parent's Children vector: that is the answer, whatever the
+			// entity's own Parent field says.
+			auto owner = ownerOf.find(static_cast<uint64_t>(entity.GetUUID()));
+			if (owner != ownerOf.end())
+			{
+				relationship.Parent = owner->second;
+				continue;
+			}
+
+			if (relationship.Parent == UUID{ 0 })
+				continue;
+
+			// Names a parent that never listed it. Translate the reference so the entity
+			// at least points at the right object, but say so: Parent and Children
+			// disagreeing is what the save-time unreachable warning will trip on.
+			auto it = fileToNew.find(static_cast<uint64_t>(relationship.Parent));
+			GE_CORE_WARN("Entity {0} names parent {1}, which does not list it as a child.",
+				static_cast<uint64_t>(entity.GetUUID()), static_cast<uint64_t>(relationship.Parent));
+
+			relationship.Parent = it != fileToNew.end() ? it->second.front() : UUID{ 0 };
+		}
 	}
 
 	bool SceneSerializer::DeserializeRuntime(const std::string& filepath)
