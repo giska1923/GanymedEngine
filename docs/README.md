@@ -53,6 +53,7 @@ including verification evidence:
 - [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
 - [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; **complete** — phases 1–5 executed, read the per-phase execution notes)
 - [`CONTENT_AUTHORING_ROADMAP.md`](toDo&done/CONTENT_AUTHORING_ROADMAP.md) — the content authoring milestone (serialization hygiene, editor undo/redo, `.gmat` material assets, linked prefabs; complete — see [editor.md](editor/editor.md), [scene.md](engine/scene.md) and [assets.md](engine/assets.md))
+- [`PARTICLE_ROADMAP.md`](toDo&done/PARTICLE_ROADMAP.md) — the particle system milestone (CPU-simulated emitters, billboard + instanced-mesh rendering, keyframed curves with an in-house curve editor; planned, not started)
 
 ## Building & running
 
