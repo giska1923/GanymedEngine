@@ -7,8 +7,11 @@
 #include "ScriptableEntity.h"
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/Core/Core.h"
+#include "GanymedE/Core/Random.h"
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Audio/AudioTypes.h"
+#include "GanymedE/Math/BoundingVolumes.h"
+#include "GanymedE/Math/Curve.h"
 
 #include <unordered_map>
 #include <variant>
@@ -369,5 +372,80 @@ namespace GanymedE {
 
 		CapsuleColliderComponent() = default;
 		CapsuleColliderComponent(const CapsuleColliderComponent&) = default;
+	};
+
+	// Component-local, firewalled: RenderState.h packs BGFX_STATE_* and must not reach
+	// Components.h (the AudioTypes.h split is the precedent). The renderer maps this to
+	// RenderState::BlendMode at draw time (Phase 3).
+	enum class ParticleBlend : uint8_t { Alpha = 0, Additive = 1 };
+
+	struct Particle
+	{
+		glm::vec3 Position{ 0.0f };
+		glm::vec3 Velocity{ 0.0f };
+		float Rotation = 0.0f;      // degrees
+		float RotationSpeed = 0.0f; // deg/sec, constant for the particle's life
+		float Age = 0.0f;
+		float Lifetime = 1.0f;
+		float StartSize = 0.1f;
+	};
+
+	// CPU particle emitter. Authored fields live on the component and serialize with the
+	// scene; there is no .gparticle asset (prefabs are the reuse vehicle).
+	//
+	// The pool is component-owned, like AnimatorComponent::Palette, with the honest
+	// difference that a pool persists across frames. Scene::Copy therefore resets pool,
+	// accumulator, timer, Playing, bounds, and RNG together — play mode starts empty and
+	// emitters warm up, the Unity-without-prewarm cost. Runtime fields are not serialized.
+	struct ParticleEmitterComponent
+	{
+		// Emission
+		float    RateOverTime = 10.0f;
+		uint32_t MaxParticles = 1000;
+		bool     Looping = true;
+		float    Duration = 5.0f;
+		bool     PlayOnStart = true;
+
+		// Initial state (cone axis = entity local +Y; rotate the entity to aim)
+		float    LifetimeMin = 1.0f, LifetimeMax = 1.0f;
+		float    SpeedMin = 1.0f, SpeedMax = 1.0f;
+		float    ConeAngle = 25.0f;
+		float    StartSizeMin = 0.1f, StartSizeMax = 0.1f;
+		float    StartRotationMin = 0.0f, StartRotationMax = 0.0f;
+		float    RotationSpeedMin = 0.0f, RotationSpeedMax = 0.0f;
+		float    GravityModifier = 0.0f;
+		bool     WorldSpace = false;
+		uint32_t Seed = 0; // 0 = derive from entity UUID when playback starts
+
+		FloatCurve    SizeCurve;
+		ColorGradient ColorOverLifetime;
+
+		enum class Mode : uint8_t { Billboard = 0, Mesh = 1 };
+		Mode          RenderMode = Mode::Billboard;
+		AssetHandle   Texture  = InvalidAssetHandle;
+		ParticleBlend Blend    = ParticleBlend::Alpha;
+		AssetHandle   Mesh     = InvalidAssetHandle;
+		AssetHandle   Material = InvalidAssetHandle;
+
+		// Runtime-only. Serializer skips; Scene::Copy resets via ResetRuntime().
+		bool Playing = false;
+		float Time = 0.0f;
+		float EmitAccumulator = 0.0f;
+		Random Rng{ 0 };
+		std::vector<Particle> Pool;
+		AABB WorldBounds;
+
+		void ResetRuntime()
+		{
+			Playing = false;
+			Time = 0.0f;
+			EmitAccumulator = 0.0f;
+			Rng = Random{ 0 };
+			Pool.clear();
+			WorldBounds = {};
+		}
+
+		ParticleEmitterComponent() = default;
+		ParticleEmitterComponent(const ParticleEmitterComponent&) = default;
 	};
 }

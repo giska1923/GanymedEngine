@@ -98,9 +98,9 @@ API notes:
   `vec3(x)`, `mul(m, v)` not `m * v`, `mtxFromCols`, varyings only in `main`'s signature, `line`
   is reserved in HLSL.
 
-Current programs (22): FlatColor, VertexPosColor, Texture, Line, Grid, Phong, PhongSkinned,
+Current programs (23): FlatColor, VertexPosColor, Texture, Line, Grid, Phong, PhongSkinned,
 ShadowDepth, ShadowDepthSkinned, Skybox, SkyboxCube, Equirect, Irradiance, Prefilter, BRDFLut,
-BloomDownsample, BloomUpsample, Tonemap, FXAA, Blit, ImGui, RmlUi.
+BloomDownsample, BloomUpsample, Tonemap, FXAA, Blit, ImGui, RmlUi, Particle.
 
 Two of those ship a per-shader `varying.<name>.def.sc` because their vertex layout is fixed by a
 third party and does not match the engine's: **ImGui** and **RmlUi** (whose colour and texcoord
@@ -169,7 +169,20 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    command never joins a run (see below).
 6. **Transparent** — back-to-front, blending on, depth-write off; only neighbors that stayed
    adjacent after the depth sort are instanced together.
-7. **Debug lines** — accumulated `DrawLine/DrawWireBox/DrawWireSphere/DrawWireCapsule` calls flush
+7. **Particles** — [`ParticleRenderer`](../../GanymedEngine/source/GanymedE/Renderer/ParticleRenderer.h)
+   flushes here, after the transparent loop and before depth-write is restored. Billboard emitters
+   are one `bgfx::submit` each into view 5's Sequential stream (CPU corner construction, camera
+   right/up basis, per-emitter Alpha/Additive via the sticky `RenderState` singleton — restored
+   unconditionally, including on transient-buffer exhaustion). Within an Alpha emitter, particles
+   are sorted back-to-front on a **scratch index array**; the pool itself is never reordered (it is
+   the sim's determinism instrument). Additive emitters skip the sort. Mesh particles never reach
+   this flush: `RenderSystem` submitted them earlier as ordinary Phong opaques, so they batch,
+   light, and cast shadows. **Hard authoring rule: mesh particles must use opaque materials** — the
+   transparent path merges only sort-adjacent runs, so a transparent debris material is one draw
+   *per particle*. Particles always composite *after* transparent meshes (a smoke plume behind glass
+   draws over it) — accepted v1 artifact; Unity interleaves the queues, Ganymed does not because
+   that means injecting into the transparent sort.
+8. **Debug lines** — accumulated `DrawLine/DrawWireBox/DrawWireSphere/DrawWireCapsule` calls flush
    as one lines draw (20k-vertex dynamic buffer), depth-tested but not written. Used by collider
    gizmos and Jolt debug draw.
 
@@ -179,7 +192,11 @@ grid on a scaled quad — its transform goes through `bgfx::setTransform`, and i
 `u_CameraPosition` because `FrameUniforms` already does, one-uniform-per-draw). The active
 environment is whatever `SubmitEnvironment` set this frame — caching environments by path is
 `AssetManager`'s job, not the renderer's. `GetStats()` reports
-draws/meshes/culled/instanced/transparent/skinned counts (shown in the editor Stats panel).
+draws/meshes/culled/instanced/transparent/skinned plus particle emitters/billboards/draws/culled
+(shown in the editor Stats panel). Per-emitter frustum cull uses the CPU AABB `ParticleSystem`
+wrote; there is no per-billboard cull. Budget: billboards carry the high counts; mesh debris is
+hundreds, not tens of thousands (one `DrawCommand` + frustum test per particle, and opaque casters
+are pushed unculled ×4 shadow cascades).
 
 Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5–8 shadow cascades,
 9–11 IBL, 12 skybox cubemap.

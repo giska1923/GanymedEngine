@@ -196,7 +196,7 @@ present, procedural fallback otherwise), so imported meshes are lit immediately.
 ### Stats panel
 
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
-transparent), live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
+transparent, particle emitters/billboards/draws/culled), live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
 FXAA), and Jolt debug-draw toggles (visible during Play; draws Jolt's body state instead of the
 authored collider gizmos).
 
@@ -224,7 +224,7 @@ API — legal because panels run outside the system update.
 ### Properties (drawn by the same panel)
 
 Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, animator, script, audio source, audio listener, rigid body, colliders, one
+lights, sky light, animator, script, audio source, audio listener, particle emitter, rigid body, colliders, one
 `DrawAddComponentEntry<T>` line each); one collapsible section per component
 (`DrawComponent<T>` helper with a remove-component menu).
 
@@ -300,6 +300,12 @@ Notable behaviors:
   bug. See [audio.md](../engine/audio.md).
 - Audio listener: a Primary checkbox and a hint that the primary camera is the fallback when the
   component is absent.
+- Particle emitter: grouped headers (Emission / Initial / Over Lifetime / Rendering). Phase 2 is
+  numeric fields, enum combos, and asset-slot drops; Size Curve and Color Over Lifetime render as
+  a disabled key count until the Phase 4 widgets. Min/Max pairs clamp so max ≥ min on edit.
+  Billboard shows Texture + Blend; Mesh shows Mesh + Material and the opaque-material rule as a
+  hint. `DrawComponent`'s per-frame copy of the open section is no longer POD-sized — it
+  heap-copies the two keyframe vectors and the live pool.
 - Colliders: dimensions, offset, friction/restitution.
 
 Adding a component type means extending this panel's Add-Component popup and `DrawComponents` —

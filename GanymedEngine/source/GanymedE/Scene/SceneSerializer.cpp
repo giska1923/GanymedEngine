@@ -299,6 +299,73 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		if (entity.HasComponent<ParticleEmitterComponent>())
+		{
+			out << YAML::Key << "ParticleEmitterComponent";
+			out << YAML::BeginMap;
+
+			const auto& p = entity.GetComponent<ParticleEmitterComponent>();
+			const ParticleEmitterComponent d{};
+
+			if (p.RateOverTime != d.RateOverTime)
+				out << YAML::Key << "RateOverTime" << YAML::Value << p.RateOverTime;
+			if (p.MaxParticles != d.MaxParticles)
+				out << YAML::Key << "MaxParticles" << YAML::Value << p.MaxParticles;
+			if (p.Looping != d.Looping)
+				out << YAML::Key << "Looping" << YAML::Value << p.Looping;
+			if (p.Duration != d.Duration)
+				out << YAML::Key << "Duration" << YAML::Value << p.Duration;
+			if (p.PlayOnStart != d.PlayOnStart)
+				out << YAML::Key << "PlayOnStart" << YAML::Value << p.PlayOnStart;
+
+			if (p.LifetimeMin != d.LifetimeMin)
+				out << YAML::Key << "LifetimeMin" << YAML::Value << p.LifetimeMin;
+			if (p.LifetimeMax != d.LifetimeMax)
+				out << YAML::Key << "LifetimeMax" << YAML::Value << p.LifetimeMax;
+			if (p.SpeedMin != d.SpeedMin)
+				out << YAML::Key << "SpeedMin" << YAML::Value << p.SpeedMin;
+			if (p.SpeedMax != d.SpeedMax)
+				out << YAML::Key << "SpeedMax" << YAML::Value << p.SpeedMax;
+			if (p.ConeAngle != d.ConeAngle)
+				out << YAML::Key << "ConeAngle" << YAML::Value << p.ConeAngle;
+			if (p.StartSizeMin != d.StartSizeMin)
+				out << YAML::Key << "StartSizeMin" << YAML::Value << p.StartSizeMin;
+			if (p.StartSizeMax != d.StartSizeMax)
+				out << YAML::Key << "StartSizeMax" << YAML::Value << p.StartSizeMax;
+			if (p.StartRotationMin != d.StartRotationMin)
+				out << YAML::Key << "StartRotationMin" << YAML::Value << p.StartRotationMin;
+			if (p.StartRotationMax != d.StartRotationMax)
+				out << YAML::Key << "StartRotationMax" << YAML::Value << p.StartRotationMax;
+			if (p.RotationSpeedMin != d.RotationSpeedMin)
+				out << YAML::Key << "RotationSpeedMin" << YAML::Value << p.RotationSpeedMin;
+			if (p.RotationSpeedMax != d.RotationSpeedMax)
+				out << YAML::Key << "RotationSpeedMax" << YAML::Value << p.RotationSpeedMax;
+			if (p.GravityModifier != d.GravityModifier)
+				out << YAML::Key << "GravityModifier" << YAML::Value << p.GravityModifier;
+			if (p.WorldSpace != d.WorldSpace)
+				out << YAML::Key << "WorldSpace" << YAML::Value << p.WorldSpace;
+			if (p.Seed != d.Seed)
+				out << YAML::Key << "Seed" << YAML::Value << p.Seed;
+
+			if (!p.SizeCurve.IsDefault())
+				out << YAML::Key << "SizeCurve" << YAML::Value << p.SizeCurve;
+			if (!p.ColorOverLifetime.IsDefault())
+				out << YAML::Key << "ColorOverLifetime" << YAML::Value << p.ColorOverLifetime;
+
+			if (p.RenderMode != d.RenderMode)
+				out << YAML::Key << "RenderMode" << YAML::Value << (int)p.RenderMode;
+			if (IsAssetHandleValid(p.Texture))
+				out << YAML::Key << "Texture" << YAML::Value << static_cast<uint64_t>(p.Texture);
+			if (p.Blend != d.Blend)
+				out << YAML::Key << "Blend" << YAML::Value << (int)p.Blend;
+			if (IsAssetHandleValid(p.Mesh))
+				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(p.Mesh);
+			if (IsAssetHandleValid(p.Material))
+				out << YAML::Key << "Material" << YAML::Value << static_cast<uint64_t>(p.Material);
+
+			out << YAML::EndMap;
+		}
+
 		if (entity.HasComponent<RigidBodyComponent>())
 		{
 			out << YAML::Key << "RigidBodyComponent";
@@ -778,6 +845,68 @@ namespace GanymedE {
 			auto& listener = deserializedEntity.AddComponent<AudioListenerComponent>();
 			if (auto primary = audioListenerComponent["Primary"])
 				listener.Primary = primary.as<bool>();
+		}
+
+		auto particleEmitterComponent = entityNode["ParticleEmitterComponent"];
+		if (particleEmitterComponent)
+		{
+			auto& p = deserializedEntity.AddComponent<ParticleEmitterComponent>();
+
+			if (auto n = particleEmitterComponent["RateOverTime"])
+				p.RateOverTime = n.as<float>();
+			if (auto n = particleEmitterComponent["MaxParticles"])
+				p.MaxParticles = n.as<uint32_t>();
+			if (auto n = particleEmitterComponent["Looping"])
+				p.Looping = n.as<bool>();
+			if (auto n = particleEmitterComponent["Duration"])
+				p.Duration = n.as<float>();
+			if (auto n = particleEmitterComponent["PlayOnStart"])
+				p.PlayOnStart = n.as<bool>();
+
+			if (auto n = particleEmitterComponent["LifetimeMin"])
+				p.LifetimeMin = n.as<float>();
+			if (auto n = particleEmitterComponent["LifetimeMax"])
+				p.LifetimeMax = n.as<float>();
+			if (auto n = particleEmitterComponent["SpeedMin"])
+				p.SpeedMin = n.as<float>();
+			if (auto n = particleEmitterComponent["SpeedMax"])
+				p.SpeedMax = n.as<float>();
+			if (auto n = particleEmitterComponent["ConeAngle"])
+				p.ConeAngle = n.as<float>();
+			if (auto n = particleEmitterComponent["StartSizeMin"])
+				p.StartSizeMin = n.as<float>();
+			if (auto n = particleEmitterComponent["StartSizeMax"])
+				p.StartSizeMax = n.as<float>();
+			if (auto n = particleEmitterComponent["StartRotationMin"])
+				p.StartRotationMin = n.as<float>();
+			if (auto n = particleEmitterComponent["StartRotationMax"])
+				p.StartRotationMax = n.as<float>();
+			if (auto n = particleEmitterComponent["RotationSpeedMin"])
+				p.RotationSpeedMin = n.as<float>();
+			if (auto n = particleEmitterComponent["RotationSpeedMax"])
+				p.RotationSpeedMax = n.as<float>();
+			if (auto n = particleEmitterComponent["GravityModifier"])
+				p.GravityModifier = n.as<float>();
+			if (auto n = particleEmitterComponent["WorldSpace"])
+				p.WorldSpace = n.as<bool>();
+			if (auto n = particleEmitterComponent["Seed"])
+				p.Seed = n.as<uint32_t>();
+
+			if (auto n = particleEmitterComponent["SizeCurve"])
+				p.SizeCurve = n.as<FloatCurve>();
+			if (auto n = particleEmitterComponent["ColorOverLifetime"])
+				p.ColorOverLifetime = n.as<ColorGradient>();
+
+			if (auto n = particleEmitterComponent["RenderMode"])
+				p.RenderMode = (ParticleEmitterComponent::Mode)n.as<int>();
+			if (auto n = particleEmitterComponent["Texture"])
+				p.Texture = n.as<uint64_t>();
+			if (auto n = particleEmitterComponent["Blend"])
+				p.Blend = (ParticleBlend)n.as<int>();
+			if (auto n = particleEmitterComponent["Mesh"])
+				p.Mesh = n.as<uint64_t>();
+			if (auto n = particleEmitterComponent["Material"])
+				p.Material = n.as<uint64_t>();
 		}
 
 		auto rigidBodyComponent = entityNode["RigidBodyComponent"];

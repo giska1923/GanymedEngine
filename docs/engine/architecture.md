@@ -65,7 +65,8 @@ Application::Run loop
 │   │   │   ├─ TransformSystem             recompute dirty world transforms (ChangeView)
 │   │   │   ├─ CameraSystem                resolve primary camera → RenderContext singleton
 │   │   │   ├─ AudioSystem                 push voice state + emitter/listener poses to AudioEngine
-│   │   │   └─ RenderSystem                submit lights/sky/meshes/sprites/gizmos to Renderer2D/3D
+│   │   │   ├─ ParticleSystem              CPU emit/age/integrate (edit and play)
+│   │   │   └─ RenderSystem                submit lights/sky/meshes/particles/sprites/gizmos
 │   │   └─ FrameEnd                        clear init/fini buffers + graveyards
 │   ├─ entity-ID pick request/poll         (editor)
 │   └─ SceneRenderer::EndFrame             bloom → tonemap → FXAA → composite
@@ -98,7 +99,7 @@ Two ordering facts worth internalizing:
   `main()`; C++ guarantees nothing about their order relative to bgfx teardown).
 - The front-end layer — `EditorLayer` or `RuntimeLayer` — owns the `SceneRenderer` (render targets +
   post stack) and the active `Scene`. Neither the engine nor `Application` holds a scene.
-- `Scene` owns the entt registry, the `SystemManager` (eight built-in systems), the `CommandQueue`,
+- `Scene` owns the entt registry, the `SystemManager` (nine built-in systems), the `CommandQueue`,
   per-component-type change buffers / graveyards / init-fini buffers, and the UUID→entity map.
   Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`).
 - `PhysicsSystem` owns the `PhysicsScene` (Jolt world) — it exists only between play and stop.
@@ -106,7 +107,7 @@ Two ordering facts worth internalizing:
   `Init()`/`Shutdown()` by `Application`; because that shutdown runs in the destructor *body*, before
   the LayerStack unwinds, every one of its calls no-ops once shut down — the `IsGpuAlive` pattern
   again (see [audio.md](audio.md)).
-- Renderer subsystems (`Renderer2D`, `Renderer3D`, `PostProcess`, `MeshShader`) are static-lifetime
+- Renderer subsystems (`Renderer2D`, `Renderer3D`, `ParticleRenderer`, `PostProcess`, `MeshShader`) are static-lifetime
   but explicitly `Init()`/`Shutdown()` by `Renderer`, releasing GPU handles while bgfx is alive.
 
 ## Design principles the code actually follows

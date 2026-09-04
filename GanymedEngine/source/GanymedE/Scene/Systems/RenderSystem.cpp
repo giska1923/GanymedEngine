@@ -8,6 +8,7 @@
 #include "GanymedE/Renderer/EditorCamera.h"
 #include "GanymedE/Renderer/Environment.h"
 #include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Renderer/ParticleRenderer.h"
 #include "GanymedE/Renderer/Renderer2D.h"
 #include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/Scene/Entity.h"
@@ -116,6 +117,65 @@ namespace GanymedE {
 		}
 	}
 
+	void RenderSystem::SubmitParticles(const glm::vec3& cameraPosition, const glm::vec3& cameraRight,
+		const glm::vec3& cameraUp)
+	{
+		ParticleRenderer::SetView(cameraPosition, cameraRight, cameraUp);
+
+		for (auto [entity, worldTransform, emitter] : View<ParticleView>())
+		{
+			if (emitter.RenderMode == ParticleEmitterComponent::Mode::Mesh)
+			{
+				if (!Renderer3D::FrustumIntersects(emitter.WorldBounds))
+				{
+					Renderer3D::AddCulledParticleEmitter();
+					continue;
+				}
+
+				if (emitter.Pool.empty() || !IsAssetHandleValid(emitter.Mesh))
+					continue;
+
+				Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(emitter.Mesh);
+				if (!mesh)
+					continue;
+
+				Ref<Material> forced;
+				if (IsAssetHandleValid(emitter.Material))
+					forced = AssetManager::GetAsset<Material>(emitter.Material);
+
+				const glm::mat4& world = worldTransform.World;
+				for (const Particle& p : emitter.Pool)
+				{
+					const float life = p.Lifetime > 0.0f
+						? glm::clamp(p.Age / p.Lifetime, 0.0f, 1.0f) : 1.0f;
+					const float size = p.StartSize * emitter.SizeCurve.Sample(life);
+					if (size <= 0.0f)
+						continue;
+
+					glm::mat4 local(1.0f);
+					local = glm::translate(local, p.Position);
+					local = glm::rotate(local, glm::radians(p.Rotation), glm::vec3(0.0f, 1.0f, 0.0f));
+					local = glm::scale(local, glm::vec3(size));
+					const glm::mat4 transform = emitter.WorldSpace ? local : world * local;
+
+					if (forced)
+					{
+						const auto& submeshes = mesh->GetSubmeshes();
+						for (uint32_t i = 0; i < (uint32_t)submeshes.size(); i++)
+							Renderer3D::SubmitMesh(mesh, i, forced, transform, (int)entity);
+					}
+					else
+					{
+						Renderer3D::SubmitMesh(mesh, transform, (int)entity);
+					}
+				}
+				continue;
+			}
+
+			ParticleRenderer::Submit((int)entity, emitter, worldTransform.World);
+		}
+	}
+
 	void RenderSystem::SubmitSprites()
 	{
 		for (auto [entity, worldTransform, sprite] : View<SpriteView>())
@@ -197,18 +257,28 @@ namespace GanymedE {
 		ECS::SingletonAccessView<RenderContext> renderView{ m_Scene };
 		const RenderContext& context = *renderView.Get();
 
-		auto renderScene3D = [&](const glm::vec3& cameraPosition)
+		auto renderScene3D = [&](const glm::vec3& cameraPosition, const glm::vec3& cameraRight,
+			const glm::vec3& cameraUp)
 		{
 			SubmitLightsAndSky();
 			SubmitMeshes();
+			SubmitParticles(cameraPosition, cameraRight, cameraUp);
 			DrawPhysicsDebugOrGizmos(cameraPosition);
 			Renderer3D::EndScene();
 		};
 
 		if (context.MainCamera)
 		{
+			const glm::mat4& t = context.CameraTransform;
+			glm::vec3 right = glm::vec3(t[0]);
+			glm::vec3 up = glm::vec3(t[1]);
+			const float rl = glm::length(right);
+			const float ul = glm::length(up);
+			right = rl > 0.0f ? right / rl : glm::vec3(1.0f, 0.0f, 0.0f);
+			up = ul > 0.0f ? up / ul : glm::vec3(0.0f, 1.0f, 0.0f);
+
 			Renderer3D::BeginScene(*context.MainCamera, context.CameraTransform);
-			renderScene3D(glm::vec3(context.CameraTransform[3]));
+			renderScene3D(glm::vec3(t[3]), right, up);
 
 			Renderer2D::BeginScene(*context.MainCamera, context.CameraTransform);
 			SubmitSprites();
@@ -218,7 +288,8 @@ namespace GanymedE {
 		{
 			// Editor convenience: Play with no scene Camera still shows the viewport
 			Renderer3D::BeginScene(*fallbackCamera);
-			renderScene3D(fallbackCamera->GetPosition());
+			renderScene3D(fallbackCamera->GetPosition(), fallbackCamera->GetRightDirection(),
+				fallbackCamera->GetUpDirection());
 
 			Renderer2D::BeginScene(*fallbackCamera);
 			SubmitSprites();
@@ -254,6 +325,7 @@ namespace GanymedE {
 		SubmitLightsAndSky();
 		Renderer3D::DrawGrid();
 		SubmitMeshes();
+		SubmitParticles(camera->GetPosition(), camera->GetRightDirection(), camera->GetUpDirection());
 		DrawColliderGizmos();
 		Renderer3D::EndScene();
 

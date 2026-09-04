@@ -648,8 +648,12 @@ namespace GanymedE {
 				auto& component = entity.GetComponent<T>();
 
 				// Taken every frame; only the copy from the frame a widget grabs the active
-				// item is kept, and one frame later that value is unrecoverable. Components
-				// are handle/POD/small-string sized, so the copy is not worth avoiding.
+				// item is kept, and one frame later that value is unrecoverable. This used
+				// to claim components were handle/POD/small-string sized. ParticleEmitter
+				// is not: an open section heap-copies two keyframe vectors *and* the live
+				// pool (up to MaxParticles) every frame. Measured cost is those allocs while
+				// that one section is open; acceptable. ComponentEditCommand<T> storing
+				// before/after by value doubles it per command — also fine, also noted.
 				T before = component;
 				const ImGuiID activeOnEntry = ImGui::GetActiveID();
 
@@ -1108,6 +1112,7 @@ namespace GanymedE {
 			DrawAddComponentEntry<ScriptComponent>("Script");
 			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");
 			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
+			DrawAddComponentEntry<ParticleEmitterComponent>("Particle Emitter");
 			DrawAddComponentEntry<RigidBodyComponent>("Rigid Body");
 			DrawAddComponentEntry<BoxColliderComponent>("Box Collider");
 			DrawAddComponentEntry<SphereColliderComponent>("Sphere Collider");
@@ -1583,6 +1588,129 @@ namespace GanymedE {
 		{
 			const bool edited = ImGui::Checkbox("Primary", &component.Primary);
 			ImGui::TextDisabled("Falls back to the primary camera when absent");
+			return edited;
+		});
+
+		DrawComponent<ParticleEmitterComponent>("Particle Emitter", entity, [](auto& component)
+		{
+			bool edited = false;
+
+			auto minMax = [&](const char* minLabel, float& minV, const char* maxLabel, float& maxV, float speed)
+			{
+				if (ImGui::DragFloat(minLabel, &minV, speed))
+				{
+					if (minV > maxV)
+						maxV = minV;
+					edited = true;
+				}
+				if (ImGui::DragFloat(maxLabel, &maxV, speed))
+				{
+					if (maxV < minV)
+						minV = maxV;
+					edited = true;
+				}
+			};
+
+			if (ImGui::CollapsingHeader("Emission", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				edited |= ImGui::DragFloat("Rate Over Time", &component.RateOverTime, 0.1f, 0.0f, 100000.0f);
+				int maxParticles = (int)component.MaxParticles;
+				if (ImGui::DragInt("Max Particles", &maxParticles, 1.0f, 0, 100000))
+				{
+					component.MaxParticles = (uint32_t)std::max(maxParticles, 0);
+					edited = true;
+				}
+				edited |= ImGui::Checkbox("Looping", &component.Looping);
+				edited |= ImGui::DragFloat("Duration", &component.Duration, 0.05f, 0.0f, 1000.0f);
+				edited |= ImGui::Checkbox("Play On Start", &component.PlayOnStart);
+			}
+
+			if (ImGui::CollapsingHeader("Initial", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				minMax("Lifetime Min", component.LifetimeMin, "Lifetime Max", component.LifetimeMax, 0.02f);
+				minMax("Speed Min", component.SpeedMin, "Speed Max", component.SpeedMax, 0.05f);
+				edited |= ImGui::DragFloat("Cone Angle", &component.ConeAngle, 0.5f, 0.0f, 180.0f);
+				minMax("Start Size Min", component.StartSizeMin, "Start Size Max", component.StartSizeMax, 0.01f);
+				minMax("Start Rotation Min", component.StartRotationMin, "Start Rotation Max", component.StartRotationMax, 1.0f);
+				minMax("Rotation Speed Min", component.RotationSpeedMin, "Rotation Speed Max", component.RotationSpeedMax, 1.0f);
+				edited |= ImGui::DragFloat("Gravity Modifier", &component.GravityModifier, 0.05f);
+				edited |= ImGui::Checkbox("World Space", &component.WorldSpace);
+				int seed = (int)component.Seed;
+				if (ImGui::DragInt("Seed", &seed, 1.0f, 0, 2147483647))
+				{
+					component.Seed = (uint32_t)std::max(seed, 0);
+					edited = true;
+				}
+				ImGui::TextDisabled("0 derives from the entity UUID at play");
+			}
+
+			if (ImGui::CollapsingHeader("Over Lifetime", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				ImGui::TextDisabled("Size Curve: %u keys", (uint32_t)component.SizeCurve.Keys().size());
+				ImGui::TextDisabled("Color Over Lifetime: %u keys", (uint32_t)component.ColorOverLifetime.Keys().size());
+			}
+
+			if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				const char* modeStrings[] = { "Billboard", "Mesh" };
+				int mode = (int)component.RenderMode;
+				if (ImGui::Combo("Render Mode", &mode, modeStrings, 2))
+				{
+					component.RenderMode = (ParticleEmitterComponent::Mode)mode;
+					edited = true;
+				}
+
+				auto assetSlot = [&](const char* label, AssetHandle& handle, AssetType type, const char* dropHint)
+				{
+					if (IsAssetHandleValid(handle))
+					{
+						const AssetMetadata* metadata = AssetManager::GetMetadata(handle);
+						if (metadata)
+							ImGui::Text("%s: %s", label, metadata->FilePath.c_str());
+						else
+							ImGui::Text("%s handle: %llu", label, static_cast<uint64_t>(handle));
+
+						ImGui::PushID(label);
+						if (ImGui::Button("Clear"))
+						{
+							handle = InvalidAssetHandle;
+							edited = true;
+						}
+						ImGui::PopID();
+					}
+					else
+					{
+						ImGui::TextDisabled("No %s assigned", label);
+					}
+
+					ImGui::TextDisabled("%s", dropHint);
+					AssetHandle dropped = EditorUI::AcceptAssetDropHandle(type);
+					if (IsAssetHandleValid(dropped))
+					{
+						handle = dropped;
+						edited = true;
+					}
+				};
+
+				if (component.RenderMode == ParticleEmitterComponent::Mode::Billboard)
+				{
+					assetSlot("Texture", component.Texture, AssetType::Texture, "Drop a texture here; unset is white");
+					const char* blendStrings[] = { "Alpha", "Additive" };
+					int blend = (int)component.Blend;
+					if (ImGui::Combo("Blend", &blend, blendStrings, 2))
+					{
+						component.Blend = (ParticleBlend)blend;
+						edited = true;
+					}
+				}
+				else
+				{
+					assetSlot("Mesh", component.Mesh, AssetType::StaticMesh, "Drop a mesh here");
+					assetSlot("Material", component.Material, AssetType::Material, "Drop a .gmat here; unset is the mesh default");
+					ImGui::TextDisabled("Mesh particles must use opaque materials");
+				}
+			}
+
 			return edited;
 		});
 

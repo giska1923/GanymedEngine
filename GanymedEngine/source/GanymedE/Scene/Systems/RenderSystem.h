@@ -34,6 +34,9 @@ namespace GanymedE {
 		using BoxColliderView     = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<BoxColliderComponent>>;
 		using SphereColliderView  = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<SphereColliderComponent>>;
 		using CapsuleColliderView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<CapsuleColliderComponent>>;
+		// Iterated in Phase 3: billboards go to ParticleRenderer, mesh particles
+		// ride SubmitMesh. The declaration itself was Phase 2 (ordering lock).
+		using ParticleView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<ParticleEmitterComponent>>;
 
 		using Views = TypeList<
 			MeshView,
@@ -44,7 +47,8 @@ namespace GanymedE {
 			SkyView,
 			BoxColliderView,
 			SphereColliderView,
-			CapsuleColliderView
+			CapsuleColliderView,
+			ParticleView
 		>;
 
 		using ECS::System<RenderSystem>::System;
@@ -56,6 +60,8 @@ namespace GanymedE {
 	private:
 		void SubmitLightsAndSky();
 		void SubmitMeshes();
+		void SubmitParticles(const glm::vec3& cameraPosition, const glm::vec3& cameraRight,
+			const glm::vec3& cameraUp);
 		void SubmitSprites();
 		void DrawColliderGizmos();
 

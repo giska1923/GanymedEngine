@@ -42,7 +42,7 @@ verbatim by the `ForEachType(ComponentList)` loop. The copy is made in two passe
 parent's `Children` names entities created later in the walk.
 
 `Scene`'s constructor wires the entt signals for tracked/init/fini component types, creates the
-`RenderContext` and `PhysicsSettings` singletons, registers the eight built-in systems, and asserts
+`RenderContext` and `PhysicsSettings` singletons, registers the nine built-in systems, and asserts
 `ValidateOrdering()` passes.
 
 ## Entity
@@ -134,6 +134,20 @@ copyable, no behavior beyond small helpers.
 Both untracked: `AudioSystem` polls them every frame, so change tracking would buy nothing, and
 untracked means a script setter needs no `MarkChanged` to be heard — the `AnimatorComponent`
 precedent.
+
+### Particles
+
+- **`ParticleEmitterComponent`** — CPU emitter: rate, cap, looping/duration, cone (+Y, aimed by
+  the entity transform), min/max lifetime/speed/size/rotation, gravity modifier, simulation space,
+  seed, `FloatCurve` size multiplier, `ColorGradient` over lifetime, and billboard vs mesh
+  render settings. `ParticleBlend` is component-local (`Alpha`/`Additive`) so `RenderState.h` does
+  not leak bgfx defines into this header. Runtime state (`Playing`, `Time`, `EmitAccumulator`,
+  `Rng`, `Pool`, `WorldBounds`) is not serialized. `Scene::Copy` calls `ResetRuntime()` — pool,
+  accumulator, timer, Playing, bounds, **and RNG together** — so play mode starts empty and
+  emitters warm up (`LifetimeMax` seconds to steady state, Unity without prewarm). `Seed = 0`
+  derives from the entity UUID when playback starts, so two prefab instances do not march in
+  lockstep; a nonzero seed pins the sequence for the replay instrument. Untracked: the sim
+  polls every tick.
 
 ### Physics (pure data — Jolt never appears here)
 
@@ -229,12 +243,29 @@ alternative trades that for a re-decode on every replay.
 "systems simulate only in play mode" norm; state it next to `AnimationSystem`, which deliberately
 diverges from that norm so the inspector can scrub a pose. Two decisions, not an accident.
 
+### ParticleSystem — [`Systems/ParticleSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/ParticleSystem.h)
+CPU simulation of `ParticleEmitterComponent`. Per emitter, in this fixed order (the order is the
+determinism contract): PlayOnStart on a fresh emitter (`Playing == false`, `Time == 0`, empty
+pool) seeds `Rng` from `Seed` or the entity UUID and sets `Playing`; age + **stable** compaction
+(`std::remove_if`, not swap-erase — pool order is the replay instrument); integrate velocity /
+position / rotation, with world-down gravity rotated into emitter space in local mode (a tilted
+fountain's gravity must not tilt with it); spawn from `EmitAccumulator` at `RateOverTime`,
+capped at `MaxParticles`, drawing lifetime/speed/cone/size/rotation from `Rng` in a documented
+order; rebuild a conservative world AABB (frustum-cull input for the billboard / mesh submit).
+
+**Ticks in edit mode, the same tick as play.** Against both neighbours, deliberately:
+`AnimationSystem` samples-without-advancing — impossible here, a spawn/age sim has no closed
+form. `AudioSystem` is silent in edit — defensible for sound, wrong for visual authoring.
+`Playing = false` is how authors get quiet. Registration is between Audio and Render; Render's
+`RO<ParticleEmitterComponent>` is what makes `ValidateOrdering` enforce that slot.
+
 ### RenderSystem — [`Systems/RenderSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/RenderSystem.h)
 Pure submission — everything that used to be inlined in `Scene::OnUpdate*`. Reads `RenderContext`,
 begins Renderer3D with the main camera (or the editor fallback), submits lights, sky/environment,
-meshes, collider gizmos (or Jolt debug draw when enabled during play), ends the scene, then does the
-2D pass (sprites) in its own render view. The editor path additionally draws the grid. Its nine view
-declarations are live documentation of exactly what rendering reads.
+meshes, **particles** (billboards queued into `ParticleRenderer`, mesh particles as ordinary
+`SubmitMesh` opaques), collider gizmos (or Jolt debug draw when enabled during play), ends the
+scene, then does the 2D pass (sprites) in its own render view. The editor path additionally draws
+the grid. Its ten view declarations are live documentation of exactly what rendering reads.
 
 Two play-mode policies live in this system:
 
@@ -252,8 +283,10 @@ entity with an animator, a mesh that `HasSkeleton()`, and a non-empty palette go
 `Renderer3D::SubmitSkinnedMesh`, everything else to `SubmitMesh`. A rigged mesh with no animator
 therefore draws as static geometry in its bind pose, which is the sane result of dropping a
 character into a scene before authoring anything. Declaring that optional read is also what made
-the `AnimationSystem`-before-`RenderSystem` ordering checkable at last — see
-[ecs.md](ecs.md#systemmanager).
+  the `AnimationSystem`-before-`RenderSystem` ordering checkable at last — see
+  [ecs.md](ecs.md#systemmanager). `ParticleSystem` is the same shape: `RenderSystem` declares
+  `RO<ParticleEmitterComponent>` so the Audio-then-Particle-then-Render slot is enforced rather
+  than conventional.
 
 ## Singletons
 
@@ -333,6 +366,12 @@ blocks keyed by component name. Notes:
   (`if (node["Volume"])`) rather than bare `as<T>()` — hand-authored scenes are a normal way to
   make one, and an absent key in a bare read throws out through `Deserialize` and loses the whole
   file.
+- **`ParticleEmitterComponent` serializes only when present**, and every authored field is omitted
+  when equal to a default-constructed component (`IsDefault()` for the curves; invalid asset handles
+  omitted). Runtime fields (`Playing`, `Time`, `EmitAccumulator`, `Rng`, `Pool`, `WorldBounds`) are
+  never written. Decode is fully guarded. A default emitter therefore emits an empty map under the
+  component key, not a wall of defaults — that is what keeps committed scenes without emitters
+  byte-identical on load → save → load → save.
 - `WorldTransformComponent` is intentionally not serialized (derived).
 - Adding a component type means extending both `SerializeEntity` and `DeserializeEntity` — this is
   one of the two remaining hand-maintained per-component lists (the other is the editor UI).
@@ -432,13 +471,17 @@ The runtime scene is a disposable deep copy keyed by UUID — physics can knock 
 Stop simply discards the copy. This is why stable UUIDs and the generic `ComponentList` copy exist.
 
 The generic copy is a shallow value copy of every component, so anything that is runtime-only needs
-an explicit fixup sweep after it. There are two: `NativeScriptComponent::Instance` is nulled so
-instances are recreated on play, and `AnimatorComponent::Palette` is cleared because carrying a
-per-joint matrix array per entity into the new scene buys one frame of stale data. Adding a
-component with runtime-only state means adding a third sweep — nothing enforces this.
+an explicit fixup sweep after it. There are three: `NativeScriptComponent::Instance` is nulled so
+instances are recreated on play; `AnimatorComponent::Palette` is cleared because carrying a
+per-joint matrix array per entity into the new scene buys one frame of stale data; and
+`ParticleEmitterComponent::ResetRuntime()` clears pool, accumulator, timer, Playing, bounds, and
+RNG together — a copied-then-reset pool with a *not*-reset RNG would double-play the editor's
+stream. Play-mode emitters therefore warm up from empty. Adding a component with runtime-only
+state means adding another sweep — nothing enforces this.
 
 The audio components are the worked example of *not* needing one. Putting the live `VoiceId` on
-`AudioSourceComponent` would have made a third sweep mandatory and would have let a copied scene
+`AudioSourceComponent` would have made a fourth sweep mandatory and would have let a copied scene
 double-drive one sound; keeping the voice in `AudioSystem`'s map means the copy is correct with no
 audio code involved at all. Where a component's runtime state goes is a `Scene::Copy` decision as
-much as an ownership one.
+much as an ownership one. Particles took the Palette side of that fork because the pool is pure
+data, not a foreign resource.

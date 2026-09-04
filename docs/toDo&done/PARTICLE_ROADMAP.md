@@ -1,6 +1,6 @@
 # GanymedEngine — Particle System Roadmap
 
-Status: **Phase 1 executed.** Written 2026-09-03, against the
+Status: **Phase 3 executed.** Written 2026-09-03, against the
 post-content-authoring engine (branch point: the undo/prefab/`.gmat` milestone, complete; HEAD
 `2e74671`). Follows the format of [`CONTENT_AUTHORING_ROADMAP.md`](CONTENT_AUTHORING_ROADMAP.md):
 each phase carries goal, steps, decisions with rationale, risks, and a verification table;
@@ -472,7 +472,56 @@ Scripted probes, x64 Debug; fixed `Timestep(1/60)` driven by hand, not wall cloc
 
 ### Phase 2 execution notes
 
-*(appended at execution)*
+Executed 2026-09-04. x64 Debug, MSBuild; engine and editor build clean after `premake5 vs2022`
+(new `ParticleSystem.cpp`). Verification ran from a temporary `RunParticlePhase2Probe` (editor TU,
+called from `EditorLayer::OnAttach`, `Application::Close()` at the end); probe removed.
+**31/31 pass.** Float determinism is this platform, this run — not a cross-compile promise.
+
+**The tick harness is Transform then Particle, not a full editor frame.** `Scene::FrameBegin` /
+`FrameEnd` are private; `Scene::OnUpdateEditor` would also run `RenderSystem` (GPU submits during
+`OnAttach`). The probe called `TransformSystem::OnUpdateEditor` then `ParticleSystem::OnUpdateEditor`
+at a fixed `Timestep(1/60)`. That is enough: these emitters sit at identity, `ParticleSystem` is an
+`IterView`, and the determinism contract lives in `TickEmitter`'s sub-step order, not in FrameBegin.
+
+**Replay (Seed=42, rate 100, 300 ticks):** pool size 202, FNV-1a over positions
+`fb96b467916f745e`. ResetRuntime + replay matched size and hash. Seed 42 vs 43 diverged; Seed=0 on
+UUIDs 2001 vs 2002 diverged (xor-fold of the 64-bit UUID).
+
+**Lifecycle:** looping rate 10 / lifetime 1 settled in 9–11 from tick 60 through 180. Non-looping
+Duration 1.0: after 60 ticks, pool=10 and `Time=0.9999997` — `60 * (1/60)` is not 1.0 in IEEE, and
+the emission window is `Looping || Time <= Duration` *after* `Time += dt`, so tick 60 still emits
+(the table's "stops at tick 60" is the Duration crossing, not an exclusive `<`). Extra 70 ticks
+drained the pool to 0 (`Time=2.1666653`). Cap 10000/sec vs `MaxParticles=100` held every tick.
+
+**PlayOnStart is a fresh-state gate, not a `HasStarted` flag.** It fires only when
+`!Playing && Time==0 && Pool.empty()`, so inspector Stop sticks without a second boolean. Rising
+edge reseeds `Rng`. Newborns are not aged or integrated on the spawn tick.
+
+**Serialization omit-guard held.** A default-curve emitter save→load→save was byte-identical and
+contained neither `SizeCurve` nor `ColorOverLifetime` (empty component map). Edited 3-key size +
+2-key gradient round-tripped and both keys were present. Comparisons use a default-constructed
+`ParticleEmitterComponent d{}` so authored defaults cannot drift from the omit checks.
+
+**Committed scenes are still not a serializer fixed point** (Phase 1 finding: `Scene: Untitled`,
+unsorted `BoxesPhysicsExample`, colliding UUID `12837192831273`). The check that actually pins this
+phase: load → save → load → save is byte-identical for all five committed scenes, and none of those
+saves contain `ParticleEmitterComponent`.
+
+**Copy / undo / ordering.** Editor warmed to ≥50 live particles; `Scene::Copy` started the play
+copy at pool 0 / Time 0; the editor pool was untouched through Copy and through 10 play ticks; the
+copy warmed up. `ComponentEditCommand<ParticleEmitterComponent>` undo restored default curves, redo
+restored 3+2 keys, visible through a save. `ValidateOrdering()==0` on the 9-system chain; a scratch
+manager with Render then Particle logged
+`System ordering: 'RenderSystem' reads component(s) that 'ParticleSystem' writes later` and returned
+>0.
+
+**Out of scope, not a miss:** no drawing, no Lua/d.ts (Phase 5), inspector curves are read-only key
+counts (Phase 4). Inspector `Seed` is a signed `DragInt` (0..INT_MAX) over a `uint32_t` field —
+fine for the replay instrument; values above 2^31−1 are not authorable in the numeric inspector.
+
+**Docs:** `scene.md` (catalog, ParticleSystem, Copy reset, YAML omit-guard), `ecs.md` (chain +
+OnUpdateEditor exception), `architecture.md` (frame diagram, nine systems), `editor.md` (inspector
++ DrawComponent copy cost), this file, `docs/README.md`. No new doc files.
 
 ---
 
@@ -588,7 +637,47 @@ interactive.
 
 ### Phase 3 execution notes
 
-*(appended at execution)*
+Executed 2026-09-04. x64 Debug, MSBuild; engine and editor build clean after `premake5 vs2022`
+(new `ParticleRenderer.cpp`) and `scripts\compile_shaders.bat` (vs/fs_Particle, dx11/spirv/glsl ×
+three app trees). Shader load logged: `Loaded shader 'Particle' (dx11)`. Verification ran from a
+temporary `RunParticlePhase3Probe` (editor TU, `EditorLayer::OnAttach`, `Application::Close()`);
+probe removed. **7/7 scripted pass.**
+
+**This is why play mode looked empty after Phase 2.** The sim filled the pool; `RenderSystem`'s
+`ParticleView` was declared only so `ValidateOrdering` would lock the slot. Nothing submitted. Phase
+3 iterates that view: billboards queue into `ParticleRenderer`, mesh particles go through
+`SubmitMesh`.
+
+**Draw counts (3 billboard emitters, cap 500, 30 ticks):** `ParticleEmitters=3`,
+`ParticleDrawCalls=3`, `ParticleBillboards=1500` matching live pool size. One submit per visible
+emitter, as targeted.
+
+**Blend restore:** Alpha + Additive emitters both live; `RenderCommand::GetState().Blending` after
+8 BeginScene/EndScene frames matched the pre-flush mode. Transient cap of 1 quad logged
+`ParticleRenderer: transient buffer exhausted — dropping billboards` once, drew 1, and still
+restored blend — the early-out leak case, measured.
+
+**Cull:** emitter AABB placed behind the editor camera → `ParticleCulledEmitters=1`, zero draws,
+pool size unchanged.
+
+**Determinism:** Phase 2-shaped 300-tick hash `bb04445b9570b0fe` identical after a live
+Submit+Flush. Alpha back-to-front sort is a scratch index array; the pool is not touched.
+
+**Seam:** `ParticleRenderer::Flush()` runs after the transparent mesh loop and before
+`SetDepthWrite(true)`. `RenderStateGuard` copies the singleton on entry and assigns it back in the
+destructor, so Additive cannot leak into grid/2D/the next frame.
+
+**Out of scope for the scripted probe, not missing from the code:** mesh-particle instancing
+(`SubmitMesh` per live particle, opaque Phong path, hard opaque-material rule already in the
+inspector), picking MRT (`fs_Particle` writes `gl_FragData[1]` unconditionally — async readback
+needs ~3 `bgfx::frame()`s the OnAttach probe cannot wait for; hover a cloud and you should pick the
+emitter), runtime boot of a particle scene (no committed particle scene yet), screenshots
+(interactive). Mesh debris is authorable now: set Render Mode to Mesh, drop a mesh, use an opaque
+`.gmat`.
+
+**Docs:** `rendering.md` (EndScene step 7, Particle program, stats/budget), `scene.md` (RenderSystem
+submit + AABB as frustum input), `architecture.md` (ParticleRenderer, RenderSystem line),
+`editor.md` (Stats panel), this file, `docs/README.md`. No new doc files.
 
 ---
 

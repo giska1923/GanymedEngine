@@ -351,6 +351,9 @@ namespace GanymedE {
 		ImGui::Text("Culled (frustum): %d", stats3D.CulledMeshes);
 		ImGui::Text("Instanced Draws: %d", stats3D.InstancedDraws);
 		ImGui::Text("Transparent: %d", stats3D.TransparentMeshes);
+		ImGui::Text("Particles: %d emitters, %d billboards, %d draws, %d culled",
+			stats3D.ParticleEmitters, stats3D.ParticleBillboards,
+			stats3D.ParticleDrawCalls, stats3D.ParticleCulledEmitters);
 
 		ImGui::Separator();
 		ImGui::Text("Post Processing:");

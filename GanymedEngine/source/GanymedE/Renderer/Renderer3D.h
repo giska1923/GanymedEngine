@@ -70,9 +70,17 @@ namespace GanymedE {
 			uint32_t InstancedDraws = 0;   // draw calls that batched > 1 instance
 			uint32_t TransparentMeshes = 0;
 			uint32_t SkinnedDraws = 0;     // draw calls that uploaded a joint palette
+			uint32_t ParticleEmitters = 0;       // billboard emitters that produced a draw
+			uint32_t ParticleBillboards = 0;     // quads that actually drew (truncation-honest)
+			uint32_t ParticleDrawCalls = 0;      // one per visible billboard emitter
+			uint32_t ParticleCulledEmitters = 0; // skipped by the Phase 2 AABB
 		};
 		static void ResetStats();
 		static Statistics GetStats();
+
+		static bool FrustumIntersects(const AABB& bounds);
+		static void AddParticleStats(uint32_t emitters, uint32_t billboards, uint32_t drawCalls);
+		static void AddCulledParticleEmitter();
 	};
 
 }
