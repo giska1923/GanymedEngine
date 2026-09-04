@@ -147,7 +147,11 @@ precedent.
   emitters warm up (`LifetimeMax` seconds to steady state, Unity without prewarm). `Seed = 0`
   derives from the entity UUID when playback starts, so two prefab instances do not march in
   lockstep; a nonzero seed pins the sequence for the replay instrument. Untracked: the sim
-  polls every tick.
+  polls every tick. Inspector Play / Stop / Restart (`PlayPreview` / `StopPreview` /
+  `RestartPreview`) are runtime-only: not serialized, not undoable. `PlayPreview` is a no-op if
+  already playing. RNG reseeds only from a fresh state (`Time == 0` and empty pool) — Stop then
+  Play resumes the same stream; Restart calls `ResetRuntime` and seeds itself because
+  `ParticleSystem` has already run that frame.
 
 ### Physics (pure data — Jolt never appears here)
 
@@ -245,8 +249,12 @@ diverges from that norm so the inspector can scrub a pose. Two decisions, not an
 
 ### ParticleSystem — [`Systems/ParticleSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/ParticleSystem.h)
 CPU simulation of `ParticleEmitterComponent`. Per emitter, in this fixed order (the order is the
-determinism contract): PlayOnStart on a fresh emitter (`Playing == false`, `Time == 0`, empty
-pool) seeds `Rng` from `Seed` or the entity UUID and sets `Playing`; age + **stable** compaction
+determinism contract): PlayOnStart on a fresh emitter (`Playing == false`, `IsFresh()` —
+`Time == 0` and empty pool) sets `Playing`; a Playing rising edge **and** a fresh state seeds
+`Rng` from `Seed` or the entity UUID (`SeedRng`). A Stop→Play resume is a rising edge that is
+*not* fresh, so the stream continues. Inspector Restart seeds itself after `ResetRuntime` —
+the next tick already sees `Playing == true` and would miss the rising-edge seed. Then: age +
+**stable** compaction
 (`std::remove_if`, not swap-erase — pool order is the replay instrument); integrate velocity /
 position / rotation, with world-down gravity rotated into emitter space in local mode (a tilted
 fountain's gravity must not tilt with it); spawn from `EmitAccumulator` at `RateOverTime`,

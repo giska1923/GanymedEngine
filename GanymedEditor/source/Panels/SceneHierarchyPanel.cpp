@@ -1,5 +1,6 @@
 #include "SceneHierarchyPanel.h"
 #include "../AssetDragDrop.h"
+#include "../EditorWidgets.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -1591,9 +1592,26 @@ namespace GanymedE {
 			return edited;
 		});
 
-		DrawComponent<ParticleEmitterComponent>("Particle Emitter", entity, [](auto& component)
+		DrawComponent<ParticleEmitterComponent>("Particle Emitter", entity, [entity](auto& component)
 		{
 			bool edited = false;
+
+			// Preview only. These mutate Playing/pool/RNG — not authored, not serialized —
+			// so they must not join `edited`. A Button still takes ActiveId for the click;
+			// TrackCommitBoundary drops the pending edit because Edited stayed false.
+			if (ImGui::Button("Play"))
+				component.PlayPreview(entity.GetUUID());
+			ImGui::SameLine();
+			if (ImGui::Button("Stop"))
+				component.StopPreview();
+			ImGui::SameLine();
+			if (ImGui::Button("Restart"))
+				component.RestartPreview(entity.GetUUID());
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s  %u live  t=%.2f",
+				component.Playing ? "Playing" : "Stopped",
+				(uint32_t)component.Pool.size(),
+				component.Time);
 
 			auto minMax = [&](const char* minLabel, float& minV, const char* maxLabel, float& maxV, float speed)
 			{
@@ -1646,8 +1664,8 @@ namespace GanymedE {
 
 			if (ImGui::CollapsingHeader("Over Lifetime", ImGuiTreeNodeFlags_DefaultOpen))
 			{
-				ImGui::TextDisabled("Size Curve: %u keys", (uint32_t)component.SizeCurve.Keys().size());
-				ImGui::TextDisabled("Color Over Lifetime: %u keys", (uint32_t)component.ColorOverLifetime.Keys().size());
+				edited |= EditorUI::CurveEditor("Size Curve", component.SizeCurve, 0.0f, 2.0f);
+				edited |= EditorUI::GradientEditor("Color Over Lifetime", component.ColorOverLifetime);
 			}
 
 			if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1708,6 +1726,8 @@ namespace GanymedE {
 					assetSlot("Mesh", component.Mesh, AssetType::StaticMesh, "Drop a mesh here");
 					assetSlot("Material", component.Material, AssetType::Material, "Drop a .gmat here; unset is the mesh default");
 					ImGui::TextDisabled("Mesh particles must use opaque materials");
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("A Transparent .gmat submits one draw per particle instead of the opaque instanced path.");
 				}
 			}
 

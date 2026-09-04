@@ -445,6 +445,42 @@ namespace GanymedE {
 			WorldBounds = {};
 		}
 
+		bool IsFresh() const { return Time == 0.0f && Pool.empty(); }
+
+		void SeedRng(UUID uuid)
+		{
+			if (Seed != 0)
+			{
+				Rng = Random(Seed);
+				return;
+			}
+
+			const uint64_t u = static_cast<uint64_t>(uuid);
+			Rng = Random(static_cast<uint32_t>(u ^ (u >> 32)));
+		}
+
+		// Inspector / Lua playback. Play is a no-op on an already-playing emitter (the
+		// PlayAnimation trap: a per-frame call must not restart). RNG reseeds only from
+		// a fresh state — Stop then Play resumes the same stream; Restart seeds itself
+		// because ParticleSystem has already run this frame and will not see a rising edge.
+		void PlayPreview(UUID uuid)
+		{
+			if (Playing)
+				return;
+			Playing = true;
+			if (IsFresh())
+				SeedRng(uuid);
+		}
+
+		void StopPreview() { Playing = false; }
+
+		void RestartPreview(UUID uuid)
+		{
+			ResetRuntime();
+			Playing = true;
+			SeedRng(uuid);
+		}
+
 		ParticleEmitterComponent() = default;
 		ParticleEmitterComponent(const ParticleEmitterComponent&) = default;
 	};

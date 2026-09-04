@@ -1,6 +1,6 @@
 # GanymedEngine — Particle System Roadmap
 
-Status: **Phase 3 executed.** Written 2026-09-03, against the
+Status: **Phase 4 executed.** Written 2026-09-03, against the
 post-content-authoring engine (branch point: the undo/prefab/`.gmat` milestone, complete; HEAD
 `2e74671`). Follows the format of [`CONTENT_AUTHORING_ROADMAP.md`](CONTENT_AUTHORING_ROADMAP.md):
 each phase carries goal, steps, decisions with rationale, risks, and a verification table;
@@ -765,7 +765,43 @@ evidence is permanent.
 
 ### Phase 4 execution notes
 
-*(appended at execution)*
+Executed 2026-09-04. x64 Debug, MSBuild; engine and editor build clean after `premake5 vs2022`
+(new `EditorWidgets.cpp`). Verification ran from a temporary `RunParticlePhase4Probe` (editor TU,
+called from `EditorLayer::OnAttach`, `Application::Close()` at the end); probe removed.
+**19/19 pass.**
+
+**Scripted undo round-trip.** Default emitter save omitted `SizeCurve` and `ColorOverLifetime`.
+A `ComponentEditCommand<ParticleEmitterComponent>` with a 3-key size curve + 2-key gradient:
+undo/save was byte-identical to the pre-edit save; redo/save identical to the post-edit save.
+That is the house instrument for the widget's mutation API — the widgets themselves cannot be
+driven from a probe (ImGui has no programmatic input path).
+
+**Seed-on-fresh, not seed-on-Playing-edge.** Phase 2 reseeded on every rising edge of `Playing`.
+Stop then Play would have reshuffled a mid-effect preview. `SeedRng` now runs only when
+`IsFresh()` (`Time == 0` and empty pool). Probe: Seed=42, rate 100, 30 ticks → Stop → Play → 30
+more ticks hashed identical to an uninterrupted 60 ticks. `PlayOnStart` still starts a fresh
+emitter and does **not** auto-resume after Stop. `RestartPreview` seeds itself: ParticleSystem
+runs before ImGui, so `Playing = true` after `ResetRuntime` would skip the next tick's rising-edge
+seed. Restart's 20-tick hash matched a fresh `PlayPreview`.
+
+**Interactive checks, named as such (cannot automate):**
+
+- Drag granularity: one key dragged ~2 s → exactly one `Undo: pushed 'Edit ParticleEmitter'`
+  (`GE_TRACE` in `EditorUndoStack::Push`); Ctrl+Z restores the pre-drag curve.
+- Instant edits: double-click-add → one command that frame; right-click-delete → one command;
+  delete on the last key → refused (`RemoveKey` warning), no command.
+- Hover-no-move: grab a key, release without moving → zero commands (pending-dropped). The
+  widget acquires the key on the press frame and `SetKey`s only on later motion — applying
+  screen-to-curve on the grab frame would snap a slightly-off-center click onto the cursor and
+  mint a command for a no-move click.
+- Drag past neighbour → `SetKey` re-sorts, polyline does not cross, live preview has no pop.
+- RenderMode switch is one undoable command; Billboard/Mesh slots swap.
+- Edit SizeCurve while the emitter plays in-edit → particles respond next frame.
+- After an authoring session: save → load → save byte-identical.
+
+**Docs:** `editor.md` (InvisibleButton house pattern, curve/gradient widgets, preview buttons
+not undoable), `scene.md` (preview controls, seed-on-fresh), this file, `docs/README.md`.
+No new doc files.
 
 ---
 

@@ -41,14 +41,6 @@ namespace GanymedE {
 			return { sinTheta * glm::cos(phi), cosTheta, sinTheta * glm::sin(phi) };
 		}
 
-		uint32_t EffectiveSeed(uint32_t authored, UUID uuid)
-		{
-			if (authored != 0)
-				return authored;
-			const uint64_t u = static_cast<uint64_t>(uuid);
-			return static_cast<uint32_t>(u ^ (u >> 32));
-		}
-
 		void RebuildBounds(ParticleEmitterComponent& emitter, const glm::mat4& world)
 		{
 			float maxMul = 0.0f;
@@ -112,14 +104,14 @@ namespace GanymedE {
 		// retirement cannot see this tick's newborns.
 
 		const bool wasPlaying = emitter.Playing;
-		if (!emitter.Playing && emitter.PlayOnStart && emitter.Time == 0.0f && emitter.Pool.empty())
+		if (!emitter.Playing && emitter.PlayOnStart && emitter.IsFresh())
 			emitter.Playing = true;
 
-		if (emitter.Playing && !wasPlaying)
-		{
-			const UUID uuid = Entity{ entity, &m_Scene }.GetUUID();
-			emitter.Rng = Random(EffectiveSeed(emitter.Seed, uuid));
-		}
+		// Seed only from a fresh start. A Stop→Play resume must keep the stream; reseeding
+		// on every Playing rising edge would reshuffle a mid-effect preview. Inspector
+		// Restart seeds itself — this tick already saw Playing==true after ResetRuntime.
+		if (emitter.Playing && !wasPlaying && emitter.IsFresh())
+			emitter.SeedRng(Entity{ entity, &m_Scene }.GetUUID());
 
 		if (!emitter.Playing)
 		{
