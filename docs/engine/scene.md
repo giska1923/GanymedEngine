@@ -353,6 +353,18 @@ blocks keyed by component name. Notes:
   The scene is left partially populated rather than rolled back, so the caller chooses whether to
   discard it; a half-loaded scene is still inspectable in the editor. The split into a private
   `DeserializeUnchecked` exists only so the try block does not re-indent every component branch.
+- **`FloatCurve` / `ColorGradient`** ([`Math/Curve.h`](../../GanymedEngine/source/GanymedE/Math/Curve.h))
+  are linear keyframe types: never empty (default is the identity multiplier `{0, 1}` / white
+  `{0, (1,1,1,1)}`), sampled by the same `upper_bound` → lerp shape as `AnimationClip::Channel`
+  (`AnimationSystem::FindKeys`). Mutation goes through `AddKey` / `RemoveKey` / `SetKey` so the
+  sorted-by-time invariant holds at the type boundary; `RemoveKey` refuses the last key.
+  `IsDefault()` is the omit-guard for when a component starts serializing them. In YAML they are a
+  Flow sequence of `[t, v]` / `[t, r, g, b, a]` keys. Decode is warn-and-default and **never
+  returns false** — a scalar where a sequence was expected yields the identity curve rather than
+  throwing out of `as<T>()`, which is a deliberate divergence from the glm conversions (those still
+  return false and throw). Per-element `IsSequence` skips a malformed key and keeps the rest, the
+  `MaterialOverrides` posture. Storage is array-of-structs, not Channel's parallel arrays: an
+  authoring type has no glTF constraint.
 
 ## Prefabs (`.gprefab`)
 
@@ -361,7 +373,8 @@ authored entity subtree. The file is the **scene format's entity list under a `P
 same component blocks, written by `SceneSerializer::SerializeEntity`, read by
 `DeserializeEntity`, ordered by the same hierarchy DFS. One schema, two containers — which is what
 splitting the serializer into per-entity halves was for. `SceneYaml.h` holds the glm conversions
-both share, so the encoding of a vec3 has one definition rather than two that can drift.
+and the `FloatCurve`/`ColorGradient` key lists both share, so the encoding of a vec3 (or a
+size curve) has one definition rather than two that can drift.
 
 **UUIDs in the file are canonical: 1..N in DFS order, not the instance's own.** With preserved
 UUIDs, applying identical content from two different instances produces two different files — a lie

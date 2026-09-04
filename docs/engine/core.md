@@ -158,6 +158,15 @@ are all assert-time failures.
   (`std::mt19937_64` seeded from `random_device`), hashable, with an *explicit* `uint64_t`
   conversion. Entity identity (`IDComponent`), asset handles (`AssetHandle`), and the physics
   body↔entity map all key off it. `UUID{0}` conventionally means "none" (no parent, invalid asset).
+- [`Random`](../../GanymedEngine/source/GanymedE/Core/Random.h) — a seedable PCG32. State is two
+  `uint64_t`s (16 bytes), copyable: a copied `Random` continues the same sequence from the copy
+  point without aliasing the source's stream, which is what `Scene::Copy` needs for per-emitter
+  particle RNG. The `uint32_t` seed is expanded with splitmix64, then the PCG seed dance (odd
+  increment, two dummy draws). `Float01()` is `[0, 1)` via division by 2^32 — no `std::`
+  distribution object, whose sequence the standard does not pin across implementations.
+  Direction-in-cone and other domain mapping stay at the call site. This is a different generator
+  from `UUID`'s file-static `mt19937_64`; that one wants uncorrelated 64-bit ids, not a small
+  replayable stream. Float determinism is best-effort IEEE-754, not a cross-platform promise.
 - `Ref<T>` / `Scope<T>` — aliases for `std::shared_ptr` / `std::unique_ptr` with
   `CreateRef`/`CreateScope` factories. Engine convention: resources shared across systems are
   `Ref`, uniquely-owned internals are `Scope`.

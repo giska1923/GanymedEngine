@@ -1,6 +1,6 @@
 # GanymedEngine — Particle System Roadmap
 
-Status: **Plan of record — no phase executed.** Written 2026-09-03, against the
+Status: **Phase 1 executed.** Written 2026-09-03, against the
 post-content-authoring engine (branch point: the undo/prefab/`.gmat` milestone, complete; HEAD
 `2e74671`). Follows the format of [`CONTENT_AUTHORING_ROADMAP.md`](CONTENT_AUTHORING_ROADMAP.md):
 each phase carries goal, steps, decisions with rationale, risks, and a verification table;
@@ -254,7 +254,47 @@ Scripted probe block (temporary, removed after), x64 Debug.
 
 ### Phase 1 execution notes
 
-*(appended at execution)*
+Executed 2026-09-04. x64 Debug, MSBuild; engine and editor build clean after `premake5 vs2022`
+(new `Curve.cpp`). Verification ran from a temporary `RunParticlePhase1Probe` (engine TU, called
+from `EditorLayer::OnAttach`, `Application::Close()` at the end); probe removed.
+**37/37 pass.** Sampler, sorted-invariant editing, RNG, YAML round-trip, and canonical-save
+immunity as amended below. Float determinism is this platform, this run — not a cross-compile
+promise.
+
+**YAML decode is stronger than the glm conversions on purpose.** `convert<FloatCurve>` /
+`convert<ColorGradient>` never return false: a scalar where a sequence was expected warns and
+yields the identity default, so `as<T>()` cannot throw a bad particle block out of a scene load.
+glm `vec3`/`vec4` still return false and throw through `as<T>()`; `Deserialize`'s try/catch stays
+the backstop for those. Per-element `IsSequence` skips a malformed key and keeps the rest. Measured:
+`YAML::Load("not-a-sequence").as<FloatCurve>()` and `YAML::Load("42").as<ColorGradient>()` both
+return the default with one `GE_CORE_WARN` and no exception.
+
+**`ReplaceKeys` is the deserialize path, not an authoring API.** The editing surface is
+`AddKey`/`RemoveKey`/`SetKey`; `Keys()` is const. `RemoveKey` on the last key warns and refuses
+(logged: `FloatCurve::RemoveKey: refusing to delete the last key`). `SetKey` moving a middle key
+past its neighbor re-sorts; samples after the move are the new polyline (`t=0.5 → 0.5`,
+`t=1.25 → 1.5` on `{0:0, 1:1, 1.5:2}`).
+
+**The committed scenes are not a serializer fixed point, and this phase did not make them one.**
+`SceneSerializer::Serialize` writes `Scene: Untitled` unconditionally, so `Phase5Test` and
+`Demo.ganymede` (`Runtime Demo`) already diverge on load→save. `BoxesPhysicsExample.ganymede` is
+not UUID-sorted (box3, UUID `1842…`, is first in the file; canonical order would lead with floor).
+`Example.ganymede` / `3DExample.ganymede` still remap the thrice-repeated UUID `12837192831273`.
+`SceneSerializer.cpp` was not touched. The check that actually pins Phase 2's omit-guard: load →
+save → load → save is byte-identical for all five committed scenes, and none of those saves contain
+`SizeCurve` / `ColorOverLifetime` / `FloatCurve`.
+
+**Out of scope, flagged:** `3DExample.ganymede` stores `Scene: UntitledAdd commentMore actions` — a
+GitHub UI artifact in the file, not an engine bug. Do not "fix" by re-saving; that is a content
+commit.
+
+**`Random` is 16 bytes** (`static_assert`). Two `Random(42)` streams matched for 1000 `UInt` +
+1000 `Float01` draws; seed 43 diverged within 4; a copy continues from the copy point without
+aliasing the source. PCG32 + splitmix64 seeding, float via `2^-32`, no `std::` distributions.
+
+**Docs:** `core.md` (`Random`), `architecture.md` (Core + Math lines), `scene.md` (YAML dialect +
+curve types), this file, `docs/README.md`. No new doc files.
+
 
 ---
 

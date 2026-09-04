@@ -8,7 +8,7 @@ Everything in the engine lives in `namespace GanymedE` (ECS machinery in `Ganyme
 ```
 GanymedE/
 ├── main/        Application, EntryPoint          — the run loop and program entry
-├── Core/        Window, Layer(Stack), Input, Log, UUID, Timestep, Core.h macros
+├── Core/        Window, Layer(Stack), Input, Log, UUID, Random, Timestep, Core.h macros
 ├── events/      Event base + dispatcher, window/key/mouse events
 ├── ECS/         The view/access-wrapper layer over entt (see ecs.md)
 ├── Scene/       Scene, Entity, Components, SceneSerializer, built-in Systems/
@@ -18,7 +18,7 @@ GanymedE/
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
 ├── UI/          UIEngine (RmlUi game UI; the editor's own UI is ImGui — see ui.md)
-├── Math/        Transform decomposition, AABB + Frustum
+├── Math/        Transform decomposition, AABB + Frustum, FloatCurve + ColorGradient
 ├── ImGui/       ImGuiLayer (docking UI host)
 ├── Debug/       Instrumentor (chrome://tracing profiler)
 └── Utils/       PlatformUtils (file dialogs)

@@ -14,6 +14,7 @@ INCLUDE IT AT THE ENTRY POINT OF THE APPLICATION
 
 #include "GanymedE/Core/Timestep.h"
 #include "GanymedE/Core/UUID.h"
+#include "GanymedE/Core/Random.h"
 
 #include "GanymedE/Core/Input.h"
 #include "GanymedE/Core/KeyCodes.h"
