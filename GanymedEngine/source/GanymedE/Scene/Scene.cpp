@@ -11,6 +11,7 @@
 #include "GanymedE/Scene/Systems/CameraSystem.h"
 #include "GanymedE/Scene/Systems/LuaScriptSystem.h"
 #include "GanymedE/Scene/Systems/NativeScriptSystem.h"
+#include "GanymedE/Scene/Systems/ParticleSystem.h"
 #include "GanymedE/Scene/Systems/PhysicsSystem.h"
 #include "GanymedE/Scene/Systems/RenderSystem.h"
 #include "GanymedE/Scene/Systems/TransformSystem.h"
@@ -67,6 +68,11 @@ namespace GanymedE {
 		// frame's. After RenderSystem would be equally correct - Render reads nothing of audio -
 		// but would break the "Render is last" reading of this list for no gain.
 		m_Systems->Add<AudioSystem>(*this);
+		// After Audio, before Render. Needs WorldTransform (post-TransformSystem) and must
+		// precede RenderSystem; Render-last is preserved. RenderSystem declares
+		// RO<ParticleEmitterComponent> so ValidateOrdering enforces this slot rather than
+		// leaving it conventional (the palette lesson).
+		m_Systems->Add<ParticleSystem>(*this);
 		m_Systems->Add<RenderSystem>(*this);
 
 		// The views the systems declare imply an ordering; check the order above actually honours
@@ -222,6 +228,16 @@ namespace GanymedE {
 			auto view = dstRegistry.view<AnimatorComponent>();
 			for (auto e : view)
 				view.get<AnimatorComponent>(e).Palette.clear();
+		}
+
+		// Particle pools persist across frames (unlike Palette), so a copied-then-not-reset
+		// emitter would double-play the editor's stream in play mode. Reset pool, accumulator,
+		// timer, Playing, bounds, and RNG together — a copied-then-reset pool with a live RNG
+		// is the other half of the same bug.
+		{
+			auto view = dstRegistry.view<ParticleEmitterComponent>();
+			for (auto e : view)
+				view.get<ParticleEmitterComponent>(e).ResetRuntime();
 		}
 
 		return newScene;

@@ -44,8 +44,11 @@ almost line for line, and for the same reasons:
   `PhysicsScene::SyncTransforms`.
 
 Registration order in the `Scene` constructor is
-`PhysicsSystem` → `NativeScriptSystem` → **`LuaScriptSystem`** → `TransformSystem` → `CameraSystem`
-→ `RenderSystem`. Scripts move things; the transform cache runs after.
+`PhysicsSystem` → `NativeScriptSystem` → `LuaScriptSystem` → `AnimationSystem` →
+`TransformSystem` → `CameraSystem` → `AudioSystem` → `ParticleSystem` → `RenderSystem`.
+Scripts move things; the transform cache runs after. Particle playback from script is the
+same slot as animation: Lua writes the component, `ParticleSystem` consumes it later in
+the same update.
 
 `OnUpdateEditor` drains both reactive views without instantiating. This is not optional: a skipped
 `InitView`/`FiniView` read asserts on the epoch gap the next time the runtime reads it. Teardown
@@ -131,8 +134,9 @@ entt storage. Two independent reasons, either sufficient:
 Copying nine floats beats both problems at script call rates.
 
 Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, `Cross`), `Entity`
-(`GetName`, `GetUUID`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians), `Get/SetScale`,
-`HasRigidBody`, the physics, animation and audio calls below), `Input`, `Key`, `Mouse`, `Log`
+(`GetName`, `GetUUID`, `GetChildByName`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians),
+`Get/SetScale`, `HasRigidBody`, the physics, animation, audio and particle calls below), `Input`,
+`Key`, `Mouse`, `Log`
 (routed to the **client** logger — script output is game output), `Scene.FindEntityByName`,
 `Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
 
@@ -258,6 +262,48 @@ One-shot paths are **relative to `assets/` and need no registry entry** — `Aud
 which is what "Audio is path-resolved by design" buys (see [audio.md](audio.md)). The positional
 overload takes a `Vec3` rather than three floats, because every other position in these bindings is
 a `Vec3`. An unknown group name warns and falls back to SFX rather than throwing.
+
+### Particles
+
+Component-direct, the animation shape: the pool lives on `ParticleEmitterComponent`, not a
+system-owned voice. `ParticleEmitterComponent` is untracked (`ParticleSystem` and `RenderSystem`
+poll it every frame), so these writes need no `MarkChanged`. All of them **no-op on an entity
+without the component**.
+
+| Call | Notes |
+|---|---|
+| `HasParticleEmitter()` | Component check |
+| `PlayParticles()`, `StopParticles()`, `IsParticlesPlaying()` | `PlayPreview` / `StopPreview` / `Playing` |
+| `EmitBurst(count)` | Accumulates `BurstPending`; `count <= 0` ignored |
+| `Get/SetParticle*` | Every scalar authored field (rate, cap, looping, duration, PlayOnStart, lifetime/speed/size/rotation ranges, cone, gravity, world-space, seed) |
+
+**`PlayParticles` on an already-playing emitter is a no-op, not a restart** — the same trap as
+`PlayAnimation` and `PlaySound`. `LuaScriptSystem` runs before `ParticleSystem`; a per-frame
+`PlayParticles` that called `ResetRuntime` would empty the pool sixty times a second. There is
+no `RestartParticles` from Lua; that is an inspector preview control. Stop freezes the pool.
+
+**`EmitBurst` does not auto-play.** The demo's impact script does `PlayParticles()` then
+`EmitBurst(n)`. Two calls in one frame add. Consume is this tick while `Playing` — Lua has
+already run — and is **not** gated by `Duration`, so a one-shot spark (`Looping=false`,
+`RateOverTime=0`) still bursts on later impacts. Remainder past `MaxParticles` stays queued.
+The count is a Lua number (always a float on this engine — see "All numbers are floats"
+below); the binding takes `double` and truncates toward zero, because `int` is rejected by
+sol2 when a script property (a double `24.0`) is passed.
+
+Curves, textures, meshes, blend mode and `RenderMode` are **not** scriptable in v1.
+
+`Entity:GetChildByName(name)` is the lookup the demo needs: **direct children only**, first tag
+match. `Scene.FindEntityByName` is a global first-match, so two boxes both parenting a child
+tagged `"Sparks"` cannot use it. Production engines usually expose a path (`Find("Sparks")` from
+the parent) for the same reason; this is the cheap end of that, not a hierarchy query language.
+
+```lua
+local sparks = self.entity:GetChildByName("Sparks")
+if sparks then
+    sparks:PlayParticles()
+    sparks:EmitBurst(24)
+end
+```
 
 ## Errors
 

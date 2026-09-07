@@ -34,6 +34,12 @@ declare interface Entity {
 	IsValid(): boolean;
 
 	/**
+	 * Direct children only, first tag match. `Scene.FindEntityByName` is a global first-match,
+	 * so two boxes both parenting a child named `"Sparks"` cannot use it.
+	 */
+	GetChildByName(name: string): Entity | undefined;
+
+	/**
 	 * Returns a COPY. Mutate it, then call the setter.
 	 *
 	 * The setter is not a style preference: it routes the write through the engine's change
@@ -53,6 +59,7 @@ declare interface Entity {
 	HasRigidBody(): boolean;
 	HasAnimator(): boolean;
 	HasAudioSource(): boolean;
+	HasParticleEmitter(): boolean;
 
 	/**
 	 * Switches to `name` and plays it. Switching clips is a hard cut from the start —
@@ -130,6 +137,70 @@ declare interface Entity {
 	/** 1.0 = unmodified. Also changes playback speed. Values <= 0 are ignored. */
 	SetSoundPitch(pitch: number): void;
 	SetSoundLooping(loop: boolean): void;
+
+	/**
+	 * Starts the entity's ParticleEmitterComponent. Component-direct: the pool lives on the
+	 * component, not a system-owned voice, and ParticleEmitterComponent is untracked so
+	 * these writes need no change log.
+	 *
+	 * Calling this every frame is safe: an already-playing emitter is left alone, not
+	 * restarted. Restarting each tick would reset the pool, because scripts run before
+	 * the particle system each update. To freeze, call StopParticles(). There is no
+	 * RestartParticles — that is an inspector preview control.
+	 *
+	 * No-op without a ParticleEmitterComponent. Curves, textures, meshes and blend mode
+	 * are not scriptable.
+	 */
+	PlayParticles(): void;
+	StopParticles(): void;
+	IsParticlesPlaying(): boolean;
+
+	/**
+	 * Queues `count` spawns consumed this tick while playing (scripts run before the
+	 * sim). Two calls in one frame add. Does not auto-play — call PlayParticles first.
+	 * Not gated by Duration, so a RateOverTime=0 one-shot still bursts on later impacts.
+	 * Remainder past MaxParticles stays queued. count <= 0 is ignored.
+	 */
+	EmitBurst(count: number): void;
+
+	GetParticleRateOverTime(): number;
+	SetParticleRateOverTime(value: number): void;
+	GetParticleMaxParticles(): number;
+	SetParticleMaxParticles(value: number): void;
+	GetParticleLooping(): boolean;
+	SetParticleLooping(value: boolean): void;
+	GetParticleDuration(): number;
+	SetParticleDuration(value: number): void;
+	GetParticlePlayOnStart(): boolean;
+	SetParticlePlayOnStart(value: boolean): void;
+	GetParticleLifetimeMin(): number;
+	SetParticleLifetimeMin(value: number): void;
+	GetParticleLifetimeMax(): number;
+	SetParticleLifetimeMax(value: number): void;
+	GetParticleSpeedMin(): number;
+	SetParticleSpeedMin(value: number): void;
+	GetParticleSpeedMax(): number;
+	SetParticleSpeedMax(value: number): void;
+	GetParticleConeAngle(): number;
+	SetParticleConeAngle(value: number): void;
+	GetParticleStartSizeMin(): number;
+	SetParticleStartSizeMin(value: number): void;
+	GetParticleStartSizeMax(): number;
+	SetParticleStartSizeMax(value: number): void;
+	GetParticleStartRotationMin(): number;
+	SetParticleStartRotationMin(value: number): void;
+	GetParticleStartRotationMax(): number;
+	SetParticleStartRotationMax(value: number): void;
+	GetParticleRotationSpeedMin(): number;
+	SetParticleRotationSpeedMin(value: number): void;
+	GetParticleRotationSpeedMax(): number;
+	SetParticleRotationSpeedMax(value: number): void;
+	GetParticleGravityModifier(): number;
+	SetParticleGravityModifier(value: number): void;
+	GetParticleWorldSpace(): boolean;
+	SetParticleWorldSpace(value: boolean): void;
+	GetParticleSeed(): number;
+	SetParticleSeed(value: number): void;
 }
 
 /** The shape every gameplay script implements. All hooks are optional. */

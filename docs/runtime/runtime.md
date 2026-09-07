@@ -49,7 +49,7 @@ is destroyed before the `Window` — so bgfx is still alive. The same guarantee 
 RuntimeLayer::OnUpdate(ts)
 ├─ Renderer2D/3D::ResetStats
 ├─ SceneRenderer::BeginFrame          bind + clear the HDR target
-├─ Scene::OnUpdateRuntime(ts, nullptr)   all eight systems
+├─ Scene::OnUpdateRuntime(ts, nullptr)   all nine systems
 ├─ UIEngine::OnUpdate(ts) / OnRender()   layout, then submit to RenderPass::UI
 └─ SceneRenderer::EndFrame            bloom → tonemap → FXAA, final pass to the backbuffer
 ```
@@ -135,16 +135,19 @@ the thing that proves the engine can ship something a person other than its auth
 |---|---|
 | Sky Light, Sun | IBL from a committed HDRI; intensities tuned down from the editor defaults, which blow out at exposure 1.0 with bloom |
 | Main Camera | Primary camera **and** the `AudioListenerComponent` — the Unity arrangement |
-| Floor, Falling Box A/B | Jolt: two dynamic bodies land on a static one. Both boxes carry `Impact.lua`, which fires a positional `Audio.PlayOneShot` from `OnCollisionEnter` — physics making a sound |
+| Floor, Falling Box A/B | Jolt: two dynamic bodies land on a static one. Both boxes carry `Impact.lua`, which fires a positional `Audio.PlayOneShot` from `OnCollisionEnter` and `PlayParticles`/`EmitBurst` on a child `Sparks` emitter (`SparkBurst.gprefab`) — physics making a sound and a spark |
 | Player | `Player.lua`: WASD movement, the HUD data model, and the audio bindings. Carries its own spatial `AudioSourceComponent` with `PlayOnStart` **off**, so the voice is built by the first `PlaySound` |
 | Music | A streamed, looping `Music`-group source with `PlayOnStart` on. Non-spatial, because music has no position |
+| Sparks (×2) | Prefab instances under each falling box. `RateOverTime=0`, `PlayOnStart=false`, additive billboards; bursts come from Lua, not from the rate |
 
 Controls: **WASD** to move, **hold Space** to sound the player's hum (calling `PlaySound` every
 frame, which is the intended idiom), **M** to mute and unmute the music bus, **Escape** to quit.
 There is no pause or menu — named as a placeholder, not an oversight.
 
 The boxes' impact script carries a 0.12 s gate: a box settling generates a burst of contacts over
-several frames, and without it the same thud fires five or six times in a row.
+several frames, and without it the same thud fires five or six times in a row. The spark burst
+uses the same gate. Both boxes parent a child tagged `Sparks`; the script looks it up with
+`GetChildByName`, not `Scene.FindEntityByName` (a global first-match would always hit Box A's).
 
 ## Divergences from the editor render path, on purpose
 

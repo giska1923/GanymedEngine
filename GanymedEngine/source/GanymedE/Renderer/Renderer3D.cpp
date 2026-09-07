@@ -8,6 +8,7 @@
 #include "Buffer.h"
 #include "Framebuffer.h"
 #include "Environment.h"
+#include "ParticleRenderer.h"
 #include "GanymedE/Math/BoundingVolumes.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -199,10 +200,14 @@ namespace GanymedE {
 		});
 		s_Data.LineGeometry.Vertices = s_Data.LineVertexBuffer;
 		s_Data.LineVertices.reserve(s_Data.MaxLineVertices);
+
+		ParticleRenderer::Init();
 	}
 
 	void Renderer3D::Shutdown()
 	{
+		ParticleRenderer::Shutdown();
+
 		s_Data.DrawList.clear();
 		s_Data.GridGeometry = {};
 		s_Data.GridShader = nullptr;
@@ -894,8 +899,16 @@ namespace GanymedE {
 				i = end;
 			}
 
-			RenderCommand::SetDepthWrite(true);
+			// Depth-write stays off into the particle flush. Restored after.
 		}
+
+		// After transparent meshes, before the depth-write restore. Billboards
+		// inherit Sequential view 5, depth-test LESS, depth-write off. Restore
+		// of RenderState is ParticleRenderer's job (unconditional, including
+		// transient-buffer early-out).
+		ParticleRenderer::Flush();
+
+		RenderCommand::SetDepthWrite(true);
 
 		// Leave blending on: the 2D renderer, grid, and debug lines rely on it
 		RenderCommand::SetBlend(true);
@@ -1000,6 +1013,24 @@ namespace GanymedE {
 	Renderer3D::Statistics Renderer3D::GetStats()
 	{
 		return s_Data.Stats;
+	}
+
+	bool Renderer3D::FrustumIntersects(const AABB& bounds)
+	{
+		return s_Data.CameraFrustum.Intersects(bounds);
+	}
+
+	void Renderer3D::AddParticleStats(uint32_t emitters, uint32_t billboards, uint32_t drawCalls)
+	{
+		s_Data.Stats.ParticleEmitters += emitters;
+		s_Data.Stats.ParticleBillboards += billboards;
+		s_Data.Stats.ParticleDrawCalls += drawCalls;
+		s_Data.Stats.DrawCalls += drawCalls;
+	}
+
+	void Renderer3D::AddCulledParticleEmitter()
+	{
+		s_Data.Stats.ParticleCulledEmitters++;
 	}
 
 	void Renderer3D::DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color)

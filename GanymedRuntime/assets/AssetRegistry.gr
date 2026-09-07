@@ -17,3 +17,6 @@ Assets:
   - Handle: 1000000000000000006
     Type: 7
     FilePath: audio/hum.wav
+  - Handle: 1000000000000000007
+    Type: 8
+    FilePath: prefabs/SparkBurst.gprefab

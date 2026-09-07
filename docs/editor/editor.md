@@ -196,7 +196,7 @@ present, procedural fallback otherwise), so imported meshes are lit immediately.
 ### Stats panel
 
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
-transparent), live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
+transparent, particle emitters/billboards/draws/culled), live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
 FXAA), and Jolt debug-draw toggles (visible during Play; draws Jolt's body state instead of the
 authored collider gizmos).
 
@@ -224,7 +224,7 @@ API — legal because panels run outside the system update.
 ### Properties (drawn by the same panel)
 
 Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, animator, script, audio source, audio listener, rigid body, colliders, one
+lights, sky light, animator, script, audio source, audio listener, particle emitter, rigid body, colliders, one
 `DrawAddComponentEntry<T>` line each); one collapsible section per component
 (`DrawComponent<T>` helper with a remove-component menu).
 
@@ -247,6 +247,20 @@ after-value then. Widgets with no active phase — a drag-drop assignment landin
 report their edit and commit in the same frame. A pending edit no frame of which reported an edit
 is dropped, which is what makes a click-without-drag and an opened-then-closed combo free. If the
 section stops being drawn mid-gesture, an end-of-frame flush commits what was recorded.
+
+**Custom canvas widgets** live in [`EditorWidgets.cpp`](../../GanymedEditor/source/EditorWidgets.cpp)
+(`CurveEditor`, `GradientEditor`) and are the first house-drawn controls. They participate in that
+protocol only if they own `ActiveId` for the whole gesture. The rule, and the pattern for any
+future custom widget: **one `InvisibleButton` spans the canvas**. A held InvisibleButton owns
+`ActiveId` until release (verified in the vendored ImGui 1.91.9b). Hit-testing against keys
+decides what the drag moves; `ImDrawList` draws. Pure `ImDrawList` plus manual hit-test without
+an item is one command per frame — the documented failure. Return true only on frames a key's
+value actually changed, so a grab-and-release with no motion drops the pending edit. Mutation
+goes through `FloatCurve` / `ColorGradient` `AddKey` / `RemoveKey` / `SetKey` only; the keys
+vector is never written directly.
+
+The vendored `ImCurveEdit` / `ImGradient` under `extern/ImGuizmo/src` stay uncompiled: they bring
+an unverified ActiveId story, which is the one property this protocol cannot live without.
 
 Notable behaviors:
 
@@ -300,6 +314,15 @@ Notable behaviors:
   bug. See [audio.md](../engine/audio.md).
 - Audio listener: a Primary checkbox and a hint that the primary camera is the fallback when the
   component is absent.
+- Particle emitter: grouped headers (Emission / Initial / Over Lifetime / Rendering). Over Lifetime
+  is `EditorUI::CurveEditor` (size, Y range 0–2) and `GradientEditor` (color bar + `ColorEdit4` on
+  the selected key). Double-click empty canvas adds a key; right-click deletes (refused on the last
+  key). Min/Max pairs clamp so max ≥ min on edit. Billboard shows Texture + Blend; Mesh shows Mesh +
+  Material and the opaque-material rule as a hover tooltip. **Play / Stop / Restart** sit at the top
+  of the section and drive runtime `Playing` / pool / RNG — they are not authored, not serialized,
+  and must not return `edited` (the same line as the inline `.gmat` editor's live preview). Stop
+  freezes the pool; Play resumes the same RNG stream; Restart resets and reseeds. `DrawComponent`'s
+  per-frame copy of the open section heap-copies the two keyframe vectors and the live pool.
 - Colliders: dimensions, offset, friction/restitution.
 
 Adding a component type means extending this panel's Add-Component popup and `DrawComponents` —
@@ -357,6 +380,7 @@ so the first call always wins the delivery and the second type would never fire.
 |---|---|
 | New panel | Create under `Panels/`, own it in `EditorLayer`, call `OnImGuiRender`, dock it in the DockBuilder block |
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
+| Custom canvas widget | `EditorWidgets.cpp`; one `InvisibleButton` spanning the canvas so `ActiveId` holds for the drag; return true only on a real value change |
 | New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |
 | New shortcut | `EditorLayer::HandleShortcuts` (editor-global) or `OnKeyPressed` (viewport-gated, like the gizmo keys) |
 | New undoable operation | An `EditorCommand` subclass in `EditorUndo.h`, pushed where the operation happens; `CompositeCommand` when several steps must undo as one |
