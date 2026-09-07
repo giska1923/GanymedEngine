@@ -41,6 +41,34 @@ namespace GanymedE {
 			return { sinTheta * glm::cos(phi), cosTheta, sinTheta * glm::sin(phi) };
 		}
 
+		void SpawnParticle(ParticleEmitterComponent& emitter, const glm::mat4& world,
+			const glm::mat3& rotation)
+		{
+			// Draw order is the determinism contract. Reordering these silently changes
+			// every effect that uses this seed.
+			Particle p;
+			p.Lifetime = emitter.Rng.Range(emitter.LifetimeMin, emitter.LifetimeMax);
+			const float speed = emitter.Rng.Range(emitter.SpeedMin, emitter.SpeedMax);
+			const glm::vec3 localDir = DirectionInCone(emitter.Rng, emitter.ConeAngle);
+			p.StartSize = emitter.Rng.Range(emitter.StartSizeMin, emitter.StartSizeMax);
+			p.Rotation = emitter.Rng.Range(emitter.StartRotationMin, emitter.StartRotationMax);
+			p.RotationSpeed = emitter.Rng.Range(emitter.RotationSpeedMin, emitter.RotationSpeedMax);
+			p.Age = 0.0f;
+
+			if (emitter.WorldSpace)
+			{
+				p.Position = glm::vec3(world[3]);
+				p.Velocity = (rotation * localDir) * speed;
+			}
+			else
+			{
+				p.Position = glm::vec3(0.0f);
+				p.Velocity = localDir * speed;
+			}
+
+			emitter.Pool.push_back(p);
+		}
+
 		void RebuildBounds(ParticleEmitterComponent& emitter, const glm::mat4& world)
 		{
 			float maxMul = 0.0f;
@@ -151,30 +179,16 @@ namespace GanymedE {
 		while (emitter.EmitAccumulator >= 1.0f && emitter.Pool.size() < emitter.MaxParticles)
 		{
 			emitter.EmitAccumulator -= 1.0f;
+			SpawnParticle(emitter, world, rotation);
+		}
 
-			// Draw order is the determinism contract. Reordering these silently changes
-			// every effect that uses this seed.
-			Particle p;
-			p.Lifetime = emitter.Rng.Range(emitter.LifetimeMin, emitter.LifetimeMax);
-			const float speed = emitter.Rng.Range(emitter.SpeedMin, emitter.SpeedMax);
-			const glm::vec3 localDir = DirectionInCone(emitter.Rng, emitter.ConeAngle);
-			p.StartSize = emitter.Rng.Range(emitter.StartSizeMin, emitter.StartSizeMax);
-			p.Rotation = emitter.Rng.Range(emitter.StartRotationMin, emitter.StartRotationMax);
-			p.RotationSpeed = emitter.Rng.Range(emitter.RotationSpeedMin, emitter.RotationSpeedMax);
-			p.Age = 0.0f;
-
-			if (emitter.WorldSpace)
-			{
-				p.Position = glm::vec3(world[3]);
-				p.Velocity = (rotation * localDir) * speed;
-			}
-			else
-			{
-				p.Position = glm::vec3(0.0f);
-				p.Velocity = localDir * speed;
-			}
-
-			emitter.Pool.push_back(p);
+		// Bursts are not gated by Duration. A one-shot spark emitter is Looping=false and
+		// RateOverTime=0; later impacts still EmitBurst while Playing. Remainder past
+		// MaxParticles stays queued for the next tick.
+		while (emitter.BurstPending > 0 && emitter.Pool.size() < emitter.MaxParticles)
+		{
+			emitter.BurstPending--;
+			SpawnParticle(emitter, world, rotation);
 		}
 
 		if (emitter.Pool.size() >= emitter.MaxParticles)

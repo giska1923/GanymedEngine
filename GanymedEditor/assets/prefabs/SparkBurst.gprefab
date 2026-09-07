@@ -1,0 +1,34 @@
+Prefab: Sparks
+Entities:
+  - Entity: 1
+    TagComponent:
+      Tag: Sparks
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    ParticleEmitterComponent:
+      RateOverTime: 0
+      MaxParticles: 64
+      Looping: false
+      PlayOnStart: false
+      LifetimeMin: 0.25
+      LifetimeMax: 0.5
+      SpeedMin: 2
+      SpeedMax: 4
+      ConeAngle: 20
+      StartSizeMin: 0.04
+      StartSizeMax: 0.08
+      GravityModifier: 1
+      WorldSpace: true
+      SizeCurve:
+        - [0, 1]
+        - [1, 0]
+      ColorOverLifetime:
+        - [0, 1, 0.65, 0.15, 1]
+        - [1, 1, 0.25, 0, 0]
+      Blend: 1

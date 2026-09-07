@@ -18,6 +18,12 @@ namespace GanymedE {
 	//     visually authored — a curve editor over an invisible effect authors blind.
 	// Unity ticks particles in the scene view; tick-all is the cheap end of that norm.
 	// Playing=false (inspector Stop, Phase 4) is how authors get quiet.
+	//
+	// BurstPending is not gated by Duration. Rate spawn is; a one-shot spark
+	// (Looping=false, RateOverTime=0) still emits on later Lua EmitBurst calls
+	// while Playing. EmitBurst does not auto-play. Remainder past MaxParticles
+	// stays queued. LuaScriptSystem runs before this system, so PlayParticles +
+	// EmitBurst in the same script tick is consumed this frame.
 	class ParticleSystem : public ECS::System<ParticleSystem>
 	{
 	public:

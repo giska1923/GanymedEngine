@@ -60,6 +60,28 @@ namespace GanymedE {
 			return system ? system->GetPhysicsScene() : nullptr;
 		}
 
+		ParticleEmitterComponent* ParticleEmitter(Entity& e)
+		{
+			return e.HasComponent<ParticleEmitterComponent>()
+				? &e.GetComponent<ParticleEmitterComponent>()
+				: nullptr;
+		}
+
+		template<typename T>
+		T ParticleGet(Entity& e, T ParticleEmitterComponent::* field, T fallback)
+		{
+			if (ParticleEmitterComponent* p = ParticleEmitter(e))
+				return p->*field;
+			return fallback;
+		}
+
+		template<typename T>
+		void ParticleSet(Entity& e, T ParticleEmitterComponent::* field, T value)
+		{
+			if (ParticleEmitterComponent* p = ParticleEmitter(e))
+				p->*field = value;
+		}
+
 		// The system that owns every voice. Same shape as Physics() above, and for the same
 		// reason: nothing outside AudioSystem may create or destroy a voice.
 		AudioSystem* Audio()
@@ -116,6 +138,23 @@ namespace GanymedE {
 				"GetUUID", [](Entity& e) { return static_cast<uint64_t>(e.GetUUID()); },
 				"IsValid", [](Entity& e) { return static_cast<bool>(e); },
 
+				// Direct children only. Scene.FindEntityByName is a global first-match; two
+				// boxes both parenting a child tagged "Sparks" cannot use it.
+				"GetChildByName", [](Entity& e, const std::string& name) -> sol::optional<Entity>
+				{
+					Scene* scene = Context();
+					if (!scene || !e || !e.HasComponent<RelationshipComponent>())
+						return sol::nullopt;
+
+					for (UUID childID : e.GetComponent<RelationshipComponent>().Children)
+					{
+						Entity child = scene->FindEntityByUUID(childID);
+						if (child && child.GetName() == name)
+							return child;
+					}
+					return sol::nullopt;
+				},
+
 				// --- Transform: get a copy, mutate it, set it back ---
 				"GetTranslation", [](Entity& e) { return e.GetComponent<TransformComponent>().Translation; },
 				"SetTranslation", [](Entity& e, const glm::vec3& value)
@@ -139,9 +178,10 @@ namespace GanymedE {
 					MarkTransformChanged(e);
 				},
 
-				"HasRigidBody",   [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
-				"HasAnimator",    [](Entity& e) { return e.HasComponent<AnimatorComponent>(); },
-				"HasAudioSource", [](Entity& e) { return e.HasComponent<AudioSourceComponent>(); },
+				"HasRigidBody",      [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
+				"HasAnimator",       [](Entity& e) { return e.HasComponent<AnimatorComponent>(); },
+				"HasAudioSource",    [](Entity& e) { return e.HasComponent<AudioSourceComponent>(); },
+				"HasParticleEmitter", [](Entity& e) { return e.HasComponent<ParticleEmitterComponent>(); },
 
 				// --- Animation ---
 				// AnimatorComponent is untracked, so unlike the transform setters these need no
@@ -281,6 +321,105 @@ namespace GanymedE {
 				{
 					if (e.HasComponent<AudioSourceComponent>())
 						e.GetComponent<AudioSourceComponent>().Loop = loop;
+				},
+
+				// --- Particles ---
+				// Component-direct, the animation shape: the pool lives on
+				// ParticleEmitterComponent (not a system-owned voice). ParticleEmitterComponent
+				// is untracked — ParticleSystem and RenderSystem poll it every frame — so these
+				// writes need no MarkChanged. No-op without the component.
+				//
+				// PlayParticles on an already-playing emitter is a no-op, not a restart: scripts
+				// call this every frame from a branch, and LuaScriptSystem runs before
+				// ParticleSystem. A restart would ResetRuntime 60×/sec. EmitBurst accumulates
+				// (two calls in one frame = one bigger burst) and does not auto-play; consume
+				// happens this tick while Playing, even past Duration. Curves and assets are
+				// not scriptable in v1.
+				"PlayParticles", [](Entity& e)
+				{
+					if (ParticleEmitterComponent* p = ParticleEmitter(e))
+						p->PlayPreview(e.GetUUID());
+				},
+				"StopParticles", [](Entity& e)
+				{
+					if (ParticleEmitterComponent* p = ParticleEmitter(e))
+						p->StopPreview();
+				},
+				"IsParticlesPlaying", [](Entity& e)
+				{
+					if (ParticleEmitterComponent* p = ParticleEmitter(e))
+						return p->Playing;
+					return false;
+				},
+				"EmitBurst", [](Entity& e, double count)
+				{
+					// double, not int: ScriptComponent properties are always Lua floats
+					// (the "all numbers are floats" rule). sol2 rejects a 24.0 into int.
+					if (count <= 0.0)
+						return;
+					if (ParticleEmitterComponent* p = ParticleEmitter(e))
+						p->BurstPending += static_cast<uint32_t>(count);
+				},
+
+				"GetParticleRateOverTime", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::RateOverTime, 0.0f); },
+				"SetParticleRateOverTime", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::RateOverTime, v); },
+				"GetParticleMaxParticles", [](Entity& e) -> int
+				{
+					if (ParticleEmitterComponent* p = ParticleEmitter(e))
+						return static_cast<int>(p->MaxParticles);
+					return 0;
+				},
+				"SetParticleMaxParticles", [](Entity& e, double v)
+				{
+					if (v < 0.0)
+						return;
+					if (ParticleEmitterComponent* p = ParticleEmitter(e))
+						p->MaxParticles = static_cast<uint32_t>(v);
+				},
+				"GetParticleLooping", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::Looping, false); },
+				"SetParticleLooping", [](Entity& e, bool v) { ParticleSet(e, &ParticleEmitterComponent::Looping, v); },
+				"GetParticleDuration", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::Duration, 0.0f); },
+				"SetParticleDuration", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::Duration, v); },
+				"GetParticlePlayOnStart", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::PlayOnStart, false); },
+				"SetParticlePlayOnStart", [](Entity& e, bool v) { ParticleSet(e, &ParticleEmitterComponent::PlayOnStart, v); },
+				"GetParticleLifetimeMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::LifetimeMin, 0.0f); },
+				"SetParticleLifetimeMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::LifetimeMin, v); },
+				"GetParticleLifetimeMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::LifetimeMax, 0.0f); },
+				"SetParticleLifetimeMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::LifetimeMax, v); },
+				"GetParticleSpeedMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::SpeedMin, 0.0f); },
+				"SetParticleSpeedMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::SpeedMin, v); },
+				"GetParticleSpeedMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::SpeedMax, 0.0f); },
+				"SetParticleSpeedMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::SpeedMax, v); },
+				"GetParticleConeAngle", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::ConeAngle, 0.0f); },
+				"SetParticleConeAngle", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::ConeAngle, v); },
+				"GetParticleStartSizeMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartSizeMin, 0.0f); },
+				"SetParticleStartSizeMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartSizeMin, v); },
+				"GetParticleStartSizeMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartSizeMax, 0.0f); },
+				"SetParticleStartSizeMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartSizeMax, v); },
+				"GetParticleStartRotationMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartRotationMin, 0.0f); },
+				"SetParticleStartRotationMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartRotationMin, v); },
+				"GetParticleStartRotationMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartRotationMax, 0.0f); },
+				"SetParticleStartRotationMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartRotationMax, v); },
+				"GetParticleRotationSpeedMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::RotationSpeedMin, 0.0f); },
+				"SetParticleRotationSpeedMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::RotationSpeedMin, v); },
+				"GetParticleRotationSpeedMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::RotationSpeedMax, 0.0f); },
+				"SetParticleRotationSpeedMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::RotationSpeedMax, v); },
+				"GetParticleGravityModifier", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::GravityModifier, 0.0f); },
+				"SetParticleGravityModifier", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::GravityModifier, v); },
+				"GetParticleWorldSpace", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::WorldSpace, false); },
+				"SetParticleWorldSpace", [](Entity& e, bool v) { ParticleSet(e, &ParticleEmitterComponent::WorldSpace, v); },
+				"GetParticleSeed", [](Entity& e) -> int
+				{
+					if (ParticleEmitterComponent* p = ParticleEmitter(e))
+						return static_cast<int>(p->Seed);
+					return 0;
+				},
+				"SetParticleSeed", [](Entity& e, double v)
+				{
+					if (v < 0.0)
+						return;
+					if (ParticleEmitterComponent* p = ParticleEmitter(e))
+						p->Seed = static_cast<uint32_t>(v);
 				},
 
 				sol::meta_function::equal_to, [](const Entity& a, const Entity& b) { return a == b; },

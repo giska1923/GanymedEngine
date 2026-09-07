@@ -1,6 +1,6 @@
 # GanymedEngine — Particle System Roadmap
 
-Status: **Phase 4 executed.** Written 2026-09-03, against the
+Status: **Phase 5 executed.** Written 2026-09-03, against the
 post-content-authoring engine (branch point: the undo/prefab/`.gmat` milestone, complete; HEAD
 `2e74671`). Follows the format of [`CONTENT_AUTHORING_ROADMAP.md`](CONTENT_AUTHORING_ROADMAP.md):
 each phase carries goal, steps, decisions with rationale, risks, and a verification table;
@@ -858,7 +858,47 @@ the idempotency note; this file gains execution notes per phase, per house rule.
 
 ### Phase 5 execution notes
 
-*(appended at execution)*
+Executed 2026-09-04. x64 Debug, MSBuild; engine, editor, and runtime build clean. Verification ran
+from a temporary `RunParticlePhase5Probe` (editor TU, `EditorLayer::OnAttach`,
+`Application::Close()`); probe removed. **17/17 pass.** The tick harness is
+`ParticleSystem::OnUpdateEditor` at a fixed `Timestep(1/60)`, same as Phase 2: `Scene::OnUpdateEditor`
+would also run `RenderSystem`. Lua calls go through the real Entity usertype
+(`sol::state_view` + `safe_script`), not C++ `PlayPreview` stand-ins.
+
+**Idempotency:** `PlayParticles()` every frame for 120 ticks, rate 10/s, lifetime 100 s so
+nothing retires. Pool grew monotonically to 20, `Time` landed in (1.9, 2.1), `Playing` stayed
+true — a restart would have pinned `Time` near `dt` and emptied the pool.
+
+**Burst:** two `EmitBurst(10)` in one Lua chunk queued `BurstPending=20` before the tick and
+the pool was 20 after it. `EmitBurst` without `PlayParticles` left the pool empty and the
+count queued. A `Duration=0` non-looping emitter still spawned 8 from a burst (rate gated,
+burst not). `MaxParticles=5` + `EmitBurst(10)` left 5 in the pool and 5 queued.
+
+**`GetChildByName`:** finds a direct child by tag; a global namesake that is not a child is
+ignored; a miss is nil.
+
+**Demo / the `int` trap:** first GanymedRuntime boot loaded 10 entities including both Sparks
+children, then `Impact.lua:OnCollisionEnter` died on
+`EmitBurst` — sol2 rejected script-property `24.0` into `void(Entity&, int)` ("not a numeric
+type that fits exactly an integer"). That is the documented "all numbers are floats" rule
+meeting `SOL_ALL_SAFETIES_ON`. Rebound `EmitBurst` / `SetParticleMaxParticles` / `SetParticleSeed`
+to `double`. Second boot: Box A and Box B both logged `Impact: … hit Floor` with **no script
+error**. Boot was windowed for 7 s so it would not steal the display; shipped
+`runtime.yaml` `Fullscreen: true` was restored. `GanymedRuntime/assets/` had no extra writes
+from the run (read-only registry). Visual burst pixels were not re-measured; the Lua→sim path
+is what this phase owns (billboards are Phase 3).
+
+**d.ts parity:** every `ScriptBindings.cpp` quoted binding name (106, skipping the `Entity` /
+`Vec3` usertype titles) is present in `ganymed.d.ts`.
+
+**Regression:** editor and Sandbox each booted a few seconds with a clean log. Committed editor
+scenes were not resaved. Phase 3's unmeasured rows (mesh-stats probe, MRT picking, additive-
+in-front-of-alpha screenshots) stay named — this phase did not backfill them.
+
+**Docs:** `scripting.md` (Particles, `GetChildByName`, the 9-system registration list that was
+stale at six), `scene.md` (`BurstPending` in runtime/Copy/YAML skip lists), `runtime.md`
+(nine systems, Sparks row), `README.md`. `rendering.md` / `editor.md` / `ecs.md` already
+matched; no changelog appends.
 
 ---
 

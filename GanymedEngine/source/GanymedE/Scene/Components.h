@@ -431,6 +431,7 @@ namespace GanymedE {
 		bool Playing = false;
 		float Time = 0.0f;
 		float EmitAccumulator = 0.0f;
+		uint32_t BurstPending = 0; // Lua EmitBurst; consumed this tick while Playing
 		Random Rng{ 0 };
 		std::vector<Particle> Pool;
 		AABB WorldBounds;
@@ -440,6 +441,7 @@ namespace GanymedE {
 			Playing = false;
 			Time = 0.0f;
 			EmitAccumulator = 0.0f;
+			BurstPending = 0;
 			Rng = Random{ 0 };
 			Pool.clear();
 			WorldBounds = {};

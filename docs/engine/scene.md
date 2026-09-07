@@ -142,16 +142,18 @@ precedent.
   seed, `FloatCurve` size multiplier, `ColorGradient` over lifetime, and billboard vs mesh
   render settings. `ParticleBlend` is component-local (`Alpha`/`Additive`) so `RenderState.h` does
   not leak bgfx defines into this header. Runtime state (`Playing`, `Time`, `EmitAccumulator`,
-  `Rng`, `Pool`, `WorldBounds`) is not serialized. `Scene::Copy` calls `ResetRuntime()` — pool,
-  accumulator, timer, Playing, bounds, **and RNG together** — so play mode starts empty and
+  `BurstPending`, `Rng`, `Pool`, `WorldBounds`) is not serialized. `Scene::Copy` calls `ResetRuntime()` — pool,
+  accumulator, timer, Playing, burst queue, bounds, **and RNG together** — so play mode starts empty and
   emitters warm up (`LifetimeMax` seconds to steady state, Unity without prewarm). `Seed = 0`
   derives from the entity UUID when playback starts, so two prefab instances do not march in
   lockstep; a nonzero seed pins the sequence for the replay instrument. Untracked: the sim
   polls every tick. Inspector Play / Stop / Restart (`PlayPreview` / `StopPreview` /
-  `RestartPreview`) are runtime-only: not serialized, not undoable. `PlayPreview` is a no-op if
+  `RestartPreview`) and Lua `PlayParticles` / `StopParticles` / `EmitBurst` are runtime-only: not
+  serialized, not undoable. `PlayPreview` is a no-op if
   already playing. RNG reseeds only from a fresh state (`Time == 0` and empty pool) — Stop then
   Play resumes the same stream; Restart calls `ResetRuntime` and seeds itself because
-  `ParticleSystem` has already run that frame.
+  `ParticleSystem` has already run that frame. `EmitBurst` accumulates into `BurstPending` and
+  does not auto-play; consume is this tick while `Playing` and is not gated by `Duration`.
 
 ### Physics (pure data — Jolt never appears here)
 
@@ -266,6 +268,10 @@ order; rebuild a conservative world AABB (frustum-cull input for the billboard /
 form. `AudioSystem` is silent in edit — defensible for sound, wrong for visual authoring.
 `Playing = false` is how authors get quiet. Registration is between Audio and Render; Render's
 `RO<ParticleEmitterComponent>` is what makes `ValidateOrdering` enforce that slot.
+Rate spawn is gated by `Looping || Time <= Duration`; **`BurstPending` is not** — a one-shot
+spark (`RateOverTime=0`, `Looping=false`) still emits on later Lua `EmitBurst` calls while
+`Playing`. Lua has already run this update, so `PlayParticles` + `EmitBurst` in the same
+script tick is consumed this frame. Remainder past `MaxParticles` stays queued.
 
 ### RenderSystem — [`Systems/RenderSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/RenderSystem.h)
 Pure submission — everything that used to be inlined in `Scene::OnUpdate*`. Reads `RenderContext`,
@@ -376,7 +382,7 @@ blocks keyed by component name. Notes:
   file.
 - **`ParticleEmitterComponent` serializes only when present**, and every authored field is omitted
   when equal to a default-constructed component (`IsDefault()` for the curves; invalid asset handles
-  omitted). Runtime fields (`Playing`, `Time`, `EmitAccumulator`, `Rng`, `Pool`, `WorldBounds`) are
+  omitted). Runtime fields (`Playing`, `Time`, `EmitAccumulator`, `BurstPending`, `Rng`, `Pool`, `WorldBounds`) are
   never written. Decode is fully guarded. A default emitter therefore emits an empty map under the
   component key, not a wall of defaults — that is what keeps committed scenes without emitters
   byte-identical on load → save → load → save.
@@ -482,7 +488,7 @@ The generic copy is a shallow value copy of every component, so anything that is
 an explicit fixup sweep after it. There are three: `NativeScriptComponent::Instance` is nulled so
 instances are recreated on play; `AnimatorComponent::Palette` is cleared because carrying a
 per-joint matrix array per entity into the new scene buys one frame of stale data; and
-`ParticleEmitterComponent::ResetRuntime()` clears pool, accumulator, timer, Playing, bounds, and
+`ParticleEmitterComponent::ResetRuntime()` clears pool, accumulator, timer, Playing, burst queue, bounds, and
 RNG together — a copied-then-reset pool with a *not*-reset RNG would double-play the editor's
 stream. Play-mode emitters therefore warm up from empty. Adding a component with runtime-only
 state means adding another sweep — nothing enforces this.

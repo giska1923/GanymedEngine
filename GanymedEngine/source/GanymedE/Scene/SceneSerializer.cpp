@@ -363,6 +363,8 @@ namespace GanymedE {
 			if (IsAssetHandleValid(p.Material))
 				out << YAML::Key << "Material" << YAML::Value << static_cast<uint64_t>(p.Material);
 
+			// Playing, Time, EmitAccumulator, BurstPending, Rng, Pool, WorldBounds: runtime-only.
+
 			out << YAML::EndMap;
 		}
 
