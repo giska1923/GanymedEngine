@@ -4,7 +4,9 @@
 #include "GanymedE/Assets/AssetMeta.h"
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/MaterialSerializer.h"
-#include "GanymedE/Assets/MeshCache.h"
+#include "GanymedE/Assets/CompiledCache.h"
+#include "GanymedE/Assets/MeshCompiler.h"
+#include "GanymedE/Assets/TextureCompiler.h"
 #include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Renderer/Environment.h"
 #include "GanymedE/Renderer/Material.h"
@@ -207,6 +209,11 @@ namespace GanymedE {
 			metadata.Type = type;
 			metadata.FilePath = pathKey;
 
+			// Carried on the index entry so a compiler never re-reads the sidecar. Empty for an
+			// asset whose sidecar had no Config block, which is every asset until an importer
+			// setting is authored.
+			metadata.Config = std::move(meta.Config);
+
 			s_Data.Registry[metadata.Handle] = metadata;
 			s_Data.PathToHandle[pathKey] = metadata.Handle;
 			return metadata.Handle;
@@ -258,6 +265,7 @@ namespace GanymedE {
 		// EditorLayer::OnDetach while Renderer::IsGpuAlive() is still true, so the GPU-resource
 		// destructors release real bgfx handles rather than tripping the is-alive guard.
 		AssetManagerRegistry::Clear();
+		CompiledCache::Shutdown();
 		s_Data.Initialized = false;
 	}
 
@@ -383,30 +391,35 @@ namespace GanymedE {
 
 	namespace {
 
+		// ---- Compiled blob ------------------------------------------------------------
+		//
+		// Mesh and Texture share a Parse stage: open the compiled artifact, compiling it first
+		// if the epoch record says it is stale. Their Apply stages differ, but neither knows
+		// whether the bytes came off disk or out of a compiler that just ran for two seconds.
+		struct CompiledBlob : AssetParseResult
+		{
+			std::vector<uint8_t> Bytes;
+		};
+
+		Scope<AssetParseResult> ParseCompiled(const AssetMetadata& metadata)
+		{
+			auto parsed = CreateScope<CompiledBlob>();
+			if (!CompiledCache::Open(metadata, parsed->Bytes) || parsed->Bytes.empty())
+				return nullptr;
+
+			return parsed;
+		}
+
 		// ---- Mesh ---------------------------------------------------------------------
 		//
-		// No Parse stage, and this one is deferred work rather than a settled answer. Both load
-		// paths construct a `Mesh`, whose constructor runs `Build()` and creates bgfx vertex and
-		// index buffers, and both build the mesh's materials inline - which pulls textures.
-		// Separating them means threading a CPU-side mesh description (vertices, indices,
-		// submeshes, material *descriptions* rather than materials) through `MeshImporter.cpp`
-		// and `MeshCache.cpp` and deferring `Mesh::Create` to Apply. That is the split Phase 5
-		// actually needs - the cgltf parse is the expensive thing that has to leave the main
-		// thread - and it is a change the size of a phase, not a step of this one. Named here so
-		// Phase 5 starts from a known cost instead of discovering it.
-		Ref<Mesh> ApplyMesh(const AssetMetadata& metadata, Scope<AssetParseResult>)
+		// Apply is still where every bgfx call lives, and for meshes so is half of Parse: the
+		// mesh compiler reaches the GPU through MeshImporter (see MeshCompiler.h). Textures are
+		// the type whose Parse is genuinely free of it.
+		Ref<Mesh> ApplyMesh(const AssetMetadata& metadata, Scope<AssetParseResult> parsed)
 		{
 			const std::filesystem::path relativePath = metadata.FilePath;
-			const std::filesystem::path fullPath = GetAssetRoot() / relativePath;
 
-			Ref<Mesh> mesh = MeshCache::TryLoad(relativePath, fullPath);
-			if (!mesh)
-			{
-				mesh = MeshImporter::Load(fullPath);
-				if (mesh)
-					MeshCache::Write(mesh, relativePath, fullPath);
-			}
-
+			Ref<Mesh> mesh = MeshCompiler::Read(static_cast<CompiledBlob&>(*parsed).Bytes, relativePath);
 			if (!mesh)
 				return nullptr;
 
@@ -435,26 +448,13 @@ namespace GanymedE {
 
 		// ---- Texture ------------------------------------------------------------------
 		//
-		// The clean case, and the one that pays: PNG/JPEG decode is the whole CPU cost and it
-		// is entirely below the bgfx line.
-		struct TextureParse : AssetParseResult
-		{
-			DecodedImage Image;
-		};
-
-		Scope<AssetParseResult> ParseTexture(const AssetMetadata& metadata)
-		{
-			auto parsed = CreateScope<TextureParse>();
-			parsed->Image = TextureImporter::Decode(GetAssetRoot() / metadata.FilePath, false);
-			if (!parsed->Image)
-				return nullptr;
-
-			return parsed;
-		}
-
+		// The clean case, and the one that pays twice: Parse is a file read (or a BC7 encode on
+		// a cold tree) with no bgfx call anywhere below it, and what Apply uploads is a mipped,
+		// block-compressed container rather than a decoded RGBA8 buffer.
 		Ref<Texture2D> ApplyTexture(const AssetMetadata&, Scope<AssetParseResult> parsed)
 		{
-			return TextureImporter::Upload(static_cast<TextureParse&>(*parsed).Image);
+			const std::vector<uint8_t>& bytes = static_cast<CompiledBlob&>(*parsed).Bytes;
+			return Texture2D::CreateFromContainer(bytes.data(), (uint32_t)bytes.size());
 		}
 
 		// ---- Material -----------------------------------------------------------------
@@ -492,10 +492,17 @@ namespace GanymedE {
 		// form. The AssetType each manager serves comes from AssetTypeOf<T>, so this list cannot
 		// disagree with the GE_ASSET_TYPE declarations; a type missing from those does not
 		// compile here.
-		AssetManagerRegistry::Register<Mesh>("Mesh", nullptr, &ApplyMesh);
+		AssetManagerRegistry::Register<Mesh>("Mesh", &ParseCompiled, &ApplyMesh);
 		AssetManagerRegistry::Register<Environment>("Environment", nullptr, &ApplyEnvironment);
-		AssetManagerRegistry::Register<Texture2D>("Texture2D", &ParseTexture, &ApplyTexture);
+		AssetManagerRegistry::Register<Texture2D>("Texture2D", &ParseCompiled, &ApplyTexture);
 		AssetManagerRegistry::Register<Material>("Material", &ParseMaterial, &ApplyMaterial);
+
+		// Which types have an offline step. A type absent from this list still loads - the cache
+		// hands back its source bytes untouched - which is the right answer for `.hdr`
+		// environments, whose expensive part is a GPU bake that cannot be precomputed, and for
+		// `.gmat` materials, which are already the compact form of themselves.
+		CompiledCache::RegisterCompiler(AssetType::StaticMesh, CreateScope<MeshCompiler>());
+		CompiledCache::RegisterCompiler(AssetType::Texture, CreateScope<TextureCompiler>());
 	}
 
 	void AssetManager::Reload(AssetHandle handle)
@@ -534,7 +541,14 @@ namespace GanymedE {
 			}
 		};
 
-		if (metadata->Type == AssetType::Material)
+		if (metadata->Type == AssetType::Texture)
+		{
+			// A texture's compiled output is the thing that has to go: evicting the object alone
+			// would re-open the same stale `.gres`. Every other type reaches Invalidate through
+			// its own branch or does not have one.
+			CompiledCache::Invalidate(*metadata);
+		}
+		else if (metadata->Type == AssetType::Material)
 		{
 			evictMaps(AssetManagerRegistry::Get<Material>().Find(handle));
 		}
@@ -546,9 +560,9 @@ namespace GanymedE {
 					evictMaps(material);
 			}
 
-			// The timestamp check already catches a source edit; this covers "reimport now",
-			// where the source is untouched but something it references changed.
-			MeshCache::Invalidate(metadata->FilePath);
+			// The epoch record already catches an edited source; this covers "reimport now",
+			// where the source is untouched but the result should be rebuilt anyway.
+			CompiledCache::Invalidate(*metadata);
 		}
 
 		manager->Evict(handle);

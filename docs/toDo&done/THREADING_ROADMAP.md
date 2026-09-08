@@ -233,8 +233,8 @@ mutex makes it a poor fit for per-task granularity. So: name the threads and wir
 whatever `GE_PROFILE_*` resolves to, and treat "is a real frame profiler worth adopting" as a separate
 question. Do not fold a Tracy adoption into this milestone.
 
-**T3 — First consumer: parallel BCn encode in the asset compiler.** Lands with asset Phase 4.
-Verification is a measured before/after import time on a real scene, reported as numbers.
+**T3 — First consumer: parallel BCn encode in the asset compiler. Done** — landed with asset
+Phase 4; see [T3 — done](#t3--done-2026-09-08) at the bottom.
 
 **T4 — Second consumer: async load.** Lands with asset Phase 5, which owns the risks. This milestone
 contributes the pinned-task drain, the cancel-and-wait `Future`, and the main-thread assert.
@@ -367,3 +367,49 @@ runs inside the thing it tests cannot report a hang — check 3 deadlocks rather
 `IsCurrentJobCancelled` regresses. The "does not use freed state under a debug allocator" half of the
 sketch's second check is **not** covered: nothing here runs under a debug allocator. Proving that
 wants ASan or Application Verifier, which is a tooling decision, not a T1 line item.
+
+---
+
+# T3 — done (2026-09-08)
+
+The first consumer is `TextureCompiler`'s block encode, landed with
+[`ASSET_PIPELINE_ROADMAP.md`](ASSET_PIPELINE_ROADMAP.md) Phase 4. Each mip is split into horizontal
+bands of four block rows and dispatched through `JobSystem::ParallelFor`. Bands are safe because the
+per-mip encode is a pure function of (dst, src, width, height): rows of `blockHeight` pixels are
+independent block rows, a band of full width and a block-multiple height is contiguous on both
+sides, and bimg allocates its own scratch per call.
+
+**The measurement, which is what this was for.** 2560×1664 → BC3 with 12 mips, 15 workers,
+optimised encoder, same process:
+
+| | Time |
+| --- | --- |
+| Serial | 597 ms |
+| Parallel | 324 ms, 331 ms |
+
+**1.8×.** The same band split on BC7 measured **4.7×** (30 306 ms → 6 402 ms) on a 256×256.
+
+**The interesting result is why 1.8× and not more, and it is not a scheduler problem.** BC7 through
+bimg is NVIDIA's AVPCL reference encoder at ~10k pixels/second, so the encode dominated everything
+and the split scaled well. Asset Phase 4 then made `auto` mean BC1/BC3 through libsquish, which is
+311× faster — and once the encode is cheap, the *serial* remainder is what is left: mip generation,
+the alpha scan that picks BC1 vs BC3, container allocation, and the DDS write. Amdahl with a
+parallel fraction around 0.55 caps out near 2.2×, and 1.8× is what that looks like measured.
+
+Two consequences worth carrying forward:
+
+- **Making the serial work faster made the parallelism matter less.** The threading milestone's own
+  justification is smaller than it looked before the encoder choice was measured. That is the
+  honest answer to "does this milestone earn its keep": on this consumer, it saves ~270 ms per large
+  texture on a cold import, and nothing at all on a warm one.
+- **Not every encoder is safe to split.** libsquish has static functions and no mutable state; AVPCL
+  writes four file-scope `bool`s per block. They are set to the same constant every call, which
+  makes the race benign in practice — the code refuses to rely on that and encodes BC7 serially.
+  `IsThreadSafeEncoder` in `Platform/Bimg/TextureEncode.cpp` is the list.
+
+**A build finding that gates the whole thing:** unoptimised, bimg's encoders did not finish a
+2560×1664 texture in four minutes. The `bimg` project now builds with `optimize "Speed"` even in
+Debug (plus `NoRuntimeChecks`, since MSVC rejects `/O2` with `/RTC1`). Without that, no measurement
+here is meaningful and the asset compiler is unusable in the configuration everyone develops in.
+
+**T4 remains open** and is asset Phase 5. Nothing in the frame runs on the scheduler yet.

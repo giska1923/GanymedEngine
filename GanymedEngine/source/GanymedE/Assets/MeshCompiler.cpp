@@ -1,6 +1,6 @@
 #include "gepch.h"
 #include "GanymedE/Renderer/MeshShader.h"
-#include "MeshCache.h"
+#include "MeshCompiler.h"
 
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/TextureImporter.h"
@@ -9,7 +9,7 @@
 #include "GanymedE/Renderer/Shader.h"
 #include "GanymedE/Renderer/Texture.h"
 
-#include <fstream>
+#include <sstream>
 
 namespace GanymedE {
 
@@ -20,7 +20,13 @@ namespace GanymedE {
 		// rather than whose fields moved. v5: Skeleton::RootTransform written before it
 		// accounted for the skinned mesh node's transform. v6: skinned submeshes written
 		// with an identity LocalTransform, which drops that node transform entirely.
-		constexpr uint32_t MESH_CACHE_VERSION = 6;
+		// v7 drops the embedded source timestamp: the `.dep` epoch record decides staleness
+		// now, and a blob that carried its own answer to that question could disagree with it.
+		//
+		// This has to stay in step with MeshCompiler::Version(), which is what CompiledCache
+		// compares - the magic and version below are a second line of defence against a stale
+		// file, not the primary one.
+		constexpr uint32_t MESH_CACHE_VERSION = 7;
 
 		void WriteString(std::ostream& out, const std::string& str)
 		{
@@ -311,50 +317,62 @@ namespace GanymedE {
 
 	}
 
-	std::filesystem::path MeshCache::GetCachePath(const std::filesystem::path& sourceRelativePath)
+	bool MeshCompiler::Compile(const CompileInput& input, CompileOutput& output) const
 	{
-		std::string filename = sourceRelativePath.generic_string();
-		std::replace(filename.begin(), filename.end(), '/', '_');
-		std::replace(filename.begin(), filename.end(), '\\', '_');
-		return GetAssetRoot() / ".assets" / "meshes" / (filename + ".meshcache");
+		GE_PROFILE_FUNCTION();
+
+		// See the note on the class: this reaches the GPU, which the compiler contract says it
+		// should not. It is what the importer can do today.
+		Ref<Mesh> mesh = MeshImporter::Load(input.SourceFullPath, &output.Dependencies);
+		if (!mesh)
+			return false;
+
+		const std::string relativePath = input.Metadata->FilePath;
+
+		std::ostringstream out(std::ios::binary);
+		WriteValue(out, MESH_CACHE_MAGIC);
+		WriteValue(out, MESH_CACHE_VERSION);
+		WriteString(out, relativePath);
+		WriteArray(out, mesh->GetVertices());
+		WriteArray(out, mesh->GetIndices());
+		WriteSubmeshes(out, mesh->GetSubmeshes());
+		WriteMaterials(out, mesh->GetMaterials());
+		WriteArray(out, mesh->GetSkinVertices());
+		WriteSkeleton(out, mesh->GetSkeleton());
+		WriteClips(out, mesh->GetClips());
+
+		const std::string blob = out.str();
+		output.Bytes.assign(blob.begin(), blob.end());
+		return !output.Bytes.empty();
 	}
 
-	uint64_t MeshCache::GetFileTimestamp(const std::filesystem::path& path)
+	Ref<Mesh> MeshCompiler::Read(const std::vector<uint8_t>& blob,
+		const std::filesystem::path& sourceRelativePath)
 	{
-		std::error_code ec;
-		auto time = std::filesystem::last_write_time(path, ec);
-		if (ec)
-			return 0;
-		return (uint64_t)time.time_since_epoch().count();
-	}
+		GE_PROFILE_FUNCTION();
 
-	Ref<Mesh> MeshCache::TryLoad(const std::filesystem::path& sourceRelativePath,
-		const std::filesystem::path& sourceFullPath)
-	{
-		std::filesystem::path cachePath = GetCachePath(sourceRelativePath);
-		if (!std::filesystem::exists(cachePath))
-			return nullptr;
-
-		uint64_t sourceTimestamp = GetFileTimestamp(sourceFullPath);
-		if (sourceTimestamp == 0)
-			return nullptr;
-
-		std::ifstream in(cachePath, std::ios::binary);
-		if (!in)
-			return nullptr;
+		std::istringstream in(std::string(blob.begin(), blob.end()), std::ios::binary);
 
 		uint32_t magic = 0, version = 0;
-		uint64_t cachedTimestamp = 0;
 		ReadValue(in, magic);
 		ReadValue(in, version);
-		ReadValue(in, cachedTimestamp);
 
-		if (magic != MESH_CACHE_MAGIC || version != MESH_CACHE_VERSION || cachedTimestamp != sourceTimestamp)
+		if (magic != MESH_CACHE_MAGIC || version != MESH_CACHE_VERSION)
+		{
+			GE_CORE_WARN("Mesh blob for '{0}' is not v{1} - the compiled output is stale in a way "
+				"the epoch record did not catch", sourceRelativePath.generic_string(), MESH_CACHE_VERSION);
 			return nullptr;
+		}
 
+		// Written and checked because the output tree is keyed by a hash of this path: a
+		// collision would otherwise hand back a completely unrelated mesh.
 		std::string storedPath = ReadString(in);
 		if (storedPath != sourceRelativePath.generic_string())
+		{
+			GE_CORE_ERROR("Mesh blob claims to be '{0}' but was opened for '{1}'",
+				storedPath, sourceRelativePath.generic_string());
 			return nullptr;
+		}
 
 		std::vector<MeshVertex> vertices;
 		std::vector<uint32_t> indices;
@@ -376,60 +394,7 @@ namespace GanymedE {
 		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials,
 			std::move(skinVertices), std::move(skeleton), std::move(clips));
 		mesh->SetPath(sourceRelativePath.generic_string());
-		GE_CORE_INFO("Loaded mesh cache '{0}'", cachePath.filename().string());
 		return mesh;
-	}
-
-	bool MeshCache::Write(const Ref<Mesh>& mesh, const std::filesystem::path& sourceRelativePath,
-		const std::filesystem::path& sourceFullPath)
-	{
-		if (!mesh)
-			return false;
-
-		uint64_t sourceTimestamp = GetFileTimestamp(sourceFullPath);
-		if (sourceTimestamp == 0)
-			return false;
-
-		std::filesystem::path cachePath = GetCachePath(sourceRelativePath);
-		std::error_code ec;
-		std::filesystem::create_directories(cachePath.parent_path(), ec);
-
-		std::ofstream out(cachePath, std::ios::binary | std::ios::trunc);
-		if (!out)
-			return false;
-
-		WriteValue(out, MESH_CACHE_MAGIC);
-		WriteValue(out, MESH_CACHE_VERSION);
-		WriteValue(out, sourceTimestamp);
-		WriteString(out, sourceRelativePath.generic_string());
-		WriteArray(out, mesh->GetVertices());
-		WriteArray(out, mesh->GetIndices());
-		WriteSubmeshes(out, mesh->GetSubmeshes());
-		WriteMaterials(out, mesh->GetMaterials());
-		WriteArray(out, mesh->GetSkinVertices());
-		WriteSkeleton(out, mesh->GetSkeleton());
-		WriteClips(out, mesh->GetClips());
-
-		GE_CORE_INFO("Wrote mesh cache '{0}'", cachePath.filename().string());
-		return true;
-	}
-
-	bool MeshCache::Invalidate(const std::filesystem::path& sourceRelativePath)
-	{
-		std::filesystem::path cachePath = GetCachePath(sourceRelativePath);
-
-		std::error_code ec;
-		bool removed = std::filesystem::remove(cachePath, ec);
-		if (ec)
-		{
-			GE_CORE_WARN("Failed to remove mesh cache '{0}'", cachePath.filename().string());
-			return false;
-		}
-
-		if (removed)
-			GE_CORE_INFO("Invalidated mesh cache '{0}'", cachePath.filename().string());
-
-		return removed;
 	}
 
 }

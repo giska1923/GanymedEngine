@@ -14,7 +14,7 @@ GanymedE/
 ├── Reflection/  Component MEMBER reflection over entt::meta (see scene.md)
 ├── Scene/       Scene, Entity, Components, SceneSerializer, built-in Systems/
 ├── Renderer/    bgfx-backed renderer: resources, Renderer2D/3D, SceneRenderer, IBL, cameras
-├── Assets/      AssetManager (scan-derived handle index + typed manager registry), AssetMeta, MeshCache
+├── Assets/      AssetManager (scan-derived index + manager registry), AssetMeta, CompiledCache + compilers
 ├── Physics/     PhysicsScene (Jolt, pimpl'd)
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
@@ -26,6 +26,8 @@ GanymedE/
 
 Platform/
 ├── Bgfx/        BgfxContext (bgfx lifetime + swapchain), ImGuiRendererBgfx
+├── Bimg/        TextureEncode - block compression. Its OWN static lib, built as C++20
+│                because bx does not compile below it (see GanymedEngine/TextureEncode.lua)
 ├── Windows/     WindowsWindow, WindowsInput, file dialogs
 ├── Linux/       LinuxWindow, LinuxInput, file dialogs
 └── macOS/       macOSWindow, macOSInput, file dialogs
@@ -152,20 +154,21 @@ Two ordering facts worth internalizing:
 
 - **The frame is still single-threaded**, and a scheduler existing does not change that. One scene
   update per frame on the main thread; bgfx runs in single-threaded mode (`renderFrame()` before
-  `init`). What exists is [`Core/JobSystem`](core.md#job-system) — a parallel-for and cancellable
-  background jobs — with **no system running on it yet**; its first consumers are the asset
-  compiler's BCn encode and async loading
-  ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3/T4). Jolt still runs its own pool,
+  `init`). [`Core/JobSystem`](core.md#job-system) has exactly one consumer, and it is offline work:
+  the texture compiler's block encode
+  ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3, measured at 1.8× on a
+  2560×1664 texture). Async loading is T4 and does not exist yet. Jolt still runs its own pool,
   so there are currently two pools of `hardware_concurrency() - 1` threads. The ViewDesc machinery
   exists so ECS parallelism can be added without redesign.
 - **The asset layer is mid-milestone.** Identity is per-asset `.meta` sidecars, loading goes through
-  a registration-driven manager registry with a Parse/Apply split, and `AssetRef<T>` is the
-  reference type components hold — so assets are evicted when the scene that referenced them
-  closes. What is still missing is compiled outputs and asynchrony: every load is a blocking read on
-  the calling thread, textures ship as PNG-decoded uncompressed, and there is no hot reload.
-  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) Phases 1–3 have landed;
-  `AssetRef` is also the shim that lets Phase 5 make loading asynchronous without touching a call
-  site, which is why it came first.
+  a registration-driven manager registry with a Parse/Apply split, `AssetRef<T>` is the reference
+  type components hold, and sources are compiled into `assets/.compiled/` with content-hash
+  invalidation — textures as mipped BCn, meshes as a binary blob. What is still missing is
+  **asynchrony**: every load, including a compile, blocks the calling thread, so a cold import of a
+  large project hitches. There is also no hot reload.
+  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) Phases 1–4 have landed;
+  `AssetRef` is the shim that lets Phase 5 make loading asynchronous without touching a call site,
+  which is why it came first.
 - **Component members are reflected, but nothing consumes it yet.**
   [`Reflection/`](scene.md#member-reflection) registers all 23 components over `entt::meta` and
   validates itself at boot; the serializer, the inspector and the Lua bindings still hand-list every

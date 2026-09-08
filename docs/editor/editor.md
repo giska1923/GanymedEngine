@@ -202,6 +202,10 @@ live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
 FXAA), and Jolt debug-draw toggles (visible during Play; draws Jolt's body state instead of the
 authored collider gizmos).
 
+A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
+many came out of `assets/.compiled/` instead. A second run over an unchanged project must read
+0 built ([assets.md](../engine/assets.md#compiled-outputs)).
+
 The Asset Cache rows come from `AssetManager::GetCacheStats()`, one per registered manager, printed
 as `resident / tracked` — live objects, and cache entries including ones whose object has already
 been collected. The gap between the two *is* eviction: close a scene and resident falls while
@@ -340,7 +344,7 @@ needs nothing: it is driven by `ComponentList`, so a new component type joins it
 ## Content Browser panel
 
 [`ContentBrowserPanel`](../../GanymedEditor/source/Panels/ContentBrowserPanel.h) — a grid view of
-`assets/`. Two classes of entry are hidden: anything whose name starts with `.` (the `.assets/`
+`assets/`. Two classes of entry are hidden: anything whose name starts with `.` (the `.compiled/`
 mesh cache today, `.compiled/` when the asset compiler lands) and `.meta`/`.meta.bad` sidecars.
 Hiding the sidecars is not cosmetic — one per asset would double every row in the grid and offer
 **Import** on a file that is not an asset. They are the `AssetManager`'s to write, never a human's
@@ -357,10 +361,15 @@ Hiding the sidecars is not cosmetic — one per asset would double every row in 
   since. `ImportAsset` writes the `.meta` sidecar itself, so there is nothing to flush — see
   [assets.md](../engine/assets.md#the-meta-sidecar).
 - Right-click on an already-registered file → **Reload**, evicting it from the manager's cache so the
-  next fetch re-reads it from disk. For a mesh this also drops its textures and deletes the
-  `.meshcache`, i.e. a full reimport. Edits land in the viewport on the next frame because
-  `RenderSystem` re-fetches by handle every frame — see
-  [assets.md](../engine/assets.md#reload) for the invariant that makes eviction safe mid-frame.
+  next fetch re-reads it from disk. For a mesh and a texture this also drops the compiled artifact,
+  i.e. a full reimport. Edits land in the viewport on the next frame because every `AssetRef`
+  re-resolves after an eviction — see [assets.md](../engine/assets.md#reload) for the invariant that
+  makes eviction safe mid-frame.
+- On a file whose type has a compiler (meshes, textures) there is also **Reimport**: `Reload` plus
+  deleting the compiled artifact outright, for the case the epoch record cannot see — an import
+  setting edited by hand, or simple doubt about what is in the cache. It **blocks**, and a large
+  texture is seconds; the menu item's tooltip says so rather than letting the editor look hung.
+  Making it non-blocking is asset Phase 5's job.
 
 ## Typed drag-drop
 

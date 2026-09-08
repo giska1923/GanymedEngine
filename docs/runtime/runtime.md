@@ -131,7 +131,10 @@ Two consequences worth knowing before adding content:
   the first two and omitted the last two — a distinction nothing enforced and a new asset was
   guaranteed to get wrong.
 
-`assets/.assets/` (the mesh cache) and `assets/shaders/compiled/` are derived and gitignored.
+`assets/.compiled/` (compiled textures and mesh blobs) and `assets/shaders/compiled/` are derived
+and gitignored. **A shipped build should ship `.compiled/` anyway**: the runtime treats `assets/` as
+read-only, and without the tree it recompiles every asset on every boot. It warns once when that
+happens rather than failing, so a missing tree is slow rather than fatal.
 `scripts/compile_shaders.bat` writes this app's copy alongside the editor's and Sandbox's.
 
 ## The demo scene

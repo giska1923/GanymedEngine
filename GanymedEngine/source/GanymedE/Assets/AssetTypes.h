@@ -3,6 +3,7 @@
 #include "GanymedE/Core/UUID.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 
 namespace GanymedE {
@@ -47,6 +48,11 @@ namespace GanymedE {
 		AssetHandle Handle = InvalidAssetHandle;
 		AssetType Type = AssetType::None;
 		std::string FilePath; // relative to assets/
+
+		// The `.meta` sidecar's Config block, carried on the index entry rather than re-read
+		// per compile. The scan already reads every sidecar, so this is free; without it every
+		// CompiledCache::Open would open the sidecar again just to hash the settings.
+		std::map<std::string, std::string> Config;
 	};
 
 }

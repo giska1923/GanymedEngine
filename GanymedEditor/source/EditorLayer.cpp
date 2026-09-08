@@ -11,6 +11,7 @@
 #include "GanymedE/Scene/PrefabSerializer.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/CompiledCache.h"
 #include "GanymedE/Assets/MaterialSerializer.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/MeshShader.h"
@@ -362,6 +363,12 @@ namespace GanymedE {
 		ImGui::Text("Asset Cache (resident / tracked):");
 		for (const AssetCacheStats& cache : AssetManager::GetCacheStats())
 			ImGui::Text("%s: %zu / %zu", cache.TypeName, cache.Resident, cache.Tracked);
+
+		// Compiles vs cache hits is the number that says whether the compiled tree is doing its
+		// job: a second run over an unchanged project must read 0 compiled.
+		const CompiledCache::Stats& compiled = CompiledCache::GetStats();
+		ImGui::Text("Compiled: %u built (%.0f ms), %u from cache",
+			compiled.Compiles, compiled.TotalCompileMs, compiled.CacheHits);
 
 		ImGui::Separator();
 		ImGui::Text("Post Processing:");

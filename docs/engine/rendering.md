@@ -257,7 +257,7 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
   [`MeshShader`](../../GanymedEngine/source/GanymedE/Renderer/MeshShader.h), which exists to give
   that cache explicit ownership released before bgfx dies) + albedo color/metallic/roughness
   scalars, albedo/normal/metallic-roughness maps (paths, or embedded compressed bytes for
-  glb-embedded textures so `MeshCache` can persist them), two-sided and transparent flags.
+  glb-embedded textures so the mesh blob can persist them), two-sided and transparent flags.
   `Bind()` uploads the scalars and binds the maps to slots 0–2 (white fallback). A material can
   come from a mesh's own import *or* from a `.gmat` asset — see
   [assets.md](assets.md#materials-gmat); the renderer does not care which.
@@ -299,6 +299,30 @@ Three consequences worth encoding rather than discovering:
   Its invalidation rules are unchanged (a skinned draw always rebinds, and it invalidates the cache
   behind it), and the mixed case is verified rather than assumed: a scene of default, overridden and
   skinned draws renders a stable draw count across 100 frames.
+
+## Colour space
+
+**The engine has no sRGB pipeline, and this section exists so that is a recorded decision rather
+than a thing you rediscover.** Textures are sampled as raw `RGBA8` with no `BGFX_TEXTURE_SRGB` flag
+and no shader-side decode; lighting runs in whatever space the texels are already in; and
+`Tonemap.glsl` applies `pow(mapped, 1.0/2.2)` once at the end of the post stack, on the way to an
+8-bit target ImGui shows.
+
+That is not correct, and it is consistent. Albedo authored in sRGB is being lit as though it were
+linear, which makes mid-tones brighter than they should be — and the single gamma at the end hides
+enough of it that everything looks plausible. Fixing it means flagging colour textures sRGB at
+creation, leaving normal/roughness/metallic linear, and re-checking every lighting constant that
+was tuned against the current look. **That is a rendering change with a visible before/after, not a
+side effect of anything else**, which is why the asset compiler deliberately has no `sRGB` config
+key ([assets.md](assets.md#texture-compilation)): a key that changed the look of every scene would
+be smuggling this change in through the back door.
+
+The convention to adopt when it is done is the standard one — albedo and emissive sRGB, everything
+else linear — and the check is a known reference gradient rendering identically before and after
+the *compiler*, then deliberately differently when the sRGB flag lands.
+
+Block compression does not interact with this. BCn stores bits; colour space is a property of how
+the texture is created and sampled, not of the encoded payload.
 
 ## Environment / IBL
 

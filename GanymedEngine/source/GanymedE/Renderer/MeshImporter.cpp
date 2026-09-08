@@ -402,7 +402,8 @@ namespace GanymedE {
 
 	}
 
-	Ref<Mesh> MeshImporter::Load(const std::filesystem::path& path)
+	Ref<Mesh> MeshImporter::Load(const std::filesystem::path& path,
+		std::vector<std::string>* outDependencies)
 	{
 		cgltf_options options = {};
 		cgltf_data* data = nullptr;
@@ -422,6 +423,42 @@ namespace GanymedE {
 		}
 
 		std::filesystem::path basePath = path.parent_path();
+
+		// Every external file cgltf just resolved. A URI is external iff it is not a data: blob
+		// and not the `.glb`'s own binary chunk, and only the ones that land inside assets/ are
+		// worth recording - a path escaping the asset root has no identity for the epoch record
+		// to hash by relative path.
+		if (outDependencies)
+		{
+			auto record = [&](const char* uri)
+			{
+				// A data: URI is the payload itself - there is no file to depend on.
+				const std::string text = uri ? uri : "";
+				if (text.empty() || text.rfind("data:", 0) == 0)
+					return;
+
+				std::error_code ec;
+				auto relative = std::filesystem::relative(basePath / text, GetAssetRoot(), ec);
+				if (ec)
+					return;
+
+				std::string recorded = relative.generic_string();
+				if (recorded.rfind("..", 0) == 0)
+					return;
+
+				if (std::find(outDependencies->begin(), outDependencies->end(), recorded)
+					== outDependencies->end())
+				{
+					outDependencies->push_back(std::move(recorded));
+				}
+			};
+
+			for (cgltf_size i = 0; i < data->buffers_count; i++)
+				record(data->buffers[i].uri);
+			for (cgltf_size i = 0; i < data->images_count; i++)
+				record(data->images[i].uri);
+		}
+
 		Ref<Shader> shader = MeshShader::Get();
 
 		// Materials

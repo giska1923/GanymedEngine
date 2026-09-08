@@ -881,6 +881,105 @@ image rather than by eye.
 | Build | MSBuild x64 Debug; bimg link added to `premake5.lua` → **premake regeneration required**, state it |
 | Docs | [`assets.md`](../engine/assets.md) compiled-output + compiler sections replacing the `MeshCache`-specific text; [`build-and-tooling.md`](../engine/build-and-tooling.md) for the `.compiled/` tree and gitignore; [`rendering.md`](../engine/rendering.md) for the colour-space convention |
 
+### Phase 4 — execution notes (done)
+
+New files: `Assets/AssetCompiler.h`, `Assets/CompiledCache.h/.cpp`, `Assets/TextureCompiler.h/.cpp`,
+`Platform/Bimg/TextureEncode.h/.cpp`, `GanymedEngine/TextureEncode.lua`. `MeshCache.h/.cpp` renamed
+to `MeshCompiler.h/.cpp`. Premake regeneration required and run.
+
+**The measured corrections come first, because two of them changed the design.**
+
+1. **`auto` is BC1/BC3, not BC7 — bimg's BC7 encoder is NVIDIA's AVPCL reference implementation.**
+   The plan's risk section estimated "BC7 at high quality is seconds per 2K texture". Measured on
+   an *optimised* build: 6.4 s for a 256×256 with mips, and **58.6 s for a 1024×1024**. That is
+   ~10k pixels/second — an exhaustive mode and partition search written to be correct, not fast. A
+   2048² albedo would be minutes, which is not a pipeline. BC1/BC3 go through libsquish instead and
+   compile the same 1024² in **188 ms, a 311× difference**, with a real quality knob. `auto` now
+   picks BC1, or BC3 when a linear scan finds the alpha channel actually used. `Format: BC7`
+   remains for the texture worth waiting for.
+
+2. **bimg had to be built optimised in Debug before any of this was measurable.** Unoptimised, the
+   BC7 path did not finish a 2560×1664 texture in four minutes. `optimize "Speed"` plus
+   `NoRuntimeChecks` on the `bimg` project only (MSVC rejects `/O2` with `/RTC1`). Without this the
+   asset compiler is unusable in the configuration everyone develops in, which is not a footnote.
+
+3. **Only libsquish's formats are parallelised.** AVPCL keeps four file-scope `bool`s that
+   `compressBC7` writes per block. They are set to the same constant every call, so the race is
+   benign in practice — and that is not a basis for threading. BC7 encodes serially; BC1/BC3/BC4/BC5
+   band-split.
+
+**Two build-shape findings the plan did not anticipate.**
+
+- **"bimg is already vendored and already builds, so there is no new dependency" was half true.**
+  The `bimg` project built only `image.cpp`; `image_encode.cpp` and every block compressor under
+  `3rdparty` were not in the build. They are now (libsquish, nvtt, etc1, etcpak, pvrtc, edtaa3,
+  iqa — ~1.4 MB of vendored source, all already in the submodule), folded into the existing project
+  rather than adding upstream's separate `bimg_encode`. **`bimg_decode` is still not built**: it
+  drags in dav1d and libavif for AV1, so the compiler decodes with the stb_image the engine already
+  vendors and hands bimg raw RGBA8. Source-format support is therefore exactly what it was.
+- **bx does not compile below C++20, and the engine is C++17.** bimg's headers only forward-declare
+  the bx types but its API takes them by pointer, so the encoder needs the real definitions. The
+  encode lives in `source/Platform/Bimg/`, built as its own C++20 static lib that the engine project
+  `removefiles` from its glob — the same boundary `bgfx.lua` already documents. Its header mentions
+  neither bimg nor bx, and it takes `ParallelFor` as a `std::function` because the engine links it.
+  The alternative, raising the whole engine to C++20, is one line and a project-wide language change
+  that should happen for its own reasons rather than as a side effect of this phase.
+  **Consequently the verification table's "bimg link added to `premake5.lua`" was already done** —
+  bimg was linked and its include path set before this phase.
+
+**Steps that turned out differently.**
+
+- **Step 3's `MeshCompiler` does not honour the compiler contract, and says so in its own header.**
+  `Compile` runs `MeshImporter::Load`, which builds a live `Mesh` with bgfx buffers and then
+  serializes it, because nothing in the importer can emit CPU-side mesh data. So a cold mesh import
+  creates its GPU buffers twice and the compiler must run on the submit thread. The warm path pays
+  neither. This is the same debt Phase 2's notes named; Phase 5 is where it comes due.
+- **Step 4's role-based `Format: auto` is not implementable as described, and BC5 would break
+  rendering.** The compiler runs on the texture; the role lives in the `.gmat` referencing it, and
+  resolving that needs the reverse index decision 11 declined to build. Worse, `Phong.glsl` reads
+  `.xyz` straight out of the normal map, so defaulting normal maps to BC5 — which stores two
+  channels and needs a shader-side Z reconstruct — would quietly break every normal-mapped surface.
+  A `MaterialSerializer` stamp was written and then **reverted**: the honest version is that
+  `Format:` is hand-editable in the `.meta` and role inference waits for the rendering change.
+- **The `sRGB` config key was dropped rather than reserved.** The engine has *no* sRGB pipeline —
+  textures are sampled as raw RGBA8 and gamma is applied once at tonemap — so the key would either
+  do nothing or change the look of every scene. A knob that does nothing is what decision 15's
+  "reserve a config block" should not become. Written up in
+  [`rendering.md` § Colour space](../engine/rendering.md#colour-space) instead, which is where the
+  fix belongs.
+- **Step 6's dependency edges are recorded but have almost nothing to record.** `MeshImporter` now
+  reports a `.gltf`'s external `.bin` buffers and image files, which is a real edge. A `.glb`
+  reports none, and every mesh here is a `.glb`. The verification row "edit a texture referenced by
+  a `.gmat`, confirm the dependent recompiles" **describes a case that does not exist**: `.gmat` has
+  no compiler, and a mesh blob stores texture paths rather than pixels, so an edited texture
+  correctly invalidates only itself. The reverse map is left unbuilt for Phase 6, which is what
+  needs it.
+- **Persisting a compiled artifact is best effort**, added after seeing the runtime — which treats
+  `assets/` as read-only — compile at boot and write into its own install directory. The bytes are
+  returned whether or not the write succeeds, and a read-only session that has to compile warns once
+  that its `.compiled/` tree did not ship.
+
+**Verification results** (MSBuild x64 Debug, full solution clean; measurements on 15 worker threads).
+
+| Check | Result |
+| --- | --- |
+| Meshes still load, cache still works | Cold: `Compiled 'models/BoxTextured.glb' with MeshCompiler in 3 ms [no cached output]`. Re-run: nothing compiled at all |
+| Epoch diff is correct | `touch` the `.glb` → **no recompile**, and `'models/BoxTextured.glb': mtime moved but content is unchanged - kept the compiled output`. Add a Config key to its `.meta` → `[stale: config]`. Bump `MeshCompiler::Version` 7→8 → `[stale: compiler-version\|config]`. Both edits reverted afterwards |
+| Dependency invalidation | **Not satisfiable as written** — see above. The machinery is exercised (the `.dep` carries `{path, hash}` pairs and the diff checks them); no compiler in this content set has a dependency to declare |
+| Texture output is right | BC1 with full mip chains, measured VRAM: 256² albedo 256 KB → 42 KB (9 mips); 1024² albedo 4 096 KB → 682 KB (11 mips); 64² checkerboard 16 KB → 2 KB (7 mips). ~6× on the two real textures, *with* mips added |
+| Non-block-aligned source | `blockPack.png` at 1181×1181 falls back to RGBA8 with a warning naming the reason. Worth knowing: with mips on that costs **more** than before (5 448 KB → 7 259 KB) — the fix is resizing the source |
+| sRGB not double-applied | Trivially true and for a disappointing reason: there is no sRGB handling to double-apply. The scene renders identically to the Phase 3 capture — 40 meshes, 32 culled, 5 instanced draws, 7 draw calls |
+| Parallel encode (T3) | 2560×1664 → BC3, 12 mips: **597 ms serial → 324–331 ms parallel, 1.8×**. The same split on BC7 measured **4.7×** (30 306 → 6 402 ms). The honest reading: the faster encoder made threading matter *less*, because mip generation, the alpha scan and the DDS write are the serial remainder |
+| Build | Full solution clean. bimg gained the encode sources; `TextureEncode` is a new project; premake regenerated |
+| Runtime boots | Compiles its mesh on a cold tree, scene loads, 10 entities, zero errors |
+| Nothing rewritten on disk | `git status` over both `assets/` trees clean; `**/assets/.compiled/` added to `.gitignore` |
+
+**Left as adjacent work.** The abandoned `assets/.assets/` trees can be deleted by hand. Packaging
+`.compiled/` with a shipped runtime belongs to the distribution milestone. The sRGB pipeline is
+scoped in `rendering.md` and is a rendering change, not an asset one.
+
+---
+
 ---
 
 ## Phase 5 — Async: non-blocking loads on `Core/JobSystem`

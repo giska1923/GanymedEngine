@@ -92,6 +92,10 @@ group "Dependencies"
 	include "GanymedEngine/extern/FreeType.lua"
 	include "GanymedEngine/extern/RmlUi.lua"
 	include "GanymedEngine/extern/enkiTS.lua"
+
+	-- Engine code, not a dependency, but it groups here because it is a static lib the engine
+	-- links rather than something anyone opens day to day. See GanymedEngine/TextureEncode.lua.
+	include "GanymedEngine/TextureEncode.lua"
 group ""
 
 include "GanymedEngine"

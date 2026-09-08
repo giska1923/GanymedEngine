@@ -16,6 +16,11 @@ GanymedEditor/assets/.assets
 # registry is authored content. See docs/engine/assets.md, "Registry portability".
 GanymedRuntime/assets/.assets
 
+# Compiled asset outputs - block-compressed textures and binary mesh blobs, keyed by a hash
+# of the source path. Derived from committed sources and rebuilt on demand, so it is ignored
+# in every project rather than per app; deleting the tree costs one recompile.
+**/assets/.compiled/
+
 # Premake-generated makefiles (regenerate with scripts/*_GenerateProjects.sh)
 Makefile
 *.make

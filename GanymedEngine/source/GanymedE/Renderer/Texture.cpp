@@ -70,6 +70,41 @@ namespace GanymedE {
 			GE_CORE_ERROR("Failed to create texture from '{0}'", path);
 	}
 
+	Texture2D::Texture2D(const uint8_t* containerBytes, uint32_t size)
+	{
+		GE_PROFILE_FUNCTION();
+
+		if (!containerBytes || size == 0)
+		{
+			GE_CORE_ERROR("Empty texture container");
+			return;
+		}
+
+		// bgfx parses DDS/KTX/PVR itself and reports what it found. Doing it this way rather
+		// than decoding the container here is what makes a block-compressed, fully mipped
+		// texture cost the engine no more code than an uncompressed one.
+		bgfx::TextureInfo info = {};
+		m_Handle = bgfx::createTexture(bgfx::copy(containerBytes, size),
+			BGFX_TEXTURE_NONE, 0, &info);
+
+		if (!bgfx::isValid(m_Handle))
+		{
+			GE_CORE_ERROR("Failed to create a texture from a {0} byte container", size);
+			return;
+		}
+
+		m_Width = info.width;
+		m_Height = info.height;
+		m_MipCount = info.numMips;
+		m_Format = (uint32_t)info.format;
+		m_GpuBytes = info.storageSize;
+
+		// A mipped texture wants trilinear minification. Point magnification stays: the 2D
+		// renderer relies on it for crisp sprites, and it is what every other path here uses.
+		if (m_MipCount > 1)
+			m_SamplerFlags = BGFX_SAMPLER_MAG_POINT;
+	}
+
 	Texture2D::~Texture2D()
 	{
 		GE_PROFILE_FUNCTION();
@@ -104,5 +139,10 @@ namespace GanymedE {
 	Ref<Texture2D> Texture2D::Create(const std::string& path)
 	{
 		return CreateRef<Texture2D>(path);
+	}
+
+	Ref<Texture2D> Texture2D::CreateFromContainer(const uint8_t* containerBytes, uint32_t size)
+	{
+		return CreateRef<Texture2D>(containerBytes, size);
 	}
 }

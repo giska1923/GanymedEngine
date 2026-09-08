@@ -98,8 +98,8 @@ with no shared file needs no batching: `ImportAsset` writes, and there is nothin
 ### The scan
 
 `ScanAssets()` walks `assets/` with a `recursive_directory_iterator`, calls
-`disable_recursion_pending()` on any directory whose name starts with `.` (`.assets/` today,
-`.compiled/` when the asset compiler lands), and skips `.meta`/`.bad` files and any extension
+`disable_recursion_pending()` on any directory whose name starts with `.` (`.compiled/`, and the
+abandoned `.assets/`), and skips `.meta`/`.bad` files and any extension
 `AssetTypeFromExtension` does not recognize. Paths are collected, **`std::sort`ed**, and only then
 registered. The sort is load-bearing rather than cosmetic: iteration order is unspecified, and the
 duplicate-handle rule below is "first one wins", so an unsorted scan would pick a different winner
@@ -286,9 +286,9 @@ itself if `Apply` never runs. Having the boundary in now means async loading lat
 
 | Type | Parse | Apply |
 |---|---|---|
-| **Texture2D** | `TextureImporter::Decode` — stb decode to RGBA8, which is the whole CPU cost | `TextureImporter::Upload` — `Texture2D::Create` + `SetData` |
+| **Texture2D** | `CompiledCache::Open` — the compiled DDS, block-compressed by `TextureCompiler` if stale | `Texture2D::CreateFromContainer` |
 | **Material** | `MaterialSerializer::ReadDesc` — `.gmat` YAML into a `MaterialDesc` | `MaterialSerializer::Build` — creates the `Material` and resolves its map paths through `LoadMaterialMap` |
-| **Mesh** | *none yet* | `MeshCache::TryLoad`, else `MeshImporter::Load` + `MeshCache::Write`; then `MaterialSerializer::GenerateSidecars` (see *Materials*) |
+| **Mesh** | `CompiledCache::Open` — the compiled blob, built by `MeshCompiler` if stale | `MeshCompiler::Read`; then `MaterialSerializer::GenerateSidecars` (see *Materials*) |
 | **Environment** | *none* | `Environment::Create` — runs the IBL bake, see [rendering.md](rendering.md#environment--ibl) |
 
 The two empty `Parse` stages are not the same kind of gap:
@@ -297,12 +297,12 @@ The two empty `Parse` stages are not the same kind of gap:
   equirectangular HDR; everything after it is the bake — six cube faces plus prefilter mips rendered
   through bgfx views — which can never leave the submit thread. Splitting would move a few percent
   of the cost and cost `Environment` its filepath constructor.
-- **Mesh is deferred work, and it is the one that matters.** Both load paths construct a `Mesh`,
-  whose constructor calls `Build()` and creates bgfx vertex and index buffers, and both build the
-  mesh’s materials inline — which pulls textures. Splitting means threading a CPU-side mesh
-  description (vertices, indices, submeshes, material *descriptions*) through `MeshImporter.cpp` and
-  `MeshCache.cpp` and deferring `Mesh::Create` to Apply. The cgltf parse is the expensive thing that
-  has to leave the main thread, so async loading cannot skip this.
+- **Mesh Parse reads bytes, but building them is not thread-safe yet.** `ParseCompiled` is shared
+  with textures and does no bgfx work itself — but on a cache miss it runs `MeshCompiler`, which
+  reaches the GPU through `MeshImporter` (see *Compiled outputs*). Splitting means threading a
+  CPU-side mesh description (vertices, indices, submeshes, material *descriptions*) through
+  `MeshImporter.cpp` and deferring `Mesh::Create` to Apply. The cgltf parse is the expensive thing
+  that has to leave the main thread, so async loading cannot skip this.
 
 `GenerateSidecars` now runs inside `ApplyMesh`, i.e. *before* the manager caches the mesh, where it
 used to run after the cache insert. Safe because it only ever reaches `ImportAsset`, never
@@ -435,7 +435,7 @@ this) renders bit-identically to before.
 
 This diverges from the fuller Unreal norm, where mesh assets reference material assets directly and
 there are no "built-in" materials. That shape needs the mesh cache to depend on `.gmat` mtimes, and
-`MeshCache` v6 serializes materials inline keyed on the *source* mtime only — so editing a `.gmat`
+the mesh blob serializes materials inline and is invalidated by the source's own epoch — so editing a `.gmat`
 would either silently not invalidate the cache, or require a dependency-tracking index the engine
 does not have. The additive shape costs one duplicated default (the mesh's material and its sidecar
 start identical) and buys three things: no cache-format change, no risk to existing scenes, and
@@ -526,7 +526,7 @@ the asset root it goes through `ImportAsset` (idempotent) + `GetAsset<Texture2D>
 referencing the same `albedo.png` share one decode and one bgfx texture. Paths that escape the root
 (`std::filesystem::relative` returns `../../foo.png` with no error code) have no asset identity
 and are decoded directly — they must not get a handle or a sidecar. `MeshImporter` (cold import) and
-`MeshCache` (cache replay) both call it, so the rule exists in one place instead of two copies of a
+`MeshCompiler` (blob replay) both call it, so the rule exists in one place instead of two copies of a
 decode loop.
 
 Embedded (`.glb`) images have no file identity, hence no handle and no de-duplication;
@@ -554,9 +554,10 @@ cache, since it has no asset identity and no reason to be evictable.
 
 | Type | Action |
 |---|---|
-| Texture, Environment | `manager->Evict(handle)`. |
+| Texture | `CompiledCache::Invalidate` then `manager->Evict(handle)` — evicting the object alone would re-open the same stale `.gres`. |
+| Environment | `manager->Evict(handle)`. |
 | Material | Two steps, in this order: (1) read the cached material with `Find(handle)` and evict its three map paths from the texture manager; (2) evict the material. |
-| StaticMesh | Three steps, **in this order**: (1) walk the cached mesh’s materials’ `Get*MapPath()`s, resolve each through `GetHandle`, evict those from the texture manager; (2) `MeshCache::Invalidate` — delete the `.meshcache` file; (3) evict the mesh. |
+| StaticMesh | Three steps, **in this order**: (1) walk the cached mesh’s materials’ `Get*MapPath()`s, resolve each through `GetHandle`, evict those from the texture manager; (2) `CompiledCache::Invalidate` — delete the compiled blob and its `.dep`; (3) evict the mesh. |
 | Scene, Script, Audio, Prefab | Nothing; `Find(type)` returns null, because they have no manager. |
 
 Step (1) is not optional, and **weak caching did not make it unnecessary** — which is worth stating
@@ -664,26 +665,203 @@ with it:
   in a file mixing static and skinned primitives, the static vertices carry zeroed skin entries.
 - A skin declared but used by no primitive is dropped along with its clips.
 
-## MeshCache
+## Compiled outputs
 
-[`MeshCache`](../../GanymedEngine/source/GanymedE/Assets/MeshCache.h) dumps the fully-parsed mesh
-(vertices, indices, submeshes, material scalars/paths/embedded texture bytes, skin vertices,
-skeleton and animation clips) as a binary blob under `assets/.assets/`, keyed by source path with
-the source file's timestamp stored for invalidation. `TryLoad` returns null on version/timestamp
-mismatch, falling back to a full re-import. The content browser hides the `.assets/` directory.
+`assets/.compiled/` is the source → artifact layer: a `.png` becomes a block-compressed, mipped
+DDS, and a `.glb` becomes the binary mesh blob that used to live in `assets/.assets/`. It is
+**derived and gitignored**; deleting the tree costs one recompile.
 
-The format is at **v6** (v4 added the skeleton, clips, the skin vertex stream and
+```
+assets/.compiled/<h0h1>/<h>.gres    the artifact
+assets/.compiled/<h0h1>/<h>.dep     its epoch record
+```
+
+`h` is a 64-bit FNV-1a of the asset-root-relative *source path*, so the tree is flat and bounded
+however deep `assets/` gets. The two-character bucket keeps any one directory to a few hundred
+files in a project with tens of thousands of assets. Hashing happens in one function
+(`CompiledCache::OutputPath`), which is what makes adding a platform tag to the key a one-line
+change the day a second build target exists — the machinery for that is deliberately *not* built
+(roadmap decision 9).
+
+### Compilers
+
+[`IAssetCompiler`](../../GanymedEngine/source/GanymedE/Assets/AssetCompiler.h) is source bytes in,
+compiled bytes out, plus a `Version()` and a list of discovered source dependencies. Registered per
+`AssetType` at `Init`:
+
+| Type | Compiler | Output |
+|---|---|---|
+| StaticMesh | [`MeshCompiler`](../../GanymedEngine/source/GanymedE/Assets/MeshCompiler.h) | the v7 binary mesh blob |
+| Texture | [`TextureCompiler`](../../GanymedEngine/source/GanymedE/Assets/TextureCompiler.h) | a mipped BCn DDS |
+| Environment, Material, Scene, Script, Audio, Prefab | *none* | — |
+
+**A type with no compiler is not a gap.** `CompiledCache::Open` hands back the source bytes
+untouched, which is the right answer for an `.hdr` environment — its expensive step is a GPU bake
+that cannot be precomputed into bytes — and for a `.gmat`, which is already the compact form of
+itself.
+
+The contract is that **a compiler is a pure function of its `CompileInput`**, because the epoch
+decides staleness from exactly what that carries. `MeshCompiler` breaks it and says so in its own
+header: it runs `MeshImporter::Load`, which builds a live `Mesh` with bgfx buffers and then
+serializes it, because nothing in the importer can emit CPU-side mesh data yet. The cost is that a
+*cold* mesh import creates its GPU buffers twice and must run on the submit thread; the warm path
+pays neither. Splitting `MeshImporter` is what fixes it, and it is the change Phase 5 cannot skip.
+
+### Epoch invalidation
+
+The `.dep` holds compiler version, source size, source mtime, source **content hash**, a hash of
+the `.meta` Config block, and a `{path, hash}` pair per declared dependency. `EpochDiff` is a
+bitflag set naming which of those moved, and it is in the recompile log line because "why did this
+rebuild" is the question an invalidation bug makes you ask:
+
+```
+Compiled 'models/BoxTextured.glb' with MeshCompiler in 3 ms (6 KB -> 5 KB) [stale: compiler-version|config]
+```
+
+Only `CompilerVersion | SourceSize | SourceHash | Dependencies | Config` force a rebuild. **A moved
+mtime alone does not** — mtime and size are a cheap pre-filter that decides whether hashing is worth
+doing at all, and when the hash comes back unchanged the record is refreshed so the next boot
+short-circuits again:
+
+```
+'models/BoxTextured.glb': mtime moved but content is unchanged - kept the compiled output
+```
+
+That is the whole reason the epoch record replaced `MeshCache`'s mtime compare. `touch` on a source,
+a checkout that rewrites files, an editor that saves to a temp and renames — all of those moved
+mtime without changing content, and all of them used to reimport.
+
+Bumping a compiler's `Version()` invalidates every output it ever produced, at once, with nothing
+to clear by hand. That is the property that makes editing an importer safe, and it is why the
+constant is on the compiler rather than in the blob format.
+
+**Dependencies are recorded but nothing declares many of them yet.** `MeshImporter` reports a
+`.gltf`'s external `.bin` buffers and external image files, which is a real edge — edit the `.bin`
+and the mesh blob rebuilds. A self-contained `.glb` reports none, and every mesh shipped here is a
+`.glb`, so the machinery is exercised and the outcome is not. The roadmap's "edit a texture
+referenced by a `.gmat`, confirm the dependent recompiles" is **not** a case that exists: `.gmat`
+has no compiler, and a mesh blob stores texture *paths*, not pixels, so an edited texture correctly
+invalidates only itself. The depth-1 reverse map of decision 11 waits for hot reload, which is the
+thing that actually needs it.
+
+### Persisting is best effort
+
+The compiled bytes are returned whether or not they could be written to disk, so an install that
+cannot write its own directory still runs — it just recompiles every boot, and says so once:
+
+> This install treats assets/ as read-only but had to compile '…' — the assets/.compiled tree was
+> not shipped with it.
+
+**Compilation is a build-time step, and a shipped game should ship its `.compiled/` tree**, the way
+UE ships cooked content. The fallback exists so a missing tree is slow rather than fatal.
+
+## Texture compilation
+
+[`TextureCompiler`](../../GanymedEngine/source/GanymedE/Assets/TextureCompiler.h) decodes the source
+with the same stb path every other texture load uses, then hands RGBA8 pixels to
+[`Platform/Bimg/TextureEncode`](../../GanymedEngine/source/Platform/Bimg/TextureEncode.h), which
+generates mips and block-compresses into a DDS. `Texture2D` takes the container straight to
+`bgfx::createTexture`, which parses DDS itself — so a mipped, compressed texture costs the engine no
+more code than an uncompressed one.
+
+`.meta` Config keys, all optional:
+
+| Key | Values | Default |
+|---|---|---|
+| `Format` | `auto`, `BC1`, `BC3`, `BC4`, `BC5`, `BC7`, `RGBA8` | `auto` |
+| `GenerateMips` | `true`, `false` | `true` |
+| `MaxSize` | integer, longest edge; 0 for no limit | `0` |
+
+**`auto` is BC1, or BC3 when the source actually uses its alpha channel — not BC7.** That is a
+measured decision, not a preference. bimg's BC7 encoder is NVIDIA's AVPCL *reference*
+implementation: an exhaustive mode and partition search, correct and extremely slow. Measured on an
+optimised build:
+
+| Texture | `auto` (BC1/BC3, libsquish) | `Format: BC7` (AVPCL) |
+|---|---|---|
+| 256×256 + mips | 9 ms | 6 399 ms |
+| 1024×1024 + mips | 188 ms | 58 575 ms |
+
+311× on the 1024². A 2048² albedo under BC7 would be minutes, which is not a pipeline. BC7 stays
+available for the texture that is worth the wait; `auto` picks the format that lets an import
+finish.
+
+`MaxSize` drops top mips rather than resampling — the chain already holds every halving of the
+source, so it is exact and needs no second filter.
+
+**Block alignment is required for compression.** bimg derives its destination row pitch as
+`width * bpp / 8`, which is only a whole number of blocks when the width is; a 1181×1181 source
+would be written short. Rather than emit a subtly corrupt texture, the compiler falls back to RGBA8
+and warns. Worth knowing what that costs: with mips on, an uncompressed fallback uses *more* VRAM
+than the old no-mips path did (1181×1181 goes 5 448 KB → 7 259 KB). The fix is to resize the source
+to a multiple of four.
+
+Measured VRAM, this project's textures:
+
+| Texture | Before (RGBA8, no mips) | After |
+|---|---|---|
+| 256×256 albedo | 256 KB | 42 KB (BC1, 9 mips) |
+| 1024×1024 albedo | 4 096 KB | 682 KB (BC1, 11 mips) |
+| 64×64 checkerboard | 16 KB | 2 KB (BC1, 7 mips) |
+
+**There is deliberately no `sRGB` key.** See [rendering.md](rendering.md#colour-space) — the engine
+has no sRGB pipeline at all, so the flag would either do nothing or silently change the look of
+every scene, and that is a rendering change rather than an asset-pipeline one.
+
+### Parallel encoding
+
+The mip encode is split into horizontal bands and dispatched through
+[`JobSystem::ParallelFor`](core.md#job-system) — the threading milestone's first consumer
+([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3), and the right one to be first:
+offline work with no frame budget and no lifetime hazards, where a bug costs import time rather
+than a corrupted frame.
+
+A band is safe on another thread because the per-mip encode is a pure function of
+(dst, src, width, height): rows of `blockHeight` pixels are independent block rows, a band of full
+width and a block-multiple height is contiguous on both sides, and bimg allocates its own scratch
+per call. Bands are only used when the arithmetic is exact — a width that is not a whole number of
+blocks, or a mip smaller than one, is encoded in a single call, which is what bimg itself does.
+
+**Only libsquish's formats are split.** BC1/BC3/BC4/BC5 go through squish, which has static
+functions and no mutable state. The BC7 path is AVPCL, which writes four file-scope `bool`s per
+block; they are set to the same constant every time, which makes the race benign in practice, and
+"benign in practice" is not a thing to build a thread on.
+
+Measured, 2560×1664 → BC3 with 12 mips, 15 workers:
+
+| | Time |
+|---|---|
+| Serial | 597 ms |
+| Parallel | 324–331 ms |
+
+**1.8×, and the honest reading is that the fast encoder made threading matter less.** The same
+split on BC7 measured 4.7× (30 306 ms → 6 402 ms) because the encode dominated everything. With
+squish the serial remainder — mip generation, the alpha scan, container allocation, the DDS write —
+is roughly half the call, and Amdahl does the rest.
+
+## The mesh blob
+
+[`MeshCompiler`](../../GanymedEngine/source/GanymedE/Assets/MeshCompiler.h) writes the fully-parsed
+mesh (vertices, indices, submeshes, material scalars/paths/embedded texture bytes, skin vertices,
+skeleton and animation clips) as a binary blob. This was `MeshCache`; what moved out is path and
+invalidation policy, which `CompiledCache` now owns for every type.
+
+The format is at **v7** (v4 added the skeleton, clips, the skin vertex stream and
 `Submesh::IsSkinned`; v5 and v6 have that same layout and exist only to discard caches whose stored
 *values* were stale — v5 the pre-correction `RootTransform`, v6 skinned submeshes written with an
-identity `LocalTransform`). Bumping the version *is* the migration: every existing cache fails
-the version check on first load and gets re-imported. A bump is the right move whenever the
-*meaning* of a stored field changes, not just its layout — a stale cache with a silently wrong
-value is far harder to diagnose than a re-import.
+identity `LocalTransform`; v7 drops the embedded source timestamp, which the `.dep` owns now). The
+old `assets/.assets/` tree is simply abandoned: it is derived output, so a one-time recompile is
+cheaper than carrying a reader for it.
+
+`MESH_CACHE_VERSION` in the blob and `MeshCompiler::Version()` have to move together. The epoch
+compares the latter; the magic and version inside the blob are a second line of defence against a
+file that got past it, not the primary check.
 
 Practical notes:
-- Delete `assets/.assets/` to force a full re-import (e.g. after changing importer code — the
-  cache has a version field, bump it when the format changes). `MeshCache::Invalidate` does the
-  same for one mesh, and is how `AssetManager::Reload` forces a reimport.
-- The cache stores material *data*, not GPU resources; textures are created on load either from
-  the recorded paths (via `TextureImporter::LoadMaterialMap`, same as cold import) or the embedded
-  bytes.
+- Delete `assets/.compiled/` to force a full rebuild of everything. **Reimport** in the content
+  browser's context menu does it for one asset, and is `CompiledCache::Invalidate` plus a `Reload`.
+- The blob stores material *data*, not GPU resources; textures are created on load either from the
+  recorded paths (via `TextureImporter::LoadMaterialMap`, same as cold import) or the embedded
+  bytes. **Embedded textures are not block-compressed** — they have no file identity, so they never
+  reach the texture compiler. Extracting them (which `MaterialSerializer::GenerateSidecars` already
+  does on first import) is what puts them on the compiled path.
