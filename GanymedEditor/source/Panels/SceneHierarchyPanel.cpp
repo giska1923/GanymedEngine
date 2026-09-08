@@ -790,7 +790,6 @@ namespace GanymedE {
 		}
 
 		AssetHandle handle = AssetManager::ImportAsset(relativePath);
-		AssetManager::FlushRegistry();
 		if (!IsAssetHandleValid(handle))
 			return;
 
@@ -923,7 +922,6 @@ namespace GanymedE {
 			return {};
 
 		AssetHandle handle = AssetManager::ImportAsset(relativePath);
-		AssetManager::FlushRegistry();
 		if (!IsAssetHandleValid(handle))
 			return {};
 

@@ -14,7 +14,7 @@ GanymedE/
 ├── Reflection/  Component MEMBER reflection over entt::meta (see scene.md)
 ├── Scene/       Scene, Entity, Components, SceneSerializer, built-in Systems/
 ├── Renderer/    bgfx-backed renderer: resources, Renderer2D/3D, SceneRenderer, IBL, cameras
-├── Assets/      AssetManager (handle registry), MeshCache
+├── Assets/      AssetManager (scan-derived handle index), AssetMeta (`.meta` sidecars), MeshCache
 ├── Physics/     PhysicsScene (Jolt, pimpl'd)
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)

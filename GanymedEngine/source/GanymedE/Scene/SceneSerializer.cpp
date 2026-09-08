@@ -595,10 +595,6 @@ namespace GanymedE {
 			ResolveHierarchy(*m_Scene, created, fileUUIDs);
 		}
 
-		// Path-based components in the file mint handles as they load; this is the flush
-		// point for the batch (AssetManager::FlushRegistry).
-		AssetManager::FlushRegistry();
-
 		return true;
 	}
 

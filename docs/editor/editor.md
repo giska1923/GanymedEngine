@@ -149,7 +149,8 @@ re-applied or reverted. The format and its ownership rules are in
 
 **Create** links the source entity to the file it just wrote, so the thing you made a prefab *from*
 becomes an instance of it. That is the Unity behaviour authors expect. The path must be inside
-`assets/`; a prefab outside the asset root has no registry identity, so nothing could reference it.
+`assets/`; a prefab outside the asset root gets no handle and no sidecar, so nothing could reference
+it.
 
 **Apply** is the milestone's one silently destructive click — it overwrites an asset, and undo
 covers scene edits only — so it is the one operation behind a confirmation modal. The modal names
@@ -332,17 +333,22 @@ needs nothing: it is driven by `ComponentList`, so a new component type joins it
 ## Content Browser panel
 
 [`ContentBrowserPanel`](../../GanymedEditor/source/Panels/ContentBrowserPanel.h) — a grid view of
-`assets/` (the `.assets/` mesh-cache directory is hidden):
+`assets/`. Two classes of entry are hidden: anything whose name starts with `.` (the `.assets/`
+mesh cache today, `.compiled/` when the asset compiler lands) and `.meta`/`.meta.bad` sidecars.
+Hiding the sidecars is not cosmetic — one per asset would double every row in the grid and offer
+**Import** on a file that is not an asset. They are the `AssetManager`'s to write, never a human's
+(see [assets.md](../engine/assets.md#the-meta-sidecar)):
 
 - Directory/file icons, tinted by asset type (mesh blue, environment orange, scene green, texture
   pink, material purple, script yellow, audio cyan). Double-click enters directories; the `<-` button goes up but can never
   escape the asset root (path-normalized check).
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
-- Right-click on an importable file (mesh/environment/texture/material/script/audio) → **Import**, registering
-  it with the `AssetManager` (idempotent), then `FlushRegistry()` — registry writes are batched per
-  user action rather than per import, see
-  [assets.md](../engine/assets.md#registry-writes).
+- Right-click on an importable file (mesh/environment/texture/material/script/audio/prefab) →
+  **Import**, registering it with the `AssetManager` (idempotent). In practice the scan at `Init`
+  has already done this for every file under `assets/`; the menu item is for a file that appeared
+  since. `ImportAsset` writes the `.meta` sidecar itself, so there is nothing to flush — see
+  [assets.md](../engine/assets.md#the-meta-sidecar).
 - Right-click on an already-registered file → **Reload**, evicting it from the manager's cache so the
   next fetch re-reads it from disk. For a mesh this also drops its textures and deletes the
   `.meshcache`, i.e. a full reimport. Edits land in the viewport on the next frame because
@@ -361,7 +367,7 @@ too (it previously wasn't used here at all: each site hand-rolled
 |---|---|
 | `AcceptAssetDrop(type)` | `optional<path>` — the dropped path relative to `assets/`, iff its type matches |
 | `AcceptAssetDrop({types...})` | `AssetDrop { Type, Path }`, falsy when nothing matched — for targets accepting several types. The viewport uses it for Scene / StaticMesh / Prefab, where the list form is **mandatory**: ImGui clears the payload as soon as one target delivers it, so three single-type calls would let only the first ever fire |
-| `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent) + `FlushRegistry` on match, else `InvalidAssetHandle` |
+| `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent, and persists identity itself) on match, else `InvalidAssetHandle` |
 
 Call it immediately after the widget that should accept the drop; it wraps
 `BeginDragDropTarget` / `AcceptDragDropPayload("CONTENT_BROWSER_ITEM")` / `EndDragDropTarget`.

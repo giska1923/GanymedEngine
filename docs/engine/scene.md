@@ -500,7 +500,7 @@ blocks keyed by component name. Notes:
   every committed scene for no content change, which is what canonical saves exist to prevent.
   Trailing unset slots are kept rather than trimmed: the index *is* the slot.
 - Asset references serialize as **handles** (`uint64_t`); `MeshPath`/`EnvironmentPath`/`ScriptPath`
-  string fallbacks are still read for backward compatibility and imported into the registry on load.
+  string fallbacks are still read for backward compatibility and imported into the asset index on load.
   Unlike meshes, a deserialized `ScriptComponent` handle is *not* warmed through `GetAsset<>` —
   scripts have no runtime object to cache, and `ScriptEngine` loads the chunk on instantiation.
   Its property overrides serialize as a `Fields` sequence of `{Name, Type, Value}`, sorted by name
@@ -509,8 +509,8 @@ blocks keyed by component name. Notes:
 - `PrefabInstanceComponent` serializes its `Source` handle, omitted when unset. A scene whose
   prefab file has since been deleted still loads: the instances become plain entities carrying a
   handle that resolves to nothing, and the editor reports it when you try to Apply or Revert.
-- **`AudioGroup` serializes as a name, not an ordinal** (`Group: Music`). It is not persisted in the
-  asset registry the way `AssetType` is, so nothing forces stable numbering on it, and an unknown
+- **`AudioGroup` serializes as a name, not an ordinal** (`Group: Music`). It is not persisted by
+  ordinal the way `AssetType` was, so nothing forces stable numbering on it, and an unknown
   name warns and falls back rather than throwing. Both audio components read every field guarded
   (`if (node["Volume"])`) rather than bare `as<T>()` — hand-authored scenes are a normal way to
   make one, and an absent key in a bare read throws out through `Deserialize` and loses the whole
@@ -574,7 +574,7 @@ content (it decides scene save order too), so that is a real change, not noise.
 
 Only `IDComponent` and `RelationshipComponent` are renumbered. `AssetHandle` *is* `UUID`, so a
 blanket remap would corrupt `StaticMesh.Mesh` and its `MaterialOverrides`, `SkyLight.Environment`,
-`Script.Script` and `AudioSource.Clip` into handles no registry knows.
+`Script.Script` and `AudioSource.Clip` into handles no `.meta` sidecar knows.
 
 The renumbering happens in a **scratch `Scene`**, not in place. Renumbering the live scene and
 putting it back would be faster; a throw or an early return in between would leave the real scene

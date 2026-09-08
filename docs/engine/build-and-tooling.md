@@ -284,18 +284,20 @@ Take the pair the lockfile records rather than upgrading TypeScript on its own. 
 Each app resolves `assets/` **relative to its working directory** — run the editor from
 `GanymedEditor/`, the runtime from `GanymedRuntime/` (`debugdir "%{prj.location}"` sets this for the
 debugger). `GanymedEditor/assets/` holds shaders (`src/` + gitignored `compiled/`), environments,
-models, scenes, textures, fonts, and the asset registry (`AssetRegistry.gr`). `assets/.assets/` is
-the binary mesh cache (safe to delete; also gitignored from the browser's perspective — the content
-browser hides it).
+models, scenes, textures, fonts, and one `.meta` sidecar per asset carrying its handle — those are
+**tracked**, for both apps, and that is the point of them ([assets.md](assets.md#the-meta-sidecar)).
+The legacy `AssetRegistry.gr` is still present and still read as a migration seed. `assets/.assets/`
+is the binary mesh cache (safe to delete; also gitignored from the browser's perspective — the
+content browser hides it, along with the sidecars).
 
 `GanymedRuntime/assets/` is a copied snapshot of that content, trimmed to what the game uses, plus
-`audio/` — authored for the demo rather than copied (see [runtime.md](../runtime/runtime.md)). Sharing or packing a single tree is a non-goal for now. Two
-`.gitignore` differences matter and are per-path, not globs: the runtime's `AssetRegistry.gr` **is
-tracked** — for a shipped game it is authored content, not a scanned cache
-([assets.md](assets.md#registry-portability)) — while its `.assets/` mesh cache is not.
+`audio/` — authored for the demo rather than copied (see [runtime.md](../runtime/runtime.md)).
+Sharing or packing a single tree is a non-goal for now. The one `.gitignore` asymmetry that remains
+is the mesh cache: `.assets/` is untracked in both apps, while identity now travels with the asset
+in both.
 
 One inconsistency worth knowing rather than tripping over: `MeshCache::Write` is *not* covered by
-`AssetManager::Init(false)`, so a read-only-registry app still writes `.assets/` on a cold mesh
+`AssetManager::Init(false)`, so a read-only-assets app still writes `.assets/` on a cold mesh
 import. It is a derived cache rather than an authored database, and gating it would mean re-parsing
 every `.glb` on every boot; the real answer is cooking meshes ahead of ship, which is its own
 milestone.

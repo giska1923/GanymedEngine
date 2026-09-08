@@ -1,90 +1,171 @@
 # Assets
 
-`GanymedEngine/source/GanymedE/Assets/` — handle-based asset identity, a YAML registry, and the
-mesh import pipeline (cgltf + a binary cache).
+`GanymedEngine/source/GanymedE/Assets/` — handle-based asset identity in committed per-asset `.meta`
+sidecars, a scan-derived in-memory index, and the mesh import pipeline (cgltf + a binary cache).
 
 ## Handles & metadata
 
 [`AssetTypes.h`](../../GanymedEngine/source/GanymedE/Assets/AssetTypes.h):
 
 - `AssetHandle` is a `UUID`; `InvalidAssetHandle` is 0 (`IsAssetHandleValid` checks).
-- `AssetType`: `StaticMesh`, `Environment`, `Texture`, `Material`, `Scene`, `Script`, `Audio` — derived
-  from file extension by `AssetTypeFromExtension` (`.gltf/.glb` → StaticMesh, `.hdr` → Environment,
-  `.png/.jpg/...` → Texture, `.ganymede` → Scene, `.lua` → Script, `.wav/.mp3/.flac` → Audio).
-  **Append only** — the enum is persisted by ordinal, so reordering it retypes every asset in every
-  existing registry.
-- `AssetMetadata` = handle + type + file path **relative to `assets/`**.
+- `AssetType`: `StaticMesh`, `Environment`, `Texture`, `Material`, `Scene`, `Script`, `Audio`,
+  `Prefab` — derived from file extension by `AssetTypeFromExtension` (`.gltf/.glb` → StaticMesh,
+  `.hdr` → Environment, `.png/.jpg/...` → Texture, `.ganymede` → Scene, `.lua` → Script,
+  `.wav/.mp3/.flac` → Audio, `.gprefab` → Prefab). `AssetTypeToString` /
+  `AssetTypeFromString` round-trip the enum **by name**, which is what a `.meta` sidecar stores.
+  The enum is still **append only**, but only for the legacy `AssetRegistry.gr` reader — that file
+  persisted the ordinal, so reordering retypes every asset in every registry still on disk. The
+  sidecar format does not inherit the trap.
+- `AssetMetadata` = handle + type + file path **relative to `assets/`**, keyed on forward slashes
+  (`generic_string()`) so a path minted on Windows matches one read on Linux.
 
 Components reference handles, never paths (`StaticMeshComponent.Mesh`,
-`SkyLightComponent.Environment`), and the scene serializer writes handles — paths can move without
-breaking scenes, as long as the registry moves with them.
+`SkyLightComponent.Environment`), and the scene serializer writes handles. A handle resolves because
+the `.meta` sidecar beside the asset says so, so a path can move — including via `git mv` — without
+breaking a scene, as long as its sidecar moves with it.
 
 ## AssetManager
 
 [`AssetManager`](../../GanymedEngine/source/GanymedE/Assets/AssetManager.h) is a static facade over
-one registry + per-type in-memory caches:
+one derived index + per-type in-memory caches:
 
 | API | Behavior |
 |---|---|
-| `Init(writableRegistry = true)` / `Shutdown()` | Load the registry; `false` makes every registry write a no-op. The editor calls these in `EditorLayer::OnAttach/OnDetach`, the runtime in `RuntimeLayer::OnAttach/OnDetach` |
-| `ImportAsset(relativePath)` | Idempotent registration: existing path returns its handle; otherwise mint a UUID, infer the type, mark the registry dirty. Unsupported extensions log a warning and return the invalid handle |
+| `Init(writableAssets = true)` / `Shutdown()` | Read the legacy registry if present, then `ScanAssets()`; `false` makes every write into `assets/` a no-op. The editor calls these in `EditorLayer::OnAttach/OnDetach`, the runtime in `RuntimeLayer::OnAttach/OnDetach` |
+| `ScanAssets()` | Walk `assets/` and rebuild the index from the `.meta` sidecars found there, minting and writing one where a recognized asset has none. Called by `Init`; safe to call again to pick up files added outside the editor |
+| `ImportAsset(relativePath)` | "Ensure this file has a sidecar, and tell me its handle." Idempotent: an indexed path returns its handle. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
 | `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
-| `FlushRegistry()` | Write the registry if an import dirtied it (see *Registry writes*) |
-| `IsRegistryWritable()` | "This process may write into `assets/`" — one flag, one meaning, for the registry and every future asset-file writer |
-
-The registry lives at `assets/AssetRegistry.gr` — YAML, one `{Handle, Type, FilePath}` entry per
-asset, **sorted by `FilePath`**. Sorting is not cosmetic: `Registry` is keyed on a random `uint64`
-under an identity hash, so a rehash reordered every entry and one import rewrote the whole file.
-Sorted output makes the registry a stable diff and makes "write it twice, compare" a usable check.
+| `IsRegistryWritable()` | "This process may write into `assets/`" — one flag, one meaning, for sidecars and every other asset-file writer |
 
 `Init(false)` is for a **shipped game**: it must not write into its own install directory (under
-Program Files that fails outright), and it has nothing to persist anyway. The guard lives inside
-`SaveRegistry()` rather than at its call sites, so no future caller can bypass it — and that
-matters, because imports happen *during scene deserialization* for path-based components, which is
-how a read-only install would otherwise have written its registry long before `Shutdown()` was ever
-asked. `IsRegistryWritable()` exposes the same flag for code that writes other files into
-`assets/`; asset writers use that one gate rather than each inventing a parallel guard. Handles
-minted in a read-only session still work; they just do not outlive it, which is the right lifetime
-for something nobody authored.
+Program Files that fails outright), and it has nothing to persist anyway. The guard is checked at the
+one place identity is decided rather than at each call site, so no future caller can bypass it — and
+that matters, because imports happen *during scene deserialization* for path-based components, long
+before any explicit save. `IsRegistryWritable()` exposes the same flag for code that writes other
+files into `assets/`; asset writers use that one gate rather than each inventing a parallel guard.
+Handles minted in a read-only session still work; they just do not outlive it, which is the right
+lifetime for something nobody authored. The corollary for a shipped build is that **every shipped
+asset needs its sidecar shipped with it** — a read-only scan can adopt an identity, never persist
+one.
 
-### Registry writes
+### The `.meta` sidecar
 
-`ImportAsset` sets a dirty flag; `FlushRegistry()` writes if it is set. Flush points are the end of
-a user-visible action:
+[`AssetMeta.h`](../../GanymedEngine/source/GanymedE/Assets/AssetMeta.h) defines the file that *is*
+an asset's identity: `foo.png` → `foo.png.meta`, YAML, four keys, and **committed to source
+control**.
 
-| Flush point | Covers |
+```yaml
+Asset:
+  Handle: 7862165199193339401
+  Type: Environment
+  ImportConfigVersion: 1
+  Config: {}
+```
+
+The extension is *appended*, not substituted, so `tree.gltf` and `tree.png` cannot share one
+sidecar. `Type` is the enum **name**: a sidecar written by a newer engine must survive a round trip
+through an older one, so an unrecognized name is not corruption — the reader returns
+`AssetType::None` and the caller re-derives the type from the extension. `Config` is a flat
+scalar→scalar map, empty until the importers of a later phase fill it, and `ImportConfigVersion`
+exists so those importers can migrate old settings in a `switch` rather than guess. Unrecognized
+`Config` keys are read and written back untouched. Nested config is deliberately not representable;
+when something needs it, that is a format version bump, not a `YAML::Node` member in a public
+header — this codebase keeps yaml-cpp out of every public header.
+
+Writes go through **emit to `foo.png.meta.tmp`, then rename over**. `std::ofstream` truncates on
+open, so a crash between open and flush would otherwise leave a zero-length sidecar: an asset whose
+identity is gone, indistinguishable from one never imported. The rename is atomic on NTFS and POSIX,
+so the file is either the old one or the new one. `AssetMetaSerializer::Read` is side-effect free
+(a read-only session can call it safely) and wraps parse *and* every scalar conversion in one
+try/catch — `as<uint64_t>()` on a non-numeric handle throws as loudly as a syntax error. A zero
+handle counts as corrupt: it is no identity at all.
+
+An unreadable sidecar is **quarantined to `foo.png.meta.bad`**, never overwritten. That is the whole
+point: the handle a hand-repair could recover is the only link between that file and every scene
+referencing it. One corrupt sidecar costs one asset a fresh handle and produces one logged error;
+it cannot take down a project scan, which is the failure mode a single shared registry had.
+
+The batching machinery this replaced — a dirty flag plus `FlushRegistry()` at seven call sites — is
+gone, along with `LoadRegistry`/`SaveRegistry`. It existed only because one import rewrote the whole
+shared file, so writes had to be deferred to the end of a user-visible action. A ~90-byte sidecar
+with no shared file needs no batching: `ImportAsset` writes, and there is nothing to flush.
+
+### The scan
+
+`ScanAssets()` walks `assets/` with a `recursive_directory_iterator`, calls
+`disable_recursion_pending()` on any directory whose name starts with `.` (`.assets/` today,
+`.compiled/` when the asset compiler lands), and skips `.meta`/`.bad` files and any extension
+`AssetTypeFromExtension` does not recognize. Paths are collected, **`std::sort`ed**, and only then
+registered. The sort is load-bearing rather than cosmetic: iteration order is unspecified, and the
+duplicate-handle rule below is "first one wins", so an unsorted scan would pick a different winner
+on NTFS than on ext4 and two developers with the same copy-pasted `.meta` would see different assets
+break.
+
+Every path→handle decision funnels through one internal `EnsureRegistered`, shared with
+`ImportAsset` so the rules exist once:
+
+| Situation | Result |
 |---|---|
-| `SceneSerializer::Deserialize` (end) | Every handle minted by a path-based component while the scene loaded |
-| `EditorUI::AcceptAssetDropHandle` | A drop onto a component's handle field |
-| `EditorLayer` viewport drop | A mesh drop: the mesh handle plus every texture its import minted |
-| `ContentBrowserPanel` → Import | The one asset the menu item registered |
-| `SceneHierarchyPanel` → Create Prefab / Instantiate Prefab | The `.gprefab` the action just wrote or resolved |
-| `EditorLayer` default-scene setup | The environment the fresh scene imports |
-| `AssetManager::Shutdown` | Anything an unflushed path missed |
+| Sidecar reads Ok, handle unclaimed | Adopt it |
+| Sidecar reads Ok, handle already claimed by another path | **First (sorted) path keeps it**, the second is re-minted, one warning names both paths |
+| Sidecar reads Ok, `Type` disagrees with the extension | Keep the handle, rewrite the type — the cost of a rename between two recognized extensions |
+| No sidecar, legacy registry names the path | Adopt the legacy handle |
+| No sidecar, nothing else knows the path | Mint a `UUID` |
+| Sidecar unreadable | Quarantine, then treat as "no sidecar" |
 
-The alternative — dirty flag plus a single flush at `Shutdown` — was rejected: an editor crash
-mid-session should not cost an afternoon of imports. A *missed* flush point costs a write deferred
-to `Shutdown`, which is the acceptable direction for this to fail in. Measured, from an empty
-registry: an editor boot that imports the default environment and one path-based mesh writes the
-file exactly twice — once per action — where every import used to write it.
+Silently aliasing two assets to one handle would corrupt every scene referencing either, which is
+why a collision is loud and re-mints rather than merges. A sidecar is written only when the asset
+file **exists** — a scene naming a since-deleted asset still gets an in-memory handle (its load path
+already warns), but writing `foo.glb.meta` next to a missing `foo.glb` would leave an orphan nothing
+cleans up.
 
-The write is **emit to `AssetRegistry.gr.tmp`, then rename over**. `std::ofstream` truncates on
-open, so a crash between open and flush used to leave a zero-length registry: every handle in every
-scene dead, and indistinguishable from "never imported anything". The rename is atomic on NTFS and
-POSIX, so the file is either the old one or the new one.
+The scan logs one line with every counter, because "did this boot mint anything?" is the question a
+derived index has to answer at a glance:
 
-`LoadRegistry` wraps its parse in one try/catch — the `SceneSerializer::Deserialize` posture, and
-for the same reason: unhandled, a truncated `.gr` terminated the process out of `Init`, before a
-window existed to say why. On a parse failure it logs, **moves the unreadable file aside as
-`AssetRegistry.gr.bad`**, and continues with an empty registry. The quarantine is the point: the
-session's first import would otherwise flush a nearly-empty registry over the file, destroying the
-handle mappings a hand-repair could have recovered. Duplicate `FilePath` entries warn and keep the
-first — the loser is unreachable through `GetHandle`/`ImportAsset` and only ever surfaces as an
-asset that silently fails to resolve.
+```
+Asset scan: 19 files, 19 adopted from sidecars, 0 adopted from the legacy registry,
+0 handles minted, 0 sidecars written, 0 quarantined, 0 handle collisions, 0 types corrected
+```
 
-`Shutdown()` clears the caches either way, and does so while `Renderer::IsGpuAlive()` so the
+A second boot over an unchanged tree must read **0 minted, 0 written** — verified on both apps, with
+byte-identical handles across runs. Legacy adoption is counted apart from a fresh mint on purpose:
+on the one boot that performs the migration, that number is what says the migration was lossless.
+
+The cost this buys is real and worth naming: identity resolution is now startup work proportional to
+the size of `assets/`. It is cheap work — one small file read per recognized asset, **nothing
+hashed** — and invisible on the current trees (19 and 10 assets), but it scales with the tree and
+will need the compiled-cache index of a later phase to stay flat.
+
+### Migration from `AssetRegistry.gr`
+
+The old model was one un-mergeable YAML per app holding every handle→path pair. A scene and its
+registry had to travel together; two people importing on two branches produced a guaranteed
+conflict; a hand-edited scene could name a handle no registry knew.
+
+`Init` reads `assets/AssetRegistry.gr` **first**, if it exists, into a path→handle seed, and only
+then scans. Reversing those two lines is how you break every existing scene. Only identity is
+migrated: the file's `Type` field is read past, because the extension types an asset now and the
+by-ordinal enum that field persisted is exactly the trap the sidecar format does not inherit. Once
+the sidecars exist the registry is redundant and never written again; `Init` logs that once. It is
+kept and still read for one release so a downgrade works — deleting it is the user's call.
+
+The seed lives for the **whole session**, not just the scan, and that is not an optimization. Files
+created after the scan need it too: a `.gmat` regenerated by `MaterialSerializer::GenerateSidecars`
+or a texture extracted from a `.glb` reaches `ImportAsset`, not the scan, and must adopt the handle
+the old registry recorded or every scene referencing it breaks. Both editor and runtime registries
+name exactly such paths.
+
+If `AssetRegistry.gr` exists but **fails to parse**, the session goes read-only
+(`IsRegistryWritable()` becomes false) instead of quarantining the file. Nothing overwrites it any
+more, so leaving it in place is what lets a hand-repair work; what matters is that a broken seed must
+not bake a lossy migration into the tree. Every asset would otherwise mint a fresh handle and write a
+sidecar claiming it, permanently breaking every scene that referenced the old one. Read-only means
+handles still work in memory, nothing is persisted, and repairing the file and restarting recovers
+completely. Duplicate `FilePath` entries in the legacy file warn and keep the first.
+
+`Shutdown()` clears the caches and the seed, and does so while `Renderer::IsGpuAlive()` so the
 GPU-resource destructors release real bgfx handles.
 
 ### Path-resolved types
@@ -102,36 +183,41 @@ The `GetAsset` primary template is *defined* with a `static_assert` rather than 
 asking for one of these is a compile error with a message instead of an unresolved external at link
 time.
 
-### Registry portability
+### Identity portability
 
-**A scene is unusable without the registry that resolves its handles.** Scenes store bare handles,
-`GetAsset<T>` resolves handle → path through the registry and nowhere else, and a handle with no
-entry loads nothing. So the registry is not an incidental cache — it is half of every scene
-reference, and the two halves have to travel together.
+**A scene is unusable without the identity that resolves its handles.** Scenes store bare handles,
+`GetAsset<T>` resolves handle → path through the index and nowhere else, and a handle with no entry
+loads nothing. Identity is therefore half of every scene reference, and the two halves have to travel
+together.
 
-The two apps therefore treat the same file differently, and `.gitignore` says so per-path:
+Which is the argument for putting it beside the asset. A `.meta` sidecar is committed, in the same
+directory as the file it identifies, for **both** apps — no per-path `.gitignore` asymmetry, no
+machine-local database, nothing to keep in sync. It merges file-by-file, it survives a `git mv`, and
+it cannot go missing without the asset going with it. This is Unity's model.
 
-| | `GanymedEditor/assets/AssetRegistry.gr` | `GanymedRuntime/assets/AssetRegistry.gr` |
-|---|---|---|
-| Tracked in git | No | **Yes** |
-| Role | Machine-local database the editor grows as you import | Authored content, shipped with the game |
-| Written at runtime | Yes (at the flush points above) | No (`Init(false)`) |
+Unreal takes the other route: path *is* identity, and moving an asset leaves a redirector object
+behind that rewrites references. That needs every asset to be an engine-owned serialized object so
+the engine can rewrite anything pointing at it — which Ganymed does not have and does not want. A
+`.png` here is a `.png`, importable by any tool, and a sidecar is the only way to attach identity to
+a file the engine does not own. Godot does the same thing for the same reason (`.import` files);
+bgfx-based engines that skip it generally end up with path-keyed assets and no rename story at all.
 
-What happens when it is missing was measured, not assumed: a runtime booted without its registry
-loads its scene, reports the right entity count, and renders **nothing but the procedural sky** —
-every mesh and the HDR environment silently absent. Only `ScriptEngine` complained, because it
-alone logged the unresolved handle.
+What happens when identity is missing was measured, not assumed: a runtime booted without it loads
+its scene, reports the right entity count, and renders **nothing but the procedural sky** — every
+mesh and the HDR environment silently absent. Only `ScriptEngine` complained, because it alone logged
+the unresolved handle.
 
-That asymmetry is fixed: the three `GetAsset<T>` loaders now warn when a *valid* handle has no
-registry entry, naming the handle and the expected type. It fires **once per handle**
-(`WarnedUnknownHandles`), because `RenderSystem` re-fetches assets by handle every frame per entity
-and an unguarded warning would arrive at frame rate — the same loud-but-not-broken posture
-`AnimationSystem` takes for an unknown clip name.
+That asymmetry is fixed: the three `GetAsset<T>` loaders warn when a *valid* handle is not in the
+index, naming the handle and the expected type, and the message names the likely cause — a sidecar
+that did not travel with its asset. It fires **once per handle** (`WarnedUnknownHandles`), because
+`RenderSystem` re-fetches assets by handle every frame per entity and an unguarded warning would
+arrive at frame rate — the same loud-but-not-broken posture `AnimationSystem` takes for an unknown
+clip name.
 
-The deeper gap is unfixed and worth naming: handle→path lives in *one* file per app rather than
-next to each asset, so it cannot merge, and a hand-edited scene can reference a handle no registry
-knows. The production answer is per-asset committed metadata (Unity's `.meta` files carry the GUID
-beside the asset). That is a change to the asset layer's identity model, not a Phase 2 fix.
+One gap remains and is worth naming: nothing yet detects a sidecar whose asset was deleted. An
+orphaned `foo.png.meta` is harmless (the scan never sees it, since it walks assets and not sidecars)
+but it accumulates, and a "clean orphaned `.meta`" maintenance action is the cheap fix when it starts
+to matter.
 
 `GetAsset<T>`'s **primary template is defined**, not just declared: its body is a
 `static_assert(sizeof(T) == 0, ...)`, so an unsupported `T` is a compile error naming the supported
@@ -202,10 +288,10 @@ the loader because `Material::Bind` asserts on a null shader and there is nothin
 until shader variants exist.
 
 **Textures are stored as paths, not handles**, and that split is deliberate: a `.gmat` has to be
-self-describing and hand-mergeable, and a bare handle means nothing without the registry that minted
-it, while a path survives a fresh clone (the shipped-registry lesson from the runtime milestone).
-Handles stay the scene↔registry currency; paths are the asset↔asset currency. The loader resolves
-each path through `LoadMaterialMap`, so materials naming one image share a decode.
+self-describing and hand-mergeable, and a bare handle means nothing without the sidecar that minted
+it, while a path is readable on its own. Handles stay the scene↔asset currency; paths are the
+asset↔asset currency. The loader resolves each path through `LoadMaterialMap`, so materials naming
+one image share a decode.
 
 A malformed or missing `.gmat` logs and returns null — the `SceneSerializer::Deserialize` posture.
 
@@ -224,12 +310,14 @@ into `assets/`.
 - Textures embedded in a `.glb` are extracted once to
   `<meshdir>/<meshstem>_textures/<map>_<i>.<ext>` and `ImportAsset`ed like any other texture. The
   bytes are already a compressed image, so extraction is a byte copy with no encoder involved — but
-  the extension is sniffed from the magic bytes rather than assumed, because the registry types
+  the extension is sniffed from the magic bytes rather than assumed, because the asset layer types
   assets by extension and a `.png` holding JPEG bytes would be a lie on disk (both occur in the
   sample meshes). Extraction is what makes the `.gmat` self-describing: a material referencing bytes
   inside another asset's blob could be neither hand-edited nor re-pointed.
-- Consequence to expect: a `.glb` import now mints texture *and* material registry entries, all in
-  one batched write.
+- Consequence to expect: a `.glb` import mints texture *and* material handles, and writes a `.meta`
+  sidecar beside each generated file. Those files did not exist when the scan ran, so they reach
+  identity through `ImportAsset` — which is exactly why the legacy migration seed has to outlive the
+  scan (see *Migration*).
 
 `MaterialSerializer::SidecarPath` is the single source of the naming rule, shared by the generator
 and by `MeshImporter::Instantiate`. If those two ever disagreed, entities would author against
@@ -251,17 +339,17 @@ Everything is forced to 4 channels (bgfx has no 24-bit RGB8 format).
 `LoadMaterialMap` is where texture **de-duplication** happens. When the recorded path stays inside
 the asset root it goes through `ImportAsset` (idempotent) + `GetAsset<Texture2D>`, so two meshes
 referencing the same `albedo.png` share one decode and one bgfx texture. Paths that escape the root
-(`std::filesystem::relative` returns `../../foo.png` with no error code) have no registry identity
-and are decoded directly — they must not get a registry entry. `MeshImporter` (cold import) and
+(`std::filesystem::relative` returns `../../foo.png` with no error code) have no asset identity
+and are decoded directly — they must not get a handle or a sidecar. `MeshImporter` (cold import) and
 `MeshCache` (cache replay) both call it, so the rule exists in one place instead of two copies of a
 decode loop.
 
-Embedded (`.glb`) images have no file identity, hence no registry entry and no de-duplication;
+Embedded (`.glb`) images have no file identity, hence no handle and no de-duplication;
 content-hash de-dup is a possible later refinement.
 
-**Side effect worth knowing:** `AssetRegistry.gr` now accumulates `Texture` entries as meshes load,
-and because `ImportAsset` persists the registry immediately, a cold import of a mesh with *n* unique
-external maps rewrites the registry *n* times.
+**Side effect worth knowing:** a cold import of a mesh with *n* unique external maps writes *n*
+`.meta` sidecars, one beside each extracted image — the reason `ImportAsset` no longer needs the
+batched flush it used to: each write touches only the file it identifies.
 
 **Flip discrepancy (known, deliberate):** file-based maps load unflipped, embedded glTF images
 flipped. Unflipped is the correct one — glTF UVs are top-left origin and bgfx normalizes texture
@@ -322,16 +410,16 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 - Materials map from glTF PBR metallic-roughness: base color factor/texture, normal map,
   metallic-roughness map, two-sided flag, alpha mode → `IsTransparent`. External texture URIs are
   recorded as paths and resolved through `TextureImporter::LoadMaterialMap` (so they de-duplicate
-  through the registry); **embedded** (glb) images are kept as compressed bytes on the `Material` so
-  the cache can persist them.
-- `MeshImporter::Instantiate(scene, path)` — used by viewport drag-drop — imports the asset
-  (registry) and creates an entity with a `StaticMeshComponent`.
+  through the asset index); **embedded** (glb) images are kept as compressed bytes on the `Material`
+  so the cache can persist them.
+- `MeshImporter::Instantiate(scene, path)` — used by viewport drag-drop — imports the asset (minting
+  its handle and sidecar if new) and creates an entity with a `StaticMeshComponent`.
 
 ### Skinning data
 
 A rigged glTF carries its skeleton and its clips **inside the `Mesh` asset**
 ([`Animation.h`](../../GanymedEngine/source/GanymedE/Renderer/Animation.h)): a `.glb` ships mesh,
-skin and animation in one file, so separate clip assets would buy registry surgery and nothing else.
+skin and animation in one file, so separate clip assets would buy identity surgery and nothing else.
 
 Only the **first** `cgltf_skin` is imported; files with more log a warning. What the importer does
 with it:

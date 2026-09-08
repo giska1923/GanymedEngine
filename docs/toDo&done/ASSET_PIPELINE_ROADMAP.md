@@ -429,6 +429,73 @@ maintenance action is cheap insurance but not required for the phase.
 | Runtime boots from snapshot | Build `GanymedRuntime`, run the packaged snapshot, scene loads |
 | Docs | [`assets.md`](../engine/assets.md) identity/registry sections rewritten in place; the "production answer is per-asset metadata" note becomes a description of what now exists |
 
+### Phase 1 — execution notes (done)
+
+Delivered as written except where noted. New files: `Assets/AssetMeta.h/.cpp` (premake regeneration
+required and run). `LoadRegistry`, `SaveRegistry` and `FlushRegistry` are **deleted**, not stubbed.
+
+**Four corrections to the plan above, each verified before being acted on.**
+
+1. **Step 6's premise was false.** `ContentBrowserPanel.cpp` performs *no* filesystem mutation —
+   no `rename`, `remove`, `copy` or `create_directory` anywhere in `GanymedEditor/source/`. There
+   was nothing to pair a `.meta` with. The real editor work was the opposite: **hide** sidecars
+   from the grid, since one per asset would double every row and offer Import on a non-asset. Also
+   generalized the `.assets`-only skip to any dotted entry, so `.compiled/` needs no second edit in
+   Phase 4.
+2. **`FlushRegistry` had to go, not become a no-op.** The dirty-flag batching existed *only* because
+   one import rewrote the whole shared file. Per-asset sidecars remove the shared file, so
+   `ImportAsset` writes directly. A no-op `FlushRegistry()` left at seven call sites is exactly the
+   vestigial API a reader trips over. Removed from `SceneSerializer.cpp`, `AssetDragDrop.cpp`,
+   `EditorLayer.cpp` (×2), `SceneHierarchyPanel.cpp` (×2), `ContentBrowserPanel.cpp`.
+3. **Scan order must be sorted.** Step 5 says "first-scanned wins", but
+   `recursive_directory_iterator` order is unspecified. Left to the filesystem, two developers with
+   the same copy-pasted `.meta` would see *different* assets break and the warning would be
+   unactionable. Paths are collected, `std::sort`ed, then registered.
+4. **The legacy seed must outlive the scan** — step 4 implies it can be dropped afterwards. It
+   cannot: both apps' registries name paths that do not exist at scan time and are regenerated
+   later by `MaterialSerializer::GenerateSidecars` (`models/Fox_mat0_fox_material.gmat`,
+   `models/Fox_textures/albedo_0.png` in the editor). Those reach identity through `ImportAsset`,
+   not the scan, and must adopt their recorded handle. `LegacyHandles` therefore lives in
+   `AssetManagerData` for the session.
+
+**Two decisions taken beyond the plan.**
+
+- **A corrupt `AssetRegistry.gr` makes the session read-only** rather than quarantining the file.
+  Nothing overwrites it any more, so leaving it in place is what allows a hand-repair; what matters
+  is that a broken seed must not bake a lossy migration into the tree. Every asset would otherwise
+  mint a fresh handle *and persist it*, permanently breaking every scene that referenced the old
+  one. Consequence for the verification table: the corrupt-`.meta` check only shows a fresh handle
+  for an asset the legacy registry does not name — one it does name correctly re-adopts. Ran that
+  check on `textures/Checkerboard.png`, which is absent from the registry.
+- **No sidecar is written for a file that does not exist.** `SceneSerializer` calls `ImportAsset`
+  on paths from the scene file that may be stale; those still get an in-memory handle (unchanged
+  behaviour, and the load path already warns) but no `foo.glb.meta` beside a missing `foo.glb`.
+- The sidecar is newline-terminated, unlike the scene and prefab writers. `.meta` is the one file
+  whose reason to exist is being committed and merged per asset, and no-newline-at-EOF turns every
+  appended key into a two-line diff. That the other YAML writers do not do this is a pre-existing
+  `.editorconfig` deviation, left alone as out of scope.
+
+**Verification results** (MSBuild x64 Debug; engine, editor and runtime all built).
+
+| Check | Result |
+| --- | --- |
+| Migration is lossless | Editor: 3/3 on-disk registry paths adopted their exact handles (`7862165199193339401`, `938641464213506982`, `9336764027479083327`), 16 minted, 19 written. Runtime: **7/7** adopted (`1000000000000000001`–`…007`). `ScanStats` counts legacy adoption separately from a fresh mint precisely so this number is visible |
+| Existing project opens unchanged | `Phase5Test.ganymede` loads with zero "not in the index" warnings. Note the committed scenes all predate handle serialization and reference meshes by `Path:`, so no committed `.ganymede` had a handle at risk; the format *does* persist handles (`Mesh:`, `Environment:`, `Script:`, `MaterialOverrides:`, prefab `Source:`) and legacy adoption is what protects anything saved since |
+| Sidecars appear and are stable | Second run: `19 files, 19 adopted from sidecars, 0 adopted from the legacy registry, 0 handles minted, 0 sidecars written`. Handle values byte-identical across runs |
+| Corrupt sidecar is contained | Truncated `textures/Checkerboard.png.meta` to 12 bytes → project opens, 18 others unaffected, one error logged, `.meta.bad` written, fresh handle minted and persisted |
+| Collision handled | Copied `Player.lua.meta` onto `Impact.lua.meta` → one warning naming both paths, `Impact.lua` (first in sort order) kept the handle, `Player.lua` re-minted, both load |
+| Runtime boots from snapshot | `Init(false)`: `12 files, 10 adopted from sidecars, 2 handles minted, 0 sidecars written` — the two mints are the `.gmat`/texture regenerated from `BoxTextured.glb` *after* the scan, which a read-only session correctly keeps in memory only. Scene loads, 10 entities, primary camera found |
+| `.gitignore` | No glob excludes `.meta`; step 8 needed no change |
+
+The 10 runtime sidecars were generated by temporarily flipping `RuntimeLayer`'s `Init` to writable
+for one boot, then reverting — a read-only app cannot mint its own shipped identity, which is the
+whole point of committing them.
+
+**Left as adjacent work, deliberately not folded in.** `IsRegistryWritable()` now has a misleading
+name (it gates all writes into `assets/`, not a registry); renaming it touches this historical doc
+and Phase 2 moves the flag anyway. A "clean orphaned `.meta`" maintenance action remains cheap
+insurance, unbuilt.
+
 ---
 
 ## Phase 2 — The manager registry: `IAssetManager`, dense type ids, weak caches

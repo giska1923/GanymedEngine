@@ -15,18 +15,27 @@ namespace GanymedE {
 	class AssetManager
 	{
 	public:
-		// writableRegistry false makes every registry write a no-op: Shutdown() skips its
-		// save, and so does ImportAsset. A shipped game must not write into its own
-		// install directory - under Program Files that fails outright - and it has nothing
-		// to persist anyway, because for a runtime the registry is shipped content rather
-		// than a scanned cache (docs/engine/assets.md, "Registry portability").
+		// writableAssets false makes every write into assets/ a no-op: no `.meta` sidecar is
+		// created, refreshed or quarantined. A shipped game must not write into its own
+		// install directory - under Program Files that fails outright - and it has nothing to
+		// persist anyway, because its sidecars are shipped content rather than a scan product
+		// (docs/engine/assets.md, "Identity portability").
 		//
-		// Handles minted by ImportAsset still work for the session; they just do not
-		// outlive it, which is the correct lifetime for something nobody authored.
-		static void Init(bool writableRegistry = true);
+		// Handles minted for an asset with no sidecar still work for the session; they just do
+		// not outlive it, which is the correct lifetime for something nobody authored.
+		static void Init(bool writableAssets = true);
 		static void Shutdown();
 
-		// Register an asset by relative path (idempotent). Returns InvalidAssetHandle if unsupported.
+		// Rebuild the in-memory index by walking assets/: read each asset's `.meta` sidecar,
+		// or mint a handle and write one. Called by Init; safe to call again to pick up files
+		// added outside the editor, which keeps every identity it already knows and only adds.
+		// Entries whose file has since vanished are *not* dropped - a handle a scene still
+		// references is more useful stale than absent.
+		static void ScanAssets();
+
+		// "Ensure this file has a sidecar, and tell me its handle" (idempotent). Returns
+		// InvalidAssetHandle for an unsupported extension. This is the entry point for a file
+		// created *after* the scan - an extracted `.glb` texture, a generated `.gmat`.
 		static AssetHandle ImportAsset(const std::filesystem::path& relativePath);
 
 		static AssetHandle GetHandle(const std::filesystem::path& relativePath);
@@ -56,23 +65,20 @@ namespace GanymedE {
 		// Safe to call mid-frame from editor UI; see docs/engine/assets.md for why.
 		static void Reload(AssetHandle handle);
 
-		static void LoadRegistry();
-		static void SaveRegistry();
-
-		// Writes the registry only if an ImportAsset has dirtied it since the last write.
-		// ImportAsset no longer saves on every call - a scene load or a mesh drop mints a
-		// handful of handles and used to rewrite the whole file once per handle. Flush at
-		// the end of a user-visible action instead (drop handled, import menu clicked,
-		// scene deserialized) so a crash mid-session costs at most the current action's
-		// imports, not the afternoon's - see docs/engine/assets.md, "Registry flush points".
-		static void FlushRegistry();
-
 		// "This process may write into assets/." False in the shipped runtime, which treats
-		// assets/ as read-only content. The registry guard and every future asset-file
-		// writer share this one flag rather than each inventing a parallel one.
+		// assets/ as read-only content. The sidecar writer and every other asset-file writer
+		// share this one flag rather than each inventing a parallel one.
 		static bool IsRegistryWritable();
 
 	private:
+		// Reads the legacy assets/AssetRegistry.gr, if it still exists, into a path -> handle
+		// seed consulted by the scan and by ImportAsset for the rest of the session. That is
+		// what makes migration lossless: an asset adopts the handle it already had instead of
+		// minting a new one, so no `.ganymede`, `.gprefab` or `.gmat` breaks. The registry is
+		// never written again and is redundant once the sidecars exist; deleting it is the
+		// user's call. Read once per session, at Init.
+		static void LoadLegacyRegistry();
+
 		static Ref<Mesh> LoadMesh(AssetHandle handle);
 		static Ref<Environment> LoadEnvironment(AssetHandle handle);
 		static Ref<Texture2D> LoadTexture(AssetHandle handle);
