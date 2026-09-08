@@ -120,6 +120,7 @@ Other build facts that have bitten before (details in
 | sol2 3.5.0 | C++ binding layer over Lua (header-only) |
 | RmlUi 6.2 | Game UI (HTML/CSS-style documents); Core + Lua plugin only |
 | FreeType 2.14.3 | RmlUi's font engine (its one hard dependency) |
+| enkiTS v1.12 | Task scheduler behind [`Core/JobSystem`](core.md#job-system) |
 
 **miniaudio** is a committed single header (`extern/miniaudio/miniaudio.h`), not a submodule — the
 cgltf precedent. It has one implementation TU, `GanymedE/Audio/miniaudio_impl.cpp`, which is the
@@ -135,8 +136,21 @@ x64 Debug engine build). Its link surface is per-OS and easy to get wrong:
   of **every app** (Sandbox, GanymedEditor, GanymedRuntime), not just the engine: static libraries
   do not propagate their links off MSVC. Same rule as the bgfx frameworks beside them.
 
+**enkiTS** gets its own `StaticLib` project (`extern/enkiTS.lua`) compiling exactly
+`src/TaskScheduler.cpp` — `src/TaskScheduler_c.*`, the C API wrapper, is deliberately excluded
+because nothing uses it. It needs no defines: `ENKITS_API` expands to nothing unless `ENKITS_DLL` is
+set, and `ENKITS_TASK_PRIORITIES_NUM` defaults to 3, which `JobSystem.cpp` *asserts* rather than
+sets — changing it here would silently change what `JobPriority` means. It is a separate project
+rather than sources folded into the engine because the engine project forces `gepch.h` on every TU
+(`<PrecompiledHeader>Use</PrecompiledHeader>`), and the only way to satisfy that is to edit the
+source to include it — which is what `extern/stb_image/stb_image.cpp` does, and which is not
+available for a submodule. `IncludeDir.enkiTS` is on the **engine project only**: `JobSystem.h` keeps
+enkiTS out of its own header (`void* Task` in the shared state), so the editor, the runtime and
+Sandbox hold a `Future<T>` without enkiTS on their include path.
+
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
-`extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`, `extern/RmlUi.lua`, `extern/FreeType.lua`).
+`extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`, `extern/RmlUi.lua`, `extern/FreeType.lua`,
+`extern/enkiTS.lua`).
 
 Two defines these hand-written scripts must supply that CMake would have set for you, both of
 which fail at *runtime* rather than at build time if missed:
