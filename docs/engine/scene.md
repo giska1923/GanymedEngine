@@ -34,8 +34,10 @@ Key entry points:
 
 **The `DuplicateEntity` whitelist is the point, not an optimization.** `AssetHandle` *is* `UUID` —
 the same C++ type — so a "rewrite every UUID-typed field" pass would happily renumber
-`StaticMesh.Mesh`, `SkyLight.Environment`, `Script.Script` and `AudioSource.Clip` into handles no
-registry knows, and the entity would render nothing with no diagnostic. Here the whitelist is
+`Script.Script`, `AudioSource.Clip` and `PrefabInstance.Source` into handles no registry knows, and
+the entity would render nothing with no diagnostic. The mesh, material and environment fields are
+`AssetRef<T>` now and are no longer even the same type, which narrows the hazard without removing
+it — the three path-resolved references above are still bare handles by design. Here the whitelist is
 structural rather than a list to maintain: `IDComponent` comes from `CreateEntityWithUUID`,
 `RelationshipComponent` is rewritten explicitly afterwards, and every other component is copied
 verbatim by the `ForEachType(ComponentList)` loop. The copy is made in two passes because a
@@ -82,7 +84,9 @@ copyable, no behavior beyond small helpers.
 ### Rendering
 
 - **`SpriteRendererComponent`** — 2D quad color (drawn by Renderer2D).
-- **`StaticMeshComponent`** — `AssetHandle` of a mesh (see [assets.md](assets.md)). Also carries
+- **`StaticMeshComponent`** — `AssetRef<Mesh>` plus `MaterialOverrides`, a
+  `std::vector<AssetRef<Material>>` parallel to the mesh's own material list (see
+  [assets.md](assets.md#assetreft)). Also carries
   skinned meshes: there is no separate `SkinnedMeshComponent`, because the asset already knows
   whether it has a skeleton and a second component would duplicate the drag-drop, serialization,
   inspector and `RenderSystem` plumbing to say nothing new.
@@ -99,7 +103,7 @@ copyable, no behavior beyond small helpers.
 - **`PointLightComponent`** — color, intensity, radius, falloff.
 - **`SpotLightComponent`** — color, intensity, range, inner/outer cone half-angles (radians),
   falloff.
-- **`SkyLightComponent`** — environment `AssetHandle` (HDR IBL when valid) or procedural
+- **`SkyLightComponent`** — `AssetRef<Environment>` (HDR IBL when it resolves) or procedural
   hemispheric sky/ground colors; intensity; `DrawSkybox`. First one wins.
 
 ### Scripting
@@ -431,9 +435,12 @@ first (a registration mistake is usually a repeated copy-paste). It checks that 
 entry is registered *and* went through `GE_REFLECT_COMPONENT`, that no field was left nameless, that
 `SerializeByName` is only on an enum, that a `Flatten` field's type is itself reflected, and that
 valued/flag attributes match the type they were put on — `Color` on a vec3/vec4, `Radians` on a
-float/vec3, an asset slot on an `AssetHandle`. That last one is the load-bearing check: `AssetHandle`
-is a plain `UUID` alias, the *same type* as `RelationshipComponent::Parent`, so nothing but this can
-catch an `Asset()` attribute put on the wrong field.
+float/vec3, an asset slot on an `AssetHandle` or an `AssetRef<T>`. That last one is the load-bearing
+check, and it is stronger on an `AssetRef<T>` than on a handle: a bare `AssetHandle` is a plain
+`UUID` alias, the *same type* as `RelationshipComponent::Parent`, so it can only be checked for
+being a handle at all, while an `AssetRef<T>` carries its asset type in the C++ type and the
+declared slot has to **agree** with it. A copy-pasted `.Asset(AssetType::Texture)` on an
+`AssetRef<Environment>` is caught; the same mistake on a bare handle still is not.
 
 The "registered" test is `resolve<T>().name() != nullptr`, **not** `if (entt::resolve<T>())`. entt
 synthesizes a node from a function-local static for any type it is asked about, so the truthiness test

@@ -489,16 +489,13 @@ namespace GanymedE {
 	{
 		// The order fixes the dense type ids for this run and has no other meaning; the ids are
 		// never persisted, because AssetType - stored by name in a `.meta` - is the durable
-		// form. This list has to agree with the GE_ASSET_TYPE declarations in the header, and
-		// nothing enforces that beyond the two sitting one file apart.
-		AssetManagerRegistry::Register<Mesh>("Mesh", AssetType::StaticMesh,
-			nullptr, &ApplyMesh);
-		AssetManagerRegistry::Register<Environment>("Environment", AssetType::Environment,
-			nullptr, &ApplyEnvironment);
-		AssetManagerRegistry::Register<Texture2D>("Texture2D", AssetType::Texture,
-			&ParseTexture, &ApplyTexture);
-		AssetManagerRegistry::Register<Material>("Material", AssetType::Material,
-			&ParseMaterial, &ApplyMaterial);
+		// form. The AssetType each manager serves comes from AssetTypeOf<T>, so this list cannot
+		// disagree with the GE_ASSET_TYPE declarations; a type missing from those does not
+		// compile here.
+		AssetManagerRegistry::Register<Mesh>("Mesh", nullptr, &ApplyMesh);
+		AssetManagerRegistry::Register<Environment>("Environment", nullptr, &ApplyEnvironment);
+		AssetManagerRegistry::Register<Texture2D>("Texture2D", &ParseTexture, &ApplyTexture);
+		AssetManagerRegistry::Register<Material>("Material", &ParseMaterial, &ApplyMaterial);
 	}
 
 	void AssetManager::Reload(AssetHandle handle)
@@ -563,7 +560,7 @@ namespace GanymedE {
 		std::vector<AssetCacheStats> stats;
 		AssetManagerRegistry::ForEach([&stats](IAssetManager& manager)
 		{
-			stats.push_back({ manager.TypeName(), manager.ResidentCount(), manager.RetainedCount() });
+			stats.push_back({ manager.TypeName(), manager.ResidentCount(), manager.TrackedCount() });
 		});
 
 		return stats;

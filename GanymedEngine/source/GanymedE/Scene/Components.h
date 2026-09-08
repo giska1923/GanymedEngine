@@ -8,6 +8,7 @@
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Random.h"
+#include "GanymedE/Assets/AssetRef.h"
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Audio/AudioTypes.h"
 #include "GanymedE/Math/BoundingVolumes.h"
@@ -100,7 +101,9 @@ namespace GanymedE {
 
 	struct StaticMeshComponent
 	{
-		AssetHandle Mesh = InvalidAssetHandle;
+		// Qualified because the member name shadows the class name for the rest of this scope -
+		// same for Material and Environment below.
+		AssetRef<GanymedE::Mesh> Mesh;
 
 		// Per renderer slot, parallel to the mesh's own material list (the index is
 		// Submesh::MaterialIndex). InvalidAssetHandle - or an index past the end - means "use
@@ -111,7 +114,7 @@ namespace GanymedE {
 		// materials untouched inside its own cache, and .gmat is a layer on top. See
 		// docs/engine/assets.md for why that shape was chosen over meshes referencing .gmat
 		// directly the way Unreal does.
-		std::vector<AssetHandle> MaterialOverrides;
+		std::vector<AssetRef<GanymedE::Material>> MaterialOverrides;
 
 		StaticMeshComponent() = default;
 		StaticMeshComponent(const StaticMeshComponent&) = default;
@@ -215,7 +218,7 @@ namespace GanymedE {
 	// cubemap drives the skybox and IBL; otherwise the procedural hemispheric colors are used.
 	struct SkyLightComponent
 	{
-		AssetHandle Environment = InvalidAssetHandle;
+		AssetRef<GanymedE::Environment> Environment;
 		glm::vec3 SkyColor{ 0.45f, 0.62f, 0.9f };
 		glm::vec3 GroundColor{ 0.28f, 0.26f, 0.22f };
 		float Intensity = 1.0f;
@@ -422,10 +425,10 @@ namespace GanymedE {
 
 		enum class Mode : uint8_t { Billboard = 0, Mesh = 1 };
 		Mode          RenderMode = Mode::Billboard;
-		AssetHandle   Texture  = InvalidAssetHandle;
+		AssetRef<Texture2D>            Texture;
 		ParticleBlend Blend    = ParticleBlend::Alpha;
-		AssetHandle   Mesh     = InvalidAssetHandle;
-		AssetHandle   Material = InvalidAssetHandle;
+		AssetRef<GanymedE::Mesh>       Mesh;
+		AssetRef<GanymedE::Material>   Material;
 
 		// Runtime-only. Serializer skips; Scene::Copy resets via ResetRuntime().
 		bool Playing = false;

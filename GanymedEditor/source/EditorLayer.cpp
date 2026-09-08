@@ -356,12 +356,12 @@ namespace GanymedE {
 			stats3D.ParticleDrawCalls, stats3D.ParticleCulledEmitters);
 
 		ImGui::Separator();
-		// Resident is what the weak cache is tracking; retained is what the manager itself is
-		// holding alive. They are equal until Phase 3's AssetRef becomes the owner, at which
-		// point retained goes to zero and resident starts falling when a scene closes.
-		ImGui::Text("Asset Cache (resident / retained):");
+		// Resident is live objects; tracked is cache entries, which includes ones whose object
+		// has been collected. The gap between the two is eviction actually happening - close a
+		// scene and resident falls while tracked does not until those handles are loaded again.
+		ImGui::Text("Asset Cache (resident / tracked):");
 		for (const AssetCacheStats& cache : AssetManager::GetCacheStats())
-			ImGui::Text("%s: %zu / %zu", cache.TypeName, cache.Resident, cache.Retained);
+			ImGui::Text("%s: %zu / %zu", cache.TypeName, cache.Resident, cache.Tracked);
 
 		ImGui::Separator();
 		ImGui::Text("Post Processing:");
@@ -735,7 +735,8 @@ namespace GanymedE {
 		// Environment / ambient (HDR IBL when the asset is present, procedural fallback otherwise)
 		Entity sky = scene->CreateEntity("Sky Light");
 		auto& skyLight = sky.AddComponent<SkyLightComponent>();
-		skyLight.Environment = AssetManager::ImportAsset("environments/studio_small_08_1k.hdr");
+		skyLight.Environment = AssetRef<Environment>(
+			AssetManager::ImportAsset("environments/studio_small_08_1k.hdr"));
 		skyLight.Intensity = 1.0f;
 	}
 

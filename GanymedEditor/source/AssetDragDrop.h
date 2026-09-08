@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GanymedE/Assets/AssetRef.h"
 #include "GanymedE/Assets/AssetTypes.h"
 
 #include <filesystem>
@@ -36,5 +37,15 @@ namespace GanymedE::EditorUI {
 
 	// Convenience for component handle fields: ImportAsset (idempotent) on match.
 	AssetHandle AcceptAssetDropHandle(AssetType type);
+
+	// The typed form, for an AssetRef<T> slot. The accepted AssetType comes from AssetTypeOf<T>,
+	// so a slot can no longer declare one type and filter on another - which was possible while
+	// every call passed the enum by hand next to a differently-typed field. Returns an unset ref
+	// when nothing matching was dropped, so the caller tests HasHandle().
+	template<typename T>
+	AssetRef<T> AcceptAssetDropRef()
+	{
+		return AssetRef<T>(AcceptAssetDropHandle(AssetTypeOf<T>::value));
+	}
 
 }

@@ -1253,15 +1253,15 @@ namespace GanymedE {
 		DrawComponent<StaticMeshComponent>("Static Mesh", entity, [](auto& component)
 		{
 			bool edited = false;
-			if (IsAssetHandleValid(component.Mesh))
+			if (component.Mesh.HasHandle())
 			{
-				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Mesh);
+				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Mesh.Handle());
 				if (metadata)
 					ImGui::Text("Mesh: %s", metadata->FilePath.c_str());
 				else
-					ImGui::Text("Mesh handle: %llu", static_cast<uint64_t>(component.Mesh));
+					ImGui::Text("Mesh handle: %llu", static_cast<uint64_t>(component.Mesh.Handle()));
 
-				Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(component.Mesh);
+				const Ref<Mesh>& mesh = component.Mesh.Get();
 				if (mesh)
 				{
 					ImGui::Text("Submeshes: %u", (uint32_t)mesh->GetSubmeshes().size());
@@ -1270,7 +1270,7 @@ namespace GanymedE {
 					// Material objects directly, which changed every entity using that mesh in
 					// every scene and persisted nowhere.
 					const auto& materials = mesh->GetMaterials();
-					component.MaterialOverrides.resize(materials.size(), InvalidAssetHandle);
+					component.MaterialOverrides.resize(materials.size());
 
 					ImGui::Text("Materials: %u", (uint32_t)materials.size());
 					ImGui::TextDisabled("Drop a .gmat on a slot to override it");
@@ -1280,7 +1280,7 @@ namespace GanymedE {
 						ImGui::PushID((int)i);
 						ImGui::Separator();
 
-						const AssetHandle slot = component.MaterialOverrides[i];
+						const AssetHandle slot = component.MaterialOverrides[i].Handle();
 						const AssetMetadata* slotMetadata = IsAssetHandleValid(slot)
 							? AssetManager::GetMetadata(slot) : nullptr;
 
@@ -1293,9 +1293,11 @@ namespace GanymedE {
 							ImGui::Text("Slot %u: (default: %s)", i, imported.c_str());
 
 						// Assigning a slot is an ordinary component edit, so Phase 2's undo
-						// covers it with no new code - see docs/editor/editor.md.
-						AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::Material);
-						if (IsAssetHandleValid(dropped))
+						// covers it with no new code - see docs/editor/editor.md. The slot
+						// accepts only a Material because AcceptAssetDropRef reads the accepted
+						// type off AssetRef<Material> rather than from a hand-written argument.
+						AssetRef<Material> dropped = EditorUI::AcceptAssetDropRef<Material>();
+						if (dropped.HasHandle())
 						{
 							component.MaterialOverrides[i] = dropped;
 							edited = true;
@@ -1306,7 +1308,7 @@ namespace GanymedE {
 							ImGui::SameLine();
 							if (ImGui::SmallButton("Clear"))
 							{
-								component.MaterialOverrides[i] = InvalidAssetHandle;
+								component.MaterialOverrides[i].Reset();
 								edited = true;
 							}
 
@@ -1326,8 +1328,8 @@ namespace GanymedE {
 			// mutate the shared Material asset, not this component, and an undo command
 			// claiming to own an asset edit would lie about its scope. Slot assignment and
 			// clearing do, because those are component state.
-			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::StaticMesh);
-			if (IsAssetHandleValid(dropped))
+			AssetRef<Mesh> dropped = EditorUI::AcceptAssetDropRef<Mesh>();
+			if (dropped.HasHandle())
 			{
 				component.Mesh = dropped;
 
@@ -1346,7 +1348,7 @@ namespace GanymedE {
 		{
 			bool edited = false;
 			Ref<Mesh> mesh = entity.HasComponent<StaticMeshComponent>()
-				? AssetManager::GetAsset<Mesh>(entity.GetComponent<StaticMeshComponent>().Mesh)
+				? entity.GetComponent<StaticMeshComponent>().Mesh.Get()
 				: nullptr;
 
 			const bool rigged = mesh && mesh->HasSkeleton();
@@ -1500,9 +1502,9 @@ namespace GanymedE {
 		DrawComponent<SkyLightComponent>("Sky Light", entity, [](auto& component)
 		{
 			bool edited = false;
-			if (IsAssetHandleValid(component.Environment))
+			if (component.Environment.HasHandle())
 			{
-				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Environment);
+				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Environment.Handle());
 				if (metadata)
 					ImGui::Text("Environment: %s", metadata->FilePath.c_str());
 				ImGui::TextDisabled("Using HDR IBL (procedural colors are fallback)");
@@ -1513,8 +1515,8 @@ namespace GanymedE {
 				edited |= ImGui::ColorEdit3("Ground Color", glm::value_ptr(component.GroundColor));
 			}
 
-			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::Environment);
-			if (IsAssetHandleValid(dropped))
+			AssetRef<Environment> dropped = EditorUI::AcceptAssetDropRef<Environment>();
+			if (dropped.HasHandle())
 			{
 				component.Environment = dropped;
 				edited = true;
@@ -1676,20 +1678,25 @@ namespace GanymedE {
 					edited = true;
 				}
 
-				auto assetSlot = [&](const char* label, AssetHandle& handle, AssetType type, const char* dropHint)
+				// Generic over the slot's asset type rather than taking an AssetType next to an
+				// untyped handle: the drop filter comes from the field itself now, so a slot
+				// cannot accept something the component would not know how to load.
+				auto assetSlot = [&](const char* label, auto& slot, const char* dropHint)
 				{
-					if (IsAssetHandleValid(handle))
+					using SlotType = typename std::decay_t<decltype(slot)>::AssetT;
+
+					if (slot.HasHandle())
 					{
-						const AssetMetadata* metadata = AssetManager::GetMetadata(handle);
+						const AssetMetadata* metadata = AssetManager::GetMetadata(slot.Handle());
 						if (metadata)
 							ImGui::Text("%s: %s", label, metadata->FilePath.c_str());
 						else
-							ImGui::Text("%s handle: %llu", label, static_cast<uint64_t>(handle));
+							ImGui::Text("%s handle: %llu", label, static_cast<uint64_t>(slot.Handle()));
 
 						ImGui::PushID(label);
 						if (ImGui::Button("Clear"))
 						{
-							handle = InvalidAssetHandle;
+							slot.Reset();
 							edited = true;
 						}
 						ImGui::PopID();
@@ -1700,17 +1707,17 @@ namespace GanymedE {
 					}
 
 					ImGui::TextDisabled("%s", dropHint);
-					AssetHandle dropped = EditorUI::AcceptAssetDropHandle(type);
-					if (IsAssetHandleValid(dropped))
+					AssetRef<SlotType> dropped = EditorUI::AcceptAssetDropRef<SlotType>();
+					if (dropped.HasHandle())
 					{
-						handle = dropped;
+						slot = dropped;
 						edited = true;
 					}
 				};
 
 				if (component.RenderMode == ParticleEmitterComponent::Mode::Billboard)
 				{
-					assetSlot("Texture", component.Texture, AssetType::Texture, "Drop a texture here; unset is white");
+					assetSlot("Texture", component.Texture, "Drop a texture here; unset is white");
 					const char* blendStrings[] = { "Alpha", "Additive" };
 					int blend = (int)component.Blend;
 					if (ImGui::Combo("Blend", &blend, blendStrings, 2))
@@ -1721,8 +1728,8 @@ namespace GanymedE {
 				}
 				else
 				{
-					assetSlot("Mesh", component.Mesh, AssetType::StaticMesh, "Drop a mesh here");
-					assetSlot("Material", component.Material, AssetType::Material, "Drop a .gmat here; unset is the mesh default");
+					assetSlot("Mesh", component.Mesh, "Drop a mesh here");
+					assetSlot("Material", component.Material, "Drop a .gmat here; unset is the mesh default");
 					ImGui::TextDisabled("Mesh particles must use opaque materials");
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("A Transparent .gmat submits one draw per particle instead of the opaque instanced path.");

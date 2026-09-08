@@ -722,6 +722,92 @@ tempting; keep it to making existing slots type-safe, not redesigning them.
 | Build | MSBuild x64 Debug: engine, editor, runtime |
 | Docs | [`assets.md`](../engine/assets.md) gets an `AssetRef` section (this is the new primary API); [`scene.md`](../engine/scene.md) component catalog field types updated; [`editor.md`](../editor/editor.md) asset-slot behaviour |
 
+### Phase 3 — execution notes (done)
+
+New file: `Assets/AssetRef.h` (premake regeneration required and run). Phase 2's `Entry::Retained`
+pin is **deleted**, so the weak cache now actually evicts — the row Phase 2 owed.
+
+**Decision 6 was overturned: composition, not inheritance from `Ref<T>`.** The decision rests on one
+sentence — "the slicing risk is real but bounded — `AssetRef` adds no data members, so a slice loses
+only the `ready()`/`handle()` API, not state" — and that sentence is false about the very sketch it
+appears next to. BlankEngine's `ResPtr` genuinely has no members, which is what makes deriving safe
+*there*; it can afford that because `makeResPtr` resolves eagerly at construction. Decision 7 chose
+lazy resolution, and lazy resolution requires the handle to be a member. So a slice to `Ref<T>` here
+loses **state**: identity is gone, the reference can never be re-resolved or reloaded, and `reset`,
+`operator=` and `swap` are each a public way to desync it silently. The benefit being bought was
+"mechanical migration across ~24 call sites", which is small; the ones that want a plain `Ref<T>`
+now write `.Get()`.
+
+Related: the sketch's `operator->` "requires a prior `Resolve()`", which is a null-deref landmine at
+every call site. `Get()`, `operator->` and `operator*` all resolve. There is deliberately no
+`operator bool` — `HasHandle()` ("is a reference authored here", never loads) and `Ready()` ("is
+there an object", resolves) are different questions and one implicit answer would hide which a call
+site meant.
+
+**Two mechanisms the plan did not anticipate, both forced by removing the pin.**
+
+1. **An eviction epoch, because `AssetRef` breaks the invariant `Reload` was built on.** The
+   documented rule was "re-fetch by handle each frame, or accept staleness across a Reload" — and
+   caching the object is exactly what stops the re-fetch. Without something, `Reload` would never
+   reach a component again. So `Detail::g_AssetEvictionEpoch` is bumped by every `Evict`/`EvictAll`
+   and compared in `Get()`. One counter for all types rather than one per manager: eviction is a
+   rare editor action, and over-invalidating costs one manager cache hit per live reference, once.
+   Phase 6's reload-in-place is what eventually removes the need.
+
+2. **`Get()` must resolve into a temporary before assigning, and this was a real bug first.** The
+   obvious shape — drop the cached `Ref`, then reload — releases the last reference to an asset the
+   `AssetRef` happens to solely own, the weak entry expires, and **one `Reload` of any handle
+   re-imports the whole scene**. The first probe caught it: reloading a `.gmat` returned a different
+   `Mesh` pointer. Holding the old object across the `Load` call makes an unaffected handle a cache
+   hit that returns the identical pointer.
+
+**Three smaller deviations.**
+
+- **Step 5 became a compile-time guarantee rather than a runtime one.** `AcceptAssetDropRef<T>()`
+  takes the accepted `AssetType` from a new `AssetTypeOf<T>` trait, so a slot cannot declare
+  `AssetRef<Environment>` and filter on `AssetType::Texture` — which was one typo away while every
+  call site wrote both by hand. `Register<T>` reads the same trait instead of taking `AssetType` as
+  an argument, closing the same gap in Phase 2's registration list. The particle inspector's three
+  slots collapsed into one lambda generic over `decltype(slot)::AssetT`.
+- **The reflection layer's asset-slot validation got stronger for free.** An `AssetRef<T>` field
+  carries its asset type in the C++ type, so `Validate()` now checks that the declared slot
+  *agrees* with `AssetTypeOf<T>` rather than only that the field is handle-shaped. `SkyLightComponent`'s
+  `sizeof` sentinel moved 40 → 64, which is the sentinel doing exactly the job decision 5 of the
+  reflection roadmap justified it with.
+- **The slicing grep the plan asks for is unnecessary**, because the failure it looks for no longer
+  compiles. What replaced it as the real hazard is the opposite: a transient `Ref` is not ownership.
+  `MeshImporter::Instantiate` loaded a mesh into a local and stored the handle, which under a weak
+  cache collects the object before the first frame; it now resolves through the `AssetRef` it is
+  about to store.
+
+**`Ready()` audit (step 6), stated honestly:** almost nothing needed it. `RenderSystem`'s
+`IsAssetHandleValid(...)` guards became unnecessary rather than becoming `Ready()`, because `Get()`
+returns null for an unset handle and for one that failed to load, and every one of those call sites
+already null-checked its `GetAsset` result. The one place `HasHandle()` is genuinely the right
+question is the inspector, which wants "is a reference authored here" without triggering a load.
+
+**Verification results** (MSBuild x64 Debug, full solution: engine, editor, runtime, Sandbox, all
+clean, no new warnings).
+
+| Check | Result |
+| --- | --- |
+| Scene round-trip is byte-identical | Load → save twice over three fixtures (a committed scene with an `Environment` handle, a hand-authored scene with `Mesh` + `Script` + `PrefabInstance` handles, and one written for this check carrying `MaterialOverrides` and all three particle slots). Pass 2 is byte-for-byte identical to pass 1 in all three, with every handle preserved — including the unset interior slot in `MaterialOverrides: [777…771, 0, 777…773]`. Against the *committed* bytes the content is identical modulo entity block **order**, which is pre-existing: the writer iterates the registry and a deserialized scene's order is not the file's, it affects entities with no asset component at all, and pass 1 is a fixpoint |
+| Eviction actually happens | `[scene live] Mesh 1/1, Environment 1/1, Texture2D 1/1, Material 1/1` → `[scene destroyed] 0/1` for all four. This is the Phase 2 row |
+| Reload still works, and does not over-reach | Reloading one `.gmat`: `material-replaced=true mesh-object-preserved=true`. The second flag is what the temporary-then-assign fix bought — it read `false` before |
+| Missing asset degrades | A valid handle with no asset: `HasHandle=true Ready=false ptr=0x0`, one warning, no crash |
+| Drag-drop type safety | Now a compile error, not a silent no-op: `AssetRef<Mesh> m = AcceptAssetDropRef<Material>()` gives `C2440: cannot convert from 'AssetRef<Material>' to 'AssetRef<Mesh>'`. Negative-tested and reverted |
+| Behaviour unchanged | `Phase5Test.ganymede` renders identically to the Phase 2 capture — 40 meshes, 32 frustum-culled, 5 instanced draws, 7 draw calls, zero warnings |
+| Runtime boots | `10 files, 10 adopted from sidecars, 0 minted`, scene loads with meshes and environment resolving, 10 entities, physics and audio running, zero warnings |
+| Lua bindings | **Vacuous as written.** `ScriptBindings.cpp` exposes no mesh, material, environment or texture field on any component — the particle bindings cover rate, looping, duration and burst only. Nothing in the Lua surface touches a converted field |
+| Nothing rewritten on disk | `git status` over both `assets/` trees clean after the probe runs and fixture cleanup |
+
+**Left as adjacent work, deliberately not folded in.** The entity-order churn named in the
+round-trip row above is a real diff-noise problem for committed scenes and has nothing to do with
+this phase; a canonical entity order in `SceneSerializer` would fix it. `IsRegistryWritable()` still
+has the misleading name Phase 1 flagged.
+
+---
+
 ---
 
 ## Phase 4 — Compiled outputs: `AssetCompiler`, epoch invalidation, BCn textures

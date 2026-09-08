@@ -6,47 +6,17 @@
 
 #include <cstddef>
 #include <filesystem>
-#include <type_traits>
 #include <vector>
 
 namespace GanymedE {
-
-	class Environment;
-	class Material;
-	class Mesh;
-	class Texture2D;
-
-	// "Does this type have an asset manager?" False by default, specialized below for the ones
-	// that do.
-	//
-	// This trait is the whole reason it survives: `GetAsset<T>` used to be a primary template
-	// whose body was `static_assert(sizeof(T) == 0)`, which gave a compile error naming the
-	// supported types instead of an unresolved external at link time. Forwarding to a registry
-	// would have regressed that to a runtime assert, so the check moved into a trait the
-	// registration list keeps honest.
-	template<typename T>
-	struct IsAssetType : std::false_type {};
-
-	// One line per managed type, beside the forward declarations, next to the `Register<T>` call
-	// in `AssetManager.cpp` that has to match it. A type declared here but never registered is a
-	// runtime assert on first use; a type registered but not declared here will not compile at
-	// the call site, which is the failure that gets noticed.
-	#define GE_ASSET_TYPE(T) template<> struct IsAssetType<T> : std::true_type {}
-
-	GE_ASSET_TYPE(Mesh);
-	GE_ASSET_TYPE(Environment);
-	GE_ASSET_TYPE(Texture2D);
-	GE_ASSET_TYPE(Material);
-
-	#undef GE_ASSET_TYPE
 
 	// One row per registered manager, for the editor's Stats panel. Type-erased here so the
 	// editor never has to see `IAssetManager`.
 	struct AssetCacheStats
 	{
 		const char* TypeName = nullptr;
-		std::size_t Resident = 0;  // live objects the manager is tracking
-		std::size_t Retained = 0;  // of those, ones the manager itself is keeping alive
+		std::size_t Resident = 0;  // live objects
+		std::size_t Tracked = 0;   // cache entries, including ones whose object was collected
 	};
 
 	class AssetManager
@@ -80,8 +50,12 @@ namespace GanymedE {
 		static AssetType GetAssetType(AssetHandle handle);
 
 		// Cached load through the type's manager: cache hit, or Parse then Apply. Every new
-		// asset type adds one `GE_ASSET_TYPE` line above and one `Register<T>` call in the
-		// `.cpp` - there is no per-type code here any more.
+		// asset type adds one `GE_ASSET_TYPE` line in AssetManagerRegistry.h and one
+		// `Register<T>` call in the `.cpp` - there is no per-type code here any more.
+		//
+		// Prefer an `AssetRef<T>` member over calling this per frame: it resolves once and
+		// caches, which is the whole point of AssetRef.h. This stays for one-shot lookups and
+		// for editor code that has a handle and no place to keep a reference.
 		//
 		// Not every asset type wants one. Script, Audio and Prefab are path-resolved by
 		// design: the manager answers handle -> path and the consumer loads itself
@@ -91,11 +65,8 @@ namespace GanymedE {
 		template<typename T>
 		static Ref<T> GetAsset(AssetHandle handle)
 		{
-			static_assert(IsAssetType<T>::value,
-				"AssetManager::GetAsset<T> is only available for Mesh, Environment, Texture2D "
-				"and Material. Script, Audio and Prefab are path-resolved by design - resolve "
-				"them through GetMetadata (docs/engine/assets.md).");
-
+			// The diagnostic lives in AssetManagerRegistry::Get<T>, so it reads the same
+			// whether a caller went through this facade or through an AssetRef.
 			return AssetManagerRegistry::Get<T>().Load(handle);
 		}
 

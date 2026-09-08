@@ -18,14 +18,18 @@ namespace GanymedE {
 	// This replaced four hardcoded `unordered_map<AssetHandle, Ref<T>>` members inside
 	// `AssetManagerData` plus a `GetAsset<T>` primary template whose body was a
 	// `static_assert`. Adding a cached asset type used to mean editing `AssetManager.cpp` in
-	// six places; it now means one `GE_ASSET_TYPE` line in `AssetManager.h` and one
-	// `Register<T>` call in `RegisterManagers`.
+	// six places; it now means one `GE_ASSET_TYPE` line below and one `Register<T>` call in
+	// `RegisterManagers`.
 	//
 	// The shape is BlankEngine's `IResourceManager` / `ResourceManager<T, Cache>` with its RTTR
 	// registration DSL removed - see docs/toDo&done/ASSET_PIPELINE_ROADMAP.md decision 4 for
 	// why a reflected registry is not worth a reflection dependency at this scale.
 
+	class Environment;
 	class IAssetManager;
+	class Material;
+	class Mesh;
+	class Texture2D;
 
 	using AssetTypeId = uint8_t;
 
@@ -34,7 +38,47 @@ namespace GanymedE {
 	// path-resolved by design. BlankEngine's 64 is sized for an engine an order of magnitude larger.
 	inline constexpr AssetTypeId MaxAssetManagers = 16;
 
+	// "Does this type have an asset manager?" False by default, true for the four below.
+	//
+	// This trait is the whole reason the good diagnostic survives: `GetAsset<T>` used to be a
+	// primary template whose body was `static_assert(sizeof(T) == 0)`, which gave a compile error
+	// naming the supported types instead of an unresolved external at link time. Forwarding to a
+	// registry would have regressed that to a runtime assert.
+	template<typename T>
+	struct IsAssetType : std::false_type {};
+
+	// The `AssetType` a managed C++ type corresponds to. Having it at compile time is what lets
+	// an editor asset slot be spelled `AcceptAssetDropRef<Material>()` instead of passing both a
+	// template argument and a matching enum that nothing checks against each other.
+	template<typename T>
+	struct AssetTypeOf;
+
+	// One line per managed type. It is also what `Register<T>` reads its `AssetType` from, so the
+	// two can no longer disagree - the enum used to be a second argument at the registration call.
+	#define GE_ASSET_TYPE(T, Enum)                                                        \
+		template<> struct IsAssetType<T> : std::true_type {};                             \
+		template<> struct AssetTypeOf<T> : std::integral_constant<AssetType, AssetType::Enum> {}
+
+	GE_ASSET_TYPE(Mesh, StaticMesh);
+	GE_ASSET_TYPE(Environment, Environment);
+	GE_ASSET_TYPE(Texture2D, Texture);
+	GE_ASSET_TYPE(Material, Material);
+
+	#undef GE_ASSET_TYPE
+
 	namespace Detail {
+
+		// Bumped by every eviction, and read by `AssetRef<T>` to decide whether the object it
+		// cached is still the one the manager would hand out.
+		//
+		// This exists because `AssetRef` broke an invariant the asset layer used to rely on:
+		// consumers re-fetched by handle every frame, so `Reload` landed in the viewport on the
+		// next frame for free. A reference that caches the object would otherwise keep the stale
+		// one forever. One counter for every type rather than one per manager, because eviction
+		// is a rare editor action and the cost of over-invalidating is a single manager cache hit
+		// per live reference, once. Phase 6's reload-in-place is what eventually makes this
+		// unnecessary.
+		inline uint32_t g_AssetEvictionEpoch = 0;
 
 		// Bumped once per distinct T, on that T's first `AssetTypeIdOf` call.
 		AssetTypeId NextAssetTypeId();
@@ -83,15 +127,15 @@ namespace GanymedE {
 		virtual AssetType Type() const = 0;
 
 		// Drop this manager's ownership of `handle`. Anything still holding a `Ref` keeps the
-		// old object, unchanged - the next `Load` builds a *new* one beside it. That is the
-		// documented `Reload` contract ("re-fetch by handle each frame, or accept staleness"),
-		// and weak caching does not change it.
+		// old object, unchanged - the next `Load` builds a *new* one beside it. Live `AssetRef`s
+		// notice through the eviction epoch and re-resolve.
 		virtual void Evict(AssetHandle handle) = 0;
 		virtual void EvictAll() = 0;
 
-		// Live objects this manager is tracking, and the subset it is keeping alive itself.
+		// Live objects, and cache entries including ones whose object has been collected.
+		// The gap between them is eviction actually happening.
 		virtual std::size_t ResidentCount() const = 0;
-		virtual std::size_t RetainedCount() const = 0;
+		virtual std::size_t TrackedCount() const = 0;
 	};
 
 	template<typename T>
@@ -108,8 +152,8 @@ namespace GanymedE {
 		// created here. `parsed` is null exactly when `ParseFn` is.
 		using ApplyFn = Ref<T> (*)(const AssetMetadata&, Scope<AssetParseResult>);
 
-		TypedAssetManager(const char* typeName, AssetType type, ParseFn parse, ApplyFn apply)
-			: m_TypeName(typeName), m_Type(type), m_Parse(parse), m_Apply(apply)
+		TypedAssetManager(const char* typeName, ParseFn parse, ApplyFn apply)
+			: m_TypeName(typeName), m_Parse(parse), m_Apply(apply)
 		{
 		}
 
@@ -121,11 +165,13 @@ namespace GanymedE {
 			auto it = m_Cache.find(handle);
 			if (it != m_Cache.end())
 			{
-				if (Ref<T> live = it->second.Cached.lock())
+				if (Ref<T> live = it->second.lock())
 					return live;
 
-				// Every holder let go while the entry was unpinned. Erasing here rather than
-				// reusing the slot keeps "in the map" and "resident" the same statement.
+				// Every holder let go. Erasing here rather than reusing the slot keeps "in the
+				// map" and "known to have existed" the same statement, and it is the only place
+				// expired entries are reclaimed - a handle nobody loads again keeps its empty
+				// entry, which is a bounded and very small cost.
 				m_Cache.erase(it);
 			}
 
@@ -139,7 +185,7 @@ namespace GanymedE {
 			// The extension typed this asset; a handle whose asset is a texture must not load as
 			// a mesh. Silent, as before: the caller asked for the wrong type, not for a file that
 			// is broken.
-			if (metadata->Type != m_Type)
+			if (metadata->Type != AssetTypeOf<T>::value)
 				return nullptr;
 
 			Scope<AssetParseResult> parsed;
@@ -157,9 +203,7 @@ namespace GanymedE {
 			if (!asset)
 				return nullptr;
 
-			Entry& entry = m_Cache[handle];
-			entry.Cached = asset;
-			entry.Retained = asset;
+			m_Cache[handle] = asset;
 			return asset;
 		}
 
@@ -170,53 +214,44 @@ namespace GanymedE {
 			auto it = m_Cache.find(handle);
 			if (it == m_Cache.end())
 				return nullptr;
-			return it->second.Cached.lock();
+			return it->second.lock();
 		}
 
 		const char* TypeName() const override { return m_TypeName; }
-		AssetType Type() const override { return m_Type; }
+		AssetType Type() const override { return AssetTypeOf<T>::value; }
 
-		void Evict(AssetHandle handle) override { m_Cache.erase(handle); }
-		void EvictAll() override { m_Cache.clear(); }
+		void Evict(AssetHandle handle) override
+		{
+			m_Cache.erase(handle);
+			++Detail::g_AssetEvictionEpoch;
+		}
+
+		void EvictAll() override
+		{
+			m_Cache.clear();
+			++Detail::g_AssetEvictionEpoch;
+		}
 
 		std::size_t ResidentCount() const override
 		{
 			std::size_t count = 0;
-			for (const auto& [handle, entry] : m_Cache)
-				count += entry.Cached.expired() ? 0 : 1;
+			for (const auto& entry : m_Cache)
+				count += entry.second.expired() ? 0 : 1;
 			return count;
 		}
 
-		std::size_t RetainedCount() const override
-		{
-			std::size_t count = 0;
-			for (const auto& [handle, entry] : m_Cache)
-				count += entry.Retained ? 1 : 0;
-			return count;
-		}
+		std::size_t TrackedCount() const override { return m_Cache.size(); }
 
 	private:
-		struct Entry
-		{
-			// Weak, so an asset is resident exactly as long as something references it. This is
-			// the fix for "nothing is ever unloaded": the four caches this replaced held strong
-			// refs and had no eviction path but Reload and Shutdown.
-			std::weak_ptr<T> Cached;
-
-			// ...except nothing references anything yet. Components store bare `AssetHandle`s
-			// and every consumer drops its `Ref` at the end of the frame, so a purely weak cache
-			// would re-import a glTF *per entity per frame*. This member is the stand-in owner
-			// until Phase 3's `AssetRef<T>` becomes the real one, at which point it is deleted
-			// and the weak cache starts collecting. See ASSET_PIPELINE_ROADMAP.md decision 5.
-			Ref<T> Retained;
-		};
+		// Weak, so an asset is resident exactly as long as something references it. That is the
+		// fix for "nothing is ever unloaded": the four maps this replaced held strong refs and
+		// had no eviction path but Reload and Shutdown. The owner is now whoever holds an
+		// `AssetRef<T>` - which is a component, and therefore a scene.
+		std::unordered_map<AssetHandle, std::weak_ptr<T>> m_Cache;
 
 		const char* m_TypeName;
-		AssetType m_Type;
 		ParseFn m_Parse;
 		ApplyFn m_Apply;
-
-		std::unordered_map<AssetHandle, Entry> m_Cache;
 	};
 
 	// The flat slot array `AssetTypeIdOf<T>()` indexes.
@@ -224,21 +259,29 @@ namespace GanymedE {
 	{
 	public:
 		template<typename T>
-		static void Register(const char* typeName, AssetType type,
+		static void Register(const char* typeName,
 			typename TypedAssetManager<T>::ParseFn parse,
 			typename TypedAssetManager<T>::ApplyFn apply)
 		{
+			static_assert(IsAssetType<T>::value,
+				"Register<T> needs a GE_ASSET_TYPE(T, ...) line in AssetManagerRegistry.h first");
+
 			const AssetTypeId id = AssetTypeIdOf<T>();
 			GE_CORE_ASSERT(id < MaxAssetManagers,
 				"More asset managers than MaxAssetManagers - raise it in AssetManagerRegistry.h");
 
 			Detail::AssetManagerSlots()[id] =
-				CreateScope<TypedAssetManager<T>>(typeName, type, parse, apply);
+				CreateScope<TypedAssetManager<T>>(typeName, parse, apply);
 		}
 
 		template<typename T>
 		static TypedAssetManager<T>& Get()
 		{
+			static_assert(IsAssetType<T>::value,
+				"No asset manager for this type. Managed types are Mesh, Environment, Texture2D "
+				"and Material; Script, Audio and Prefab are path-resolved by design - resolve "
+				"them through AssetManager::GetMetadata (docs/engine/assets.md).");
+
 			IAssetManager* manager = Detail::AssetManagerSlots()[AssetTypeIdOf<T>()].get();
 			GE_CORE_ASSERT(manager, "No asset manager registered for this type - AssetManager::Init "
 				"has to run before the first GetAsset");

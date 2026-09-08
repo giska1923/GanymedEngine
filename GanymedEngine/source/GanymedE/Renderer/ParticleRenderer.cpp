@@ -285,12 +285,10 @@ namespace GanymedE {
 			memcpy(tvb.data, s_Data.Vertices.data(), vertCount * sizeof(ParticleVertex));
 			memcpy(tib.data, s_Data.Indices.data(), indexCount * sizeof(uint16_t));
 
-			Ref<Texture2D> texture = s_Data.WhiteTexture;
-			if (IsAssetHandleValid(emitter.Texture))
-			{
-				if (Ref<Texture2D> loaded = AssetManager::GetAsset<Texture2D>(emitter.Texture))
-					texture = loaded;
-			}
+			// Unset, or a texture that failed to load, falls back to white - the emitter's
+			// vertex colour then carries the whole look.
+			const Ref<Texture2D>& assigned = emitter.Texture.Get();
+			const Ref<Texture2D>& texture = assigned ? assigned : s_Data.WhiteTexture;
 
 			s_Data.Shader->SetTexture("s_tex0", 0, texture);
 

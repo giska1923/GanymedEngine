@@ -112,11 +112,11 @@ Two ordering facts worth internalizing:
   again (see [audio.md](audio.md)).
 - Renderer subsystems (`Renderer2D`, `Renderer3D`, `ParticleRenderer`, `PostProcess`, `MeshShader`) are static-lifetime
   but explicitly `Init()`/`Shutdown()` by `Renderer`, releasing GPU handles while bgfx is alive.
-- **Loaded assets are owned by their `TypedAssetManager<T>`**, one per managed type in a flat slot
-  array indexed by a dense type id ([assets.md](assets.md#managers-and-caching)). The cache is
-  `weak_ptr`, so the intended owner is whoever holds a reference — but until a typed asset reference
-  exists, each entry also pins a `shared_ptr`, because components store bare handles and nothing
-  else keeps an asset alive between frames. `AssetManager::Shutdown` destroys the managers while
+- **Loaded assets are owned by whatever holds an `AssetRef<T>`, which in practice is a scene.**
+  `TypedAssetManager<T>` tracks them in a `weak_ptr` cache, one manager per managed type in a flat
+  slot array indexed by a dense type id ([assets.md](assets.md#managers-and-caching)), but the cache
+  keeps nothing alive: a component field is the owner, so closing a scene collects its meshes,
+  materials, textures and environments. `AssetManager::Shutdown` destroys the managers while
   `Renderer::IsGpuAlive()` is still true, the same discipline as the renderer subsystems above.
 
 ## Design principles the code actually follows
@@ -158,12 +158,14 @@ Two ordering facts worth internalizing:
   ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3/T4). Jolt still runs its own pool,
   so there are currently two pools of `hardware_concurrency() - 1` threads. The ViewDesc machinery
   exists so ECS parallelism can be added without redesign.
-- **The asset layer is mid-milestone.** Identity is per-asset `.meta` sidecars and loading goes
-  through a registration-driven manager registry with a Parse/Apply split, but nothing is evicted
-  yet (the managers pin what they load) and nothing is asynchronous or compiled.
-  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) Phases 1–2 have landed;
-  Phase 3’s typed reference is what makes the weak cache real, and it is also the shim that lets
-  Phase 5 make loading asynchronous without touching a call site.
+- **The asset layer is mid-milestone.** Identity is per-asset `.meta` sidecars, loading goes through
+  a registration-driven manager registry with a Parse/Apply split, and `AssetRef<T>` is the
+  reference type components hold — so assets are evicted when the scene that referenced them
+  closes. What is still missing is compiled outputs and asynchrony: every load is a blocking read on
+  the calling thread, textures ship as PNG-decoded uncompressed, and there is no hot reload.
+  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) Phases 1–3 have landed;
+  `AssetRef` is also the shim that lets Phase 5 make loading asynchronous without touching a call
+  site, which is why it came first.
 - **Component members are reflected, but nothing consumes it yet.**
   [`Reflection/`](scene.md#member-reflection) registers all 23 components over `entt::meta` and
   validates itself at boot; the serializer, the inspector and the Lua bindings still hand-list every

@@ -69,7 +69,7 @@ namespace GanymedE {
 	{
 		for (auto [entity, animator, meshComponent] : View<AnimView>())
 		{
-			Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(meshComponent.Mesh);
+			const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
 			if (!mesh || !mesh->HasSkeleton())
 			{
 				// An animator on a static mesh is a user error, not a crash. An empty palette is

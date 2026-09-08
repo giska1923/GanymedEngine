@@ -118,23 +118,26 @@ namespace GanymedE {
 			out << YAML::BeginMap;
 
 			auto& smc = entity.GetComponent<StaticMeshComponent>();
-			if (IsAssetHandleValid(smc.Mesh))
-				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(smc.Mesh);
+
+			// AssetRef serializes as its handle, so every key and value below is byte-identical
+			// to what the bare-handle version wrote. That is the whole compatibility story.
+			if (smc.Mesh.HasHandle())
+				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(smc.Mesh.Handle());
 
 			// Written only when at least one slot is actually overridden. Emitting an empty
 			// sequence for every mesh entity would rewrite every committed scene file for no
 			// content change, which is exactly what Phase 1's canonical saves exist to prevent.
 			bool hasOverride = false;
-			for (AssetHandle handle : smc.MaterialOverrides)
-				hasOverride = hasOverride || IsAssetHandleValid(handle);
+			for (const AssetRef<Material>& slot : smc.MaterialOverrides)
+				hasOverride = hasOverride || slot.HasHandle();
 
 			if (hasOverride)
 			{
 				// Handles, not paths: the scene-to-registry currency. Trailing unset slots are
 				// kept rather than trimmed, because the index *is* the slot.
 				out << YAML::Key << "MaterialOverrides" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-				for (AssetHandle handle : smc.MaterialOverrides)
-					out << static_cast<uint64_t>(handle);
+				for (const AssetRef<Material>& slot : smc.MaterialOverrides)
+					out << static_cast<uint64_t>(slot.Handle());
 				out << YAML::EndSeq;
 			}
 
@@ -258,8 +261,8 @@ namespace GanymedE {
 			out << YAML::BeginMap;
 
 			auto& skc = entity.GetComponent<SkyLightComponent>();
-			if (IsAssetHandleValid(skc.Environment))
-				out << YAML::Key << "Environment" << YAML::Value << static_cast<uint64_t>(skc.Environment);
+			if (skc.Environment.HasHandle())
+				out << YAML::Key << "Environment" << YAML::Value << static_cast<uint64_t>(skc.Environment.Handle());
 			out << YAML::Key << "SkyColor" << YAML::Value << skc.SkyColor;
 			out << YAML::Key << "GroundColor" << YAML::Value << skc.GroundColor;
 			out << YAML::Key << "Intensity" << YAML::Value << skc.Intensity;
@@ -354,14 +357,14 @@ namespace GanymedE {
 
 			if (p.RenderMode != d.RenderMode)
 				out << YAML::Key << "RenderMode" << YAML::Value << (int)p.RenderMode;
-			if (IsAssetHandleValid(p.Texture))
-				out << YAML::Key << "Texture" << YAML::Value << static_cast<uint64_t>(p.Texture);
+			if (p.Texture.HasHandle())
+				out << YAML::Key << "Texture" << YAML::Value << static_cast<uint64_t>(p.Texture.Handle());
 			if (p.Blend != d.Blend)
 				out << YAML::Key << "Blend" << YAML::Value << (int)p.Blend;
-			if (IsAssetHandleValid(p.Mesh))
-				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(p.Mesh);
-			if (IsAssetHandleValid(p.Material))
-				out << YAML::Key << "Material" << YAML::Value << static_cast<uint64_t>(p.Material);
+			if (p.Mesh.HasHandle())
+				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(p.Mesh.Handle());
+			if (p.Material.HasHandle())
+				out << YAML::Key << "Material" << YAML::Value << static_cast<uint64_t>(p.Material.Handle());
 
 			// Playing, Time, EmitAccumulator, BurstPending, Rng, Pool, WorldBounds: runtime-only.
 
@@ -676,15 +679,20 @@ namespace GanymedE {
 			auto meshHandle = staticMeshComponent["Mesh"];
 			if (meshHandle)
 			{
-				smc.Mesh = meshHandle.as<uint64_t>();
-				AssetManager::GetAsset<Mesh>(smc.Mesh);
+				smc.Mesh = AssetRef<Mesh>(AssetHandle(meshHandle.as<uint64_t>()));
+
+				// Resolved here rather than left to the first frame, as it always was. The
+				// difference is that the resolved object now lives in the component: with the
+				// weak cache of Phase 2 a warm load whose result was dropped would be collected
+				// before anything used it.
+				smc.Mesh.Get();
 			}
 			else
 			{
 				// Backward compatibility with path-based scenes
 				auto meshPath = staticMeshComponent["MeshPath"];
 				if (meshPath)
-					smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
+					smc.Mesh = AssetRef<Mesh>(AssetManager::ImportAsset(meshPath.as<std::string>()));
 			}
 
 			auto overrides = staticMeshComponent["MaterialOverrides"];
@@ -693,7 +701,7 @@ namespace GanymedE {
 				smc.MaterialOverrides.clear();
 				smc.MaterialOverrides.reserve(overrides.size());
 				for (auto slot : overrides)
-					smc.MaterialOverrides.push_back(AssetHandle{ slot.as<uint64_t>() });
+					smc.MaterialOverrides.emplace_back(AssetHandle{ slot.as<uint64_t>() });
 			}
 		}
 
@@ -796,13 +804,13 @@ namespace GanymedE {
 
 			auto envHandle = skyLightComponent["Environment"];
 			if (envHandle)
-				skc.Environment = envHandle.as<uint64_t>();
+				skc.Environment = AssetRef<Environment>(AssetHandle(envHandle.as<uint64_t>()));
 			else
 			{
 				// Backward compatibility with path-based scenes
 				auto envPath = skyLightComponent["EnvironmentPath"];
 				if (envPath)
-					skc.Environment = AssetManager::ImportAsset(envPath.as<std::string>());
+					skc.Environment = AssetRef<Environment>(AssetManager::ImportAsset(envPath.as<std::string>()));
 			}
 			skc.SkyColor = skyLightComponent["SkyColor"].as<glm::vec3>();
 			skc.GroundColor = skyLightComponent["GroundColor"].as<glm::vec3>();
@@ -898,13 +906,13 @@ namespace GanymedE {
 			if (auto n = particleEmitterComponent["RenderMode"])
 				p.RenderMode = (ParticleEmitterComponent::Mode)n.as<int>();
 			if (auto n = particleEmitterComponent["Texture"])
-				p.Texture = n.as<uint64_t>();
+				p.Texture = AssetRef<Texture2D>(AssetHandle(n.as<uint64_t>()));
 			if (auto n = particleEmitterComponent["Blend"])
 				p.Blend = (ParticleBlend)n.as<int>();
 			if (auto n = particleEmitterComponent["Mesh"])
-				p.Mesh = n.as<uint64_t>();
+				p.Mesh = AssetRef<Mesh>(AssetHandle(n.as<uint64_t>()));
 			if (auto n = particleEmitterComponent["Material"])
-				p.Material = n.as<uint64_t>();
+				p.Material = AssetRef<Material>(AssetHandle(n.as<uint64_t>()));
 		}
 
 		auto rigidBodyComponent = entityNode["RigidBodyComponent"];

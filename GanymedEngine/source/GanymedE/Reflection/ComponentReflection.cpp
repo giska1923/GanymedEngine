@@ -4,6 +4,14 @@
 #include "GanymedE/ECS/ComponentTraits.h"
 #include "GanymedE/Scene/Components.h"
 
+// AssetRef<T> reaches entt as a reflected member type, and entt's meta machinery needs T complete
+// to answer `is_constructible` about it. Components.h only forward-declares the four asset classes,
+// which is deliberate - it is included almost everywhere and the renderer headers are not free.
+#include "GanymedE/Renderer/Environment.h"
+#include "GanymedE/Renderer/Material.h"
+#include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Renderer/Texture.h"
+
 // Every registration block in the engine, in one translation unit.
 //
 // The alternative - a block next to each struct in Components.h - reads better and is harder to
@@ -541,6 +549,11 @@ namespace GanymedE::Reflection {
 		// numbers - which costs more than it catches, on a codebase that builds for Windows, Linux
 		// and macOS. The rule is mechanical rather than a judgement call per component: library
 		// container member => no sentinel.
+		//
+		// AssetRef<T> is not a container and keeps its sentinel: it is a UUID, a shared_ptr and a
+		// uint32_t, and sizeof(shared_ptr) is two pointers on every mainstream implementation.
+		// SkyLightComponent's number moved from 40 to 64 when its Environment stopped being a
+		// bare handle, which is the sentinel doing exactly the job it exists for.
 		static_assert(sizeof(TransformComponent) == 36, "TransformComponent changed - reflect the new field");
 		static_assert(sizeof(WorldTransformComponent) == 64, "WorldTransformComponent changed - reflect the new field");
 		static_assert(sizeof(SpriteRendererComponent) == 16, "SpriteRendererComponent changed - reflect the new field");
@@ -548,7 +561,7 @@ namespace GanymedE::Reflection {
 		static_assert(sizeof(DirectionalLightComponent) == 20, "DirectionalLightComponent changed - reflect the new field");
 		static_assert(sizeof(PointLightComponent) == 24, "PointLightComponent changed - reflect the new field");
 		static_assert(sizeof(SpotLightComponent) == 32, "SpotLightComponent changed - reflect the new field");
-		static_assert(sizeof(SkyLightComponent) == 40, "SkyLightComponent changed - reflect the new field");
+		static_assert(sizeof(SkyLightComponent) == 64, "SkyLightComponent changed - reflect the new field");
 		static_assert(sizeof(NativeScriptComponent) == 24, "NativeScriptComponent changed - reflect the new field");
 		static_assert(sizeof(AudioSourceComponent) == 24, "AudioSourceComponent changed - reflect the new field");
 		static_assert(sizeof(AudioListenerComponent) == 1, "AudioListenerComponent changed - reflect the new field");
@@ -567,6 +580,43 @@ namespace GanymedE::Reflection {
 		bool IsSameType(const entt::meta_type& type, const entt::type_info& info)
 		{
 			return type && type.info() == info;
+		}
+
+		// What may carry an `Asset(...)` attribute. A bare AssetHandle accepts any slot - it is a
+		// UUID and nothing about it says which kind - while an AssetRef<T> accepts exactly one,
+		// so the two cases are checked differently on purpose.
+		bool IsValidAssetSlot(const entt::meta_type& type, AssetType slot)
+		{
+			if (IsSameType(type, entt::type_id<AssetHandle>())
+				|| IsSameType(type, entt::type_id<std::vector<AssetHandle>>()))
+			{
+				return true;
+			}
+
+			struct TypedSlot
+			{
+				const entt::type_info& Info;
+				AssetType Slot;
+			};
+
+			// Spelled out rather than derived, for the same reason AssetTypeFromString is: a new
+			// managed type that is missing here fails validation loudly at boot instead of
+			// silently opting out of the check.
+			const TypedSlot typed[] = {
+				{ entt::type_id<AssetRef<Mesh>>(),                      AssetType::StaticMesh  },
+				{ entt::type_id<AssetRef<Environment>>(),               AssetType::Environment },
+				{ entt::type_id<AssetRef<Texture2D>>(),                 AssetType::Texture     },
+				{ entt::type_id<AssetRef<Material>>(),                  AssetType::Material    },
+				{ entt::type_id<std::vector<AssetRef<Material>>>(),     AssetType::Material    },
+			};
+
+			for (const TypedSlot& candidate : typed)
+			{
+				if (IsSameType(type, candidate.Info))
+					return candidate.Slot == slot;
+			}
+
+			return false;
 		}
 
 		// Reports every problem rather than stopping at the first: a registration mistake is
@@ -602,11 +652,15 @@ namespace GanymedE::Reflection {
 
 			// AssetHandle is a UUID alias, so this is the check that catches an Asset() attribute
 			// put on the wrong field - the type system cannot.
-			if (attr && attr->Slot != AssetType::None
-				&& !IsSameType(type, entt::type_id<AssetHandle>())
-				&& !IsSameType(type, entt::type_id<std::vector<AssetHandle>>()))
+			//
+			// An AssetRef<T> field carries its asset type in the C++ type, so the check gets
+			// stronger there: the declared slot has to *agree* with AssetTypeOf<T>. That catches
+			// a copy-pasted `.Asset(AssetType::Texture)` on an AssetRef<Environment>, which the
+			// bare-handle form could never catch.
+			if (attr && attr->Slot != AssetType::None && !IsValidAssetSlot(type, attr->Slot))
 			{
-				GE_CORE_ERROR("Reflection: {0}::{1} has an asset slot but is not an AssetHandle", owner, field.name());
+				GE_CORE_ERROR("Reflection: {0}::{1} has an asset slot ({2}) that does not match "
+					"its type", owner, field.name(), AssetTypeToString(attr->Slot));
 				ok = false;
 			}
 

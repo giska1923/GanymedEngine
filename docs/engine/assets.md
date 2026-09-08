@@ -19,10 +19,12 @@ sidecars, a scan-derived in-memory index, and the mesh import pipeline (cgltf + 
 - `AssetMetadata` = handle + type + file path **relative to `assets/`**, keyed on forward slashes
   (`generic_string()`) so a path minted on Windows matches one read on Linux.
 
-Components reference handles, never paths (`StaticMeshComponent.Mesh`,
-`SkyLightComponent.Environment`), and the scene serializer writes handles. A handle resolves because
-the `.meta` sidecar beside the asset says so, so a path can move — including via `git mv` — without
-breaking a scene, as long as its sidecar moves with it.
+Components reference handles, never paths — through an [`AssetRef<T>`](#assetreft) for the four
+managed types (`StaticMeshComponent.Mesh`, `SkyLightComponent.Environment`) and as a bare
+`AssetHandle` for the path-resolved ones (`ScriptComponent.Script`, `AudioSourceComponent.Clip`,
+`PrefabInstanceComponent.Source`). Either way the scene serializer writes the handle. A handle
+resolves because the `.meta` sidecar beside the asset says so, so a path can move — including via
+`git mv` — without breaking a scene, as long as its sidecar moves with it.
 
 ## AssetManager
 
@@ -35,7 +37,7 @@ one derived index plus a registry of per-type managers (see *Managers and cachin
 | `ScanAssets()` | Walk `assets/` and rebuild the index from the `.meta` sidecars found there, minting and writing one where a recognized asset has none. Called by `Init`; safe to call again to pick up files added outside the editor |
 | `ImportAsset(relativePath)` | "Ensure this file has a sidecar, and tell me its handle." Idempotent: an indexed path returns its handle. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
-| `GetAsset<T>(handle)` | Cached load through the type’s manager. Available for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those, enforced by an `IsAssetType<T>` `static_assert` |
+| `GetAsset<T>(handle)` | Cached load through the type’s manager. Available for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those, enforced by an `IsAssetType<T>` `static_assert`. Prefer an [`AssetRef<T>`](#assetreft) member; this is for one-shot lookups |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
 | `GetCacheStats()` | One `{TypeName, Resident, Retained}` row per registered manager, for the editor’s Stats panel |
 | `IsRegistryWritable()` | "This process may write into `assets/`" — one flag, one meaning, for sidecars and every other asset-file writer |
@@ -261,8 +263,10 @@ and `entt::meta` is not in the asset layer for the reasons in
 ### Type ids
 
 `AssetTypeIdOf<T>()` returns a dense `uint8_t` assigned from a counter on that type’s first use, so
-resolving a manager is an **array index, not a `std::type_index` hash** — `RenderSystem` re-fetches
-by handle per entity per frame and that lookup sits on the path. `MaxAssetManagers` is 16, sized for
+resolving a manager is an **array index, not a `std::type_index` hash**. It sat on the render path
+when every consumer re-fetched by handle per entity per frame; `AssetRef` moved that to once per
+reference, and the array index is what keeps the re-resolve after an eviction cheap too.
+`MaxAssetManagers` is 16, sized for
 the four managed types and the eight `AssetType` values rather than for BlankEngine’s 64.
 
 The id depends on registration order and is therefore **not stable across builds**. It must never be
@@ -306,24 +310,116 @@ used to run after the cache insert. Safe because it only ever reaches `ImportAss
 
 Scene, Script, Audio and Prefab have no manager at all — see *Path-resolved types* above.
 
-### The cache is weak, with a temporary owner
+### The cache is weak, and its owner is the scene
 
 Each manager caches `std::weak_ptr<T>`, so an asset stays resident exactly as long as something
 references it. That is the fix for "nothing is ever unloaded": the four strong maps this replaced
 had no eviction path but `Reload` and `Shutdown`, so opening a 200-asset scene and then switching
 scenes left every texture from the first one resident.
 
-**It does not evict yet, and the reason is worth stating rather than discovering.** Nothing outside
-the manager holds a reference: components store bare `AssetHandle`s, and every consumer drops its
-`Ref` at the end of the frame. A purely weak cache would therefore re-import a glTF *per entity per
-frame*. So each entry also holds a strong `Retained` pointer — a stand-in owner until a typed asset
-reference becomes the real one, at which point that member is deleted and the weak half starts doing
-its job. Until then the two counts in the editor’s Stats panel move together, and the `weak_ptr`
-expiry branch in `TypedAssetManager<T>::Load` is unreachable in practice.
+The owner is an `AssetRef<T>`, which means it is a component, which means it is a scene. Close a
+scene and its meshes, materials, textures and environments go with it — measured, not asserted:
 
-`AssetManager::GetCacheStats()` returns one `{TypeName, Resident, Retained}` row per registered
-manager; the editor renders it under **Stats → Asset Cache**. Resident is what the weak cache is
-tracking, retained is what the manager is keeping alive itself.
+```
+PROBE stats [scene live]       Mesh: resident=1 tracked=1   ... Material: resident=1 tracked=1
+PROBE stats [scene destroyed]  Mesh: resident=0 tracked=1   ... Material: resident=0 tracked=1
+```
+
+`ResidentCount()` counts live objects; `TrackedCount()` counts cache entries, including ones whose
+object has been collected. An expired entry is reclaimed the next time that handle is loaded, and
+nothing sweeps them otherwise — a bounded cost that would need a great many one-shot handles to
+matter. `AssetManager::GetCacheStats()` returns both per manager and the editor renders them under
+**Stats → Asset Cache**.
+
+The consequence to keep in mind: **a transient `Ref` is not ownership**. Code that loads an asset
+and drops the reference before anything else takes it will see the object collected immediately and
+re-imported on the next request. `MeshImporter::Instantiate` is the case that hit this — it now
+resolves through the `AssetRef` it is about to store rather than through a local `GetAsset`.
+
+Two things that hold assets alive and are easy to forget: `Renderer3D` keeps a `Ref<Environment>`
+for the duration of a frame, and the editor's undo stack snapshots whole components, so an
+`AssetRef` in undo history keeps its asset resident. Both are correct — they are real references —
+but they mean resident counts lag a scene close until the undo stack is cleared. The content
+browser needs no such care: its icons are fixed `resources/` textures outside the asset cache, so
+the thumbnail-cache hazard the design anticipated does not exist here.
+
+## `AssetRef<T>`
+
+[`AssetRef.h`](../../GanymedEngine/source/GanymedE/Assets/AssetRef.h) is the primary asset API.
+A component holds one instead of a bare `AssetHandle`:
+
+```cpp
+struct StaticMeshComponent
+{
+    AssetRef<Mesh> Mesh;
+    std::vector<AssetRef<Material>> MaterialOverrides;
+};
+```
+
+and a consumer resolves it instead of calling `GetAsset<T>`:
+
+```cpp
+const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
+if (!mesh)
+    continue;
+```
+
+| Member | Behaviour |
+|---|---|
+| `Handle()` / `SetHandle(h)` / `Reset()` | The identity. `SetHandle` drops the cached object with it |
+| `HasHandle()` | "Is a reference authored here?" Cheap, never loads — the replacement for `IsAssetHandleValid(field)` |
+| `Ready()` | "Is there an object to use?" Resolves. A valid handle whose asset is missing answers false |
+| `Get()` | `const Ref<T>&`, resolving on first use. Null for an unset handle *and* for one that failed to load |
+| `operator->` / `operator*` | For code that has already established the asset is there |
+| `operator==` | Handle equality — two references to one asset are equal whether or not either has resolved |
+
+There is deliberately **no `operator bool`**: "has a handle" and "has an object" are different
+questions, and one implicit answer would hide which a call site meant.
+
+**It is composition, not inheritance from `Ref<T>`.** The plan
+([`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) decision 6) called for
+deriving from `Ref<T>` the way BlankEngine's `ResPtr` derives from `shared_ptr`, on the argument that
+slicing is harmless because the wrapper "adds no data members, so a slice loses only API, not
+state." That is true of `ResPtr`, which has no members because it resolves eagerly at construction.
+It is not true here: lazy resolution *requires* the handle to be a member, so a slice to `Ref<T>`
+would silently drop identity and leave a reference that can never be re-resolved or reloaded — and
+`reset`, `operator=` and `swap` would each be a public way to desync it. The drop-in benefit that
+justified deriving was worth about 24 call sites; the few that want a plain `Ref<T>` say `.Get()`.
+
+**Serialization is unchanged.** An `AssetRef` writes as `static_cast<uint64_t>(field.Handle())` and
+reads back through `AssetRef<T>(AssetHandle(node.as<uint64_t>()))`, so every key and value in every
+`.ganymede` and `.gprefab` is byte-identical to the bare-handle format. Verified by round-tripping a
+scene through load → save twice: the second pass is byte-for-byte identical to the first, with every
+handle preserved including unset interior slots in a `MaterialOverrides` sequence.
+
+### What resolves and what does not
+
+`Mesh`, `Material`, `Environment` and `Texture2D` fields are `AssetRef<T>`. `ScriptComponent::Script`,
+`AudioSourceComponent::Clip` and `PrefabInstanceComponent::Source` stay **bare `AssetHandle`s** —
+they are the path-resolved types, they have no manager, and `AssetRef<T>` refuses to instantiate for
+them with a `static_assert` naming the reason.
+
+### Eviction and the epoch
+
+`AssetRef` caching the object breaks an invariant the asset layer used to rely on: consumers
+re-fetched by handle every frame, so `Reload` landed in the viewport on the next frame for free. A
+reference that remembers the object would keep the stale one forever.
+
+The fix is a process-wide `Detail::g_AssetEvictionEpoch`, bumped by every `Evict`/`EvictAll`. `Get()`
+compares it against the epoch it last resolved at and re-resolves when they differ. One counter for
+every type, not one per manager: eviction is a rare editor action, and over-invalidating costs a
+single manager cache hit per live reference, once.
+
+**The subtle part, and it was a real bug before it was a rule:** `Get()` resolves into a temporary
+and only then assigns. Releasing the cached `Ref` *first* would drop the last reference to an asset
+this happens to be the sole owner of, the weak cache entry would expire, and one `Reload` of any
+handle would re-import the entire scene. Holding the old object across the `Load` call means an
+unaffected handle gets a cache hit and the very same pointer back. Measured: reloading one `.gmat`
+replaces that material's object and leaves the mesh's pointer identical.
+
+Phase 6's reload-in-place — re-running parse/apply into the *existing* object — is what eventually
+makes the epoch unnecessary.
+
 
 ## Materials (`.gmat`)
 
@@ -345,8 +441,8 @@ does not have. The additive shape costs one duplicated default (the mesh's mater
 start identical) and buys three things: no cache-format change, no risk to existing scenes, and
 **no reverse-dependency index anywhere**. That last one is the shape's best property and worth
 stating plainly: `Reload(.gmat)` needs no material→mesh map because meshes never reference `.gmat`.
-Only override slots do, and `RenderSystem` re-fetches by handle every frame, so eviction lands in
-the viewport on the next frame for free.
+Only override slots do, and each of those is an `AssetRef<Material>` that re-resolves itself after
+an eviction, so `Reload` lands in the viewport with no index to maintain.
 
 ### Format
 
@@ -471,21 +567,22 @@ is what makes Reload mean *reimport now* rather than *recheck the timestamp* —
 check already catches source edits, but a referenced external texture can change while the `.gltf`’s
 own timestamp does not.
 
-`Evict` erases the whole cache entry, dropping the manager’s own reference. Anything still holding a
-`Ref` keeps the old object, unchanged, and the next `GetAsset` builds a *new* one beside it — which
-is exactly the contract the invariant below describes.
+`Evict` erases the whole cache entry, dropping the manager’s own reference, and bumps the eviction
+epoch. Anything still holding a `Ref` keeps the old object unchanged; anything holding an `AssetRef`
+notices the epoch and re-resolves, so the next `Get()` builds a *new* object beside the old one.
 
 **Why plain eviction is safe** — this is the invariant the asset layer relies on:
 
-- Components store `AssetHandle`s, never `Ref`s.
-- `RenderSystem` re-fetches by handle every frame, so an eviction lands on the next frame; the
-  inspector fetches per draw; the serializer only warms the cache;
+- Components hold an `AssetRef<T>` or a bare `AssetHandle`, never a raw `Ref`.
+- Every `AssetRef` re-resolves after an eviction (see [Eviction and the epoch](#eviction-and-the-epoch)),
+  so a `Reload` lands on the next access rather than needing a per-frame re-fetch;
   `Renderer3D::s_Data.ActiveEnvironment` is overwritten by the next `SubmitEnvironment`.
 - Evicted objects drain via `shared_ptr` refcount, and bgfx defers handle destruction to frame end,
   so evicting mid-frame from ImGui code cannot pull a texture out from under an in-flight draw.
 
-The rule for future consumers: **re-fetch by handle each frame, or accept staleness across a
-Reload.** Caching a `Ref` on a component breaks it.
+The rule for future consumers: **hold an `AssetRef<T>`, not a `Ref<T>`.** A raw `Ref` cached on a
+component is invisible to eviction, keeps its asset resident forever, and goes stale across a
+`Reload` with nothing to notice.
 
 Asset roots: paths resolve against `GetAssetRoot()`
 ([`AssetPaths.h`](../../GanymedEngine/source/GanymedE/Assets/AssetPaths.h)) — the relative

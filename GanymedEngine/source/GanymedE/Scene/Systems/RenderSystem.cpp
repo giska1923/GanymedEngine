@@ -55,18 +55,14 @@ namespace GanymedE {
 		// instead of re-deciding every frame.
 		for (auto [sky] : View<SkyView>())
 		{
-			if (IsAssetHandleValid(sky.Environment))
-			{
-				Ref<Environment> environment = AssetManager::GetAsset<Environment>(sky.Environment);
-				if (environment && environment->IsValid())
-					Renderer3D::SubmitEnvironment(environment, sky.Intensity, sky.DrawSkybox);
-				else
-					Renderer3D::SubmitSkyLight(sky.SkyColor, sky.GroundColor, sky.Intensity, sky.DrawSkybox);
-			}
+			// Resolved through the component's own reference: the first frame loads, every
+			// frame after is a pointer already in the component. This used to be a handle -> Ref
+			// hash lookup per entity per frame, for every asset on this page.
+			const Ref<Environment>& environment = sky.Environment.Get();
+			if (environment && environment->IsValid())
+				Renderer3D::SubmitEnvironment(environment, sky.Intensity, sky.DrawSkybox);
 			else
-			{
 				Renderer3D::SubmitSkyLight(sky.SkyColor, sky.GroundColor, sky.Intensity, sky.DrawSkybox);
-			}
 			break;
 		}
 
@@ -77,25 +73,21 @@ namespace GanymedE {
 	{
 		for (auto [entity, worldTransform, meshComponent, animator] : View<MeshView>())
 		{
-			if (!IsAssetHandleValid(meshComponent.Mesh))
-				continue;
-
-			Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(meshComponent.Mesh);
+			const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
 			if (!mesh)
 				continue;
 
-			// Resolved per frame by handle, like every other asset reference here. That is what
-			// makes AssetManager::Reload on a .gmat land in the viewport on the next frame with
-			// no reverse material-to-mesh index anywhere in the engine.
+			// Reload still lands in the viewport on the next frame with no reverse
+			// material-to-mesh index: eviction bumps the epoch every AssetRef checks, so the
+			// slot re-resolves itself. That is what replaced "re-fetch by handle every frame".
 			//
-			// The scratch vector is reused across entities: an inspector-heavy scene would
-			// otherwise allocate once per mesh per frame.
+			// The scratch vector exists because Renderer3D takes a contiguous
+			// `const Ref<Material>*` and AssetRef is not layout-compatible with Ref. It is
+			// reused across entities: an override-heavy scene would otherwise allocate once
+			// per mesh per frame.
 			m_ResolvedOverrides.clear();
-			for (AssetHandle handle : meshComponent.MaterialOverrides)
-			{
-				m_ResolvedOverrides.push_back(IsAssetHandleValid(handle)
-					? AssetManager::GetAsset<Material>(handle) : nullptr);
-			}
+			for (const AssetRef<Material>& slot : meshComponent.MaterialOverrides)
+				m_ResolvedOverrides.push_back(slot.Get());
 
 			const Ref<Material>* overrides = m_ResolvedOverrides.empty() ? nullptr : m_ResolvedOverrides.data();
 			const uint32_t overrideCount = (uint32_t)m_ResolvedOverrides.size();
@@ -132,16 +124,14 @@ namespace GanymedE {
 					continue;
 				}
 
-				if (emitter.Pool.empty() || !IsAssetHandleValid(emitter.Mesh))
+				if (emitter.Pool.empty())
 					continue;
 
-				Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(emitter.Mesh);
+				const Ref<Mesh>& mesh = emitter.Mesh.Get();
 				if (!mesh)
 					continue;
 
-				Ref<Material> forced;
-				if (IsAssetHandleValid(emitter.Material))
-					forced = AssetManager::GetAsset<Material>(emitter.Material);
+				const Ref<Material>& forced = emitter.Material.Get();
 
 				const glm::mat4& world = worldTransform.World;
 				for (const Particle& p : emitter.Pool)

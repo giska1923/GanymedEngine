@@ -781,13 +781,17 @@ namespace GanymedE {
 		if (!IsAssetHandleValid(handle))
 			return {};
 
-		Ref<Mesh> mesh = AssetManager::GetAsset<Mesh>(handle);
+		// Loaded through a reference rather than a bare GetAsset, so the object has an owner
+		// before this scope ends: the manager cache is weak, and a mesh nobody holds is
+		// collected the moment the local goes out of scope.
+		AssetRef<Mesh> meshRef(handle);
+		const Ref<Mesh>& mesh = meshRef.Get();
 		if (!mesh)
 			return {};
 
 		Entity entity = scene->CreateEntity(path.stem().string());
 		auto& smc = entity.AddComponent<StaticMeshComponent>();
-		smc.Mesh = handle;
+		smc.Mesh = meshRef;
 
 		// Point the new entity at the sidecars the load above just generated, so a
 		// drag-dropped mesh authors against .gmat from birth rather than needing a manual
@@ -804,7 +808,7 @@ namespace GanymedE {
 			const std::string name = materials[i] ? materials[i]->GetName() : std::string();
 			const std::filesystem::path sidecar = MaterialSerializer::SidecarPath(relativePath, i, name);
 
-			smc.MaterialOverrides.push_back(std::filesystem::exists(GetAssetRoot() / sidecar)
+			smc.MaterialOverrides.emplace_back(std::filesystem::exists(GetAssetRoot() / sidecar)
 				? AssetManager::ImportAsset(sidecar) : InvalidAssetHandle);
 		}
 

@@ -274,9 +274,11 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
 
 `SubmitMesh` and `SubmitSkinnedMesh` both take an optional `(const Ref<Material>* overrides,
 uint32_t count)` pair, indexed by `Submesh::MaterialIndex` — a null entry, or an index past the
-end, falls back to the mesh's own material. `RenderSystem` resolves
-`StaticMeshComponent::MaterialOverrides` from handles to `Ref`s once per entity per frame and
-passes the array down.
+end, falls back to the mesh's own material. `RenderSystem` copies
+`StaticMeshComponent::MaterialOverrides` into a reused scratch vector and passes the array down.
+The copy is not a lookup any more — each slot is an `AssetRef<Material>` holding its object — but a
+contiguous `const Ref<Material>*` is still needed, and `AssetRef` is not layout-compatible with
+`Ref`.
 
 Passing the array down rather than looping submeshes at the call site is what lets the **skinned**
 path honour overrides too: its palette staging is internal to `Renderer3D`, so a caller cannot

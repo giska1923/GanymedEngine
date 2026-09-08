@@ -203,10 +203,10 @@ FXAA), and Jolt debug-draw toggles (visible during Play; draws Jolt's body state
 authored collider gizmos).
 
 The Asset Cache rows come from `AssetManager::GetCacheStats()`, one per registered manager, printed
-as `resident / retained` — live objects the manager is tracking, and the subset it is keeping alive
-itself. They move together today because the managers pin everything they load; once a typed asset
-reference becomes the owner, retained drops to zero and resident is the number to watch across a
-scene switch (see [assets.md](../engine/assets.md#managers-and-caching)).
+as `resident / tracked` — live objects, and cache entries including ones whose object has already
+been collected. The gap between the two *is* eviction: close a scene and resident falls while
+tracked does not, until those handles are loaded again (see
+[assets.md](../engine/assets.md#managers-and-caching)).
 
 ## Scene Hierarchy panel
 
@@ -275,7 +275,7 @@ Notable behaviors:
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons, which returns
   `bool`) and call `MarkChanged<TransformComponent>` only when a row reported an edit. Rotation is
   written back **only** on an actual edit, for the round-trip reason above.
-- Static mesh: shows the mesh asset (assign with `AcceptAssetDropHandle(StaticMesh)`), then **one
+- Static mesh: shows the mesh asset (assign with `AcceptAssetDropRef<Mesh>()`), then **one
   row per renderer slot**. Each row shows either the assigned `.gmat` or `(default: <imported
   name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes the override.
   Both are ordinary component edits, so undo covers them with no new code. Assigning a different
@@ -292,7 +292,7 @@ Notable behaviors:
   and Clear contribute to the section's `edited` return.
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
 - Static mesh: shows the mesh asset (handle + path) — assign with
-  `AcceptAssetDropHandle(StaticMesh)`.
+  `AcceptAssetDropRef<Mesh>()`.
 - Animator: a **combo over the clip names the entity's own mesh carries**, rather than a free text
   field. The clip reference is a name, so a text field would let you type one that resolves to
   nothing and get a silent bind pose. Plus Speed, Playing, Loop, and a **Time** slider bounded by
@@ -311,7 +311,7 @@ Notable behaviors:
   they are keyed by name against the old script's declarations. Removing the component in edit mode
   is safe: `LuaScriptSystem` drains its `FiniView` there and tears down any instance left from a
   previous play session. See [scripting.md](../engine/scripting.md).
-- Sky light: environment asset (`AcceptAssetDropHandle(Environment)`), sky/ground colors, intensity,
+- Sky light: environment asset (`AcceptAssetDropRef<Environment>()`), sky/ground colors, intensity,
   DrawSkybox.
 - Audio source: the clip asset (handle + path) with a Clear button — assign with
   `AcceptAssetDropHandle(Audio)`, the helper's first client outside the three it was written for.
@@ -375,10 +375,25 @@ too (it previously wasn't used here at all: each site hand-rolled
 | `AcceptAssetDrop(type)` | `optional<path>` — the dropped path relative to `assets/`, iff its type matches |
 | `AcceptAssetDrop({types...})` | `AssetDrop { Type, Path }`, falsy when nothing matched — for targets accepting several types. The viewport uses it for Scene / StaticMesh / Prefab, where the list form is **mandatory**: ImGui clears the payload as soon as one target delivers it, so three single-type calls would let only the first ever fire |
 | `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent, and persists identity itself) on match, else `InvalidAssetHandle` |
+| `AcceptAssetDropRef<T>()` | The same, typed: an `AssetRef<T>`, unset when nothing matching was dropped |
 
 Call it immediately after the widget that should accept the drop; it wraps
 `BeginDragDropTarget` / `AcceptDragDropPayload("CONTENT_BROWSER_ITEM")` / `EndDragDropTarget`.
 A mismatched drop is silently ignored.
+
+**Prefer `AcceptAssetDropRef<T>()` for a component slot.** The accepted `AssetType` comes from
+`AssetTypeOf<T>`, so the filter is derived from the field rather than passed beside it — a slot can
+no longer declare `AssetRef<Environment>` and filter on `AssetType::Texture`, which was one typo
+away while every call site wrote both by hand. Assigning the result to the wrong field is a compile
+error rather than a drop that silently never fires:
+
+```
+error C2440: cannot convert from 'AssetRef<Material>' to 'AssetRef<Mesh>'
+```
+
+The particle emitter's three slots are drawn by one `assetSlot(label, slot, hint)` lambda generic
+over `decltype(slot)::AssetT`, which is what removed the `AssetType` argument that used to sit next
+to an untyped `AssetHandle&`.
 
 **A multi-type target must use the `initializer_list` overload, not two calls in a row.**
 `ImGui::EndDragDropTarget` calls `ClearDragDrop` as soon as a payload is delivered, and
