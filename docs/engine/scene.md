@@ -323,6 +323,141 @@ Anything a host needs true on the play-mode scene must be (re)written after the 
 `EditorLayer` pushes `DebugDraw` *and* `ShowColliderGizmos` onto the active scene every play frame
 rather than once on play.
 
+## Member reflection
+
+Ganymed reflects component **types** well — `ComponentList` and `ComponentTraits<T>` drive
+`Scene::Copy`, signal hookup and undo snapshots ([ecs.md](ecs.md#component-registration)). What it did
+not reflect is component **members**: the serializer, the inspector and the Lua bindings each
+hand-listed every field, so a new `float` had to be added in four places and silently did nothing if
+one was missed. [`Reflection/`](../../GanymedEngine/source/GanymedE/Reflection/Reflection.h) is the
+member half, built on **entt's own `entt::meta`** rather than a second reflection library — see
+[REFLECTION_ROADMAP.md](../toDo&done/REFLECTION_ROADMAP.md) for why (short version: "add component by
+type name", copy/paste-a-component and prefab diffing all have to get from a reflected type *back* to
+entt storage, and only entt's own meta can).
+
+Two files:
+
+| File | Contents |
+|---|---|
+| [`Reflection.h`](../../GanymedEngine/source/GanymedE/Reflection/Reflection.h) | The `Trait` flag enum, the `Attr` payload struct, the query helpers, `GE_REFLECT_COMPONENT` / `GE_REFLECT_TYPE` |
+| [`ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp) | Every registration block, `Reflection::Init()`, `Reflection::Validate()`, the size sentinels |
+
+### The one discipline line
+
+**No engine system may read a component through `entt::meta`.** `meta_data::get` returns `meta_any`
+*by value*; entt's small-buffer optimization covers a `float` or a `bool`, but a `std::string`, a
+`glm::mat4` or a `std::vector` allocates. For an inspector (a few dozen reads per frame on one
+selected entity) that is irrelevant; for a save (thousands per file, not a frame-budget operation) it
+is fine; for a system touching every entity every frame it is disqualifying. Systems use
+`ComponentList`/`ForEachType` and direct member access, exactly as they do today. This is a rule about
+*where* reflection is allowed, not a performance caveat to weigh case by case.
+
+### The two-tier attribute vocabulary
+
+Attributes split by cost, because entt stores them differently:
+
+- **`Trait`** — a 16-bit flag word packed into the meta node itself. Free to read, no allocation, no
+  lookup. entt reserves the low 16 bits of a node's traits word for its own flags (`is_class`,
+  `is_enum`, …) and shifts user traits into the upper half, so a user enum gets exactly 16 bits and no
+  more — a hard ceiling, and it also asserts that not all sixteen are set at once. Ten are spent:
+  `Hidden`, `ReadOnly`, `Color`, `Radians`, `NotSerialized`, `OmitIfDefault`, `Flatten`,
+  `SerializeByName`, `Component`, `Custom`, plus the composite `Runtime = Hidden | NotSerialized`.
+- **`Attr`** — one payload struct behind `.custom<>`: display label, section, note, min/max, drag
+  speed, and the `AssetType` an `AssetHandle` field accepts. One struct rather than one per attribute
+  kind because **entt holds a single `.custom<>` payload per meta object — a second call replaces the
+  first, it does not append.** That single fact is also why registration is engine-side only: an
+  editor-side second pass would silently overwrite everything the engine registered. Editor-only
+  knowledge (drawer function pointers) belongs in the editor's own `meta_type`-keyed map.
+
+Every flag exists because the current serializer or inspector measurably needs it, not because it
+seemed generally useful:
+
+- `Color` — 11 `ColorEdit3/4` call sites the type system cannot distinguish from a `DragFloat3`.
+- `Radians` — `TransformComponent::Rotation`, the spot cone half-angles and the camera FOV are stored
+  in radians and authored in degrees. When it is set, `Attr`'s min/max are in **display** units.
+- `OmitIfDefault` — `ParticleEmitterComponent` guards all ~20 of its keys with `if (p.X != d.X)`
+  against a default-constructed `d`; every asset handle is written only when valid.
+- `Flatten` — `SceneSerializer` emits a collider's `PhysicsMaterial` **flattened**, as `Friction` and
+  `Restitution` siblings of `HalfExtents`, not under a `Material` sub-map. Without the flag a generic
+  writer would nest them and invalidate every saved collider.
+- `SerializeByName` — type-level, on `AudioGroup`, the one enum persisted by name rather than ordinal.
+- `Custom` — a field both generic paths must skip because a bespoke drawer/writer owns it
+  (`RelationshipComponent`'s two ends, `ScriptComponent::Fields`, `StaticMeshComponent`'s per-slot
+  override list, the curve editors).
+
+There is deliberately no `AdvancedOnly` and no `EnumNames`: nothing in the panel has an advanced
+section, and enum value names are registered on the **enum type**, so they live once beside the enum
+instead of once per field that uses it (`meta_type::is_enum()` plus its `data()` range answers "what
+are the options").
+
+### Registered names are the on-disk contract
+
+Every `YAML::Key` in `SceneSerializer.cpp` is currently character-identical to its C++ member
+identifier, and the roadmap's R3 drives save/load from these registered names. A name here that does
+not match today's key breaks every committed `.gscene` and `.gprefab`. Field names are therefore
+**written out by hand**, never stringified from the token — a field rename would otherwise silently
+drop one value from every scene. The human-facing label lives in `Attr::Display`, which is how
+`SceneCamera` carries the key `PerspectiveFOV`, the accessor `GetPerspectiveVerticalFOV` and the label
+"Vertical FOV" at once.
+
+Type names *are* stringified by the macros. The asymmetry is deliberate: a component-type rename is
+loud (the component vanishes from every entity in the editor immediately) where a field rename is
+silent, and the type token already has a second binding in `ComponentList` that a rename must satisfy
+anyway.
+
+### What is registered
+
+32 types, 119 members (the boot log prints both — a count far below that is the cheapest signal that a
+registration block was dropped):
+
+- The **23 components** — all 21 `ComponentList` entries plus `IDComponent` and `TagComponent`, which
+  `ComponentList` excludes as entity identity but which prefab diffing has to know exist in order to
+  skip.
+- **4 supporting types** — `PhysicsMaterial`; `SceneCamera`, whose seven private fields are registered
+  through entt's setter/getter `.data` overload; and `FloatCurve` / `ColorGradient` with **zero
+  members**. A reflected type with no members is the deliberate signal "opaque — a bespoke drawer and
+  writer own this": both curve types keep a sorted-by-time invariant and never expose their key vector
+  mutably, so a generic setter could not preserve the invariant even if one existed.
+- **5 enums** with their value names.
+
+glm's vector types are **not** registered. Reflecting `vec3::x/y/z` would invite a generic serializer
+to emit a map where yaml-cpp's converter currently writes a flow sequence, silently changing the file
+format; consumers identify them by `type_info` comparison instead, which needs no registration.
+
+### Verification
+
+`Reflection::Validate()` runs from `Init()` in Debug and logs every problem rather than stopping at the
+first (a registration mistake is usually a repeated copy-paste). It checks that every `ComponentList`
+entry is registered *and* went through `GE_REFLECT_COMPONENT`, that no field was left nameless, that
+`SerializeByName` is only on an enum, that a `Flatten` field's type is itself reflected, and that
+valued/flag attributes match the type they were put on — `Color` on a vec3/vec4, `Radians` on a
+float/vec3, an asset slot on an `AssetHandle`. That last one is the load-bearing check: `AssetHandle`
+is a plain `UUID` alias, the *same type* as `RelationshipComponent::Parent`, so nothing but this can
+catch an `Asset()` attribute put on the wrong field.
+
+The "registered" test is `resolve<T>().name() != nullptr`, **not** `if (entt::resolve<T>())`. entt
+synthesizes a node from a function-local static for any type it is asked about, so the truthiness test
+passes for a type nobody registered and would report an entirely empty registration file as healthy.
+`name` is only ever assigned by `.type(id, name)`, which makes it the honest signal.
+
+What no test can check is whether a type's member list is **complete** — the true member set is
+exactly the thing that is not reflected. The `static_assert(sizeof(T) == N)` sentinels at the bottom of
+`ComponentReflection.cpp` are the only forcing function, and they have two honest limits. Padding: a
+`bool` dropped into existing padding does not move `sizeof` (`AudioSourceComponent` has three spare
+bytes right now). And they cover 16 of the 21 `ComponentList` entries — every one with no
+standard-library container member. `sizeof(std::string)` is 40 with MSVC's STL and 32 with libstdc++,
+and vector and unordered_map differ likewise, so a sentinel on `TagComponent`,
+`RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `ScriptComponent` or
+`ParticleEmitterComponent` would have to be a table of per-platform numbers — more cost than it
+catches, on a codebase that builds for Windows, Linux and macOS. The rule is mechanical rather than a
+judgement call per component: library container member ⇒ no sentinel.
+
+### Current state
+
+**There is no consumer yet.** Registration and validation exist; the serializer, the inspector and the
+Lua bindings still hand-list every field, and nothing behaves differently. Collapsing them is R2–R4 of
+[REFLECTION_ROADMAP.md](../toDo&done/REFLECTION_ROADMAP.md).
+
 ## Serialization
 
 [`SceneSerializer`](../../GanymedEngine/source/GanymedE/Scene/SceneSerializer.h) writes/reads YAML

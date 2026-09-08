@@ -273,3 +273,67 @@ top of R1–R3. Scope them properly when they are next, not now.
    type, or a reflected base plus an `AssetSlot{AssetType}` attribute? Cannot answer until
    `AssetRef` exists, which is why R2 waits.
 3. Are the per-component `sizeof` sentinels of decision 5 worth their noise? Decide at R1, all-or-none.
+
+## R1 — executed (2026-09-08)
+
+Landed: [`Reflection/Reflection.h`](../../GanymedEngine/source/GanymedE/Reflection/Reflection.h) and
+[`Reflection/ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp),
+`Reflection::Init()` wired into `Application`'s constructor second, after `JobSystem::Init()`. 32 types
+and 119 members registered; no consumer, no behaviour change. Documented in
+[scene.md § Member reflection](../engine/scene.md#member-reflection), with the decision-4 discipline
+line added as rule 9 of [ecs.md § Rules that must never break](../engine/ecs.md#rules-that-must-never-break).
+
+It lives in `scene.md` rather than a `reflection.md` of its own because the layer is currently 2 files
+with no consumers, and `scene.md` already owns components and serialization. **Worth promoting to its
+own doc when R2 or R3 lands** — at that point the drawer registry, the property-path scheme and the
+serializer contract are more than a section.
+
+**Sequencing corrected.** The milestone was sketched as following asset Phases 1–3. That holds for
+R2–R4 (the `AssetRef<T>` drawer and the `.gmat`-as-path asymmetry both need Phase 3) but not R1, which
+registers today's types under today's names and verifies itself. R1 was therefore executed first.
+
+Open questions, answered:
+
+1. **Registration is engine-side only; the editor adds no second pass.** The deciding API fact is that
+   `.custom<>` holds exactly one payload per meta object — a second registration pass would *overwrite*
+   the engine's attributes rather than add to them. One payload slot means one owner. Editor-only
+   knowledge (drawer function pointers) goes in the editor's own `meta_type`-keyed map in R2.
+2. Deferred to R2 by construction, as intended.
+3. **Sentinels adopted, but not all-or-none — that instruction is not implementable as written.**
+   `sizeof(std::string)` is 40 with MSVC's STL and 32 with libstdc++; vector and unordered_map differ
+   likewise. A hard `static_assert` on the 6 components with a library container would break the Linux
+   and macOS builds or degenerate into a per-platform table. Rule adopted instead: *library container
+   member ⇒ no sentinel*, which is mechanical rather than a judgement call and covers 16 of the 21
+   `ComponentList` entries.
+
+Two corrections to the plan as sketched:
+
+- **"A test asserting every type in `ComponentList` resolves" would pass vacuously.**
+  `internal::resolve<Type>` returns a node built from a function-local static when the type is absent
+  from the meta context, so `entt::resolve<T>()` is *always* truthy — the test would report an entirely
+  empty registration file as healthy. The honest signal is `resolve<T>().name() != nullptr`; `name` is
+  only ever assigned by `.type(id, name)`.
+- **The vocabulary was pruned against the measured code, not the sketch.** `AdvancedOnly` dropped
+  (nothing in the panel has an advanced section, and no `BeginDisabled` exists). `EnumNames` dropped
+  (entt reflects values on the enum *type*, so names live once beside the enum). `Color`, `Radians`,
+  `OmitIfDefault`, `Flatten`, `SerializeByName`, `Component` and `Custom` added, each forced by a
+  specific measured fact — see scene.md. `Transient` folded into `Runtime = Hidden | NotSerialized`
+  rather than spending a flag. Ten of the sixteen used.
+
+Risks, measured rather than assumed:
+
+- **Compile time is a non-issue.** `<entt/entt.hpp>` is amalgamated (meta included) and was already
+  included by 8 engine headers, so the only new cost is instantiation in one TU. Touch-and-rebuild of
+  `ComponentReflection.cpp` is 7.8 s wall clock; the same measurement on `Core/JobSystem.cpp` as a
+  control is 3.7 s. ~4 s for one TU nobody edits often. No need to split it per component group.
+- **`meta_ctx` singleton**: `meta_factory<T>{}` delegates to `locator<meta_ctx>::value_or()`, and the
+  engine is one static library linked into one binary, so there is one context. A plugin DLL would have
+  to be passed the context explicitly; Ganymed has no plugin architecture.
+- **Linker stripping**: avoided as planned — one explicit `Init()` naming eleven registration functions,
+  and the boot log prints the type and member counts so a dropped block is visible.
+
+Verified: x64 Debug builds clean (engine and full solution, 0 warnings), the editor boots and logs
+`Reflection initialised: 32 types, 119 members` / `Reflection validation passed`. `Validate()` was
+negative-tested by deliberately marking `AnimatorComponent::Speed` as `Color` with a texture asset
+slot — both violations were reported and the assert fired; the injection was then reverted and the
+clean run repeated. Two source files added, so premake regeneration was required.

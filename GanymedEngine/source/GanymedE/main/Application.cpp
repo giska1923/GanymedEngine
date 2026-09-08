@@ -4,6 +4,7 @@
 #include "GanymedE/events/KeyEvent.h"
 
 #include "GanymedE/Audio/AudioEngine.h"
+#include "GanymedE/Reflection/Reflection.h"
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 #include "GanymedE/UI/UIEngine.h"
@@ -39,6 +40,13 @@ namespace GanymedE {
 		// construction rather than by convention. JobSystem::IsMainThread is only
 		// trustworthy because of that.
 		JobSystem::Init();
+
+		// Before the window, because it needs nothing at all - it only populates entt's meta
+		// context. Anything constructed after this point may assume every component is reflected,
+		// which matters most for a tool or a Sandbox app that builds a Scene before the first
+		// frame. In Debug it self-validates and asserts, so a registration mistake surfaces at
+		// boot rather than the first time a panel draws.
+		Reflection::Init();
 
 		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(
 			WindowProps(m_Specification.Name, m_Specification.Width, m_Specification.Height,

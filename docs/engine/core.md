@@ -63,12 +63,19 @@ as `argv[1]`), then wraps startup/run/shutdown in three profiling sessions
   events + present).
 
 The constructor brings up the engine's global subsystems in a fixed order — [`JobSystem::Init`](#job-system)
-→ `Renderer::Init` → [`AudioEngine::Init`](audio.md) → `ScriptEngine::Init` → `UIEngine::Init` — and
+→ [`Reflection::Init`](scene.md#member-reflection) → `Renderer::Init` → [`AudioEngine::Init`](audio.md)
+→ `ScriptEngine::Init` → `UIEngine::Init` — and
 the destructor body tears them down in the reverse-ish order the dependencies actually require:
 `UIEngine::Shutdown` (its Lua plugin holds references into the VM, and it releases GPU textures) →
 `ScriptEngine::Shutdown` → `AudioEngine::Shutdown` → `JobSystem::Shutdown` → `Renderer::Shutdown`.
 Audio has no dependency in either direction; it is placed where it is so the boot log reads in a
 stable order.
+
+`Reflection::Init` sits second because it depends on nothing — it only fills entt's meta context — so
+everything constructed after it may assume every component is reflected. It has no matching
+`Shutdown`: the meta context is owned by entt's locator and dies with the process, and there is no
+foreign resource behind it. In Debug it self-validates and asserts, so a registration mistake
+surfaces in the boot log rather than the first time a panel draws.
 
 The two ends of `JobSystem`'s lifetime are **not** mirror images, and both positions are load-bearing.
 It initializes *first*, before the window exists, because enkiTS numbers the thread that initializes

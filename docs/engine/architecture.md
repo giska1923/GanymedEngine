@@ -11,6 +11,7 @@ GanymedE/
 ├── Core/        Window, Layer(Stack), Input, Log, UUID, Random, Timestep, Core.h macros
 ├── events/      Event base + dispatcher, window/key/mouse events
 ├── ECS/         The view/access-wrapper layer over entt (see ecs.md)
+├── Reflection/  Component MEMBER reflection over entt::meta (see scene.md)
 ├── Scene/       Scene, Entity, Components, SceneSerializer, built-in Systems/
 ├── Renderer/    bgfx-backed renderer: resources, Renderer2D/3D, SceneRenderer, IBL, cameras
 ├── Assets/      AssetManager (handle registry), MeshCache
@@ -126,7 +127,9 @@ Two ordering facts worth internalizing:
 3. **One list per concept.** `ComponentList` in
    [`ComponentTraits.h`](../../GanymedEngine/source/GanymedE/ECS/ComponentTraits.h) is the single
    registry of components; `Scene::Copy`, signal hookup, and the ViewDesc bitmask index all iterate
-   it instead of hand-maintained parallel lists.
+   it instead of hand-maintained parallel lists. `Reflection` is the member-level counterpart, and
+   `Reflection::Validate()` asserts the two lists agree at boot
+   ([scene.md](scene.md#member-reflection)).
 4. **Derived data is cached and invalidated, not recomputed.** `WorldTransformComponent` is the
    flagship: an idle scene recomputes zero world matrices; moving one entity recomputes exactly its
    subtree (TransformSystem's ChangeView).
@@ -149,6 +152,11 @@ Two ordering facts worth internalizing:
   ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3/T4). Jolt still runs its own pool,
   so there are currently two pools of `hardware_concurrency() - 1` threads. The ViewDesc machinery
   exists so ECS parallelism can be added without redesign.
+- **Component members are reflected, but nothing consumes it yet.**
+  [`Reflection/`](scene.md#member-reflection) registers all 23 components over `entt::meta` and
+  validates itself at boot; the serializer, the inspector and the Lua bindings still hand-list every
+  field, and behaviour is unchanged. Collapsing them is R2–R4 of
+  [`REFLECTION_ROADMAP.md`](../toDo&done/REFLECTION_ROADMAP.md).
 - Scripting is Lua 5.4 + sol2 (`ScriptComponent`, hot-reloadable, TypeScript-authored via
   TypeScriptToLua) *and* C++ `NativeScriptComponent`. See [scripting.md](scripting.md).
   `Scripting-And-UI-Integration.md` is the plan that delivered it, not a plan for the future.
