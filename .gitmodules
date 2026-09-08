@@ -40,3 +40,6 @@
 [submodule "GanymedEngine/extern/freetype"]
 	path = GanymedEngine/extern/freetype
 	url = https://gitlab.freedesktop.org/freetype/freetype
+[submodule "GanymedEngine/extern/enkiTS"]
+	path = GanymedEngine/extern/enkiTS
+	url = https://github.com/dougbinks/enkiTS.git

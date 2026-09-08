@@ -68,7 +68,10 @@ project "GanymedEngine"
 		"%{IncludeDir.lua}",
 		"%{IncludeDir.lua_cxx}",
 		"%{IncludeDir.sol2}",
-		"%{IncludeDir.RmlUi}"
+		"%{IncludeDir.RmlUi}",
+		-- Engine-private: Core/JobSystem.h keeps enkiTS out of its own header, so the
+		-- editor, the runtime and Sandbox hold a Future<T> without this path.
+		"%{IncludeDir.enkiTS}"
 	}
 
 	links
@@ -82,7 +85,8 @@ project "GanymedEngine"
 		"bx",
 		"Lua",
 		"RmlUi",
-		"FreeType"
+		"FreeType",
+		"enkiTS"
 	}
 
 	filter "system:windows"

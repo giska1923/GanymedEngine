@@ -9,6 +9,7 @@
 #include "GanymedE/UI/UIEngine.h"
 
 #include "GanymedE/Core/Input.h"
+#include "GanymedE/Core/JobSystem.h"
 #include "GanymedE/Core/KeyCodes.h"
 
 #include <GLFW/glfw3.h>
@@ -30,6 +31,14 @@ namespace GanymedE {
 
 		GE_CORE_ASSERT(!s_instance, "Application cannot have two instances!");
 		s_instance = this;
+
+		// First, before the window and the renderer, for two reasons. It depends on
+		// nothing, so anything initialised after it may submit work — and enkiTS numbers
+		// the thread that initialises it as thread 0, so doing it here is what makes
+		// "thread 0" and "the thread that owns bgfx submission" the same thread by
+		// construction rather than by convention. JobSystem::IsMainThread is only
+		// trustworthy because of that.
+		JobSystem::Init();
 
 		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(
 			WindowProps(m_Specification.Name, m_Specification.Width, m_Specification.Height,
@@ -77,6 +86,13 @@ namespace GanymedE {
 		// Before the LayerStack unwinds, which is why every AudioEngine call is guarded
 		// by an alive flag: a layer stopping its sounds in OnDetach runs after this.
 		AudioEngine::Shutdown();
+
+		// Deliberately not the mirror of Init's position. Shutdown waits for outstanding
+		// jobs and drains the main-thread queue one last time, and that queue is where the
+		// bgfx half of a background load lives — so it has to run while the renderer is
+		// still up. Joining after Renderer::Shutdown would hand a live bgfx call a dead
+		// context.
+		JobSystem::Shutdown();
 
 		Renderer::Shutdown();
 	}
@@ -171,6 +187,12 @@ namespace GanymedE {
 			float time = (float)glfwGetTime(); // Platform::GetTime()
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
+
+			// Before the layers, and outside the minimised gate. Before, so a resource a
+			// worker finished last frame becomes usable by the systems that draw with it
+			// this frame instead of a frame later. Outside, because a minimised window has
+			// not stopped background loading, and a queue nobody drains grows without bound.
+			JobSystem::OnUpdate();
 
 			// The dormancy gate is a leftover migration kill-switch and is
 			// hard-false now that the scene path runs fully on bgfx; it goes

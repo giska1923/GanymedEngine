@@ -52,6 +52,8 @@ Application::Run loop
 │
 ├─ compute Timestep from glfwGetTime()
 │
+├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized)
+│
 ├─ Layer::OnUpdate for each layer          (EditorLayer in the editor)
 │   │
 │   ├─ SceneRenderer::BeginFrame           binds + clears the HDR scene target
@@ -133,14 +135,20 @@ Two ordering facts worth internalizing:
    etc. are concrete wrappers over bgfx handles. `RendererAPI` survives only as a backend enum.
 6. **Plain-data components, engine types firewalled.** Components are plain structs; Jolt types
    never appear in headers (`PhysicsScene` is pimpl'd); miniaudio types appear in exactly two `.cpp`s
-   and never in a header, not even as a forward declaration; bgfx types appear only in renderer
-   headers.
+   and never in a header, not even as a forward declaration; enkiTS is reduced to a `void*` in
+   `JobSystem.h`'s shared state, so only the engine project compiles against it; bgfx types appear
+   only in renderer headers.
 
 ## Current limitations / known state
 
-- Single-threaded: one scene update per frame on the main thread; bgfx runs in single-threaded
-  mode (`renderFrame()` before `init`). The ViewDesc machinery exists so parallelism can be added
-  without redesign.
+- **The frame is still single-threaded**, and a scheduler existing does not change that. One scene
+  update per frame on the main thread; bgfx runs in single-threaded mode (`renderFrame()` before
+  `init`). What exists is [`Core/JobSystem`](core.md#job-system) — a parallel-for and cancellable
+  background jobs — with **no system running on it yet**; its first consumers are the asset
+  compiler's BCn encode and async loading
+  ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3/T4). Jolt still runs its own pool,
+  so there are currently two pools of `hardware_concurrency() - 1` threads. The ViewDesc machinery
+  exists so ECS parallelism can be added without redesign.
 - Scripting is Lua 5.4 + sol2 (`ScriptComponent`, hot-reloadable, TypeScript-authored via
   TypeScriptToLua) *and* C++ `NativeScriptComponent`. See [scripting.md](scripting.md).
   `Scripting-And-UI-Integration.md` is the plan that delivered it, not a plan for the future.

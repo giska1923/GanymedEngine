@@ -1,6 +1,8 @@
 # Threading Milestone — Scope Sketch (`Core/JobSystem` on enkiTS)
 
-Status: **scope sketch, not a phase plan.** Written 2026-09-08 against `master` at `ee4148f`. Like
+Status: **scope sketch, not a phase plan. T1 is done** — see [T1 — done](#t1--done-2026-09-08) at the
+bottom, which is where the three open questions got answered and where the sketch below was deviated
+from. Written 2026-09-08 against `master` at `ee4148f`. Like
 [`REFLECTION_ROADMAP.md`](REFLECTION_ROADMAP.md) this fixes the decisions that are expensive to change
 later — the library, the scope boundary, the API shape, the risks — and deliberately leaves the phases
 coarse, because the first real consumer arrives in
@@ -288,3 +290,80 @@ contributes the pinned-task drain, the cancel-and-wait `Future`, and the main-th
    Wrapping costs a translation layer and buys the ability to change scheduler later; exposing is
    honest about the dependency. Leaning toward a thin wrapper that exposes `TaskPriority` directly and
    hides everything else, but this is worth deciding once rather than drifting.
+
+---
+
+# T1 — done (2026-09-08)
+
+enkiTS is vendored as a submodule at `GanymedEngine/extern/enkiTS`, pinned to
+`4cba61a045d8e759bd35e5d85691bf9f7271f822` (`v1.12-4-g4cba61a`, zlib). `Core/JobSystem.h/.cpp` and
+`extern/enkiTS.lua` are in, `Application` is wired, and the reference docs are updated:
+[`core.md` §Job system](../engine/core.md#job-system),
+[`build-and-tooling.md` §Dependencies](../engine/build-and-tooling.md), and
+[`architecture.md`](../engine/architecture.md) frame flow.
+
+**Built and run:** x64 Debug, `enkiTS.vcxproj` → `GanymedEngine.vcxproj` → `GanymedEditor.vcxproj`,
+all clean (the only warning is the pre-existing `LNK4006 __NULL_IMPORT_DESCRIPTOR` between
+`gdi32.lib` and `psapi.lib`). The editor boots and logs
+`JobSystem initialised: 19 worker threads + main (20 total)` / `JobSystem self-test passed`, and on
+close logs `JobSystem shut down` with no in-flight warning. Note the toolchain path in `AGENTS.md`
+says Visual Studio *Community*; this machine has *Professional* — the MSBuild path differs.
+
+### The three open questions, answered
+
+1. **The main thread is thread 0, and no registration is needed.** `GetThreadNum()` returns 0 for the
+   thread that called `Initialize` and `NO_THREAD_NUM` (`0xFFFFFFFF`) for threads enkiTS has never
+   seen. So `JobSystem::Init()` from the top of the `Application` constructor makes "thread 0" and
+   "the thread that owns bgfx submission" the same thread *by construction*, and `IsMainThread()` is
+   trustworthy for the asset layer's asserts. `RegisterExternalTaskThread` is not used anywhere.
+2. **`hardware_concurrency() - 1`, unchanged.** Shrinking it to hedge against Jolt's second pool
+   would be a guess, and there is no consumer to measure yet. The oversubscription is documented in
+   `core.md` and stays until decision 4's consolidation.
+3. **Fully wrapped — enkiTS does not appear in `JobSystem.h` at all.** `Detail::JobState::Task` is a
+   `void*` the `.cpp` casts back to `enki::ITaskSet*`, and `JobPriority` is its own enum. This went
+   *further* than the "expose `TaskPriority` directly" lean, for a reason that only became clear
+   while writing it: the engine is a static lib consumed by the editor, the runtime and Sandbox, and
+   exposing enkiTS would put its include path in all three just so they can hold a `Future<T>`. The
+   cost is one `std::function` allocation per submitted job — noise against any work worth
+   submitting — plus a `static_assert` chain pinning `JobPriority` to `ENKITS_TASK_PRIORITIES_NUM == 3`
+   instead of a translating `switch` that would keep compiling if the tier count ever changed.
+
+### Deviations from the sketch above, and why
+
+- **No `IPinnedTask` / `RunPinnedTasks()`.** The sketch called `RunPinnedTasks()` "a first-class
+  concept, where BlankEngine hand-rolled it", and that was the wrong read. Pinned tasks are heap
+  objects whose lifetime must be managed until they execute — the same lifetime problem as decision
+  3, paid a second time — and `RunPinnedTasks()` gives no clean "drain exactly what was queued at
+  frame start" boundary. `SubmitToMainThread` + `OnUpdate` is BlankEngine's swap-under-lock queue
+  instead: ~15 lines, `std::function` payloads with no per-task allocation to track, and an explicit
+  boundary so work queued *from* a main-thread job lands next frame rather than extending the drain.
+- **`IsCurrentJobCancelled()` was added.** Decision 3 said "the task body checks the flag at entry and
+  at coarse loop boundaries" without saying *how* the body reaches the flag. It cannot: `Submit`
+  captures the result slot rather than the `JobState`, because `state → Work → state` is a
+  `shared_ptr` cycle and the job would leak. So the flag is reachable through a `thread_local` set by
+  the task wrapper — BlankEngine's `thisThreadTaskIsCancelled`, same rationale. The alternative,
+  threading a token parameter through every callable signature, is how that codebase ended up with
+  eight SFINAE overloads this doc already criticises.
+- **Every entry point degrades to inline execution when uninitialized.** Not in the sketch. The asset
+  compiler is meant to run from tools that never construct an `Application`; a scheduler that *must*
+  exist is one that gets a null check at every call site instead. `CanUseScheduler()` also covers the
+  subtler case — enkiTS's API is only valid on the initialising thread, its own workers, and
+  registered external threads, so anything else must run inline rather than touch the scheduler.
+- **T2's profiler wiring stayed out**, as planned: `profilerCallbacks` is left default and thread
+  naming is untouched.
+
+### Verification, and the honest caveat
+
+The sketch asked for three checks. They are `JobSystem::RunSelfTest()`, called from `Init()` under
+`GE_DEBUG`: a `ParallelFor` over 100k items summed through per-thread buckets matches `N(N-1)/2`; a
+`Future` dropped mid-flight is observed to have waited (the body sets a flag false on exit, and the
+flag is read after the scope closes); and a running body observes `IsCurrentJobCancelled()`, with the
+test waiting for a `started` flag first so the entry check cannot short-circuit it. Check 2 sleeps
+20ms on purpose — without it the test wins by luck rather than by the destructor working.
+
+**The caveat: this is a boot-time self-check, not a test.** The repo has no runtime test suite (the
+ECS ships `static_assert`-only files), so there was nowhere to put a real one, and a self-test that
+runs inside the thing it tests cannot report a hang — check 3 deadlocks rather than failing if
+`IsCurrentJobCancelled` regresses. The "does not use freed state under a debug allocator" half of the
+sketch's second check is **not** covered: nothing here runs under a debug allocator. Proving that
+wants ASan or Application Verifier, which is a tooling decision, not a T1 line item.
