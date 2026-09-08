@@ -4,10 +4,33 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 
 namespace GanymedE {
 
 	class Texture2D;
+
+	// A decoded image still on the CPU: RGBA8, tightly packed, owning stb's buffer.
+	//
+	// This is the seam between Parse and Apply for textures - decoding is pure CPU work that
+	// Phase 5 moves to a worker thread, while the bgfx texture it becomes must be created on
+	// the submit thread (ASSET_PIPELINE_ROADMAP.md decision 13). Move-only, because there is
+	// exactly one owner of the pixels at a time.
+	struct DecodedImage
+	{
+		// stbi_image_free, kept out of this header so stb_image does not leak into every TU
+		// that mentions a texture.
+		struct PixelDeleter
+		{
+			void operator()(uint8_t* pixels) const;
+		};
+
+		std::unique_ptr<uint8_t, PixelDeleter> Pixels;
+		uint32_t Width = 0;
+		uint32_t Height = 0;
+
+		explicit operator bool() const { return Pixels != nullptr; }
+	};
 
 	// One decode path for every asset-layer texture load. stb's flip flag is global
 	// state, so both entry points set it explicitly immediately before decoding -
@@ -19,6 +42,17 @@ namespace GanymedE {
 	class TextureImporter
 	{
 	public:
+		// The CPU half. No bgfx call reachable from either - that is the contract Phase 5
+		// depends on, and it is why the LoadFrom* pair below is expressed as Decode + Upload
+		// rather than the other way around.
+		static DecodedImage Decode(const std::filesystem::path& fullPath,
+			bool flipVertically = false);
+		static DecodedImage DecodeFromMemory(const uint8_t* bytes, size_t size,
+			bool flipVertically = true);
+
+		// The GPU half. Main thread only.
+		static Ref<Texture2D> Upload(const DecodedImage& image);
+
 		// File-based material textures load unflipped, matching Texture2D(path):
 		// bgfx normalises texture origin to top-left on every backend.
 		static Ref<Texture2D> LoadFromFile(const std::filesystem::path& fullPath,

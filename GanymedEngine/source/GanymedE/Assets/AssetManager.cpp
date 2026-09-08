@@ -21,11 +21,6 @@ namespace GanymedE {
 		std::unordered_map<AssetHandle, AssetMetadata> Registry;
 		std::unordered_map<std::string, AssetHandle> PathToHandle;
 
-		std::unordered_map<AssetHandle, Ref<Mesh>> LoadedMeshes;
-		std::unordered_map<AssetHandle, Ref<Environment>> LoadedEnvironments;
-		std::unordered_map<AssetHandle, Ref<Texture2D>> LoadedTextures;
-		std::unordered_map<AssetHandle, Ref<Material>> LoadedMaterials;
-
 		bool Initialized = false;
 		bool WritableRegistry = true;
 
@@ -46,13 +41,22 @@ namespace GanymedE {
 
 	static AssetManagerData s_Data;
 
-	namespace {
+	// The two hooks TypedAssetManager<T>::Load needs from the facade. Declared in
+	// AssetManagerRegistry.h rather than reached through AssetManager.h, because the
+	// dependency runs the other way: GetAsset<T> is built on the manager template.
+	namespace Detail {
+
+		const AssetMetadata* FindAssetMetadata(AssetHandle handle)
+		{
+			return AssetManager::GetMetadata(handle);
+		}
 
 		// A valid handle with no registry entry means the scene references an asset this
-		// install does not know about - almost always a missing or stale AssetRegistry.gr.
-		// Worth saying out loud: the consequence is an entity that renders nothing, which
-		// is indistinguishable from a bad transform or an unlit material until you know.
-		void WarnUnknownHandle(AssetHandle handle, const char* expected)
+		// install does not know about - almost always a `.meta` sidecar that did not travel
+		// with its asset. Worth saying out loud: the consequence is an entity that renders
+		// nothing, which is indistinguishable from a bad transform or an unlit material
+		// until you know.
+		void WarnUnknownAssetHandle(AssetHandle handle, const char* expectedTypeName)
 		{
 			if (!s_Data.WarnedUnknownHandles.insert(handle).second)
 				return;
@@ -60,8 +64,12 @@ namespace GanymedE {
 			GE_CORE_WARN("Asset handle {0} is not in the index (expected: {1}) - nothing will be "
 				"loaded for it. The usual cause is an asset whose `.meta` sidecar did not travel "
 				"with it, or a file that is no longer under assets/.",
-				static_cast<uint64_t>(handle), expected);
+				static_cast<uint64_t>(handle), expectedTypeName);
 		}
+
+	}
+
+	namespace {
 
 		struct ScanStats
 		{
@@ -213,6 +221,11 @@ namespace GanymedE {
 
 		s_Data.WritableRegistry = writableAssets;
 
+		// Before anything can load. Nothing in the scan does, but a manager slot that is empty
+		// when GetAsset<T> reaches it asserts, and doing this first also makes the dense type
+		// ids fall out of registration order rather than out of whichever call site ran first.
+		RegisterManagers();
+
 		// Legacy first, so the scan has a path -> handle seed to adopt from before it mints
 		// anything. Reversing these two lines is how you break every existing scene.
 		LoadLegacyRegistry();
@@ -241,13 +254,10 @@ namespace GanymedE {
 		s_Data.LegacyHandles.clear();
 		s_Data.LegacyRegistryPresent = false;
 		s_Data.WarnedUnknownHandles.clear();
-		// Runs from EditorLayer::OnDetach while Renderer::IsGpuAlive() is still true,
-		// so the GPU-resource destructors release real bgfx handles rather than
-		// tripping the is-alive guard.
-		s_Data.LoadedMeshes.clear();
-		s_Data.LoadedEnvironments.clear();
-		s_Data.LoadedTextures.clear();
-		s_Data.LoadedMaterials.clear();
+		// Destroys the managers, and with them everything they retain. Runs from
+		// EditorLayer::OnDetach while Renderer::IsGpuAlive() is still true, so the GPU-resource
+		// destructors release real bgfx handles rather than tripping the is-alive guard.
+		AssetManagerRegistry::Clear();
 		s_Data.Initialized = false;
 	}
 
@@ -371,155 +381,124 @@ namespace GanymedE {
 		return metadata ? metadata->Type : AssetType::None;
 	}
 
-	Ref<Mesh> AssetManager::LoadMesh(AssetHandle handle)
-	{
-		if (!IsAssetHandleValid(handle))
-			return nullptr;
+	namespace {
 
-		auto cached = s_Data.LoadedMeshes.find(handle);
-		if (cached != s_Data.LoadedMeshes.end())
-			return cached->second;
-
-		const AssetMetadata* metadata = GetMetadata(handle);
-		if (!metadata)
+		// ---- Mesh ---------------------------------------------------------------------
+		//
+		// No Parse stage, and this one is deferred work rather than a settled answer. Both load
+		// paths construct a `Mesh`, whose constructor runs `Build()` and creates bgfx vertex and
+		// index buffers, and both build the mesh's materials inline - which pulls textures.
+		// Separating them means threading a CPU-side mesh description (vertices, indices,
+		// submeshes, material *descriptions* rather than materials) through `MeshImporter.cpp`
+		// and `MeshCache.cpp` and deferring `Mesh::Create` to Apply. That is the split Phase 5
+		// actually needs - the cgltf parse is the expensive thing that has to leave the main
+		// thread - and it is a change the size of a phase, not a step of this one. Named here so
+		// Phase 5 starts from a known cost instead of discovering it.
+		Ref<Mesh> ApplyMesh(const AssetMetadata& metadata, Scope<AssetParseResult>)
 		{
-			WarnUnknownHandle(handle, "static mesh");
-			return nullptr;
-		}
-		if (metadata->Type != AssetType::StaticMesh)
-			return nullptr;
+			const std::filesystem::path relativePath = metadata.FilePath;
+			const std::filesystem::path fullPath = GetAssetRoot() / relativePath;
 
-		std::filesystem::path relativePath = metadata->FilePath;
-		std::filesystem::path fullPath = GetAssetRoot() / relativePath;
+			Ref<Mesh> mesh = MeshCache::TryLoad(relativePath, fullPath);
+			if (!mesh)
+			{
+				mesh = MeshImporter::Load(fullPath);
+				if (mesh)
+					MeshCache::Write(mesh, relativePath, fullPath);
+			}
 
-		Ref<Mesh> mesh = MeshCache::TryLoad(relativePath, fullPath);
-		if (!mesh)
-		{
-			mesh = MeshImporter::Load(fullPath);
-			if (mesh)
-				MeshCache::Write(mesh, relativePath, fullPath);
-		}
-
-		if (mesh)
-		{
-			s_Data.LoadedMeshes[handle] = mesh;
+			if (!mesh)
+				return nullptr;
 
 			// Here rather than inside MeshImporter, because this is the one point both the cold
 			// import and the cache replay pass through - a cached mesh must still get its
 			// sidecars, or deleting .meshcache would be the only way to regenerate them.
+			//
+			// It now runs *before* the manager caches the mesh, where the old code ran after.
+			// Safe because GenerateSidecars only ever reaches ImportAsset, never GetAsset<Mesh>:
+			// it writes files and registers handles, so nothing in it can re-enter this load.
 			MaterialSerializer::GenerateSidecars(mesh, relativePath);
+			return mesh;
 		}
 
-		return mesh;
-	}
-
-	// Cached, not path-resolved (the Script/Audio pattern), and the caching is load-bearing
-	// rather than a performance choice: instancing merges draws on Ref<Material> *identity*, so
-	// two entities sharing one .gmat handle must receive the same Ref or every batch shatters.
-	Ref<Material> AssetManager::LoadMaterial(AssetHandle handle)
-	{
-		if (!IsAssetHandleValid(handle))
-			return nullptr;
-
-		auto cached = s_Data.LoadedMaterials.find(handle);
-		if (cached != s_Data.LoadedMaterials.end())
-			return cached->second;
-
-		const AssetMetadata* metadata = GetMetadata(handle);
-		if (!metadata)
+		// ---- Environment --------------------------------------------------------------
+		//
+		// No Parse stage either, but unlike Mesh that is the right answer rather than deferred
+		// work. The separable CPU part is one `stbi_loadf` of the equirectangular HDR;
+		// everything after it is the IBL bake - six cube faces plus prefilter mips rendered
+		// through bgfx views - which can never leave the submit thread. Splitting would move a
+		// few percent of the cost and take `Environment`'s filepath constructor with it.
+		Ref<Environment> ApplyEnvironment(const AssetMetadata& metadata, Scope<AssetParseResult>)
 		{
-			WarnUnknownHandle(handle, "material");
-			return nullptr;
+			return Environment::Create((GetAssetRoot() / metadata.FilePath).string());
 		}
-		if (metadata->Type != AssetType::Material)
-			return nullptr;
 
-		Ref<Material> material = MaterialSerializer::Load(GetAssetRoot() / metadata->FilePath);
-		if (material)
-			s_Data.LoadedMaterials[handle] = material;
-
-		return material;
-	}
-
-	Ref<Environment> AssetManager::LoadEnvironment(AssetHandle handle)
-	{
-		if (!IsAssetHandleValid(handle))
-			return nullptr;
-
-		auto cached = s_Data.LoadedEnvironments.find(handle);
-		if (cached != s_Data.LoadedEnvironments.end())
-			return cached->second;
-
-		const AssetMetadata* metadata = GetMetadata(handle);
-		if (!metadata)
+		// ---- Texture ------------------------------------------------------------------
+		//
+		// The clean case, and the one that pays: PNG/JPEG decode is the whole CPU cost and it
+		// is entirely below the bgfx line.
+		struct TextureParse : AssetParseResult
 		{
-			WarnUnknownHandle(handle, "environment");
-			return nullptr;
-		}
-		if (metadata->Type != AssetType::Environment)
-			return nullptr;
+			DecodedImage Image;
+		};
 
-		std::filesystem::path fullPath = GetAssetRoot() / metadata->FilePath;
-		Ref<Environment> environment = Environment::Create(fullPath.string());
-		if (environment)
-			s_Data.LoadedEnvironments[handle] = environment;
-
-		return environment;
-	}
-
-	Ref<Texture2D> AssetManager::LoadTexture(AssetHandle handle)
-	{
-		if (!IsAssetHandleValid(handle))
-			return nullptr;
-
-		// Plain map lookup on the hit path: RenderSystem re-fetches assets by handle
-		// every frame per entity, and texture consumers may end up there too.
-		auto cached = s_Data.LoadedTextures.find(handle);
-		if (cached != s_Data.LoadedTextures.end())
+		Scope<AssetParseResult> ParseTexture(const AssetMetadata& metadata)
 		{
-			GE_CORE_TRACE("Texture cache hit (handle {0})", static_cast<uint64_t>(handle));
-			return cached->second;
+			auto parsed = CreateScope<TextureParse>();
+			parsed->Image = TextureImporter::Decode(GetAssetRoot() / metadata.FilePath, false);
+			if (!parsed->Image)
+				return nullptr;
+
+			return parsed;
 		}
 
-		const AssetMetadata* metadata = GetMetadata(handle);
-		if (!metadata)
+		Ref<Texture2D> ApplyTexture(const AssetMetadata&, Scope<AssetParseResult> parsed)
 		{
-			WarnUnknownHandle(handle, "texture");
-			return nullptr;
+			return TextureImporter::Upload(static_cast<TextureParse&>(*parsed).Image);
 		}
-		if (metadata->Type != AssetType::Texture)
-			return nullptr;
 
-		std::filesystem::path fullPath = GetAssetRoot() / metadata->FilePath;
-		Ref<Texture2D> texture = TextureImporter::LoadFromFile(fullPath, false);
-		if (texture)
-			s_Data.LoadedTextures[handle] = texture;
+		// ---- Material -----------------------------------------------------------------
+		//
+		// Cached, not path-resolved (the Script/Audio pattern), and the caching is load-bearing
+		// rather than a performance choice: instancing merges draws on Ref<Material> *identity*,
+		// so two entities sharing one .gmat handle must receive the same Ref or every batch
+		// shatters. That is also why Material cannot be given a shared placeholder in Phase 5
+		// without thinking about batching first.
+		struct MaterialParse : AssetParseResult
+		{
+			MaterialDesc Desc;
+		};
 
-		return texture;
+		Scope<AssetParseResult> ParseMaterial(const AssetMetadata& metadata)
+		{
+			auto parsed = CreateScope<MaterialParse>();
+			if (!MaterialSerializer::ReadDesc(GetAssetRoot() / metadata.FilePath, parsed->Desc))
+				return nullptr;
+
+			return parsed;
+		}
+
+		Ref<Material> ApplyMaterial(const AssetMetadata&, Scope<AssetParseResult> parsed)
+		{
+			return MaterialSerializer::Build(static_cast<MaterialParse&>(*parsed).Desc);
+		}
+
 	}
 
-	template<>
-	Ref<Mesh> AssetManager::GetAsset<Mesh>(AssetHandle handle)
+	void AssetManager::RegisterManagers()
 	{
-		return LoadMesh(handle);
-	}
-
-	template<>
-	Ref<Environment> AssetManager::GetAsset<Environment>(AssetHandle handle)
-	{
-		return LoadEnvironment(handle);
-	}
-
-	template<>
-	Ref<Texture2D> AssetManager::GetAsset<Texture2D>(AssetHandle handle)
-	{
-		return LoadTexture(handle);
-	}
-
-	template<>
-	Ref<Material> AssetManager::GetAsset<Material>(AssetHandle handle)
-	{
-		return LoadMaterial(handle);
+		// The order fixes the dense type ids for this run and has no other meaning; the ids are
+		// never persisted, because AssetType - stored by name in a `.meta` - is the durable
+		// form. This list has to agree with the GE_ASSET_TYPE declarations in the header, and
+		// nothing enforces that beyond the two sitting one file apart.
+		AssetManagerRegistry::Register<Mesh>("Mesh", AssetType::StaticMesh,
+			nullptr, &ApplyMesh);
+		AssetManagerRegistry::Register<Environment>("Environment", AssetType::Environment,
+			nullptr, &ApplyEnvironment);
+		AssetManagerRegistry::Register<Texture2D>("Texture2D", AssetType::Texture,
+			&ParseTexture, &ApplyTexture);
+		AssetManagerRegistry::Register<Material>("Material", AssetType::Material,
+			&ParseMaterial, &ApplyMaterial);
 	}
 
 	void AssetManager::Reload(AssetHandle handle)
@@ -528,79 +507,66 @@ namespace GanymedE {
 		if (!metadata)
 			return;
 
-		switch (metadata->Type)
+		// Scene, Script, Audio and Prefab have no manager, so there is nothing to evict - they
+		// are path-resolved and their consumers own whatever caching they do.
+		IAssetManager* manager = AssetManagerRegistry::Find(metadata->Type);
+		if (!manager)
+			return;
+
+		// Textures go first, then their owner. Weak caching did not make this ordering
+		// unnecessary, which is worth stating because it is tempting to assume it did: the
+		// reloaded material or mesh re-resolves its map paths through LoadMaterialMap, which is
+		// a GetAsset<Texture2D>, and a texture still cached would be handed straight back. The
+		// rule is about the texture cache, not about who owns the material.
+		auto evictMaps = [](const Ref<Material>& material)
 		{
-			case AssetType::Texture:
-				s_Data.LoadedTextures.erase(handle);
-				break;
-
-			case AssetType::Environment:
-				s_Data.LoadedEnvironments.erase(handle);
-				break;
-
-			case AssetType::Material:
-			{
-				// Textures first, for the same reason the mesh branch does it: the reloaded
-				// material would otherwise rebind the stale cached ones through LoadMaterialMap.
-				auto cached = s_Data.LoadedMaterials.find(handle);
-				if (cached != s_Data.LoadedMaterials.end() && cached->second)
-				{
-					for (const std::string* mapPath : {
-						&cached->second->GetAlbedoMapPath(),
-						&cached->second->GetNormalMapPath(),
-						&cached->second->GetMetallicRoughnessMapPath() })
-					{
-						if (mapPath->empty())
-							continue;
-
-						AssetHandle textureHandle = GetHandle(*mapPath);
-						if (IsAssetHandleValid(textureHandle))
-							s_Data.LoadedTextures.erase(textureHandle);
-					}
-				}
-
-				s_Data.LoadedMaterials.erase(handle);
-				break;
-			}
-
-			case AssetType::StaticMesh:
-			{
-				// Order matters: the mesh's textures have to go first, or the reimported
-				// mesh rebinds the stale cached ones through LoadMaterialMap.
-				auto cached = s_Data.LoadedMeshes.find(handle);
-				if (cached != s_Data.LoadedMeshes.end() && cached->second)
-				{
-					for (const auto& material : cached->second->GetMaterials())
-					{
-						if (!material)
-							continue;
-
-						for (const std::string* mapPath : {
-							&material->GetAlbedoMapPath(),
-							&material->GetNormalMapPath(),
-							&material->GetMetallicRoughnessMapPath() })
-						{
-							if (mapPath->empty())
-								continue;
-
-							AssetHandle textureHandle = GetHandle(*mapPath);
-							if (IsAssetHandleValid(textureHandle))
-								s_Data.LoadedTextures.erase(textureHandle);
-						}
-					}
-				}
-
-				s_Data.LoadedMeshes.erase(handle);
-				MeshCache::Invalidate(metadata->FilePath);
-				break;
-			}
-
-			default:
-				// Scene/Script/Audio have no GetAsset cache to evict.
+			if (!material)
 				return;
+
+			for (const std::string* mapPath : {
+				&material->GetAlbedoMapPath(),
+				&material->GetNormalMapPath(),
+				&material->GetMetallicRoughnessMapPath() })
+			{
+				if (mapPath->empty())
+					continue;
+
+				AssetHandle textureHandle = GetHandle(*mapPath);
+				if (IsAssetHandleValid(textureHandle))
+					AssetManagerRegistry::Get<Texture2D>().Evict(textureHandle);
+			}
+		};
+
+		if (metadata->Type == AssetType::Material)
+		{
+			evictMaps(AssetManagerRegistry::Get<Material>().Find(handle));
+		}
+		else if (metadata->Type == AssetType::StaticMesh)
+		{
+			if (Ref<Mesh> mesh = AssetManagerRegistry::Get<Mesh>().Find(handle))
+			{
+				for (const Ref<Material>& material : mesh->GetMaterials())
+					evictMaps(material);
+			}
+
+			// The timestamp check already catches a source edit; this covers "reimport now",
+			// where the source is untouched but something it references changed.
+			MeshCache::Invalidate(metadata->FilePath);
 		}
 
+		manager->Evict(handle);
 		GE_CORE_INFO("Reloading asset '{0}'", metadata->FilePath);
+	}
+
+	std::vector<AssetCacheStats> AssetManager::GetCacheStats()
+	{
+		std::vector<AssetCacheStats> stats;
+		AssetManagerRegistry::ForEach([&stats](IAssetManager& manager)
+		{
+			stats.push_back({ manager.TypeName(), manager.ResidentCount(), manager.RetainedCount() });
+		});
+
+		return stats;
 	}
 
 	void AssetManager::LoadLegacyRegistry()

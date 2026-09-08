@@ -14,7 +14,7 @@ GanymedE/
 ├── Reflection/  Component MEMBER reflection over entt::meta (see scene.md)
 ├── Scene/       Scene, Entity, Components, SceneSerializer, built-in Systems/
 ├── Renderer/    bgfx-backed renderer: resources, Renderer2D/3D, SceneRenderer, IBL, cameras
-├── Assets/      AssetManager (scan-derived handle index), AssetMeta (`.meta` sidecars), MeshCache
+├── Assets/      AssetManager (scan-derived handle index + typed manager registry), AssetMeta, MeshCache
 ├── Physics/     PhysicsScene (Jolt, pimpl'd)
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
@@ -112,6 +112,12 @@ Two ordering facts worth internalizing:
   again (see [audio.md](audio.md)).
 - Renderer subsystems (`Renderer2D`, `Renderer3D`, `ParticleRenderer`, `PostProcess`, `MeshShader`) are static-lifetime
   but explicitly `Init()`/`Shutdown()` by `Renderer`, releasing GPU handles while bgfx is alive.
+- **Loaded assets are owned by their `TypedAssetManager<T>`**, one per managed type in a flat slot
+  array indexed by a dense type id ([assets.md](assets.md#managers-and-caching)). The cache is
+  `weak_ptr`, so the intended owner is whoever holds a reference — but until a typed asset reference
+  exists, each entry also pins a `shared_ptr`, because components store bare handles and nothing
+  else keeps an asset alive between frames. `AssetManager::Shutdown` destroys the managers while
+  `Renderer::IsGpuAlive()` is still true, the same discipline as the renderer subsystems above.
 
 ## Design principles the code actually follows
 
@@ -152,6 +158,12 @@ Two ordering facts worth internalizing:
   ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3/T4). Jolt still runs its own pool,
   so there are currently two pools of `hardware_concurrency() - 1` threads. The ViewDesc machinery
   exists so ECS parallelism can be added without redesign.
+- **The asset layer is mid-milestone.** Identity is per-asset `.meta` sidecars and loading goes
+  through a registration-driven manager registry with a Parse/Apply split, but nothing is evicted
+  yet (the managers pin what they load) and nothing is asynchronous or compiled.
+  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) Phases 1–2 have landed;
+  Phase 3’s typed reference is what makes the weak cache real, and it is also the shim that lets
+  Phase 5 make loading asynchronous without touching a call site.
 - **Component members are reflected, but nothing consumes it yet.**
   [`Reflection/`](scene.md#member-reflection) registers all 23 components over `entt::meta` and
   validates itself at boot; the serializer, the inspector and the Lua bindings still hand-list every

@@ -561,6 +561,93 @@ writing the interface, not during.
 | Build | MSBuild x64 Debug, `GanymedEngine.vcxproj` then editor + runtime; premake regen noted if files added |
 | Docs | [`assets.md`](../engine/assets.md) API table + a new "Managers and caching" section; [`architecture.md`](../engine/architecture.md) module-boundary note |
 
+### Phase 2 — execution notes (done)
+
+Delivered as written except where noted. New files: `Assets/AssetManagerRegistry.h/.cpp` (premake
+regeneration required and run). `AssetManagerData` lost its four cache maps; `AssetManager.h` lost
+its four `LoadX` declarations and its four `GetAsset<T>` specialization declarations.
+
+**Step 2's open question, resolved by looking rather than by writing.** There is no acceptable
+common base. `Mesh`, `Texture2D`, `Material` and `Environment` share nothing: `Texture2D` and
+`Environment` own raw `bgfx::TextureHandle`s and are non-copyable, `Material` owns no GPU resource
+at all, and `Mesh` owns geometry plus a skeleton plus clips. An `AssetBase` with a virtual
+destructor would put a vptr into four renderer types to serve the asset layer's convenience. So the
+type erasure lives inside `TypedAssetManager<T>` and `IAssetManager` exposes only
+`TypeName`/`Type`/`Evict`/`EvictAll`/`ResidentCount`/`RetainedCount`, as the step's fallback
+allowed.
+
+**Two decisions taken against the plan, both worth reading before Phase 3.**
+
+1. **The weak cache is real, but it does not evict yet — the managers pin what they load.** Step 3
+   and decision 5 say the cache is `weak_ptr` and `AssetRef<T>` supplies the strong reference. Doing
+   only the first half is not a partial improvement, it is a catastrophic regression: components
+   store bare `AssetHandle`s and every consumer (`RenderSystem`, the inspector, the serializer)
+   drops its `Ref` at the end of the frame, so nothing outside the cache holds an asset alive at
+   all. A purely weak cache would re-run `MeshCache::TryLoad` — or a cold cgltf import — **per
+   entity per frame**. So each cache entry carries a `weak_ptr Cached` *and* a `Ref Retained`, and
+   Phase 3 deletes the second member. The honest consequence: the `.lock()`-failed branch in
+   `Load` is unreachable today, so the verification table's "eviction actually happens" row is
+   **not** satisfied by this phase, and cannot be until Phase 3. It is Phase 3's row.
+
+   The alternative — fold Phase 3 into this phase — was rejected for scope, but it is the reason
+   the two phases should land close together. Phases 1–2 leave the leak exactly where it was.
+
+2. **No `GE_REGISTER_ASSET_MANAGER` macro.** Step 4 asks for one. It would have stringified the
+   type name and nothing else, since the `IsAssetType<T>` specialization has to live in the header
+   next to the forward declarations and the registration lives in the `.cpp`. Four
+   `AssetManagerRegistry::Register<T>("T", AssetType::X, &Parse, &Apply)` calls in one function
+   read better than a macro that hides the same information. Explicit over clever, per house style.
+
+**The Parse/Apply split is honest for two of the four types, and the other two are recorded rather
+than papered over.** Decision 13 calls it "the cheapest thing in this plan"; that is true for
+`Texture2D` (a `Decode` → `DecodedImage` → `Upload` split of `TextureImporter`, ~40 lines, and the
+PNG decode is the whole CPU cost) and for `Material` (a `ReadDesc` → `MaterialDesc` → `Build` split
+of `MaterialSerializer::Load`). It is not true for the other two:
+
+- **Environment registers no Parse, and that is the correct answer, not a punt.** The only
+  separable CPU work is one `stbi_loadf`; everything after it is the IBL bake, six cube faces plus
+  prefilter mips through bgfx views, which can never leave the submit thread.
+- **Mesh registers no Parse, and that *is* deferred work — the load-bearing kind.** Both load paths
+  construct a `Mesh` whose constructor calls `Build()` and creates bgfx buffers, and both build the
+  mesh's materials inline, which pulls textures. Splitting means threading a CPU-side mesh
+  description through `MeshImporter.cpp` (814 lines) and `MeshCache.cpp` (435) and deferring
+  `Mesh::Create` to Apply. That is a phase-sized change and it is the one Phase 5 cannot skip, since
+  the cgltf parse is the expensive thing that has to leave the main thread. **Budget it inside
+  Phase 5 rather than assuming decision 13 already paid for it.**
+
+**Three smaller corrections.**
+
+- **The `Reload` ordering survives unchanged.** Step 6 predicted that "with weak caches most of that
+  ordering becomes unnecessary". It does not: the rule is about the *texture* cache, not about who
+  owns the material. A reloaded material or mesh re-resolves its map paths through
+  `LoadMaterialMap`, which is a `GetAsset<Texture2D>`, so a still-cached texture is handed straight
+  back. Both branches keep evicting maps first. What did change is that the per-type `switch` over
+  four cache maps became `AssetManagerRegistry::Find(type)` plus one shared `evictMaps` lambda.
+- **`GenerateSidecars` moved from after the cache insert to inside `ApplyMesh`**, because Apply
+  returns the object before the manager caches it. Safe, and verified by reading rather than
+  assumed: it only ever reaches `ImportAsset`, never `GetAsset<Mesh>`, so it cannot re-enter the
+  load.
+- **`AssetManager::Init` calls `RegisterManagers()` first.** The dense ids are assigned on first use
+  of `AssetTypeIdOf<T>`, so registering first is what makes them fall out of registration order
+  rather than out of whichever call site ran first. They are never persisted — `AssetType` by name
+  in a `.meta` is the durable form.
+
+**Verification results** (MSBuild x64 Debug, VS 2022 *Professional* on this machine — note
+`AGENTS.md` names Community; the MSBuild path differs. Full solution: engine, editor, runtime,
+Sandbox, all clean, no new warnings).
+
+| Check | Result |
+| --- | --- |
+| Unsupported type still a clean compile error | `GetAsset<int>` in a scratch TU: `error C2338: static_assert failed: 'AssetManager::GetAsset<T> is only available for Mesh, Environment, Texture2D and Material...'`. The probe was reverted afterwards |
+| Behaviour unchanged | `Phase5Test.ganymede` (40 instanced boxes) opens with zero warnings and zero errors, mesh replayed from `.meshcache`, renders identically. `Renderer3D`: 40 meshes, 32 frustum-culled, 5 instanced draws, 7 draw calls |
+| Cache identity holds | Two `GetAsset<Material>` calls on one handle return the same pointer — the invariant instancing batches on. Measured, not assumed: a probe logged `material same-ref=true` |
+| Reload still works | Probe on `BoxTextured_mat0_Texture.gmat`: after `Reload`, both the material **and** its albedo texture are different objects — i.e. the texture-first eviction ordering works. On `BoxTextured.glb`: `.meshcache` invalidated, cold cgltf re-import, new `Mesh` object |
+| `CachedCount` readout | Stats panel shows `Mesh 1/1, Environment 0/0, Texture2D 0/0, Material 0/0` on that scene. The two zeros are correct and pre-existing: the scene's entities carry no `MaterialOverrides`, and the mesh's own material uses the `.glb`'s *embedded* image, which has no path and so never reaches the registry |
+| No premature collection | Cannot regress: nothing is collected. See decision 1 above |
+| Eviction actually happens | **Not satisfied, by construction.** Phase 3's row |
+| Runtime boots | `10 files, 10 adopted from sidecars, 0 minted, 0 written`, scene loads, 10 entities, physics and audio run, zero warnings |
+| Nothing rewritten on disk | `git status` over both `assets/` trees is clean after four editor runs and a runtime run |
+
 ---
 
 ## Phase 3 — `AssetRef<T>`: the reference abstraction

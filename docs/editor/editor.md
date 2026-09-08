@@ -197,9 +197,16 @@ present, procedural fallback otherwise), so imported meshes are lit immediately.
 ### Stats panel
 
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
-transparent, particle emitters/billboards/draws/culled), live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
+transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
+live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
 FXAA), and Jolt debug-draw toggles (visible during Play; draws Jolt's body state instead of the
 authored collider gizmos).
+
+The Asset Cache rows come from `AssetManager::GetCacheStats()`, one per registered manager, printed
+as `resident / retained` — live objects the manager is tracking, and the subset it is keeping alive
+itself. They move together today because the managers pin everything they load; once a typed asset
+reference becomes the owner, retained drops to zero and resident is the number to watch across a
+scene switch (see [assets.md](../engine/assets.md#managers-and-caching)).
 
 ## Scene Hierarchy panel
 

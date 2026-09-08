@@ -356,6 +356,14 @@ namespace GanymedE {
 			stats3D.ParticleDrawCalls, stats3D.ParticleCulledEmitters);
 
 		ImGui::Separator();
+		// Resident is what the weak cache is tracking; retained is what the manager itself is
+		// holding alive. They are equal until Phase 3's AssetRef becomes the owner, at which
+		// point retained goes to zero and resident starts falling when a scene closes.
+		ImGui::Text("Asset Cache (resident / retained):");
+		for (const AssetCacheStats& cache : AssetManager::GetCacheStats())
+			ImGui::Text("%s: %zu / %zu", cache.TypeName, cache.Resident, cache.Retained);
+
+		ImGui::Separator();
 		ImGui::Text("Post Processing:");
 		auto& rendererSettings = m_SceneRenderer->GetSettings();
 		ImGui::DragFloat("Exposure", &rendererSettings.Exposure, 0.01f, 0.0f, 16.0f);

@@ -9,16 +9,12 @@
 
 namespace GanymedE {
 
-	namespace {
+	void DecodedImage::PixelDeleter::operator()(uint8_t* pixels) const
+	{
+		stbi_image_free(pixels);
+	}
 
-		// Takes ownership of stb's buffer.
-		Ref<Texture2D> Upload(unsigned char* pixels, int width, int height)
-		{
-			Ref<Texture2D> texture = Texture2D::Create((uint32_t)width, (uint32_t)height);
-			texture->SetData(pixels, (uint32_t)(width * height * 4));
-			stbi_image_free(pixels);
-			return texture;
-		}
+	namespace {
 
 		// std::filesystem::relative returns "../../foo.png" with no error code for a
 		// file outside the root, and such a path must never get a registry entry.
@@ -37,7 +33,7 @@ namespace GanymedE {
 
 	}
 
-	Ref<Texture2D> TextureImporter::LoadFromFile(const std::filesystem::path& fullPath, bool flipVertically)
+	DecodedImage TextureImporter::Decode(const std::filesystem::path& fullPath, bool flipVertically)
 	{
 		GE_PROFILE_FUNCTION();
 
@@ -50,18 +46,19 @@ namespace GanymedE {
 		if (!pixels)
 		{
 			GE_CORE_ERROR("Failed to load image '{0}'", fullPath.string());
-			return nullptr;
+			return {};
 		}
 
-		return Upload(pixels, width, height);
+		return { std::unique_ptr<uint8_t, DecodedImage::PixelDeleter>(pixels),
+			(uint32_t)width, (uint32_t)height };
 	}
 
-	Ref<Texture2D> TextureImporter::LoadFromMemory(const uint8_t* bytes, size_t size, bool flipVertically)
+	DecodedImage TextureImporter::DecodeFromMemory(const uint8_t* bytes, size_t size, bool flipVertically)
 	{
 		GE_PROFILE_FUNCTION();
 
 		if (!bytes || size == 0)
-			return nullptr;
+			return {};
 
 		stbi_set_flip_vertically_on_load(flipVertically ? 1 : 0);
 
@@ -70,10 +67,31 @@ namespace GanymedE {
 		if (!pixels)
 		{
 			GE_CORE_ERROR("Failed to decode embedded image ({0} bytes)", size);
-			return nullptr;
+			return {};
 		}
 
-		return Upload(pixels, width, height);
+		return { std::unique_ptr<uint8_t, DecodedImage::PixelDeleter>(pixels),
+			(uint32_t)width, (uint32_t)height };
+	}
+
+	Ref<Texture2D> TextureImporter::Upload(const DecodedImage& image)
+	{
+		if (!image)
+			return nullptr;
+
+		Ref<Texture2D> texture = Texture2D::Create(image.Width, image.Height);
+		texture->SetData(image.Pixels.get(), image.Width * image.Height * 4);
+		return texture;
+	}
+
+	Ref<Texture2D> TextureImporter::LoadFromFile(const std::filesystem::path& fullPath, bool flipVertically)
+	{
+		return Upload(Decode(fullPath, flipVertically));
+	}
+
+	Ref<Texture2D> TextureImporter::LoadFromMemory(const uint8_t* bytes, size_t size, bool flipVertically)
+	{
+		return Upload(DecodeFromMemory(bytes, size, flipVertically));
 	}
 
 	Ref<Texture2D> TextureImporter::LoadMaterialMap(const std::filesystem::path& relativePath)

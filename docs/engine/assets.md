@@ -27,7 +27,7 @@ breaking a scene, as long as its sidecar moves with it.
 ## AssetManager
 
 [`AssetManager`](../../GanymedEngine/source/GanymedE/Assets/AssetManager.h) is a static facade over
-one derived index + per-type in-memory caches:
+one derived index plus a registry of per-type managers (see *Managers and caching*):
 
 | API | Behavior |
 |---|---|
@@ -35,8 +35,9 @@ one derived index + per-type in-memory caches:
 | `ScanAssets()` | Walk `assets/` and rebuild the index from the `.meta` sidecars found there, minting and writing one where a recognized asset has none. Called by `Init`; safe to call again to pick up files added outside the editor |
 | `ImportAsset(relativePath)` | "Ensure this file has a sidecar, and tell me its handle." Idempotent: an indexed path returns its handle. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
-| `GetAsset<T>(handle)` | Cached load. Specialized for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those |
+| `GetAsset<T>(handle)` | Cached load through the type’s manager. Available for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those, enforced by an `IsAssetType<T>` `static_assert` |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
+| `GetCacheStats()` | One `{TypeName, Resident, Retained}` row per registered manager, for the editor’s Stats panel |
 | `IsRegistryWritable()` | "This process may write into `assets/`" — one flag, one meaning, for sidecars and every other asset-file writer |
 
 `Init(false)` is for a **shipped game**: it must not write into its own install directory (under
@@ -207,8 +208,8 @@ its scene, reports the right entity count, and renders **nothing but the procedu
 mesh and the HDR environment silently absent. Only `ScriptEngine` complained, because it alone logged
 the unresolved handle.
 
-That asymmetry is fixed: the three `GetAsset<T>` loaders warn when a *valid* handle is not in the
-index, naming the handle and the expected type, and the message names the likely cause — a sidecar
+That asymmetry is fixed: `TypedAssetManager<T>::Load` warns when a *valid* handle is not in the
+index, naming the handle and the manager that wanted it — one place rather than one per loader, and the message names the likely cause — a sidecar
 that did not travel with its asset. It fires **once per handle** (`WarnedUnknownHandles`), because
 `RenderSystem` re-fetches assets by handle every frame per entity and an unguarded warning would
 arrive at frame rate — the same loud-but-not-broken posture `AnimationSystem` takes for an unknown
@@ -219,29 +220,110 @@ orphaned `foo.png.meta` is harmless (the scan never sees it, since it walks asse
 but it accumulates, and a "clean orphaned `.meta`" maintenance action is the cheap fix when it starts
 to matter.
 
-`GetAsset<T>`'s **primary template is defined**, not just declared: its body is a
-`static_assert(sizeof(T) == 0, ...)`, so an unsupported `T` is a compile error naming the supported
-types rather than an unresolved-external at link time. The three specializations are *declared* at
-namespace scope in the header — a specialization must be visible before any use that would
-otherwise implicitly instantiate the primary template. Adding an asset type therefore means: one
-declaration in the header, one definition in the `.cpp`, one `Loaded*` cache map.
+`GetAsset<T>` for an unsupported `T` is still a **compile error naming the supported types**, not
+an unresolved external at link time. It used to be a primary template whose body was
+`static_assert(sizeof(T) == 0, ...)`; forwarding to a manager registry would have regressed that to
+a runtime assert, so the check moved into an `IsAssetType<T>` trait that the registration list in
+[`AssetManager.h`](../../GanymedEngine/source/GanymedE/Assets/AssetManager.h) specializes. Asking
+for `GetAsset<int>` produces:
 
-Load paths:
-- **Mesh** — try `MeshCache` first; on miss, `MeshImporter::Load` then write the cache. Either way,
-  `MaterialSerializer::GenerateSidecars` runs afterwards (see *Materials*).
-- **Material** — `MaterialSerializer::Load` on the `.gmat`. Cached rather than path-resolved, and
-  the caching is load-bearing rather than a performance choice: instancing merges draws on
-  `Ref<Material>` *identity*, so two entities sharing one `.gmat` handle have to receive the same
-  `Ref` or every batch shatters.
-- **Environment** — `Environment::Create` (runs the IBL bake; see
-  [rendering.md](rendering.md#environment--ibl)).
-- **Texture2D** — `TextureImporter::LoadFromFile` against the asset root, unflipped.
-- Scene/Script/Audio/Prefab are registered types without a `GetAsset` path (scenes load via
-  `SceneSerializer`, prefabs via `PrefabSerializer`; scripts by path in `ScriptEngine`, since there
-  is no runtime object to cache — see [scripting.md](scripting.md)).
+```
+error C2338: static_assert failed: 'AssetManager::GetAsset<T> is only available for Mesh,
+Environment, Texture2D and Material. Script, Audio and Prefab are path-resolved by design -
+resolve them through GetMetadata (docs/engine/assets.md).'
+```
 
-Cache lookups on all four paths are plain `unordered_map` hits, deliberately: `RenderSystem`
-re-fetches by handle every frame for every entity.
+## Managers and caching
+
+Every managed type has a `TypedAssetManager<T>`
+([`AssetManagerRegistry.h`](../../GanymedEngine/source/GanymedE/Assets/AssetManagerRegistry.h))
+living in a flat slot array, and `GetAsset<T>` is a one-liner into it. This replaced four hardcoded
+`unordered_map<AssetHandle, Ref<T>>` members and four private `LoadX` functions inside
+`AssetManager.cpp` — adding a cached type used to mean editing that file in six places.
+
+Adding one now means exactly two lines, one file apart:
+
+```cpp
+// AssetManager.h, beside the forward declarations
+GE_ASSET_TYPE(Skeleton);
+
+// AssetManager.cpp, in RegisterManagers()
+AssetManagerRegistry::Register<Skeleton>("Skeleton", AssetType::Skeleton, &ParseSkeleton, &ApplySkeleton);
+```
+
+Nothing enforces that the two agree. A type declared but never registered asserts on first use; a
+type registered but not declared will not compile at the call site, which is the half that gets
+noticed. The shape is BlankEngine’s `IResourceManager` / `ResourceManager<T, Cache>` with its RTTR
+registration DSL removed — a reflected registry is not worth a reflection dependency at this scale,
+and `entt::meta` is not in the asset layer for the reasons in
+[`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) decision 14.
+
+### Type ids
+
+`AssetTypeIdOf<T>()` returns a dense `uint8_t` assigned from a counter on that type’s first use, so
+resolving a manager is an **array index, not a `std::type_index` hash** — `RenderSystem` re-fetches
+by handle per entity per frame and that lookup sits on the path. `MaxAssetManagers` is 16, sized for
+the four managed types and the eight `AssetType` values rather than for BlankEngine’s 64.
+
+The id depends on registration order and is therefore **not stable across builds**. It must never be
+persisted; `AssetType`, stored by name in a `.meta`, is the durable form. `RegisterManagers()` runs
+first in `Init` so the assignment falls out of registration order rather than out of whichever call
+site happened to run first.
+
+### Parse and Apply
+
+Each manager is registered with two function pointers rather than one loader, and the split is
+dictated by bgfx rather than by taste: **bgfx resource creation belongs to the thread that owns the
+context.** So `Parse` is pure CPU work — file IO, decode, deserialize, and nothing below it may
+reach a bgfx call — and `Apply` turns the intermediate into the live object on the main thread. The
+intermediate is an `AssetParseResult` subclass, polymorphic rather than a `std::any` so it frees
+itself if `Apply` never runs. Having the boundary in now means async loading later changes *where*
+`Parse` runs, not the shape of any manager.
+
+| Type | Parse | Apply |
+|---|---|---|
+| **Texture2D** | `TextureImporter::Decode` — stb decode to RGBA8, which is the whole CPU cost | `TextureImporter::Upload` — `Texture2D::Create` + `SetData` |
+| **Material** | `MaterialSerializer::ReadDesc` — `.gmat` YAML into a `MaterialDesc` | `MaterialSerializer::Build` — creates the `Material` and resolves its map paths through `LoadMaterialMap` |
+| **Mesh** | *none yet* | `MeshCache::TryLoad`, else `MeshImporter::Load` + `MeshCache::Write`; then `MaterialSerializer::GenerateSidecars` (see *Materials*) |
+| **Environment** | *none* | `Environment::Create` — runs the IBL bake, see [rendering.md](rendering.md#environment--ibl) |
+
+The two empty `Parse` stages are not the same kind of gap:
+
+- **Environment is correct as it stands.** The separable CPU part is one `stbi_loadf` of the
+  equirectangular HDR; everything after it is the bake — six cube faces plus prefilter mips rendered
+  through bgfx views — which can never leave the submit thread. Splitting would move a few percent
+  of the cost and cost `Environment` its filepath constructor.
+- **Mesh is deferred work, and it is the one that matters.** Both load paths construct a `Mesh`,
+  whose constructor calls `Build()` and creates bgfx vertex and index buffers, and both build the
+  mesh’s materials inline — which pulls textures. Splitting means threading a CPU-side mesh
+  description (vertices, indices, submeshes, material *descriptions*) through `MeshImporter.cpp` and
+  `MeshCache.cpp` and deferring `Mesh::Create` to Apply. The cgltf parse is the expensive thing that
+  has to leave the main thread, so async loading cannot skip this.
+
+`GenerateSidecars` now runs inside `ApplyMesh`, i.e. *before* the manager caches the mesh, where it
+used to run after the cache insert. Safe because it only ever reaches `ImportAsset`, never
+`GetAsset<Mesh>`: it writes files and registers handles, so nothing in it can re-enter the load.
+
+Scene, Script, Audio and Prefab have no manager at all — see *Path-resolved types* above.
+
+### The cache is weak, with a temporary owner
+
+Each manager caches `std::weak_ptr<T>`, so an asset stays resident exactly as long as something
+references it. That is the fix for "nothing is ever unloaded": the four strong maps this replaced
+had no eviction path but `Reload` and `Shutdown`, so opening a 200-asset scene and then switching
+scenes left every texture from the first one resident.
+
+**It does not evict yet, and the reason is worth stating rather than discovering.** Nothing outside
+the manager holds a reference: components store bare `AssetHandle`s, and every consumer drops its
+`Ref` at the end of the frame. A purely weak cache would therefore re-import a glTF *per entity per
+frame*. So each entry also holds a strong `Retained` pointer — a stand-in owner until a typed asset
+reference becomes the real one, at which point that member is deleted and the weak half starts doing
+its job. Until then the two counts in the editor’s Stats panel move together, and the `weak_ptr`
+expiry branch in `TypedAssetManager<T>::Load` is unreachable in practice.
+
+`AssetManager::GetCacheStats()` returns one `{TypeName, Resident, Retained}` row per registered
+manager; the editor renders it under **Stats → Asset Cache**. Resident is what the weak cache is
+tracking, retained is what the manager is keeping alive itself.
 
 ## Materials (`.gmat`)
 
@@ -297,7 +379,7 @@ A malformed or missing `.gmat` logs and returns null — the `SceneSerializer::D
 
 ### Sidecar generation and embedded-texture extraction
 
-Runs from `AssetManager::LoadMesh`, after either load path succeeds — that is the one point cold
+Runs from the mesh manager’s Apply stage, after either load path succeeds — that is the one point cold
 import and cache replay both pass through, so a cached mesh still gets its sidecars instead of
 needing its `.meshcache` deleted first. Gated on `IsRegistryWritable()`: the runtime never writes
 into `assets/`.
@@ -332,9 +414,16 @@ Everything is forced to 4 channels (bgfx has no 24-bit RGB8 format).
 
 | Entry point | Used by |
 |---|---|
-| `LoadFromFile(fullPath, flip=false)` | `AssetManager::LoadTexture` |
+| `Decode(fullPath, flip=false)` → `DecodedImage` | The texture manager’s Parse stage. CPU only |
+| `DecodeFromMemory(bytes, size, flip=true)` → `DecodedImage` | The CPU half of the embedded-image path |
+| `Upload(DecodedImage)` | The texture manager’s Apply stage. Main thread only |
+| `LoadFromFile(fullPath, flip=false)` | `Decode` + `Upload`, for callers that want both at once |
 | `LoadFromMemory(bytes, size, flip=true)` | glTF images embedded in a buffer view |
 | `LoadMaterialMap(relativePath)` | Material maps recorded as a path — the de-duplicating resolve |
+
+`DecodedImage` is the Parse/Apply seam: RGBA8, tightly packed, owning stb’s buffer through a
+`unique_ptr` with a custom deleter so `stb_image.h` stays out of the header. Move-only, because
+there is exactly one owner of the pixels at a time.
 
 `LoadMaterialMap` is where texture **de-duplication** happens. When the recorded path stays inside
 the asset root it goes through `ImportAsset` (idempotent) + `GetAsset<Texture2D>`, so two meshes
@@ -363,19 +452,28 @@ cache, since it has no asset identity and no reason to be evictable.
 
 ## Reload
 
-`Reload(handle)` is plain eviction, dispatched on the metadata type:
+`Reload(handle)` is plain eviction, dispatched on the metadata type. It finds the manager through
+`AssetManagerRegistry::Find(type)`, so the per-type `switch` over cache maps is gone — but the
+*ordering* around it is not:
 
 | Type | Action |
 |---|---|
-| Texture, Environment | Erase from the per-type map. |
-| Material | Two steps, in this order: (1) erase its three maps from `LoadedTextures` (same reason as the mesh branch); (2) erase from `LoadedMaterials`. |
-| StaticMesh | Three steps, **in this order**: (1) walk the cached mesh's materials' `Get*MapPath()`s, resolve each through `GetHandle`, erase those from `LoadedTextures`; (2) erase from `LoadedMeshes`; (3) `MeshCache::Invalidate` — delete the `.meshcache` file. |
-| Scene, Script, Audio | Nothing; these have no `GetAsset` cache. |
+| Texture, Environment | `manager->Evict(handle)`. |
+| Material | Two steps, in this order: (1) read the cached material with `Find(handle)` and evict its three map paths from the texture manager; (2) evict the material. |
+| StaticMesh | Three steps, **in this order**: (1) walk the cached mesh’s materials’ `Get*MapPath()`s, resolve each through `GetHandle`, evict those from the texture manager; (2) `MeshCache::Invalidate` — delete the `.meshcache` file; (3) evict the mesh. |
+| Scene, Script, Audio, Prefab | Nothing; `Find(type)` returns null, because they have no manager. |
 
-Step (1) is not optional: skip it and the reimported mesh silently rebinds the stale cached textures
-through `LoadMaterialMap`. Step (3) is what makes Reload mean *reimport now* rather than *recheck the
-timestamp* — the cache's timestamp check already catches source edits, but a referenced external
-texture can change while the `.gltf`'s own timestamp does not.
+Step (1) is not optional, and **weak caching did not make it unnecessary** — which is worth stating
+because it is the natural assumption. It is a rule about the *texture* cache, not about who owns the
+material: the reloaded material or mesh re-resolves its map paths through `LoadMaterialMap`, which is
+a `GetAsset<Texture2D>`, and a texture still cached would be handed straight back. The mesh step (2)
+is what makes Reload mean *reimport now* rather than *recheck the timestamp* — the cache’s timestamp
+check already catches source edits, but a referenced external texture can change while the `.gltf`’s
+own timestamp does not.
+
+`Evict` erases the whole cache entry, dropping the manager’s own reference. Anything still holding a
+`Ref` keeps the old object, unchanged, and the next `GetAsset` builds a *new* one beside it — which
+is exactly the contract the invariant below describes.
 
 **Why plain eviction is safe** — this is the invariant the asset layer relies on:
 
