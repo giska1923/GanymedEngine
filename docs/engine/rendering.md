@@ -465,11 +465,24 @@ invisible. Pick storage is a fixed array because bgfx writes the result memory a
 cross-cutting state:
 
 - `Init/Shutdown` — RenderCommand, Renderer2D, Renderer3D, PostProcess, and releasing `MeshShader`
-  while bgfx is alive.
+  and `Environment`'s shared bake resources while bgfx is alive.
 - **`IsGpuAlive()`** — lowered by `BgfxContext` *before* `bgfx::shutdown()`; every resource
   destructor checks it. This is the systemic fix for the "static outlives bgfx" crash class
   (function-local `static Ref<Shader>` etc.) — the guard makes it safe, but resources should still
   be owned and released explicitly (the guard turns a crash into a leak, and bgfx reports leaks).
+
+  **The rule that follows, and it is easy to miss:** every `Ref<>` a renderer's `static` data holds
+  must be cleared in that renderer's `Shutdown()`. `Renderer3D::Shutdown` clears twelve such members
+  and for a long time missed the thirteenth — `s_Data.ActiveEnvironment`, the environment the last
+  frame drew with. A static's destructor runs after `main()`, by which point `IsGpuAlive()` is false,
+  so `~Environment` took its early-out and bgfx reported `LEAK: TextureHandle 3` at shutdown (the env
+  cubemap, the irradiance map and the prefiltered map). Clearing it does not destroy anything early —
+  the scene still owns the environment through an `AssetRef` and dies during the LayerStack unwind,
+  which is inside the window's lifetime. It only stops a static from being the last owner.
+
+  Checking this is cheap: run a **Debug** build (Release emits no bgfx diagnostics at all), close it
+  normally, and look for `BGFX LEAK` on stdout. A killed process proves nothing, because shutdown
+  never runs.
 - `GetFrameNumber()` — fed by `BgfxContext` from `bgfx::frame()`; what async readback polls
   against.
 - `SetDebugStatsEnabled` — the F1 stats overlay.

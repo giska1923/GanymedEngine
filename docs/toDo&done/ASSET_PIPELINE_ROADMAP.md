@@ -1493,9 +1493,42 @@ first and the second environment load**.
 **A pre-existing leak, measured rather than assumed.** bgfx's Debug shutdown reports leaked texture
 handles when an `Environment` outlives `Renderer::Shutdown`: its destructor then sees
 `IsGpuAlive() == false` and returns without freeing. `HEAD` leaks **4** textures in that path; this
-change leaks **3**, because the LUT is no longer among the object's own handles. The remaining three
-(env cubemap, irradiance, prefilter) are the pre-existing problem and are **not fixed here** - the
-fix is scene teardown ordering, not the bake.
+change leaks **3**, because the LUT is no longer among the object's own handles. Fixed in the
+follow-up below.
+
+### Follow-up — the Environment shutdown leak (done)
+
+One line, and the interesting part is where it goes. I had guessed "scene teardown ordering"; it was
+not that.
+
+`Renderer3D::Shutdown()` releases twelve GPU-holding members of its file-scope `static s_Data` and
+missed the thirteenth: **`s_Data.ActiveEnvironment`**, the environment the last frame drew with.
+`ResetFrameState()` and `SubmitSkyLight()` both clear it, so it looked handled; neither runs at
+shutdown. A static is destroyed after `main()` returns - after `~BgfxContext` has lowered
+`IsGpuAlive` and called `bgfx::shutdown` - so `~Environment` took its is-alive early-out and its
+three cubemaps were never released. This is precisely the trap `MeshShader.h` documents, one field
+along.
+
+Clearing it destroys nothing early: the scene still owns the environment through an `AssetRef` and
+dies during the LayerStack unwind, which is inside the window's lifetime. It only stops a static
+from being the last owner.
+
+| Debug editor, two environments created, closed normally | `BGFX LEAK` |
+| --- | --- |
+| `HEAD` | 4 textures |
+| After the shared-LUT follow-up | 3 textures |
+| **After this fix** | **none** |
+
+**Verification.** Debug, Release and Dist build clean. The leak-check run reaches `Shutdown
+complete.` with both environments baked and reports no leaked handles at all - a clean shutdown
+rather than an early exit, which is the thing to confirm when a check passes by producing no
+output. Release scene regression unchanged: 40 meshes / 32 culled / 5 instanced draws / 7 draw
+calls, 48 reloads, 0 recompiles, 0 errors.
+
+Two notes on method, because both cost time. **Release emits no bgfx diagnostics**, so a leak check
+only exists in Debug. And **a process killed by a timeout proves nothing** - shutdown never runs, so
+there is nothing to report. The runtime shares `Renderer3D::Shutdown` and therefore the fix, but it
+has no self-close hook and was not separately leak-tested for that reason.
 
 ---
 
