@@ -1,5 +1,6 @@
 #include "EditorLayer.h"
 #include "AssetDragDrop.h"
+#include "EditorInspector.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -41,6 +42,10 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		AssetManager::Init();
+
+		// After Reflection::Init (Application's constructor), because a drawer is keyed on a
+		// meta_type that has to exist first.
+		EditorUI::InitPropertyDrawers();
 
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 		m_IconPlay = Texture2D::Create("resources/icons/PlayButton.png");

@@ -1126,8 +1126,11 @@ wants work to run on a worker has to poll `IsReady()`. Written up in
 | Runtime boots | Compiles its mesh on a cold tree, scene loads, 10 entities, primary camera found, zero errors |
 
 **Left as adjacent work.** `Environment`'s bake is the remaining synchronous hitch and wants an
-async-friendly IBL path, not an asset-layer change. The handoff window's four frames is a constant
-that would want revisiting if anything ever loads assets outside a frame loop.
+async-friendly IBL path, not an asset-layer change. *(Done later - see
+[the IBL follow-up](#follow-up--the-environment-ibl-bake-done). The guess in this sentence was half
+wrong: half the cost was the decode, which is an asset-layer change after all.)* The handoff
+window's four frames is a constant that would want revisiting if anything ever loads assets outside
+a frame loop.
 
 ---
 

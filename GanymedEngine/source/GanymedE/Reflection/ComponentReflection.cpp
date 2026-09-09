@@ -363,9 +363,9 @@ namespace GanymedE::Reflection {
 			GE_REFLECT_COMPONENT(BoxColliderComponent)
 				.custom<Attr>(Attr{}.Label("Box Collider"))
 				.data<&BoxColliderComponent::HalfExtents>("HalfExtents")
-					.custom<Attr>(Attr{}.Label("Half Extents").Speed(0.05f))
+					.custom<Attr>(Attr{}.Label("Half Extents").Speed(0.1f).Reset(0.5f))
 				.data<&BoxColliderComponent::Offset>("Offset")
-					.custom<Attr>(Attr{}.Speed(0.05f))
+					.custom<Attr>(Attr{}.Speed(0.1f))
 				.data<&BoxColliderComponent::Material>("Material")
 					.traits(Trait::Flatten);
 
@@ -374,7 +374,7 @@ namespace GanymedE::Reflection {
 				.data<&SphereColliderComponent::Radius>("Radius")
 					.custom<Attr>(Attr{}.Range(0.001f, 1000.0f).Speed(0.05f))
 				.data<&SphereColliderComponent::Offset>("Offset")
-					.custom<Attr>(Attr{}.Speed(0.05f))
+					.custom<Attr>(Attr{}.Speed(0.1f))
 				.data<&SphereColliderComponent::Material>("Material")
 					.traits(Trait::Flatten);
 
@@ -385,7 +385,7 @@ namespace GanymedE::Reflection {
 				.data<&CapsuleColliderComponent::HalfHeight>("HalfHeight")
 					.custom<Attr>(Attr{}.Label("Half Height").Range(0.001f, 1000.0f).Speed(0.05f))
 				.data<&CapsuleColliderComponent::Offset>("Offset")
-					.custom<Attr>(Attr{}.Speed(0.05f))
+					.custom<Attr>(Attr{}.Speed(0.1f))
 				.data<&CapsuleColliderComponent::Material>("Material")
 					.traits(Trait::Flatten);
 		}

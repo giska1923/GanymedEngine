@@ -1,5 +1,6 @@
 #include "SceneHierarchyPanel.h"
 #include "../AssetDragDrop.h"
+#include "../EditorInspector.h"
 #include "../EditorWidgets.h"
 
 #include <imgui/imgui.h>
@@ -230,89 +231,6 @@ namespace GanymedE {
 			m_EntityToDelete = entity.GetUUID();
 	}
 
-	// Returns true when a widget in this row actually edited `values` - the ground truth the
-	// undo commit boundary is built on. It used to return void, which meant the caller had to
-	// diff the value instead, and a value diff cannot tell a real edit from a float that came
-	// back changed through a degrees/radians round-trip.
-	static bool DrawVec3Control(const std::string& label, glm::vec3& values, float resetValue = 0.0f, float columnWidth = 100.0f)
-	{
-		bool edited = false;
-		ImGuiIO& io = ImGui::GetIO();
-		auto boldFont = io.Fonts->Fonts[0];
-
-		ImGui::PushID(label.c_str());
-
-		ImGui::Columns(2);
-		ImGui::SetColumnWidth(0, columnWidth);
-		ImGui::Text(label.c_str());
-		ImGui::NextColumn();
-
-		ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{ 0, 0 });
-
-		float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
-		ImVec2 buttonSize = { lineHeight + 3.0f, lineHeight };
-
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.9f, 0.2f, 0.2f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
-		ImGui::PushFont(boldFont);
-		if (ImGui::Button("X", buttonSize))
-		{
-			values.x = resetValue;
-			edited = true;
-		}
-
-		ImGui::PopFont();
-		ImGui::PopStyleColor(3);
-
-		ImGui::SameLine();
-		edited |= ImGui::DragFloat("##X", &values.x, 0.1f, 0.0f, 0.0f, "%.2f");
-		ImGui::PopItemWidth();
-		ImGui::SameLine();
-
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.3f, 0.8f, 0.3f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
-		ImGui::PushFont(boldFont);
-		if (ImGui::Button("Y", buttonSize))
-		{
-			values.y = resetValue;
-			edited = true;
-		}
-
-		ImGui::PopFont();
-		ImGui::PopStyleColor(3);
-
-		ImGui::SameLine();
-		edited |= ImGui::DragFloat("##Y", &values.y, 0.1f, 0.0f, 0.0f, "%.2f");
-		ImGui::PopItemWidth();
-		ImGui::SameLine();
-
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.2f, 0.35f, 0.9f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
-		ImGui::PushFont(boldFont);
-		if (ImGui::Button("Z", buttonSize))
-		{
-			values.z = resetValue;
-			edited = true;
-		}
-
-		ImGui::PopFont();
-		ImGui::PopStyleColor(3);
-
-		ImGui::SameLine();
-		edited |= ImGui::DragFloat("##Z", &values.z, 0.1f, 0.0f, 0.0f, "%.2f");
-		ImGui::PopItemWidth();
-
-		ImGui::PopStyleVar();
-
-		ImGui::Columns(1);
-
-		ImGui::PopID();
-		return edited;
-	}
 
 	// The tunables a script declares, each row showing this entity's value.
 	//
@@ -1124,7 +1042,7 @@ namespace GanymedE {
 
 		DrawComponent<TransformComponent>("Transform", entity, [&](auto& component)
 		{
-			bool edited = DrawVec3Control("Translation", component.Translation);
+			bool edited = EditorUI::DrawVec3Control("Translation", component.Translation);
 
 			// Rotation is stored in radians and shown in degrees, and the round-trip is not
 			// exact. Writing back unconditionally therefore changed the stored value on frames
@@ -1132,13 +1050,13 @@ namespace GanymedE {
 			// scheme it mints a phantom undo command and marks the scene dirty on selection.
 			// Write back only when the row says it was edited.
 			glm::vec3 rotation = glm::degrees(component.Rotation);
-			if (DrawVec3Control("Rotation", rotation))
+			if (EditorUI::DrawVec3Control("Rotation", rotation))
 			{
 				component.Rotation = glm::radians(rotation);
 				edited = true;
 			}
 
-			edited |= DrawVec3Control("Scale", component.Scale, 1.0f);
+			edited |= EditorUI::DrawVec3Control("Scale", component.Scale, 1.0f);
 
 			// Editing the component directly is invisible to change tracking, so the cached
 			// world transform would never be refreshed.
@@ -1245,9 +1163,18 @@ namespace GanymedE {
 			return edited;
 		});
 
+		// ---- Reflected sections -------------------------------------------------------------
+		//
+		// From here down, a section whose body is one DrawReflectedComponent call is drawn
+		// entirely from ComponentReflection.cpp - field order, labels, ranges, drag speeds,
+		// colour-vs-position widget choice, enum names and notes all come from the registration.
+		// Adding a field to one of these components is one `.data<>` line, not an edit here.
+		//
+		// The sections that stay hand-written are not leftovers; each has its reason stated at
+		// its own site, and R1 anticipated most of them in the registration comments.
 		DrawComponent<SpriteRendererComponent>("Sprite Renderer", entity, [](auto& component)
 		{
-			return ImGui::ColorEdit4("Color", glm::value_ptr(component.Color));
+			return EditorUI::DrawReflectedComponent(component);
 		});
 
 		DrawComponent<StaticMeshComponent>("Static Mesh", entity, [](auto& component)
@@ -1458,20 +1385,12 @@ namespace GanymedE {
 
 		DrawComponent<DirectionalLightComponent>("Directional Light", entity, [](auto& component)
 		{
-			bool edited = ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
-			edited |= ImGui::DragFloat("Intensity", &component.Intensity, 0.05f, 0.0f, 100.0f);
-			edited |= ImGui::Checkbox("Cast Shadows", &component.CastShadows);
-			ImGui::TextDisabled("Direction = entity -Z (rotate to aim)");
-			return edited;
+			return EditorUI::DrawReflectedComponent(component);
 		});
 
 		DrawComponent<PointLightComponent>("Point Light", entity, [](auto& component)
 		{
-			bool edited = ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
-			edited |= ImGui::DragFloat("Intensity", &component.Intensity, 0.05f, 0.0f, 1000.0f);
-			edited |= ImGui::DragFloat("Radius", &component.Radius, 0.1f, 0.0f, 1000.0f);
-			edited |= ImGui::DragFloat("Falloff", &component.Falloff, 0.05f, 0.01f, 16.0f);
-			return edited;
+			return EditorUI::DrawReflectedComponent(component);
 		});
 
 		DrawComponent<SpotLightComponent>("Spot Light", entity, [](auto& component)
@@ -1587,9 +1506,7 @@ namespace GanymedE {
 
 		DrawComponent<AudioListenerComponent>("Audio Listener", entity, [](auto& component)
 		{
-			const bool edited = ImGui::Checkbox("Primary", &component.Primary);
-			ImGui::TextDisabled("Falls back to the primary camera when absent");
-			return edited;
+			return EditorUI::DrawReflectedComponent(component);
 		});
 
 		DrawComponent<ParticleEmitterComponent>("Particle Emitter", entity, [entity](auto& component)
@@ -1741,52 +1658,28 @@ namespace GanymedE {
 
 		DrawComponent<RigidBodyComponent>("Rigid Body", entity, [](auto& component)
 		{
-			bool edited = false;
-			const char* typeStrings[] = { "Static", "Dynamic", "Kinematic" };
-			int type = (int)component.Type;
-			if (ImGui::Combo("Type", &type, typeStrings, 3))
-			{
-				component.Type = (RigidBodyType)type;
-				edited = true;
-			}
-
-			edited |= ImGui::DragFloat("Mass", &component.Mass, 0.05f, 0.001f, 100000.0f);
-			edited |= ImGui::DragFloat("Linear Damping", &component.LinearDamping, 0.01f, 0.0f, 10.0f);
-			edited |= ImGui::DragFloat("Angular Damping", &component.AngularDamping, 0.01f, 0.0f, 10.0f);
-			edited |= ImGui::Checkbox("Use Gravity", &component.UseGravity);
-			return edited;
+			// The Type combo's entries come from RigidBodyType's own registration, so adding a
+			// body type is one line beside the enum instead of a parallel string array here.
+			return EditorUI::DrawReflectedComponent(component);
 		});
 
-		auto drawPhysicsMaterial = [](PhysicsMaterial& mat)
+		// PhysicsMaterial is drawn by Trait::Flatten, which puts Friction and Restitution beside
+		// the collider's own fields rather than under a sub-header - the same shape the flag
+		// already forces on SceneSerializer. The `drawPhysicsMaterial` lambda these three shared
+		// is gone with them.
+		DrawComponent<BoxColliderComponent>("Box Collider", entity, [](auto& component)
 		{
-			bool edited = ImGui::DragFloat("Friction", &mat.Friction, 0.01f, 0.0f, 10.0f);
-			edited |= ImGui::DragFloat("Restitution", &mat.Restitution, 0.01f, 0.0f, 1.0f);
-			return edited;
-		};
-
-		DrawComponent<BoxColliderComponent>("Box Collider", entity, [&](auto& component)
-		{
-			bool edited = DrawVec3Control("Half Extents", component.HalfExtents, 0.5f);
-			edited |= DrawVec3Control("Offset", component.Offset);
-			edited |= drawPhysicsMaterial(component.Material);
-			return edited;
+			return EditorUI::DrawReflectedComponent(component);
 		});
 
-		DrawComponent<SphereColliderComponent>("Sphere Collider", entity, [&](auto& component)
+		DrawComponent<SphereColliderComponent>("Sphere Collider", entity, [](auto& component)
 		{
-			bool edited = ImGui::DragFloat("Radius", &component.Radius, 0.05f, 0.001f, 1000.0f);
-			edited |= DrawVec3Control("Offset", component.Offset);
-			edited |= drawPhysicsMaterial(component.Material);
-			return edited;
+			return EditorUI::DrawReflectedComponent(component);
 		});
 
-		DrawComponent<CapsuleColliderComponent>("Capsule Collider", entity, [&](auto& component)
+		DrawComponent<CapsuleColliderComponent>("Capsule Collider", entity, [](auto& component)
 		{
-			bool edited = ImGui::DragFloat("Radius", &component.Radius, 0.05f, 0.001f, 1000.0f);
-			edited |= ImGui::DragFloat("Half Height", &component.HalfHeight, 0.05f, 0.001f, 1000.0f);
-			edited |= DrawVec3Control("Offset", component.Offset);
-			edited |= drawPhysicsMaterial(component.Material);
-			return edited;
+			return EditorUI::DrawReflectedComponent(component);
 		});
 	}
 }

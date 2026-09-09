@@ -461,9 +461,27 @@ judgement call per component: library container member ⇒ no sentinel.
 
 ### Current state
 
-**There is no consumer yet.** Registration and validation exist; the serializer, the inspector and the
-Lua bindings still hand-list every field, and nothing behaves differently. Collapsing them is R2–R4 of
-[REFLECTION_ROADMAP.md](../toDo&done/REFLECTION_ROADMAP.md).
+**The inspector is the first consumer.** Eight of the editor's twenty component sections are now drawn
+from this registration rather than from a hand-written lambda — see
+[editor.md § The generic (reflected) inspector](../editor/editor.md#the-generic-reflected-inspector).
+The serializer and the Lua bindings still hand-list every field; collapsing the serializer is R3, and
+the bindings are deliberately out of scope.
+
+Two facts that consumer established, both worth knowing before writing another one:
+
+- **`meta_type::data()` iterates in registration order.** Verified rather than assumed — the
+  inspector's field order is user-visible, and a `dense_map` that happened to iterate by hash would
+  have scrambled every converted section. Registration order is therefore a real contract of
+  `ComponentReflection.cpp`, not just tidiness.
+- **`meta_data::get` may hand back a copy or a reference depending on entt's policy**, so every
+  drawer reads into a concrete local, edits that, and writes back with `set`. Poking through the
+  `meta_any` would work by accident and break on a policy change.
+
+R2 also added `Attr::Reset` to the vocabulary: the value the X/Y/Z widget's coloured buttons restore.
+It is not derivable and no other attribute can carry it, and without it the collider sections could
+not go through the generic drawer without changing what their reset buttons do. One registered field
+uses it today (`BoxColliderComponent::HalfExtents`), which is the same "forced by a specific measured
+fact" bar every other attribute had to clear.
 
 ## Serialization
 

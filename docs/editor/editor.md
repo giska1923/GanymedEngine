@@ -282,8 +282,49 @@ report their edit and commit in the same frame. A pending edit no frame of which
 is dropped, which is what makes a click-without-drag and an opened-then-closed combo free. If the
 section stops being drawn mid-gesture, an end-of-frame flush commits what was recorded.
 
+### The generic (reflected) inspector
+
+Most sections no longer have a hand-written body. `EditorUI::DrawReflectedComponent(component)` in
+[`EditorInspector.h`](../../GanymedEditor/source/EditorInspector.h) draws a component from what
+`entt::meta` knows about it — field order, labels, ranges, drag speeds, the colour-vs-position widget
+choice, enum entries and notes all come from
+[`ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp).
+Adding a field to a converted component is one `.data<>` line in the registration, not an edit here.
+
+**It does not touch the undo protocol, and that is the point.** REFLECTION_ROADMAP R2 expected the
+generic drawer to "own `ActiveId` across a drag exactly as the hand-written path does". It does not
+have to: the commit boundary lives in `DrawComponent<T>`, which wraps the *section*, so a generic
+body only has to keep the section contract above — mutate on a reported edit, return true when it
+does. Every drawer does, so a converted section keeps one-command-per-gesture with **zero** change
+to `EditorUndo`.
+
+Dispatch is a `meta_type`-keyed map of `PropertyDrawer` function pointers, editor-side. It has to be
+editor-side: `.custom<>` holds exactly one payload per meta object, so a second registration pass
+from the editor would *overwrite* the engine's attributes rather than add to them. Defaults cover
+`float`, `bool`, `int32`/`uint32`, `std::string`, `glm::vec2/3/4`, every registered enum, and
+`AssetRef<T>`; `RegisterPropertyDrawer` overrides one for a type. A field whose type has no drawer is
+skipped and named once in the log — a missing drawer should be loud, not invisible.
+
+Trait handling: `Hidden` and `Custom` are skipped, `ReadOnly` draws disabled (and never reports an
+edit), `Color` selects `ColorEdit` over the X/Y/Z row, `Radians` converts to degrees for display, and
+`Flatten` draws a nested struct's fields as siblings — the shape `SceneSerializer` already forces for
+a collider's `PhysicsMaterial`.
+
+**Converted:** Sprite Renderer, Directional Light, Point Light, Audio Listener, Rigid Body, and the
+three colliders. Verified by screenshot: the Properties panel is **pixel-identical** to the
+hand-written version for all seven, with the entity carrying every one of them.
+
+**Still hand-written, each for a stated reason at its own site:** Transform (degrees round-trip plus
+a `MarkChanged` hook), Prefab Instance (draws its source and returns false), Camera (the projection
+type gates which fields exist), Static Mesh (material-override list), Animator, Script (schema comes
+from Lua, not from C++), Spot Light (clamps outer ≥ inner — cross-field), Sky Light (an assigned
+environment makes two colour fields unreachable), Audio Source, Particle Emitter (sections, curves
+and gradients).
+
 **Custom canvas widgets** live in [`EditorWidgets.cpp`](../../GanymedEditor/source/EditorWidgets.cpp)
-(`CurveEditor`, `GradientEditor`) and are the first house-drawn controls. They participate in that
+(`CurveEditor`, `GradientEditor`, and `DrawVec3Control`, which moved there from the panel in R2 so
+the reflected vec3 drawer produces the same widget the hand-written sections do) and are the first
+house-drawn controls. They participate in that
 protocol only if they own `ActiveId` for the whole gesture. The rule, and the pattern for any
 future custom widget: **one `InvisibleButton` spans the canvas**. A held InvisibleButton owns
 `ActiveId` until release (verified in the vendored ImGui 1.91.9b). Hit-testing against keys

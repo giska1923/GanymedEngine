@@ -337,3 +337,77 @@ Verified: x64 Debug builds clean (engine and full solution, 0 warnings), the edi
 negative-tested by deliberately marking `AnimatorComponent::Speed` as `Color` with a texture asset
 slot — both violations were reported and the assert fired; the injection was then reverted and the
 clean run repeated. Two source files added, so premake regeneration was required.
+
+---
+
+## R2 — executed (2026-09-10)
+
+Landed: [`EditorInspector.h/.cpp`](../../GanymedEditor/source/EditorInspector.h) - a
+`meta_type`-keyed `PropertyDrawer` registry, default drawers, and `DrawReflectedComponent<T>`.
+Eight of the panel's twenty sections converted. Two source files added, so premake regeneration was
+required. Written up in
+[editor.md](../editor/editor.md#the-generic-reflected-inspector) and
+[scene.md](../engine/scene.md#current-state).
+
+**The phase's headline risk did not exist.** The plan said "the generic drawer has to own `ActiveId`
+across a drag exactly as the hand-written path does", and called the undo protocol "the real
+integration risk". It is not: the commit boundary lives in `SceneHierarchyPanel::DrawComponent<T>`,
+which wraps the whole *section* - it copies the component, reads `GetActiveID()` either side of the
+body, and hands both to `TrackCommitBoundary<T>`. The body's entire obligation is the house rule
+already written on that boundary: mutate only on a reported edit, return true when it does. Every
+drawer obeys it, so **`EditorUndo` was not touched at all** and one-command-per-gesture survives by
+construction rather than by re-implementation.
+
+**Two entt facts established by measuring, not by reading.**
+
+- **`meta_type::data()` iterates in registration order.** Checked first, because field order is
+  user-visible and a hash-ordered container would have scrambled every converted section and forced
+  an ordering attribute. It does not. Registration order in `ComponentReflection.cpp` is now a real
+  contract.
+- **`meta_data::get` may return a copy or a reference depending on policy**, so every drawer reads
+  into a concrete local, edits that, and writes back with `set`. Editing through the `meta_any`
+  would work by accident today and break on a policy change.
+
+**Two gaps the conversion exposed, both fixed rather than worked around.**
+
+- `BoxColliderComponent::HalfExtents` is drawn with `resetValue = 0.5`, which no attribute could
+  express. Added `Attr::Reset`. One field uses it, which is the same bar every other attribute in
+  the vocabulary had to clear.
+- **`Speed` was inert on every vec3 field.** `DrawVec3Control` hardcoded `0.1f`, so the
+  `.Speed(0.05f)` registered on the collider offsets did nothing. Threaded the speed through the
+  widget and corrected those registrations to `0.1f` - the value that actually ships. Declaring an
+  attribute nothing reads is worse than not declaring it, and this was only visible because
+  something finally tried to consume it.
+
+`DrawVec3Control` moved from a file-static in the panel to `EditorWidgets`, so the reflected drawer
+produces the same widget the hand-written sections do rather than a `DragFloat3` that looks nothing
+like it.
+
+**Converted:** Sprite Renderer, Directional Light, Point Light, Audio Listener, Rigid Body, Box /
+Sphere / Capsule Collider. Between them they exercise colours, ranged floats, bools, a registered
+enum, type-level notes, the X/Y/Z widget and a `Flatten`ed nested struct.
+
+**Still hand-written**, each for a reason stated at its own site: Transform, Prefab Instance, Camera,
+Static Mesh, Animator, Script, Spot Light, Sky Light, Audio Source, Particle Emitter. R1's
+registration comments had already predicted the Spot Light and Sky Light cases.
+
+**Verification.**
+
+| Check | Result |
+| --- | --- |
+| Looks identical | An entity carrying all seven convertible components, inspector open, backbuffer screenshot against `HEAD`: the Properties panel is **pixel-identical**. The only differing pixels in the frame are the Stats panel's own live counters and a content-browser icon |
+| No phantom undo entries | Inspector open on those seven sections, ~2 s idle, no input: `UndoDepth` stays **0**. A drawer that reported `edited` every frame would push one command per frame, which is the failure mode worse than no undo |
+| Every field has a drawer | No `no property drawer` warnings for any converted component |
+| Builds | Debug and Release clean, 0 errors. Editor boots with `Reflection initialised: 32 types, 119 members` / `validation passed`; runtime boots with 0 errors, 0 warnings |
+
+**Not done, deliberately.** A scripted drag to prove one-gesture-one-command end to end: driving
+ImGui input programmatically is a test harness this editor does not have, and the property is
+already guaranteed by the boundary being untouched. The idle-`UndoDepth` check covers the failure
+mode a generic drawer could actually introduce.
+
+**Left as adjacent work.** `Attr::Section` (the particle emitter's grouping) is unread by the
+generic path, because the only component using it stays hand-written - it will matter the moment
+anything else groups fields. The R1 note's suggestion to promote reflection to its own
+`docs/engine/reflection.md` was **not** taken: the drawer registry is editor-side and belongs in
+`editor.md`, the registration stays in `scene.md`, and neither is yet large enough on its own. Worth
+revisiting when R3 puts the serializer contract in the same place.

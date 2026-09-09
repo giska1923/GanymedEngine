@@ -123,6 +123,16 @@ namespace GanymedE::Reflection {
 		// (0.01 for damping, 0.1 for a radius, 0.05 for an intensity).
 		float DragSpeed = 0.0f;
 
+		// What the X/Y/Z row's coloured reset buttons set the component to. Zero for a position
+		// or an offset, which is why it defaults there; a box collider's half-extents reset to
+		// 0.5 and a scale to 1. Added in R2 because it is not derivable and not expressible any
+		// other way - the widget takes it as an argument and the type cannot supply it.
+		//
+		// Used by exactly one registered field today (BoxColliderComponent::HalfExtents). It
+		// earns the slot anyway: without it the collider sections cannot go through the generic
+		// drawer without changing what their reset buttons do.
+		float ResetValue = 0.0f;
+
 		// What an AssetHandle field accepts. AssetHandle is a plain UUID alias, identical to the
 		// type of RelationshipComponent::Parent, so the TYPE cannot express this - which is
 		// exactly why the two-tier vocabulary exists.
@@ -133,6 +143,7 @@ namespace GanymedE::Reflection {
 		Attr& Tip(const char* text) { Note = text; return *this; }
 		Attr& Range(float lo, float hi) { Min = lo; Max = hi; HasRange = true; return *this; }
 		Attr& Speed(float step) { DragSpeed = step; return *this; }
+		Attr& Reset(float value) { ResetValue = value; return *this; }
 		Attr& Asset(AssetType type) { Slot = type; return *this; }
 	};
 
