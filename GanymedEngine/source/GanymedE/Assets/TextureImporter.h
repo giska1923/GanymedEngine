@@ -33,9 +33,13 @@ namespace GanymedE {
 		explicit operator bool() const { return Pixels != nullptr; }
 	};
 
-	// One decode path for every asset-layer texture load. stb's flip flag is global
-	// state, so both entry points set it explicitly immediately before decoding -
-	// no call site depends on what a previous load left behind.
+	// One decode path for every asset-layer texture load.
+	//
+	// **Nothing in the engine writes stb's flip flag.** It is a process-wide global in the
+	// vendored copy (no STBI_THREAD_LOCAL), and decoding happens on worker threads, so setting
+	// it would be a data race between a texture compile and a mesh's embedded image - producing
+	// an occasionally upside-down texture. `flipVertically` is honoured by flipping the decoded
+	// buffer instead, which is thread-local by construction.
 	//
 	// Editor chrome (icons, the checkerboard) deliberately stays on the
 	// Texture2D(path) constructor: those live outside the asset cache and are

@@ -289,7 +289,7 @@ itself if `Apply` never runs. Having the boundary in now means async loading lat
 | **Texture2D** | `CompiledCache::Open` — the compiled DDS, block-compressed by `TextureCompiler` if stale | `Texture2D::CreateFromContainer` |
 | **Material** | `MaterialSerializer::ReadDesc` — `.gmat` YAML into a `MaterialDesc` | `MaterialSerializer::Build` — creates the `Material` and resolves its map paths through `LoadMaterialMap` |
 | **Mesh** | `CompiledCache::Open` then `MeshCompiler::Read` — the compiled blob, built by `MeshCompiler` if stale, deserialized into a `MeshSource` — then `DecodeEmbeddedMaps` | `BuildMesh`; then `MaterialSerializer::GenerateSidecars` (see *Materials*) |
-| **Environment** | *none* | `Environment::Create` — runs the IBL bake, see [rendering.md](rendering.md#environment--ibl) |
+| **Environment** | `Environment::Load` — `stbi_loadf` of the equirectangular HDR | `Environment::Create` — uploads it and submits the IBL bake, see [rendering.md](rendering.md#environment--ibl) |
 
 The two empty `Parse` stages are not the same kind of gap:
 
@@ -500,8 +500,7 @@ rejected before the cause was found: it would have recovered about 10 ms of the 
 while the floor stayed exactly where it was. In Release a typical apply is ~1.5 ms, so the 4 ms
 budget admits two or three of them.
 
-`WaitFor` is deliberately **not** budgeted: it means "I cannot proceed without this". Neither is
-`Environment`, which has no Parse stage and applies inline.
+`WaitFor` is deliberately **not** budgeted: it means "I cannot proceed without this".
 
 ### Embedded textures are decoded during Parse
 
@@ -636,12 +635,29 @@ tolerates a null asset for a frame or two instead. Keep the list this short.
 
 ### What is still synchronous
 
-- **Environment.** It has no Parse stage, so it applies inline and its IBL bake still hitches. That
-  is not an omission: the bake is six cube faces plus prefilter mips rendered through bgfx views,
-  which cannot leave the submit thread, and the only part that could — one `stbi_loadf` — is a few
-  percent of it.
-- **Everything inside Apply.** Creating bgfx buffers and textures is main-thread work by
-  construction. What moved off is file IO, decode, deserialization and compilation.
+**Everything inside Apply**, and only that. Creating bgfx buffers and textures is main-thread work by
+construction. What moved off is file IO, decode, deserialization and compilation.
+
+`Environment` was the last holdout and is no longer one. The note that used to sit here said its
+separable CPU part was "a few percent" of an environment load — **that was wrong, and measuring it is
+what closed the gap.** Release, 1K panorama:
+
+| | Before | Now |
+|---|---|---|
+| `stbi_loadf` of the panorama | 21–29 ms, main thread | 16–25 ms, **worker** (`Environment::Load`) |
+| Two forced `bgfx::frame()` calls | 24–26 ms, main thread | **gone** |
+| Upload + bake submission | ~4 ms, main thread | ~4 ms first load, **2.2–3.3 ms** after |
+| **Total on the main thread** | **54–62 ms** | **6.3 ms** first load, **2.2–3.3 ms** after |
+
+The decode was 45% of it and the forced frames were another 45%; the bake's own GPU submission — the
+part that genuinely cannot move — was never more than about 4 ms, and the bake programs and BRDF LUT
+are now shared across environments rather than rebuilt per load. See
+[rendering.md](rendering.md#the-ibl-bake-is-a-prepass) for why the forced frames existed and what
+replaced them.
+
+An environment now loads like everything else: **null for one frame**, during which a sky light falls
+back to the procedural sky, then resident. Verified frame by frame — frame 0 renders the procedural
+gradient, frame 1 renders the baked skybox, and frames 2–7 are pixel-identical to frame 1.
 
 ## Hot reload
 

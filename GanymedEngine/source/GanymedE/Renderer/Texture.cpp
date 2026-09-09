@@ -33,7 +33,8 @@ namespace GanymedE {
 		// bgfx's texture origin is top-left on every backend it normalises, so
 		// unlike the GL path this must NOT flip. Getting this wrong shows up as
 		// vertically mirrored sprites.
-		stbi_set_flip_vertically_on_load(0);
+		// Nothing in the engine writes stb's flip global any more - it is shared state and
+		// decoding happens on workers. See TextureImporter.h.
 
 		stbi_uc* data = nullptr;
 		{

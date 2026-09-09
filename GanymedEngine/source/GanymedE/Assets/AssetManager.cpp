@@ -479,14 +479,32 @@ namespace GanymedE {
 
 		// ---- Environment --------------------------------------------------------------
 		//
-		// No Parse stage either, but unlike Mesh that is the right answer rather than deferred
-		// work. The separable CPU part is one `stbi_loadf` of the equirectangular HDR;
-		// everything after it is the IBL bake - six cube faces plus prefilter mips rendered
-		// through bgfx views - which can never leave the submit thread. Splitting would move a
-		// few percent of the cost and take `Environment`'s filepath constructor with it.
-		Ref<Environment> ApplyEnvironment(const AssetMetadata& metadata, Scope<AssetParseResult>)
+		// The claim that used to sit here - that the separable CPU part is "a few percent" of an
+		// environment load - was wrong, and measuring it is what closed the last synchronous
+		// hitch in the asset layer. Release, 1K panorama: `stbi_loadf` **25 ms**, the bake's own
+		// submission 2 ms. The decode was 45% of it, and it is exactly the kind of work Parse
+		// exists for.
+		struct EnvironmentParse : AssetParseResult
 		{
-			return Environment::Create((GetAssetRoot() / metadata.FilePath).string());
+			EquirectImage Image;
+		};
+
+		Scope<AssetParseResult> ParseEnvironment(const AssetMetadata& metadata)
+		{
+			auto parsed = CreateScope<EnvironmentParse>();
+			parsed->Image = Environment::Load((GetAssetRoot() / metadata.FilePath).string());
+			if (!parsed->Image.IsValid())
+				return nullptr;
+
+			return parsed;
+		}
+
+		// What is left here is the part that genuinely cannot move: uploading the panorama and
+		// submitting the bake, both bgfx calls on the thread that owns the context.
+		Ref<Environment> ApplyEnvironment(const AssetMetadata& metadata, Scope<AssetParseResult> parsed)
+		{
+			return Environment::Create((GetAssetRoot() / metadata.FilePath).string(),
+				std::move(static_cast<EnvironmentParse&>(*parsed).Image));
 		}
 
 		// ---- Texture ------------------------------------------------------------------
@@ -537,11 +555,7 @@ namespace GanymedE {
 		// compile here.
 		AssetManagerRegistry::Register<Mesh>("Mesh", &ParseMesh, &ApplyMesh);
 
-		// Environment has no Parse, so it applies inline on the calling thread and its IBL bake
-		// still hitches. That is not an omission: the bake is six cube faces plus prefilter mips
-		// rendered through bgfx views, which cannot leave the submit thread, and the only part
-		// that could - one stbi_loadf - is a few percent of it.
-		AssetManagerRegistry::Register<Environment>("Environment", nullptr, &ApplyEnvironment);
+		AssetManagerRegistry::Register<Environment>("Environment", &ParseEnvironment, &ApplyEnvironment);
 		AssetManagerRegistry::Register<Texture2D>("Texture2D", &ParseTexture, &ApplyTexture);
 		AssetManagerRegistry::Register<Material>("Material", &ParseMaterial, &ApplyMaterial);
 

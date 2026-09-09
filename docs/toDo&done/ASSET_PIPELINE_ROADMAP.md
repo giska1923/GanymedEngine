@@ -1310,89 +1310,6 @@ asset — 40 meshes, 32 culled, 5 instanced draws, 7 draw calls, 60 reloads, 0 r
 Deferred applies drain rather than strand (`maxDeferred` 12 → 6 → 0, `pending` back to 0). Runtime
 boots with 0 errors and 0 warnings.
 
----
-
----
-
-## Not doing (and why)
-
-Each of these is a real BlankEngine feature that this plan deliberately excludes. The point is not that
-they are bad — they are load-bearing for BlankEngine — but that they solve problems Ganymed does not have,
-at costs Ganymed cannot currently justify.
-
-- **Mip streaming with budgets, GPU feedback and bindless residency**
-  (`texture_resource_manager.hpp`, `streaming_service.hpp`). This is the single largest subsystem in
-  BlankEngine's resource layer: per-level `LoadingScheme`, atomic loaded/target levels, bandwidth and
-  allocation-rate limits, `BottleneckType` classification, a GPU feedback buffer with readback, a
-  bindless info buffer, and a whole `StreamingService` merging per-world quality requests behind
-  `StreamingRulesOverride`. It exists because BlankEngine streams open worlds that do not fit in VRAM.
-  Ganymed loads bounded scenes, does not use bindless, and has no measured VRAM pressure. This is
-  weeks of work to solve a problem that does not exist yet; Phase 4's BCn compression captures the
-  VRAM win for a fraction of the cost. Revisit only when a scene actually fails to fit.
-- **Generators / complex assets** (`asset_generator.hpp`). One source → many assets, with
-  `ImportAction{Move, CreateNew, DeleteAndReplace, ModifyExisting}`, `IModifier`, per-output
-  `State{Generate, NoGenerate, NoGenerateAndReplace}` and rename tracking. BlankEngine needs it because
-  artists drop FBX files containing dozens of sub-assets that must round-trip across reimports.
-  Ganymed's `MaterialSerializer::GenerateSidecars` already handles the one case it has (glTF →
-  `.gmat` sidecars + embedded texture extraction) in a few hundred lines. Generalizing it into a
-  generator framework would be a system with one call site.
-- **`PlatformContext` and per-platform/per-API compiled outputs.** Ganymed builds one target at a
-  time and bgfx already abstracts the graphics API. Decision 9 keeps the hook (the output key is
-  computed in one function) without building the machinery.
-- **The virtual filesystem with alias mounts and zip packages** (`virtual_file_system.hpp`).
-  Genuinely useful for shipping, and Ganymed's runtime already has a working assets snapshot instead.
-  This is packaging work, not asset-layer work; it belongs to a distribution milestone.
-- **BlankEngine's config-migration machinery** (`m_cfgUpdateVersionFn`, `m_legacyCfgNames`,
-  `ISourceConverter` with `Version{Latest, Outdated, CriticalOutdated}`). BlankEngine has years of shipped
-  configs to migrate. Ganymed has zero. A single `ImportConfigVersion` int plus a switch
-  (decision 15) covers the next several years. Reflection itself is not excluded — it is deferred to
-  its own milestone on `entt::meta` (decision 14, [`REFLECTION_ROADMAP.md`](REFLECTION_ROADMAP.md)),
-  which is where the `.meta` import-config panel gets auto-generated. **RTTR specifically is
-  rejected**, for the reasons in decision 14(b).
-- **`AssetDependenciesService` at arbitrary depth**, with source-vs-external edge classification and
-  a persisted compact DB. Decision 11 takes the depth-1 reverse map, which answers both questions
-  Ganymed actually asks.
-- **The statistics service** (`IResourceStatistics`, `ResourceStatistics<D>`, per-type rows enriched
-  from asset intermediate data). Nice panel. Phase 4's `.dep` already stores compile time and output
-  size, so if this is wanted later it is a UI over data that exists. Not a phase.
-- **Asset edit states** (`IAssetEditState`, `findOrOpenEditState`, `enqueueSave`, `PauseWatchersScope`).
-  This is infrastructure for editors that mutate assets in memory with deferred saves. Ganymed's
-  editor mutates scenes, not assets, and writes `.gmat` immediately.
-- **A per-frame manager execution graph** (`runBefore`/`runAfter`, `tf::Subflow`, `ExecutionGraph`).
-  With one job system, three priorities and fewer than ten asset types, a fixed drain order in
-  `AssetManager::Update()` is sufficient and vastly easier to reason about. If manager
-  interdependencies ever become non-trivial, revisit — but note that `assignAfter` in BlankEngine exists
-  mostly to order *construction*, which a fixed registration order handles.
-- **Compression as a pluggable policy** (`ICompressor`, `ZStdCompressor`, `PassthroughCompressor`,
-  compressor hash feeding invalidation). Adding zstd is a new dependency for a win that BCn already
-  delivers on the dominant asset class. If mesh blobs become a size problem, revisit — and note the
-  `.dep` epoch already reserves a slot for a compressor hash.
-
----
-
-## Appendix A — BlankEngine reference map
-
-Files studied for this plan, for anyone re-reading the source design. All under
-`D:\game\src\engine\engine\services\`.
-
-| File | What to look at |
-| --- | --- |
-| `assets/asset_service.hpp` / `.cpp` | `OpenFlags`, `openAsset`, `openResourceFile`, `createHashedFileName`, `generateOutputPath`, `findInCache`, the watcher registry + `WatcherQueue`, `ImportAssetTask` in an `AsyncQueue`, `validateAssetPath`/`PathErrorType` |
-| `assets/asset.hpp` | `AssetData`, `IntermediateData`, `Epoch`/`EpochDiff`, `checkRecompile`, `tryCompile`, `openCompiledFile`, the path field set — **the core of Phase 4** |
-| `assets/asset_compiler.hpp` | `IAssetCompiler::Context`, `compile(Blob&&, ctx, Blob&, variant&)`, `ISourceConverter`, `MetaInfo`, the `registration::AssetCompilerBase<T>` DSL |
-| `assets/asset_watch.hpp` | `EventType{Deleted, Modified, ModifiedDependency}` as a per-frame bitmask — **Phase 6** |
-| `assets/asset_dependencies.hpp` / `asset_dependencies_service.hpp` | The source-vs-external dependency rule; forward/backward queries at depth |
-| `assets/asset_generator.hpp` | Generators and complex assets — read to understand what is being skipped and why |
-| `resource/resource.hpp` | `ResPtr<T>`, `IResource`/`Status`/`type<T>()`, `Resource<T>` CRTP, `ResourceModificationTracker` — **the core of Phase 3** |
-| `resource/resource_service.hpp` | `IResourceManager`, cache strategies, `ParseResourceRoutine`, `SimpleResourceManager`, `AdvancedResourceManager`, `ResourceService`, `makeResPtr`, the registration DSLs — **the core of Phases 2 and 5** |
-| `resource/resources/skeleton_resource_manager.hpp` | The minimal `SimpleResourceManager`: `parse` + `applyLoadResult` + `gatherStatistics` and nothing else |
-| `resource/resources/texture_resource.hpp` / `_manager.hpp` | The streaming case, and the canonical registration block at `texture_resource.cpp:1917` |
-| `resource/resources/material_resource_manager.hpp` | The `AdvancedResourceManager` escape hatch: pending-command queue + inheritance reload |
-| `resource/resources/effect_resource_manager.hpp` | A `SimpleResourceManager` with a side cache and a non-default priority |
-| `resource/streaming_service.hpp` | The streaming budget service — read to understand the cost of what is being skipped |
-| `assets/compilers/texture_compiler.hpp` | A concrete compiler with a versioned `Cfg` and reported `Info` stats — the model for Phase 4's `TextureCompiler` |
-| `filesystem/virtual_file_system.hpp` | `IFile::readAsync` → `IAsyncData`, mounted filesystems |
-
 ### Follow-up — decoding embedded images during Parse (done)
 
 `MeshSource` gained `*Decoded` slots holding a `DecodedImage` per map, `DecodeEmbeddedMaps` fills
@@ -1479,3 +1396,184 @@ reads sensibly and was left alone.
 touching every asset under the live scene: worst frame 14-19 ms per round (Debug 27-40), render
 identical at 40 meshes / 32 culled / 5 instanced draws / 7 draw calls, 60 reloads, 0 recompiles,
 0 errors. Release runtime boots with 0 errors, 0 warnings, 10 entities, and no watcher line.
+
+---
+
+### Follow-up — the Environment IBL bake (done)
+
+The last synchronous hitch in the asset layer, and the note that described it was wrong. Phase 5
+recorded that `Environment` could not have a Parse stage because "the only part that could [move] —
+one `stbi_loadf` — is a few percent of it." Measuring it (Release, 1K panorama, three runs) found
+something else entirely:
+
+| Part | Cost | Verdict |
+| --- | --- | --- |
+| `stbi_loadf` of the panorama | 21-29 ms | 45%, and pure CPU |
+| Two forced `bgfx::frame()` calls inside `Bake` | 24-26 ms | 45%, and avoidable |
+| 4x `Shader::Create` | 1.6-1.8 ms | 3% |
+| Bake submission (67 framebuffers + 67 draws) | 1.9-2.1 ms | 4%, and genuinely unmovable |
+| **Total, all on the submit thread** | **54-62 ms** | |
+
+**The forced frames were the find.** `Bake` called `bgfx::frame()` twice inline, because
+`RenderPass::EnvironmentBake` sat at 32 - *after* `SceneHDR` - so an environment applied at the top
+of a frame was not readable by that frame's scene pass. Forcing two presentations blocked the main
+thread for 24-26 ms and pushed two half-built frames to the screen on the way past.
+
+**The fix is ordering, not machinery.** A bake is a prepass, so it now sorts *before* everything
+that samples it: `EnvironmentBake = 1`, with the frame proper starting at `Shadow = 69`. Every other
+pass shifted up by 68; nothing hardcoded a view id, so this was a one-file change. The bake is then
+correct within the frame it is submitted in and the `bgfx::frame()` calls are gone. The 67 transient
+framebuffers are destroyed immediately - bgfx defers handle destruction until the frame that used
+them has been rendered.
+
+**And `Environment` finally gets a Parse stage**: `Environment::Load` decodes the HDR into an
+`EquirectImage` on a worker; the constructor uploads it and submits the bake.
+
+| | Before | Now |
+| --- | --- | --- |
+| Main thread | **54-62 ms** | **3.9-5.1 ms** |
+| Worker | - | 16-25 ms (decode) |
+
+### A data race this uncovered, introduced two follow-ups earlier
+
+Moving `stbi_loadf` to a worker meant looking at stb's threading, and the vendored copy under
+`extern/stb_image` has **no `STBI_THREAD_LOCAL` support** - `stbi__vertically_flip_on_load` is a
+plain process-wide global. `TextureImporter::Decode`/`DecodeFromMemory` wrote it immediately before
+decoding.
+
+That was harmless while decoding was main-thread-only. **The "decode embedded images during Parse"
+follow-up above made it a live race**: `TextureCompiler` decodes with flip off on a worker while
+`DecodeEmbeddedMaps` decodes with flip on, on another. Symptom: an occasionally upside-down texture,
+non-deterministic. Never observed - found by reading, because the Environment change would have
+added a third concurrent stb user.
+
+Fixed by removing the shared mutable state rather than guarding it: nothing in the engine writes
+stb's flip global any more, and `flipVertically` is honoured by flipping the decoded buffer, which
+is thread-local by construction. Upgrading the vendored stb would also have worked and is not
+allowed (`extern/` is off limits); a mutex would have serialised exactly the decodes this milestone
+spent two follow-ups parallelising.
+
+**Verification.** Debug, Release and Dist all build clean. Pixel evidence rather than draw counts,
+because a view-ordering bug leaves the counts identical: backbuffer screenshots before (at `HEAD`)
+and after are **identical across the whole viewport** - the only differing pixels in the frame are
+editor chrome (the Stats panel's own counters and a content-browser icon). Frame-by-frame through
+the new one-frame async window: frame 0 renders the procedural sky fallback, frame 1 renders the
+baked skybox, frames 2-7 are pixel-identical to frame 1 - so the bake is right on the frame it is
+submitted in, with no pop and no settling. Scene render unchanged at 40 meshes / 32 culled / 5
+instanced draws / 7 draw calls across four hot-reload rounds, 48 reloads, 0 recompiles, 0 errors.
+Release runtime boots with 0 errors, 0 warnings, 10 entities, and bakes its environment.
+
+### Follow-up — cached bake shaders and a shared BRDF LUT (done)
+
+The two items the IBL note left open, both taken. The four bake programs and the BRDF LUT are
+created once and released by `Renderer::Shutdown` while bgfx is still alive - the ownership rule
+`MeshShader.h` already spells out, since static destruction runs after `bgfx::shutdown`.
+
+The LUT is the split-sum approximation's second term: a pure function of the BRDF over
+(NdotV, roughness), with no dependence on the HDR. It was being baked byte-identically for every
+environment. `Environment::GetBRDFLut()` now returns the shared handle, no environment owns it, and
+the destructor's handle list dropped from four textures to three.
+
+| Environment load, submit thread (Release) | |
+| --- | --- |
+| Before this follow-up | 3.9-5.1 ms |
+| First load in a process (shaders + LUT still paid for) | 6.3 ms |
+| Every load after that | **2.2-3.3 ms** |
+
+A bake takes 67 views the first time and **66** after, which is the cheapest possible proof that the
+LUT pass is genuinely skipped rather than merely reusing a handle - and it is logged as such during
+verification.
+
+**Verification.** Debug, Release and Dist build clean. Three environments created in one session:
+view counts 67 / 66 / 66, and the rendered viewport is **pixel-identical between the first and the
+second** - so a shared LUT produces the same image as a freshly baked one. Against `HEAD` (i.e. all
+the IBL work plus this follow-up versus none of it) the viewport is **pixel-identical for both the
+first and the second environment load**.
+
+**A pre-existing leak, measured rather than assumed.** bgfx's Debug shutdown reports leaked texture
+handles when an `Environment` outlives `Renderer::Shutdown`: its destructor then sees
+`IsGpuAlive() == false` and returns without freeing. `HEAD` leaks **4** textures in that path; this
+change leaks **3**, because the LUT is no longer among the object's own handles. The remaining three
+(env cubemap, irradiance, prefilter) are the pre-existing problem and are **not fixed here** - the
+fix is scene teardown ordering, not the bake.
+
+---
+
+## Not doing (and why)
+
+Each of these is a real BlankEngine feature that this plan deliberately excludes. The point is not that
+they are bad — they are load-bearing for BlankEngine — but that they solve problems Ganymed does not have,
+at costs Ganymed cannot currently justify.
+
+- **Mip streaming with budgets, GPU feedback and bindless residency**
+  (`texture_resource_manager.hpp`, `streaming_service.hpp`). This is the single largest subsystem in
+  BlankEngine's resource layer: per-level `LoadingScheme`, atomic loaded/target levels, bandwidth and
+  allocation-rate limits, `BottleneckType` classification, a GPU feedback buffer with readback, a
+  bindless info buffer, and a whole `StreamingService` merging per-world quality requests behind
+  `StreamingRulesOverride`. It exists because BlankEngine streams open worlds that do not fit in VRAM.
+  Ganymed loads bounded scenes, does not use bindless, and has no measured VRAM pressure. This is
+  weeks of work to solve a problem that does not exist yet; Phase 4's BCn compression captures the
+  VRAM win for a fraction of the cost. Revisit only when a scene actually fails to fit.
+- **Generators / complex assets** (`asset_generator.hpp`). One source → many assets, with
+  `ImportAction{Move, CreateNew, DeleteAndReplace, ModifyExisting}`, `IModifier`, per-output
+  `State{Generate, NoGenerate, NoGenerateAndReplace}` and rename tracking. BlankEngine needs it because
+  artists drop FBX files containing dozens of sub-assets that must round-trip across reimports.
+  Ganymed's `MaterialSerializer::GenerateSidecars` already handles the one case it has (glTF →
+  `.gmat` sidecars + embedded texture extraction) in a few hundred lines. Generalizing it into a
+  generator framework would be a system with one call site.
+- **`PlatformContext` and per-platform/per-API compiled outputs.** Ganymed builds one target at a
+  time and bgfx already abstracts the graphics API. Decision 9 keeps the hook (the output key is
+  computed in one function) without building the machinery.
+- **The virtual filesystem with alias mounts and zip packages** (`virtual_file_system.hpp`).
+  Genuinely useful for shipping, and Ganymed's runtime already has a working assets snapshot instead.
+  This is packaging work, not asset-layer work; it belongs to a distribution milestone.
+- **BlankEngine's config-migration machinery** (`m_cfgUpdateVersionFn`, `m_legacyCfgNames`,
+  `ISourceConverter` with `Version{Latest, Outdated, CriticalOutdated}`). BlankEngine has years of shipped
+  configs to migrate. Ganymed has zero. A single `ImportConfigVersion` int plus a switch
+  (decision 15) covers the next several years. Reflection itself is not excluded — it is deferred to
+  its own milestone on `entt::meta` (decision 14, [`REFLECTION_ROADMAP.md`](REFLECTION_ROADMAP.md)),
+  which is where the `.meta` import-config panel gets auto-generated. **RTTR specifically is
+  rejected**, for the reasons in decision 14(b).
+- **`AssetDependenciesService` at arbitrary depth**, with source-vs-external edge classification and
+  a persisted compact DB. Decision 11 takes the depth-1 reverse map, which answers both questions
+  Ganymed actually asks.
+- **The statistics service** (`IResourceStatistics`, `ResourceStatistics<D>`, per-type rows enriched
+  from asset intermediate data). Nice panel. Phase 4's `.dep` already stores compile time and output
+  size, so if this is wanted later it is a UI over data that exists. Not a phase.
+- **Asset edit states** (`IAssetEditState`, `findOrOpenEditState`, `enqueueSave`, `PauseWatchersScope`).
+  This is infrastructure for editors that mutate assets in memory with deferred saves. Ganymed's
+  editor mutates scenes, not assets, and writes `.gmat` immediately.
+- **A per-frame manager execution graph** (`runBefore`/`runAfter`, `tf::Subflow`, `ExecutionGraph`).
+  With one job system, three priorities and fewer than ten asset types, a fixed drain order in
+  `AssetManager::Update()` is sufficient and vastly easier to reason about. If manager
+  interdependencies ever become non-trivial, revisit — but note that `assignAfter` in BlankEngine exists
+  mostly to order *construction*, which a fixed registration order handles.
+- **Compression as a pluggable policy** (`ICompressor`, `ZStdCompressor`, `PassthroughCompressor`,
+  compressor hash feeding invalidation). Adding zstd is a new dependency for a win that BCn already
+  delivers on the dominant asset class. If mesh blobs become a size problem, revisit — and note the
+  `.dep` epoch already reserves a slot for a compressor hash.
+
+---
+
+## Appendix A — BlankEngine reference map
+
+Files studied for this plan, for anyone re-reading the source design. All under
+`D:\game\src\engine\engine\services\`.
+
+| File | What to look at |
+| --- | --- |
+| `assets/asset_service.hpp` / `.cpp` | `OpenFlags`, `openAsset`, `openResourceFile`, `createHashedFileName`, `generateOutputPath`, `findInCache`, the watcher registry + `WatcherQueue`, `ImportAssetTask` in an `AsyncQueue`, `validateAssetPath`/`PathErrorType` |
+| `assets/asset.hpp` | `AssetData`, `IntermediateData`, `Epoch`/`EpochDiff`, `checkRecompile`, `tryCompile`, `openCompiledFile`, the path field set — **the core of Phase 4** |
+| `assets/asset_compiler.hpp` | `IAssetCompiler::Context`, `compile(Blob&&, ctx, Blob&, variant&)`, `ISourceConverter`, `MetaInfo`, the `registration::AssetCompilerBase<T>` DSL |
+| `assets/asset_watch.hpp` | `EventType{Deleted, Modified, ModifiedDependency}` as a per-frame bitmask — **Phase 6** |
+| `assets/asset_dependencies.hpp` / `asset_dependencies_service.hpp` | The source-vs-external dependency rule; forward/backward queries at depth |
+| `assets/asset_generator.hpp` | Generators and complex assets — read to understand what is being skipped and why |
+| `resource/resource.hpp` | `ResPtr<T>`, `IResource`/`Status`/`type<T>()`, `Resource<T>` CRTP, `ResourceModificationTracker` — **the core of Phase 3** |
+| `resource/resource_service.hpp` | `IResourceManager`, cache strategies, `ParseResourceRoutine`, `SimpleResourceManager`, `AdvancedResourceManager`, `ResourceService`, `makeResPtr`, the registration DSLs — **the core of Phases 2 and 5** |
+| `resource/resources/skeleton_resource_manager.hpp` | The minimal `SimpleResourceManager`: `parse` + `applyLoadResult` + `gatherStatistics` and nothing else |
+| `resource/resources/texture_resource.hpp` / `_manager.hpp` | The streaming case, and the canonical registration block at `texture_resource.cpp:1917` |
+| `resource/resources/material_resource_manager.hpp` | The `AdvancedResourceManager` escape hatch: pending-command queue + inheritance reload |
+| `resource/resources/effect_resource_manager.hpp` | A `SimpleResourceManager` with a side cache and a non-default priority |
+| `resource/streaming_service.hpp` | The streaming budget service — read to understand the cost of what is being skipped |
+| `assets/compilers/texture_compiler.hpp` | A concrete compiler with a versioned `Cfg` and reported `Info` stats — the model for Phase 4's `TextureCompiler` |
+| `filesystem/virtual_file_system.hpp` | `IFile::readAsync` → `IAsyncData`, mounted filesystems |

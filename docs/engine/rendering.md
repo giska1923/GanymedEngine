@@ -328,12 +328,57 @@ the texture is created and sampled, not of the encoded payload.
 
 [`Environment`](../../GanymedEngine/source/GanymedE/Renderer/Environment.h) bakes an
 equirectangular HDR into: a 512² 5-mip environment cubemap (skybox), a 32² diffuse irradiance map,
-a 128² 5-mip prefiltered specular map, and a 512² BRDF LUT. The bake runs **once, entirely within
-one frame**, across the transient view block starting at `RenderPass::EnvironmentBake` (~67 views:
+a 128² 5-mip prefiltered specular map, and — once per process, not once per environment — a 512²
+BRDF LUT. The bake runs **once, entirely within one frame**, across the transient view block starting at `RenderPass::EnvironmentBake` (67 views:
 faces × mips, twice, + LUT) — valid only because views execute in ID order, so each stage samples
 what a lower-numbered view wrote. bgfx cannot mipmap render targets, so every env mip is rendered
 from the panorama directly. Binding is the caller's job (`Renderer3D` feeds the handles to
 `Shader::SetTexture` per material — samplers belong to shaders, there is no global bind).
+
+Only the upload and the submission are on the submit thread; the panorama is `stbi_loadf`-decoded on
+a worker first (`Environment::Load`, the asset layer's Parse stage — see
+[assets.md](assets.md#what-is-still-synchronous)).
+
+### What every environment shares
+
+Two things are created once and reused, both released by `Renderer::Shutdown` while bgfx is still
+alive — static destruction runs *after* `bgfx::shutdown`, which is how handles left to it leak or
+crash (the reasoning is spelled out in [`MeshShader.h`](../../GanymedEngine/source/GanymedE/Renderer/MeshShader.h)):
+
+- **The four bake programs** (`Equirect`, `Irradiance`, `Prefilter`, `BRDFLut`). They were recreated
+  per environment, at 1.6–1.8 ms of file IO and shader creation for an identical result.
+- **The BRDF LUT.** It is the split-sum approximation's second term — a pure function of the BRDF
+  over (NdotV, roughness), with **no dependence on the HDR**. Baking it per environment produced a
+  byte-identical 512² texture every time and cost a view, a framebuffer and a draw per load.
+  `Environment::GetBRDFLut()` returns the shared handle; no environment owns it, and no
+  environment's destructor frees it.
+
+Together these take a second and subsequent environment load from ~4–5 ms of submit-thread work to
+**2.2–3.3 ms**. The first load in a process still pays for both (~6.3 ms).
+
+### The IBL bake is a prepass
+
+`RenderPass::EnvironmentBake = 1` — **before the shadow and scene passes**, not after them. That
+placement is the whole reason the bake is cheap, and it was not always so.
+
+The block used to sit at 32, after `SceneHDR`. An environment applied at the top of a frame was
+therefore unreadable by that same frame's scene pass, and the bake worked around it by calling
+`bgfx::frame()` **twice, inline**, to force its own frames through. That cost 24–26 ms of blocked
+main thread (measured, Release) — it was the larger half of the load hitch — and on the way past it
+presented two half-built frames.
+
+Ordering the bake first makes it correct within the frame it is submitted in, so the forced frames
+are gone. Verified frame by frame with backbuffer screenshots: the frame an environment applies in
+already renders the baked skybox, and the following frames are pixel-identical to it.
+
+Two consequences worth knowing if you add a pass:
+
+- **Everything that samples the bake must sort above 67.** The pass table leaves views 1–68 to the
+  bake and starts the frame proper at `Shadow = 69`; `ViewAllocator` asserts against `Shadow` rather
+  than counting. A bake takes 67 views the first time and **66 after that** — see the BRDF LUT below.
+- Destroying the bake's 67 transient framebuffers immediately after submission is safe: bgfx defers
+  handle destruction until the frame that used them has been rendered. The cube textures they wrote
+  into are owned by the `Environment`.
 
 ## SceneRenderer & the post stack
 
@@ -346,7 +391,7 @@ scene HDR (RGBA16F + entityID + D24S8)
   → tonemap (ACES-style, exposure; bloom composited additively in HDR before the curve)
   → FXAA (optional)
   → composite (LDR, shown in the editor viewport via GetFinalImageRendererID)
-  → game UI (RmlUi, RenderPass::UI = 28) composited into that same LDR target
+  → game UI (RmlUi, RenderPass::UI = 96) composited into that same LDR target
 ```
 
 (Or, with `SetOutputToBackbuffer(true)`, the final post pass and the UI both land on the backbuffer
@@ -373,11 +418,11 @@ composite target unwritten, i.e. a black image.
 ### Backbuffer output mode
 
 `SetOutputToBackbuffer(true)` sends the **final** pass to the backbuffer instead of the composite
-framebuffer — FXAA at view 25 when active, tonemap at view 24 when not. It replaces
+framebuffer — FXAA at view 93 when active, tonemap at view 92 when not. It replaces
 `Framebuffer::BindToView` with `setViewFrameBuffer(view, BGFX_INVALID_HANDLE)` +
 `setViewRect(view, 0, 0, w, h)`. A host in this mode also passes `nullptr` to `UIEngine::SetTarget`,
-which routes RmlUi's view 28 at the backbuffer too. View order stays monotonic: 0 (context touch) <
-24/25 (final post) < 28 (UI). This is the mode `GanymedRuntime` runs in; the editor never touches it.
+which routes RmlUi's view 96 at the backbuffer too. View order stays monotonic: 0 (context touch) <
+92/93 (final post) < 96 (UI). This is the mode `GanymedRuntime` runs in; the editor never touches it.
 
 Consequences:
 
@@ -394,7 +439,7 @@ Consequences:
 **Retarget rather than a dedicated present pass** — the divergence from the production norm.
 Unity/Unreal both end on a present/upscale pass because it carries resolution scaling, HDR-display
 output, and platform present semantics. None of those exist here yet, and a present pass would cost a
-new view ID *above* `RenderPass::UI = 28` (since it must composite a UI'd image) plus a new shader:
+new view ID *above* `RenderPass::UI = 96` (since it must composite a UI'd image) plus a new shader:
 `vs_Blit.sc` expects `a_texcoord0` while the PostProcess fullscreen quad supplies only
 `a_Position` as Float2, so it would have to derive UV from position like `vs_FXAA`/`vs_Tonemap` — a
 new program and a new flip-parity surface. The escape hatch is named and deferred to whenever

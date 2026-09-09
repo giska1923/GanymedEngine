@@ -60,7 +60,7 @@ an error every five seconds ([scene.md](../engine/scene.md)) — loud, throttled
 crash.
 
 View order stays monotonic, which is what makes the whole thing work without a present pass:
-0 (BgfxContext touch) < 5/6 (scene) < 7–22 (bloom) < 24/25 (final post) < 28 (UI).
+0 (BgfxContext touch) < 73/74 (scene) < 75–90 (bloom) < 92/93 (final post) < 96 (UI).
 
 ## Events
 

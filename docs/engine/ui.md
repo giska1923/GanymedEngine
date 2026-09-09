@@ -21,7 +21,7 @@ all. Anything the editor needs goes through `UIEngine`.
 
 ## Where it lands in the frame
 
-`RenderPass::UI = 28`, and that single constant is the whole ordering story. bgfx executes views in
+`RenderPass::UI = 96`, and that single constant is the whole ordering story. bgfx executes views in
 ID order, so sitting after `Composite` (26) means the UI draws onto the tonemapped, anti-aliased
 image in **display space** and is never itself tonemapped — regardless of where in the frame the
 submit calls happen. It also appears inside the editor's viewport image for free, because that

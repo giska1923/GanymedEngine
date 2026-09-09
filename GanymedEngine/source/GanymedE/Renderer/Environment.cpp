@@ -26,7 +26,9 @@ namespace GanymedE {
 
 			uint16_t Take()
 			{
-				GE_CORE_ASSERT(Next < RenderPass::ImGui, "Ran out of environment bake views!");
+				GE_CORE_ASSERT(Next < RenderPass::Shadow,
+					"Ran out of environment bake views - raise EnvironmentBakeViewCount and shift "
+					"the passes after it in RenderPassIDs.h");
 				return Next++;
 			}
 		};
@@ -82,36 +84,117 @@ namespace GanymedE {
 			return bgfx::createFrameBuffer(1, &attachment, false);
 		}
 
-		bgfx::TextureHandle LoadEquirect(const std::string& filepath, uint32_t& outWidth, uint32_t& outHeight)
+		bgfx::TextureHandle UploadEquirect(const EquirectImage& image)
 		{
-			int w = 0, h = 0, channels = 0;
-			stbi_set_flip_vertically_on_load(0);
+			const bgfx::Memory* mem = bgfx::copy(image.Pixels.data(),
+				(uint32_t)(image.Pixels.size() * sizeof(float)));
 
-			// Force 4 channels: bgfx has no 3-component float texture format.
-			float* data = stbi_loadf(filepath.c_str(), &w, &h, &channels, 4);
-			if (!data)
-			{
-				GE_CORE_ERROR("Failed to load HDR environment '{0}'", filepath);
-				return BGFX_INVALID_HANDLE;
-			}
-
-			outWidth = (uint32_t)w;
-			outHeight = (uint32_t)h;
-
-			const bgfx::Memory* mem = bgfx::copy(data, (uint32_t)(w * h * 4 * sizeof(float)));
-			stbi_image_free(data);
-
-			return bgfx::createTexture2D((uint16_t)w, (uint16_t)h, false, 1,
+			return bgfx::createTexture2D((uint16_t)image.Width, (uint16_t)image.Height, false, 1,
 				bgfx::TextureFormat::RGBA32F, BGFX_SAMPLER_UVW_CLAMP, mem);
+		}
+
+		// Shared by every bake. Recreating the four programs per environment cost 1.6-1.8 ms of
+		// file IO and shader creation for an identical result, and the BRDF LUT below is a whole
+		// render target and draw for an identical result. Both are held until Renderer::Shutdown
+		// releases them - see Environment::ReleaseSharedResources.
+		struct SharedBakeResources
+		{
+			Ref<Shader> Equirect;
+			Ref<Shader> Irradiance;
+			Ref<Shader> Prefilter;
+			Ref<Shader> BRDF;
+
+			// Baked once, by whichever environment loads first.
+			bgfx::TextureHandle BRDFLut = BGFX_INVALID_HANDLE;
+
+			bool ShadersValid() const
+			{
+				return Equirect && Equirect->IsValid() && Irradiance && Irradiance->IsValid()
+					&& Prefilter && Prefilter->IsValid() && BRDF && BRDF->IsValid();
+			}
+		};
+
+		SharedBakeResources& Shared()
+		{
+			static SharedBakeResources s_Shared;
+			return s_Shared;
+		}
+
+		bool EnsureBakeShaders()
+		{
+			SharedBakeResources& shared = Shared();
+			if (shared.ShadersValid())
+				return true;
+
+			shared.Equirect = Shader::Create("assets/shaders/Equirect.glsl");
+			shared.Irradiance = Shader::Create("assets/shaders/Irradiance.glsl");
+			shared.Prefilter = Shader::Create("assets/shaders/Prefilter.glsl");
+			shared.BRDF = Shader::Create("assets/shaders/BRDFLut.glsl");
+
+			return shared.ShadersValid();
 		}
 
 	}
 
-	Environment::Environment(const std::string& filepath)
+	EquirectImage Environment::Load(const std::string& filepath)
+	{
+		GE_PROFILE_FUNCTION();
+
+		EquirectImage image;
+
+		int w = 0, h = 0, channels = 0;
+
+		// Force 4 channels: bgfx has no 3-component float texture format. stb's flip global is
+		// deliberately not touched - see TextureImporter.h; the default orientation is the one
+		// this path has always wanted.
+		float* data = stbi_loadf(filepath.c_str(), &w, &h, &channels, 4);
+		if (!data)
+		{
+			GE_CORE_ERROR("Failed to load HDR environment '{0}'", filepath);
+			return image;
+		}
+
+		image.Width = (uint32_t)w;
+		image.Height = (uint32_t)h;
+
+		// One copy out of stb's buffer, so the result owns itself and can be moved through the
+		// asset layer's parse result. ~8 MB for a 1K panorama against a ~25 ms decode.
+		image.Pixels.assign(data, data + (std::size_t)w * h * 4);
+		stbi_image_free(data);
+
+		return image;
+
+	}
+
+	bgfx::TextureHandle Environment::GetBRDFLut() const { return Shared().BRDFLut; }
+
+	void Environment::ReleaseSharedResources()
+	{
+		SharedBakeResources& shared = Shared();
+
+		if (Renderer::IsGpuAlive() && bgfx::isValid(shared.BRDFLut))
+			bgfx::destroy(shared.BRDFLut);
+
+		shared.BRDFLut = BGFX_INVALID_HANDLE;
+		shared.Equirect = nullptr;
+		shared.Irradiance = nullptr;
+		shared.Prefilter = nullptr;
+		shared.BRDF = nullptr;
+	}
+
+	Environment::Environment(const std::string& filepath, EquirectImage image)
 		: m_Filepath(filepath)
 	{
-		uint32_t srcWidth = 0, srcHeight = 0;
-		bgfx::TextureHandle equirect = LoadEquirect(filepath, srcWidth, srcHeight);
+		if (!image.IsValid())
+		{
+			GE_CORE_ERROR("IBL bake aborted: no image was decoded for '{0}'", filepath);
+			return;
+		}
+
+		const uint32_t srcWidth = image.Width;
+		const uint32_t srcHeight = image.Height;
+
+		bgfx::TextureHandle equirect = UploadEquirect(image);
 		if (!bgfx::isValid(equirect))
 			return;
 
@@ -122,7 +205,7 @@ namespace GanymedE {
 		m_Valid = bgfx::isValid(m_EnvCubemap)
 			&& bgfx::isValid(m_Irradiance)
 			&& bgfx::isValid(m_Prefilter)
-			&& bgfx::isValid(m_BRDFLut);
+			&& bgfx::isValid(Shared().BRDFLut);
 
 		if (m_Valid)
 			GE_CORE_INFO("Baked IBL environment '{0}' ({1}x{2} source)", filepath, srcWidth, srcHeight);
@@ -136,7 +219,8 @@ namespace GanymedE {
 		if (!Renderer::IsGpuAlive())
 			return;
 
-		bgfx::TextureHandle handles[] = { m_EnvCubemap, m_Irradiance, m_Prefilter, m_BRDFLut };
+		// Not the BRDF LUT: it is shared and Renderer::Shutdown owns its lifetime.
+		bgfx::TextureHandle handles[] = { m_EnvCubemap, m_Irradiance, m_Prefilter };
 		for (bgfx::TextureHandle h : handles)
 		{
 			if (bgfx::isValid(h))
@@ -146,17 +230,16 @@ namespace GanymedE {
 
 	void Environment::Bake(bgfx::TextureHandle equirect)
 	{
-		Ref<Shader> equirectShader = Shader::Create("assets/shaders/Equirect.glsl");
-		Ref<Shader> irradianceShader = Shader::Create("assets/shaders/Irradiance.glsl");
-		Ref<Shader> prefilterShader = Shader::Create("assets/shaders/Prefilter.glsl");
-		Ref<Shader> brdfShader = Shader::Create("assets/shaders/BRDFLut.glsl");
-
-		if (!equirectShader->IsValid() || !irradianceShader->IsValid()
-			|| !prefilterShader->IsValid() || !brdfShader->IsValid())
+		if (!EnsureBakeShaders())
 		{
 			GE_CORE_ERROR("IBL bake aborted: one or more bake shaders failed to load");
 			return;
 		}
+
+		SharedBakeResources& shared = Shared();
+		const Ref<Shader>& equirectShader = shared.Equirect;
+		const Ref<Shader>& irradianceShader = shared.Irradiance;
+		const Ref<Shader>& prefilterShader = shared.Prefilter;
 
 		const uint64_t rtFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_UVW_CLAMP;
 
@@ -166,11 +249,17 @@ namespace GanymedE {
 			bgfx::TextureFormat::RGBA16F, rtFlags);
 		m_Prefilter = bgfx::createTextureCube((uint16_t)kPrefilterSize, true, 1,
 			bgfx::TextureFormat::RGBA16F, rtFlags);
-		m_BRDFLut = bgfx::createTexture2D((uint16_t)kBRDFLutSize, (uint16_t)kBRDFLutSize, false, 1,
-			bgfx::TextureFormat::RG16F, rtFlags);
+
+		// Only the first environment pays for this one.
+		const bool bakeLut = !bgfx::isValid(shared.BRDFLut);
+		if (bakeLut)
+		{
+			shared.BRDFLut = bgfx::createTexture2D((uint16_t)kBRDFLutSize, (uint16_t)kBRDFLutSize,
+				false, 1, bgfx::TextureFormat::RG16F, rtFlags);
+		}
 
 		if (!bgfx::isValid(m_EnvCubemap) || !bgfx::isValid(m_Irradiance)
-			|| !bgfx::isValid(m_Prefilter) || !bgfx::isValid(m_BRDFLut))
+			|| !bgfx::isValid(m_Prefilter) || !bgfx::isValid(shared.BRDFLut))
 		{
 			GE_CORE_ERROR("IBL bake aborted: could not create the target textures");
 			return;
@@ -246,11 +335,12 @@ namespace GanymedE {
 			}
 		}
 
-		// --- 4. BRDF integration LUT ------------------------------------------
+		// --- 4. BRDF integration LUT (once per process, not once per environment) ---
+		if (bakeLut)
 		{
 			const uint16_t view = views.Take();
 			bgfx::Attachment attachment;
-			attachment.init(m_BRDFLut, bgfx::Access::Write, 0, 1, 0);
+			attachment.init(shared.BRDFLut, bgfx::Access::Write, 0, 1, 0);
 			bgfx::FrameBufferHandle fb = bgfx::createFrameBuffer(1, &attachment, false);
 			framebuffers.push_back(fb);
 
@@ -266,16 +356,20 @@ namespace GanymedE {
 			RenderCommand::SetDepthWrite(false);
 			RenderCommand::SetCullFace(false);
 
-			brdfShader->Bind();
+			shared.BRDF->Bind();
 			RenderCommand::DrawIndexed(quad);
 		}
 
-		// The bake is submitted, not executed: bgfx runs it when the frame is
-		// presented. Two frames guarantee the work has been consumed before the
-		// transient framebuffers are released (the textures themselves survive).
-		bgfx::frame();
-		bgfx::frame();
-
+		// The bake is submitted, not executed: bgfx runs it when the frame is presented, and
+		// because these views sort before the scene passes (RenderPassIDs.h) the results are
+		// readable by the very frame this was submitted into.
+		//
+		// **No `bgfx::frame()` here.** It used to call it twice, to force the bake through
+		// before releasing the framebuffers - 24-26 ms of blocked main thread, measured, and it
+		// also presented two half-built frames on its way past. Destroying a framebuffer is
+		// deferred by bgfx until the frame that used it has been rendered, so the handles below
+		// can go back immediately; the cube textures they wrote into are owned by this object
+		// and survive.
 		for (bgfx::FrameBufferHandle fb : framebuffers)
 		{
 			if (bgfx::isValid(fb))
@@ -289,9 +383,9 @@ namespace GanymedE {
 		RenderCommand::SetCullFace(true);
 	}
 
-	Ref<Environment> Environment::Create(const std::string& filepath)
+	Ref<Environment> Environment::Create(const std::string& filepath, EquirectImage image)
 	{
-		return CreateRef<Environment>(filepath);
+		return CreateRef<Environment>(filepath, std::move(image));
 	}
 
 }
