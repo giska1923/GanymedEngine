@@ -168,8 +168,10 @@ Two ordering facts worth internalizing:
   runs on `JobSystem` workers while `AssetManager::Update` applies the results on the main thread.
   Measured: 845 ms of cold-import work that used to block the frame loop now costs it nothing
   (see [assets.md](assets.md#asynchronous-loading)).
-  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) Phases 1–5 have landed. What
-  is left is **hot reload** (Phase 6): editing an asset on disk still needs a manual Reload.
+  Editing an asset on disk reloads it in the viewport within about half a second, through an mtime
+  poll that evicts what changed and whatever captured it.
+  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) is **complete** — all six
+  phases have landed.
 - **Component members are reflected, but nothing consumes it yet.**
   [`Reflection/`](scene.md#member-reflection) registers all 23 components over `entt::meta` and
   validates itself at boot; the serializer, the inspector and the Lua bindings still hand-list every

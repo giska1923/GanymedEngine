@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <vector>
 
 namespace GanymedE {
@@ -50,6 +51,11 @@ namespace GanymedE {
 		static const AssetMetadata* GetMetadata(AssetHandle handle);
 		static AssetType GetAssetType(AssetHandle handle);
 
+		// Every indexed asset, in unspecified order. For AssetWatcher, which needs a handle and
+		// a path per row every quarter second and has no business keeping its own copy of the
+		// index. Do not mutate the index from inside `fn`.
+		static void ForEachAsset(const std::function<void(const AssetMetadata&)>& fn);
+
 		// Cached load through the type's manager: cache hit, or Parse then Apply. Every new
 		// asset type adds one `GE_ASSET_TYPE` line in AssetManagerRegistry.h and one
 		// `Register<T>` call in the `.cpp` - there is no per-type code here any more.
@@ -92,6 +98,19 @@ namespace GanymedE {
 		// this also drops its textures and the .meshcache file - "reimport now".
 		// Safe to call mid-frame from editor UI; see docs/engine/assets.md for why.
 		static void Reload(AssetHandle handle);
+
+		// "This file changed on disk." The hot-reload entry point, called from AssetWatcher.
+		// Returns false when there was nothing to do - a type with no manager, or a handle the
+		// index does not know.
+		//
+		// **Narrower than Reload, in both directions, and both differences are deliberate.**
+		// Reload means *reimport now*: it deletes the compiled output and reaches down into an
+		// asset's own textures, because a person pressed a button that says so. This is a file
+		// event, so it evicts what actually changed plus whatever captured it, and leaves the
+		// compiled output to the epoch record - which is the machinery that already tells a real
+		// edit apart from an editor rewriting identical bytes. Forcing a recompile here would
+		// turn every save-to-temp-and-rename into a BC7 encode.
+		static bool OnAssetModified(AssetHandle handle);
 
 		// One row per registered manager. Editor-facing; nothing in the engine reads it.
 		static std::vector<AssetCacheStats> GetCacheStats();

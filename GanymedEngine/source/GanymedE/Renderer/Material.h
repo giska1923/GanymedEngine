@@ -41,6 +41,14 @@ namespace GanymedE {
 		void SetNormalMapHandle(AssetHandle handle) { m_NormalMapHandle = handle; }
 		void SetMetallicRoughnessMapHandle(AssetHandle handle) { m_MetallicRoughnessMapHandle = handle; }
 
+		// Read back by the hot-reload dependency scan, which asks every resident material
+		// whether it captured a texture that just changed on disk. Comparing identities rather
+		// than paths means a material built before its map finished loading - null texture,
+		// valid handle - still answers correctly.
+		AssetHandle GetAlbedoMapHandle() const { return m_AlbedoMapHandle; }
+		AssetHandle GetNormalMapHandle() const { return m_NormalMapHandle; }
+		AssetHandle GetMetallicRoughnessMapHandle() const { return m_MetallicRoughnessMapHandle; }
+
 		void SetAlbedoMap(const Ref<Texture2D>& texture) { m_AlbedoMap = texture; }
 		Ref<Texture2D> GetAlbedoMap() const { return m_AlbedoMap; }
 		void SetAlbedoMapPath(const std::string& path) { m_AlbedoMapPath = path; }

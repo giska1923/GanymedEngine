@@ -366,6 +366,24 @@ namespace GanymedE {
 			}
 		}
 
+		// Every asset of this type that is *currently alive*, as (handle, object). Depth-1
+		// dependency questions are answered by walking this - "which resident materials
+		// reference this texture" - rather than by maintaining a reverse-edge map; see
+		// AssetManager.cpp's EvictTextureDependents for why the scan is the better shape under
+		// a weak cache.
+		//
+		// **Do not evict from inside `fn`**: Evict erases from the very map this iterates.
+		// Collect handles, then act.
+		template<typename Fn>
+		void ForEachResident(Fn&& fn) const
+		{
+			for (const auto& entry : m_Cache)
+			{
+				if (Ref<T> live = entry.second.lock())
+					fn(entry.first, live);
+			}
+		}
+
 		// Cache lookup only - never loads. For code that wants the object *if* it is already
 		// resident: `Reload` reads a material's texture paths this way before evicting them.
 		Ref<T> Find(AssetHandle handle) const

@@ -3,6 +3,7 @@
 
 #include "GanymedE/Assets/AssetMeta.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/AssetWatcher.h"
 #include "GanymedE/Assets/MaterialSerializer.h"
 #include "GanymedE/Assets/CompiledCache.h"
 #include "GanymedE/Assets/MeshCompiler.h"
@@ -239,6 +240,11 @@ namespace GanymedE {
 		LoadLegacyRegistry();
 		ScanAssets();
 
+		// After the scan, so the first poll has an index to walk. Off wherever assets/ is
+		// read-only: a shipped runtime has no editor to reload into and its content does not
+		// change under it, so the poll would be pure cost.
+		AssetWatcher::Init(writableAssets);
+
 		s_Data.Initialized = true;
 		GE_CORE_INFO("AssetManager initialized ({0} assets indexed, assets/ {1})",
 			s_Data.Registry.size(), writableAssets ? "writable" : "read-only");
@@ -262,6 +268,8 @@ namespace GanymedE {
 		s_Data.LegacyHandles.clear();
 		s_Data.LegacyRegistryPresent = false;
 		s_Data.WarnedUnknownHandles.clear();
+		AssetWatcher::Shutdown();
+
 		// Cancel first, then destroy. Every manager's in-flight parses are asked to stop before
 		// any single Future's destructor starts waiting, so a shutdown with a scene's worth of
 		// loads in flight drains them concurrently rather than one at a time.
@@ -393,6 +401,12 @@ namespace GanymedE {
 	{
 		const AssetMetadata* metadata = GetMetadata(handle);
 		return metadata ? metadata->Type : AssetType::None;
+	}
+
+	void AssetManager::ForEachAsset(const std::function<void(const AssetMetadata&)>& fn)
+	{
+		for (const auto& entry : s_Data.Registry)
+			fn(entry.second);
 	}
 
 	namespace {
@@ -594,9 +608,115 @@ namespace GanymedE {
 		GE_CORE_INFO("Reloading asset '{0}'", metadata->FilePath);
 	}
 
+	namespace {
+
+		bool UsesTexture(const Material& material, AssetHandle texture)
+		{
+			return material.GetAlbedoMapHandle() == texture
+				|| material.GetNormalMapHandle() == texture
+				|| material.GetMetallicRoughnessMapHandle() == texture;
+		}
+
+		// The reverse edge hot reload needs: this texture changed, so everything that *captured*
+		// it has to be rebuilt. Depth-1, and computed by scanning what is resident rather than
+		// maintained as a map.
+		//
+		// Roadmap decision 11 asks for an `unordered_map<AssetHandle, vector<AssetHandle>>`
+		// populated as assets load. Scanning is the better shape here for one specific reason:
+		// the cache is **weak**, so "which materials reference this texture" is only ever a
+		// question about *resident* objects. A maintained map would accumulate edges to objects
+		// that have since been collected, and the weak cache offers no hook to prune them - the
+		// map would need sweeping on every eviction and would still be wrong between sweeps. The
+		// scan cannot go stale, needs no bookkeeping on the load path, and costs three handle
+		// compares per resident material: a scene's worth of assets is a few hundred integer
+		// comparisons, at the rate a human saves a file.
+		//
+		// The rule this exists to enforce is stated in docs/engine/assets.md: hold an
+		// `AssetRef<T>`, not a `Ref<T>`. Material and Mesh are the two places the engine breaks
+		// it - a Material captures `Ref<Texture2D>`, a Mesh owns its `Ref<Material>`s outright -
+		// and they break it for good reasons, so this is the price.
+		void EvictTextureDependents(AssetHandle texture)
+		{
+			// Collected before anything is evicted: Evict erases from the very caches these
+			// walks iterate.
+			std::vector<AssetHandle> materials;
+			AssetManagerRegistry::Get<Material>().ForEachResident(
+				[&](AssetHandle handle, const Ref<Material>& material)
+				{
+					if (UsesTexture(*material, texture))
+						materials.push_back(handle);
+				});
+
+			// A mesh's materials are built by BuildMesh out of the compiled blob's material
+			// *descriptions*, not resolved from `.gmat` handles - so the mesh is the only thing
+			// that can re-resolve them, and evicting the whole mesh is how. Cheap: the blob is a
+			// cache hit, so this is a file read and a buffer upload rather than a re-import.
+			std::vector<AssetHandle> meshes;
+			AssetManagerRegistry::Get<Mesh>().ForEachResident(
+				[&](AssetHandle handle, const Ref<Mesh>& mesh)
+				{
+					for (const Ref<Material>& material : mesh->GetMaterials())
+					{
+						if (material && UsesTexture(*material, texture))
+						{
+							meshes.push_back(handle);
+							break;
+						}
+					}
+				});
+
+			for (AssetHandle handle : materials)
+				AssetManagerRegistry::Get<Material>().Evict(handle);
+
+			for (AssetHandle handle : meshes)
+				AssetManagerRegistry::Get<Mesh>().Evict(handle);
+
+			if (!materials.empty() || !meshes.empty())
+			{
+				GE_CORE_TRACE("Hot reload: {0} material(s) and {1} mesh(es) rebuild for it",
+					materials.size(), meshes.size());
+			}
+		}
+
+	}
+
+	bool AssetManager::OnAssetModified(AssetHandle handle)
+	{
+		const AssetMetadata* metadata = GetMetadata(handle);
+		if (!metadata)
+			return false;
+
+		// Scene, Script, Audio and Prefab have no manager and nothing cached here: Lua owns its
+		// chunks and miniaudio owns decoded audio. Saving a `.ganymede` from the editor lands
+		// here every time, so this is also what keeps the log quiet.
+		IAssetManager* manager = AssetManagerRegistry::Find(metadata->Type);
+		if (!manager)
+			return false;
+
+		manager->Evict(handle);
+
+		// Nothing re-resolves between these two calls - Evict only drops cache entries and bumps
+		// the epoch - so the whole set is evicted before any Get() can hand back a stale object.
+		if (metadata->Type == AssetType::Texture)
+			EvictTextureDependents(handle);
+
+		// Deliberately **no** CompiledCache::Invalidate. Reload calls it because it means
+		// "reimport now"; a file event does not. The epoch record already distinguishes an edit
+		// from a rewrite that lands identical bytes, and editors save by writing a temp file and
+		// renaming constantly - forcing a recompile on every mtime move would turn a
+		// no-op save of a 2K texture into a multi-second BC7 encode. This is the case Phase 4's
+		// content hashing was built for.
+		return true;
+	}
+
 	void AssetManager::Update()
 	{
 		GE_PROFILE_FUNCTION();
+
+		// Before the managers, and before anything in the frame reads an asset. Evicting here
+		// means a `Ref` obtained later in this frame cannot be pulled out from under it, which
+		// is the plan's "apply reloads at a frame boundary" satisfied by construction.
+		AssetWatcher::Poll();
 
 		AssetManagerRegistry::ForEach([](IAssetManager& manager) { manager.Update(); });
 	}

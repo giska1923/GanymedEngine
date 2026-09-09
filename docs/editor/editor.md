@@ -213,6 +213,22 @@ scene and resident falls while tracked does not, until those handles are loaded 
 column is a cold open in progress (see
 [assets.md](../engine/assets.md#asynchronous-loading)).
 
+Below it, **Hot reload assets/** is the watcher's switch, with `watched / ms-per-poll / reloaded /
+settling` under it and the last reloaded path. Editing an asset in an external tool updates the
+viewport within about half a second with no restart. Two of those numbers are worth reading rather
+than ignoring:
+
+- **ms/poll** is what decides whether this stays a poll. It is 0.5-1.5 ms for this project's assets;
+  the roadmap's alternative is a Win32 `ReadDirectoryChangesW` watcher, worth writing the day this
+  column shows up in a frame and not before.
+- **settling** is changes seen but not yet acted on - a debounce in progress, or a batch deferred
+  because more than 16 files changed at once.
+
+Turn the switch **off before a large `git` operation** and back on afterwards: a branch switch
+touching hundreds of assets is a change event for every one of them. Re-enabling adopts what is on
+disk rather than reloading it, so the switch does not defeat itself. Full details in
+[assets.md](../engine/assets.md#hot-reload).
+
 ## Scene Hierarchy panel
 
 [`SceneHierarchyPanel`](../../GanymedEditor/source/Panels/SceneHierarchyPanel.h) — tree of root

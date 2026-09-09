@@ -1179,6 +1179,89 @@ during a branch switch — hence the disable switch and the debounce.
 | Mid-frame safety | Reload under a heavy scene repeatedly; no flicker of half-applied state |
 | Docs | [`assets.md`](../engine/assets.md) hot reload section; [`platform.md`](../engine/platform.md) if a Win32 watcher is written; [`editor.md`](../editor/editor.md) for the toast + toggle |
 
+### Phase 6 — execution notes (done)
+
+New files: `Assets/AssetWatcher.h/.cpp`. Premake regeneration required and run. No new dependency,
+no platform code.
+
+**Step 1 went with the plan's own recommendation: a poll, not `ReadDirectoryChangesW`.** 0.25 s
+interval, `last_write_time` + `file_size` per indexed asset, keyed by handle. Measured at
+**0.5–1.5 ms for 23 assets**, and the number is on screen in the Stats panel rather than in a
+comment — the day it shows up in a frame is the day the Win32 watcher gets written behind the same
+interface. Not before, and not both.
+
+**Two parts of step 3 were not built, and both refusals are load-bearing.**
+
+1. **No reload-in-place.** The step asks for parse/apply re-run into the *existing* object "so every
+   `AssetRef` holder sees the new contents without knowing anything happened." They already do —
+   that is what `Detail::g_AssetEvictionEpoch` is for, and the epoch's own doc comment predicted this
+   phase would retire it. The reverse is true: evict-and-rebuild is *safer*. The old object stays
+   alive and unchanged for whoever holds it and the new one appears at the next `Get()`, so the
+   "Risks" paragraph's own scenario — a mesh whose vertex buffer is swapped under an already-submitted
+   pass — cannot happen. Mutation would introduce that risk in order to remove a mechanism that works.
+2. **No `CompiledCache::Invalidate`.** `Reload` calls it because it means *reimport now*; a file
+   event does not. Invalidate deletes the `.gres` unconditionally, and a watcher fires on mtime — so
+   every save-to-temp-and-rename would become a BC7 encode. Letting the epoch record decide is the
+   entire point of Phase 4, and hot reload is where it pays: verified at 48 reloads with **zero**
+   recompiles when the bytes were unchanged.
+
+**Step 4's reverse-edge map became a scan, deliberately.** Decision 11 asks for an
+`unordered_map<AssetHandle, vector<AssetHandle>>` populated as assets load. The cache is *weak*, so
+"which materials reference this texture" is only ever a question about **resident** objects — a
+maintained map accumulates edges to collected ones, the weak cache gives no hook to prune them, and
+it is wrong between sweeps. The scan cannot go stale, needs no bookkeeping on the load path, and
+costs three handle compares per resident material. The plan also under-scoped the propagation: it
+names texture → materials, but a **`Mesh` owns its `Ref<Material>`s outright**, built from the
+compiled blob's material *descriptions* rather than from `.gmat` handles, so a mesh referencing a
+changed texture has to be evicted too. Verified separately, and it needed a hand-written `.gltf`
+fixture because every model in the project has its textures embedded.
+
+**Step 6's toast was not built; the switch was.** There is no notification system in the editor, and
+building one for a single consumer is the kind of thing this roadmap's scope assessment argues
+against. What landed is a Stats-panel section — the on/off switch (which a branch switch genuinely
+needs), `watched / ms-per-poll / reloaded / settling`, and the last reloaded path — plus the existing
+log line. The viewport visibly changing is itself the notification. A toast remains a reasonable
+thing to want; it is a notifications feature, not a hot-reload one.
+
+**Two smaller additions the plan did not have.**
+
+- **A per-poll budget of 16.** Step 2's debounce coalesces a burst on *one* file; it does nothing
+  about hundreds of files changing at once, which is the "Risks" paragraph's second risk. Every
+  accepted change queues a parse that holds its compiled bytes until Apply, so an unbounded branch
+  switch would put the whole set in flight — gigabytes for 2K BC7. Over-budget entries keep their
+  settled state and land on the next poll.
+- **The stamp is accepted before the reload is attempted.** A source that is broken right now must
+  not be retried every poll forever; the next real edit moves the stamp again, so a mid-write read
+  recovers on the following save.
+
+**Verification results** (MSBuild x64 Debug, full solution clean, 0 errors).
+
+| Check | Result |
+| --- | --- |
+| Texture hot reload | Rewritten with **identical** bytes: reloaded, `mtime moved but content is unchanged - kept the compiled output`, **0 recompiles**. Rewritten with **different** bytes: reloaded and recompiled, `[stale: source-size\|source-mtime\|source-hash]`. Latency ~0.45 s (poll + settle) |
+| Dependency propagation | `Hot reload: 2 material(s) and 0 mesh(es) rebuild for it` — both `.gmat`s sharing the texture were rebuilt and both re-pointed at the new texture object. Separately, changing a mesh's *own* external texture: `0 material(s) and 1 mesh(es)`, and the mesh object identity changed. Phase 4's `.dep` dependency edge fired alongside it: `Compiled 'HotReloadFixture.gltf' [stale: dependencies]` |
+| Deletion is survivable | Deleted: reload fired, `Cannot compile ... the source file is not there`, texture null, both materials null-mapped, **no crash**, index entry kept. Restored: reloaded, recompiled, texture back |
+| Branch switch | All 23 indexed assets rewritten at once: first poll accepted **16** and deferred **7** (`settling=7`), the next took the rest. No hang, no crash, exit 0. Worst frame **110 ms** — that is 16 assets creating GPU resources in one Apply, in a Debug build, not the watcher, whose poll stayed under 1.5 ms throughout |
+| Mid-frame safety | `Phase5Test.ganymede` live, four consecutive rounds of touching every asset: **40 meshes, 32 culled, 5 instanced draws, 7 draw calls** after every round — identical to Phases 2–5 — with 48 reloads, 0 recompiles, 0 errors and 0 warnings. Worst frame per round 22–30 ms |
+| The switch works | Watcher off, file changed: `reloads` unchanged. Back on: `adopted the current state of assets/ without reloading`, still unchanged. On the next real edit it fired again |
+| Runtime is unaffected | `assets/ read-only`, no watcher line in the log at all, 0 errors, 0 warnings, scene loads |
+| Nothing rewritten on disk | `git status` over both `assets/` trees clean after the storm test (23 identical-byte rewrites) and fixture cleanup |
+
+**One finding worth carrying:** `Material::Bind()` is a **once-per-draw** call. Calling it outside
+the render path to force a map re-resolve takes bgfx down with
+`FATAL: Uniform 38 (u_AlbedoColor) was already set for this draw call`. The probe used the same
+lookup its `resolve` lambda performs instead.
+
+**Left as adjacent work.** Two things this phase made visible rather than caused. First,
+`HashDependency` is size+mtime rather than content (a deliberate Phase 4 asymmetry — it is checked on
+every load of every dependent), so *touching* a texture recompiles the mesh that references it even
+when the bytes are identical; the tradeoff still holds, but hot reload is what makes it reachable in
+normal editing. Second, `TypedAssetManager::Update` applies everything that is ready in one frame,
+which is where the storm's 110 ms went; an Apply budget per frame would smooth it, and would help a
+cold open equally.
+
+---
+
 ---
 
 ## Not doing (and why)

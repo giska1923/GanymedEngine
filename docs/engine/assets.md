@@ -417,8 +417,12 @@ handle would re-import the entire scene. Holding the old object across the `Load
 unaffected handle gets a cache hit and the very same pointer back. Measured: reloading one `.gmat`
 replaces that material's object and leaves the mesh's pointer identical.
 
-Phase 6's reload-in-place — re-running parse/apply into the *existing* object — is what eventually
-makes the epoch unnecessary.
+The roadmap expected Phase 6 to replace this with reload-in-place — re-running parse/apply into the
+*existing* object. **It did not, and the epoch is the better mechanism.** Reload-in-place would swap
+a live `Mesh`'s vertex buffer while a pass may already have submitted with it, which is precisely the
+mid-frame hazard the plan names as hot reload's main risk; evicting cannot cause it, because the old
+object stays alive and unchanged for whoever holds it and the new one appears at the next `Get()`.
+The epoch is what makes that invisible to the holder, which was reload-in-place's entire argument.
 
 
 ## Asynchronous loading
@@ -541,6 +545,111 @@ tolerates a null asset for a frame or two instead. Keep the list this short.
   percent of it.
 - **Everything inside Apply.** Creating bgfx buffers and textures is main-thread work by
   construction. What moved off is file IO, decode, deserialization and compilation.
+
+## Hot reload
+
+Edit an asset on disk, see it in the viewport — no restart, no button.
+[`AssetWatcher`](../../GanymedEngine/source/GanymedE/Assets/AssetWatcher.h) polls `assets/` and turns
+a file change into an eviction; everything after that is machinery Phases 3–5 already built.
+
+Watching is **on in the editor, off in the runtime** — the switch is `IsRegistryWritable()`, because
+an install that treats `assets/` as read-only has no editor to reload into and its content does not
+change under it.
+
+### A poll, not a file watcher
+
+The roadmap's step 1 offered `ReadDirectoryChangesW` behind a `FileWatcher` interface or an mtime
+poll, recommended the poll, and said not to build both. The poll it is, and the number that would
+justify changing that is on screen: the editor's Stats panel shows **ms/poll** live.
+
+| | |
+|---|---|
+| Poll interval | 0.25 s |
+| Cost, 23 indexed assets | **0.5–1.5 ms** per poll, i.e. every 15th frame does one extra millisecond |
+
+`last_write_time` plus `file_size` per indexed asset, keyed by handle. That is *not* a content check
+— deciding whether the bytes really changed is `CompiledCache`'s job one layer down, and it already
+does it properly. The poll's only question is "did anything move".
+
+### The debounce, and why it is not just coalescing
+
+A change has to still be there, **unchanged**, on a later poll before it counts (0.2 s). Coalescing
+a burst of writes is the obvious reason. The load-bearing one is different: editors save by writing
+a temp file and renaming, sometimes touching the result again, and reading one mid-write parses into
+a *failure* — which a manager remembers until something evicts it. Waiting for the writer to stop is
+what keeps a hot reload from turning a good asset into a broken one. A file whose stamp changes and
+changes back inside the window produces no event at all, which is what a `git checkout` landing on
+identical content looks like.
+
+The new stamp is accepted *before* the reload is attempted. A source that is broken right now must
+not be retried every poll forever; the next real edit moves the stamp again, so a mid-write read
+recovers on the following save rather than needing a manual Reload.
+
+### What a change actually does
+
+`AssetManager::OnAssetModified(handle)` — and it is **narrower than `Reload` in both directions**:
+
+- It **evicts, and does not invalidate the compiled output.** `Reload` deletes the `.gres` because it
+  means *reimport now*; a file event does not. The epoch record already tells a real edit apart from
+  a rewrite that lands identical bytes, and forcing a recompile on every mtime move would turn a
+  no-op save of a 2K texture into a multi-second BC7 encode. This is the case the content hashing in
+  [Epoch invalidation](#epoch-invalidation) was built for, and hot reload is where it pays.
+- It **does not reach down into an asset's own textures.** `Reload` evicts a material's maps so a
+  reimport re-reads them; here the texture did not change, so dropping it would only cost a re-upload.
+- It **does reach outward**, to whatever captured the changed asset — see below.
+- It returns false for a type with no manager, so saving a `.ganymede` from the editor is silent
+  rather than logging a reload of something nothing caches.
+
+### Dependency propagation, by scanning rather than by a map
+
+The rule stated under [Reload](#reload) is *hold an `AssetRef<T>`, not a `Ref<T>`* — and the engine
+breaks it in exactly two places, for good reasons: a `Material` captures `Ref<Texture2D>` when it is
+built, and a `Mesh` owns its `Ref<Material>`s outright. Neither notices the eviction epoch. So a
+changed texture has to evict them too, or the viewport keeps the old image.
+
+| Changed | Also evicted | Why |
+|---|---|---|
+| Texture | every resident `Material` whose three map handles include it | it captured the `Ref` and nothing re-resolves it |
+| Texture | every resident `Mesh` one of whose materials does | a mesh's materials come from the compiled blob's material *descriptions*, so only rebuilding the mesh re-resolves them; the blob is a cache hit, so this is a file read and a buffer upload, not a re-import |
+| Material (`.gmat`) | nothing | components hold `AssetRef<Material>`, which the epoch already covers |
+| Mesh, Environment | nothing | nothing captures either by raw `Ref` |
+
+Roadmap decision 11 asks for an `unordered_map<AssetHandle, vector<AssetHandle>>` reverse-edge map
+populated as assets load. **Scanning the resident set is the better shape here**, for one specific
+reason: the cache is *weak*, so "which materials reference this texture" is only ever a question
+about resident objects. A maintained map would accumulate edges to objects that have since been
+collected, the weak cache offers no hook to prune them, and it would be wrong between sweeps. The
+scan cannot go stale, needs no bookkeeping on the load path, and costs three handle compares per
+resident material — a few hundred integer comparisons, at the rate a human saves a file. Comparing
+`AssetHandle`s rather than paths also means a material built *before* its map finished loading (null
+texture, valid handle) still answers correctly.
+
+### Deletion
+
+A deleted asset **keeps its handle and its index entry** and simply stops loading: the parse finds
+no source, the manager records the failure, and consumers see null — a mesh draws nothing, a
+material renders its albedo colour. Dropping the index entry would be wrong, because scenes still
+reference it and the file may come back; a branch switch does exactly that. Restoring the file moves
+the stamp again, which evicts (clearing the failed record) and reloads it.
+
+### The storm switch
+
+`git checkout` across a branch that touches many assets changes hundreds of files at once. Two
+things bound it:
+
+- **At most 16 reloads are accepted per poll.** The rest keep their settled state and land on the
+  next one. Every accepted change queues a parse that holds its compiled bytes until Apply, so
+  unbounded, a texture-heavy branch would put the whole set in flight simultaneously — gigabytes for
+  2K BC7. (The same unbounded-in-flight property is true of a cold open and is not new here; this
+  only declines to make it easy to trigger.)
+- **A switch in the editor's Stats panel.** Turning watching back on *adopts* what is on disk rather
+  than reloading it — otherwise the switch would defeat itself.
+
+Measured, rewriting all 23 indexed assets in one go: the first poll accepted 16 and deferred 7, the
+next took the rest, and the worst frame in between was **110 ms** in a Debug build. That is the
+batched Apply — 16 assets creating GPU resources in one frame — not the watcher, whose poll stayed
+under 1.5 ms throughout. Under a live 40-mesh scene, four consecutive rounds of touching every asset
+produced 48 reloads, **zero recompiles**, and identical draw statistics after every round.
 
 ## Materials (`.gmat`)
 

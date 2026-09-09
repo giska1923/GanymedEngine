@@ -11,6 +11,7 @@
 #include "GanymedE/Scene/PrefabSerializer.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/AssetWatcher.h"
 #include "GanymedE/Assets/CompiledCache.h"
 #include "GanymedE/Assets/MaterialSerializer.h"
 #include "GanymedE/Renderer/Material.h"
@@ -375,6 +376,23 @@ namespace GanymedE {
 		ImGui::Text("Compiled: %u built (%.0f ms), %u from cache, %u running",
 			compiled.Compiles, compiled.TotalCompileMs, compiled.CacheHits,
 			CompiledCache::CompilesInFlight());
+
+		// The switch exists for one situation and it is worth naming: a `git checkout` across a
+		// branch that touches many assets generates a change event for every one of them.
+		// Turning watching back on adopts the new state without reloading it.
+		bool watching = AssetWatcher::IsEnabled();
+		if (ImGui::Checkbox("Hot reload assets/", &watching))
+			AssetWatcher::SetEnabled(watching);
+
+		// ms/poll is the number that decides whether this stays a poll. The roadmap's
+		// alternative is a Win32 ReadDirectoryChangesW watcher, worth writing the day this
+		// column shows up in a frame - and not before.
+		const AssetWatcher::Stats watch = AssetWatcher::GetStats();
+		ImGui::TextDisabled("%zu watched, %.2f ms/poll, %u reloaded, %u settling",
+			watch.Watched, watch.LastPollMs, watch.Reloads, watch.Settling);
+
+		if (!watch.LastReloaded.empty())
+			ImGui::TextDisabled("Last: %s", watch.LastReloaded.c_str());
 
 		ImGui::Separator();
 		ImGui::Text("Post Processing:");
