@@ -224,6 +224,14 @@ namespace GanymedE {
 
 		for (uint8_t lod = 0; lod < writeMips; lod++)
 		{
+			if (options.ShouldCancel && options.ShouldCancel())
+			{
+				bimg::imageFree(encoded);
+				bimg::imageFree(source);
+				result.Message = "cancelled";
+				return false;
+			}
+
 			bimg::ImageMip srcMip;
 			if (!bimg::imageGetRawData(*source, 0, (uint8_t)(firstMip + lod),
 				source->m_data, source->m_size, srcMip))

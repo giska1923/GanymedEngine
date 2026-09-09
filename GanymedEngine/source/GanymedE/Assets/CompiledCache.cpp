@@ -3,8 +3,10 @@
 
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Core/JobSystem.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -228,10 +230,16 @@ namespace GanymedE {
 
 		struct CompiledCacheData
 		{
+			// Written only at Init, read from workers afterwards. Not atomic and does not need
+			// to be: registration happens before any manager can queue a parse.
 			std::array<Scope<IAssetCompiler>, 16> Compilers;   // indexed by AssetType ordinal
-			CompiledCache::Stats Stats;
-			bool Compiling = false;
-			bool WarnedAboutReadOnlyCompile = false;
+
+			// Atomic because Open runs on workers and several can finish at once.
+			std::atomic<uint32_t> Compiles{ 0 };
+			std::atomic<uint32_t> CacheHits{ 0 };
+			std::atomic<uint64_t> TotalCompileMicros{ 0 };
+			std::atomic<uint32_t> Compiling{ 0 };
+			std::atomic_flag WarnedAboutReadOnlyCompile = ATOMIC_FLAG_INIT;
 		};
 
 		CompiledCacheData s_Data;
@@ -273,7 +281,7 @@ namespace GanymedE {
 		for (Scope<IAssetCompiler>& compiler : s_Data.Compilers)
 			compiler.reset();
 
-		s_Data.Stats = {};
+		ResetStats();
 	}
 
 	const IAssetCompiler* CompiledCache::CompilerFor(AssetType type)
@@ -297,9 +305,23 @@ namespace GanymedE {
 		return GetAssetRoot() / ".compiled" / std::string(name, name + 2) / (std::string(name) + ".gres");
 	}
 
-	const CompiledCache::Stats& CompiledCache::GetStats() { return s_Data.Stats; }
-	void CompiledCache::ResetStats() { s_Data.Stats = {}; }
-	bool CompiledCache::IsCompiling() { return s_Data.Compiling; }
+	CompiledCache::Stats CompiledCache::GetStats()
+	{
+		Stats stats;
+		stats.Compiles = s_Data.Compiles.load(std::memory_order_relaxed);
+		stats.CacheHits = s_Data.CacheHits.load(std::memory_order_relaxed);
+		stats.TotalCompileMs = s_Data.TotalCompileMicros.load(std::memory_order_relaxed) / 1000.0;
+		return stats;
+	}
+
+	void CompiledCache::ResetStats()
+	{
+		s_Data.Compiles.store(0, std::memory_order_relaxed);
+		s_Data.CacheHits.store(0, std::memory_order_relaxed);
+		s_Data.TotalCompileMicros.store(0, std::memory_order_relaxed);
+	}
+
+	uint32_t CompiledCache::CompilesInFlight() { return s_Data.Compiling.load(std::memory_order_relaxed); }
 
 	bool CompiledCache::Invalidate(const AssetMetadata& metadata)
 	{
@@ -405,7 +427,7 @@ namespace GanymedE {
 						metadata.FilePath);
 				}
 
-				s_Data.Stats.CacheHits++;
+				s_Data.CacheHits.fetch_add(1, std::memory_order_relaxed);
 				return true;
 			}
 
@@ -421,6 +443,12 @@ namespace GanymedE {
 		if (current.SourceHash == 0)
 			current.SourceHash = HashBytes(sourceBytes.data(), sourceBytes.size());
 
+		// The cheapest cancellation point there is, and the one that matters most: a cold open
+		// queues every asset at once, so most cancelled parses have not started compiling yet
+		// and stop here for free. A compile already running polls between mips instead.
+		if (JobSystem::IsCurrentJobCancelled())
+			return false;
+
 		CompileInput input;
 		input.Metadata = &metadata;
 		input.SourceFullPath = sourceFull;
@@ -430,9 +458,9 @@ namespace GanymedE {
 		CompileOutput result;
 
 		const auto start = std::chrono::steady_clock::now();
-		s_Data.Compiling = true;
+		s_Data.Compiling.fetch_add(1, std::memory_order_relaxed);
 		const bool ok = compiler->Compile(input, result);
-		s_Data.Compiling = false;
+		s_Data.Compiling.fetch_sub(1, std::memory_order_relaxed);
 		result.CompileMs = std::chrono::duration<double, std::milli>(
 			std::chrono::steady_clock::now() - start).count();
 
@@ -484,8 +512,9 @@ namespace GanymedE {
 				"assets/.compiled - it will be compiled again on the next run.", metadata.FilePath);
 		}
 
-		s_Data.Stats.Compiles++;
-		s_Data.Stats.TotalCompileMs += result.CompileMs;
+		s_Data.Compiles.fetch_add(1, std::memory_order_relaxed);
+		s_Data.TotalCompileMicros.fetch_add((uint64_t)(result.CompileMs * 1000.0),
+			std::memory_order_relaxed);
 
 		GE_CORE_INFO("Compiled '{0}' with {1} in {2:.0f} ms ({3} KB -> {4} KB){5}",
 			metadata.FilePath, compiler->Name(), result.CompileMs,
@@ -496,9 +525,8 @@ namespace GanymedE {
 		// still works - that is what the fallback above is for - but every boot pays for it, and
 		// on a first run of a large project that is minutes. Said once, because a whole project
 		// missing its outputs would otherwise say it per asset.
-		if (!s_Data.WarnedAboutReadOnlyCompile && !AssetManager::IsRegistryWritable())
+		if (!AssetManager::IsRegistryWritable() && !s_Data.WarnedAboutReadOnlyCompile.test_and_set())
 		{
-			s_Data.WarnedAboutReadOnlyCompile = true;
 			GE_CORE_WARN("This install treats assets/ as read-only but had to compile "
 				"'{0}' - the assets/.compiled tree was not shipped with it. Compiled output is "
 				"derived, but it is derived *at build time*: shipping without it means every boot "

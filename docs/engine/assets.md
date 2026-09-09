@@ -288,7 +288,7 @@ itself if `Apply` never runs. Having the boundary in now means async loading lat
 |---|---|---|
 | **Texture2D** | `CompiledCache::Open` — the compiled DDS, block-compressed by `TextureCompiler` if stale | `Texture2D::CreateFromContainer` |
 | **Material** | `MaterialSerializer::ReadDesc` — `.gmat` YAML into a `MaterialDesc` | `MaterialSerializer::Build` — creates the `Material` and resolves its map paths through `LoadMaterialMap` |
-| **Mesh** | `CompiledCache::Open` — the compiled blob, built by `MeshCompiler` if stale | `MeshCompiler::Read`; then `MaterialSerializer::GenerateSidecars` (see *Materials*) |
+| **Mesh** | `CompiledCache::Open` then `MeshCompiler::Read` — the compiled blob, built by `MeshCompiler` if stale, deserialized into a `MeshSource` | `BuildMesh`; then `MaterialSerializer::GenerateSidecars` (see *Materials*) |
 | **Environment** | *none* | `Environment::Create` — runs the IBL bake, see [rendering.md](rendering.md#environment--ibl) |
 
 The two empty `Parse` stages are not the same kind of gap:
@@ -297,12 +297,12 @@ The two empty `Parse` stages are not the same kind of gap:
   equirectangular HDR; everything after it is the bake — six cube faces plus prefilter mips rendered
   through bgfx views — which can never leave the submit thread. Splitting would move a few percent
   of the cost and cost `Environment` its filepath constructor.
-- **Mesh Parse reads bytes, but building them is not thread-safe yet.** `ParseCompiled` is shared
-  with textures and does no bgfx work itself — but on a cache miss it runs `MeshCompiler`, which
-  reaches the GPU through `MeshImporter` (see *Compiled outputs*). Splitting means threading a
-  CPU-side mesh description (vertices, indices, submeshes, material *descriptions*) through
-  `MeshImporter.cpp` and deferring `Mesh::Create` to Apply. The cgltf parse is the expensive thing
-  that has to leave the main thread, so async loading cannot skip this.
+- **Mesh is fully split as of Phase 5**, and it was the last holdout. `MeshImporter::Import` emits a
+  [`MeshSource`](../../GanymedEngine/source/GanymedE/Renderer/MeshSource.h) — vertices, indices,
+  submeshes, material *descriptions*, skin data, skeleton, clips — with no bgfx call anywhere below
+  it, and `BuildMesh` is the single main-thread step that turns one into a live `Mesh`. Before that,
+  the compiler had to build a `Mesh` (buffers, materials, textures) purely so it could serialize it,
+  which meant compiling on the submit thread and creating every GPU object twice on a cold import.
 
 `GenerateSidecars` now runs inside `ApplyMesh`, i.e. *before* the manager caches the mesh, where it
 used to run after the cache insert. Safe because it only ever reaches `ImportAsset`, never
@@ -420,6 +420,127 @@ replaces that material's object and leaves the mesh's pointer identical.
 Phase 6's reload-in-place — re-running parse/apply into the *existing* object — is what eventually
 makes the epoch unnecessary.
 
+
+## Asynchronous loading
+
+`AssetManager::GetAsset<T>` and `AssetRef<T>::Get()` **return null while an asset is still
+loading**, and both are non-blocking. A load is two halves:
+
+```
+main thread                    worker                    main thread
+Load(handle) ───► queue parse ─► ParseFn ──► ready ─► AssetManager::Update ─► ApplyFn ─► cache
+   returns null                  (file IO,                (once per frame,      (bgfx)
+                                  compile,                 from Application::Run)
+                                  deserialize)
+```
+
+`Load` is **main-thread only and asserts it**. That is stronger than the roadmap's "assert on Apply",
+and it is what makes the manager's three maps — cache, pending, failed — plain containers with no
+lock: a second `Load` for the same handle joins the first rather than racing it, because both happen
+on one thread. Everything that can be slow is inside `ParseFn`, and every bgfx call is inside
+`ApplyFn`. The assert was negative-tested by loading from a worker: it fires and takes the process
+with it.
+
+**Measured, on this project's five textures with a cold `assets/.compiled/`:**
+
+| | |
+|---|---|
+| Same loads forced synchronous (`WaitFor` each) | **845 ms**, blocking the frame loop |
+| Asynchronous, worst steady frame while ~970 ms of compiles ran | **~10 ms** |
+
+The compiles themselves did not get faster — they moved. The frame loop ran at 7–11 ms throughout,
+including the frame during which a 566 ms BC3 encode was in flight.
+
+### There are no placeholders, and that is a decision
+
+[`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) decision 8 called for a
+per-type placeholder — checkerboard texture, unit cube mesh, deliberately-ugly error material — on
+the argument that returning null *"forces every call site to branch, and 24 call sites in a render
+loop is exactly where you don't want that."*
+
+**The premise does not hold here.** Every one of those call sites has branched on a null asset since
+long before this phase, because a missing asset has always been possible. What placeholders would
+actually change is what a *pending* asset looks like — and the fallbacks that already exist are
+better than the ones proposed:
+
+| Pending | What happens today | What a placeholder would do |
+|---|---|---|
+| A material's texture | `Material::Bind` gates on a null map; the surface renders with its albedo colour | A checkerboard, briefly, on every surface |
+| `SkyLightComponent::Environment` | The procedural sky, which is the authored fallback | Black |
+| A `MaterialOverrides` slot | The mesh's own material | A deliberately-ugly error material, and one shared `Ref` would collapse every pending material into one instancing batch |
+| `StaticMeshComponent::Mesh` | The entity draws nothing | A unit cube at whatever scale the entity has |
+
+A unit cube at the wrong scale is more confusing than nothing. Placeholders are a good idea in an
+engine whose fallbacks are worse than the placeholder; this one's are better.
+
+### The handoff window
+
+This is the part that does not fall out of the design, and it was a live bug before it was a rule.
+
+`Load` returns null while a parse is in flight, so **the caller walks away with nothing**. When
+`Update` finally applies the asset, the only reference to it is a local inside the manager. Insert
+that into a `weak_ptr` cache and it is collected before the function returns; the next frame's
+`Load` sees an expired entry and starts the whole parse again. That is exactly what happened the
+first time this ran: one mesh stuck at "pending" forever, nothing rendered, and the compiled-cache
+hit counter climbed past 3800 in half a minute.
+
+So a manager holds a **strong** reference to anything it has just applied, for `kHandoffFrames`
+(four) calls to `Update`. Anything that wants the asset is polling every frame — an `AssetRef` whose
+`Get()` returned null re-asks by design — so it takes ownership on the next call and the manager's
+grip stops mattering. Nothing takes it, it ages out and is collected, which is the weak cache
+behaving exactly as intended. One frame would do in principle; four leaves slack for a consumer that
+skips a frame.
+
+### Materials re-ask for their maps
+
+A `Material` is not an `AssetRef` holder: it captures `Ref<Texture2D>` once, when it is built. Under
+synchronous loading that was fine. Under asynchronous loading a material built while its albedo was
+still compiling would hold a null map **forever**, because nothing re-resolves it.
+
+So each map carries its `AssetHandle` beside it, and `Material::Bind` re-asks once, for a map that is
+null and has an identity. The lookup only happens while a map is missing; after it resolves this is
+one null check per bind. An embedded texture — one that lives inside a `.glb` rather than as a file —
+has no handle, is decoded directly during `BuildMesh`, and is never pending.
+
+### `WaitFor`, and its one call site
+
+`AssetManager::WaitFor(handle)` blocks until an asset is loaded and applied. It pumps other queued
+jobs while it waits, so it cannot deadlock the pool — in fact enkiTS will often run the very parse
+being waited on, on the calling thread, which is precisely the synchronous behaviour wanted here
+(see [core.md](core.md#job-system)).
+
+There is **one** call site: `MeshImporter::Instantiate`, which has to read a mesh's material list to
+size and fill the new entity's override slots and cannot act on "not yet". Everything on a frame path
+tolerates a null asset for a frame or two instead. Keep the list this short.
+
+### Cancellation, eviction and shutdown
+
+- **A scene swap cancels nothing, and does not need to.** Dropping a scene destroys its `AssetRef`s,
+  but the manager's pending loads are keyed by handle and simply complete. If the new scene wants
+  the asset it is already there; if not, it ages out of the handoff and is collected. No asset from
+  the old scene can be "applied into" the new one — Apply only writes the manager's own cache.
+- **`Evict` cancels and sets aside, rather than waiting.** enkiTS cannot dequeue a started task, so
+  the choice is to block or to hold the `Future` somewhere until it retires. Blocking was measured
+  at **186 ms** for a Reload issued while a 2560×1664 texture was mid-encode. The cancelled `Future`
+  now moves to a draining list that `Update` reaps once `IsReady()`, and the stall is gone. Holding
+  it is safe because the pending entry is already erased, so nothing can read the result.
+- **Compiles poll for cancellation at coarse boundaries**, which is what the threading milestone's
+  contract asks of any long body: `CompiledCache::Open` checks before invoking a compiler (the cheap
+  and common case — a cold open queues everything at once, so most cancelled parses have not started
+  yet), and the texture encoder checks between mips.
+- **Shutdown cancels everything first, then destroys.** `AssetManager::Shutdown` calls
+  `CancelPending` on every manager before `Clear`, so a scene's worth of in-flight parses drain
+  concurrently rather than one `Future` destructor at a time. Verified by closing the editor with
+  three loads pending and four compiles running: clean exit, code 0.
+
+### What is still synchronous
+
+- **Environment.** It has no Parse stage, so it applies inline and its IBL bake still hitches. That
+  is not an omission: the bake is six cube faces plus prefilter mips rendered through bgfx views,
+  which cannot leave the submit thread, and the only part that could — one `stbi_loadf` — is a few
+  percent of it.
+- **Everything inside Apply.** Creating bgfx buffers and textures is main-thread work by
+  construction. What moved off is file IO, decode, deserialization and compilation.
 
 ## Materials (`.gmat`)
 
@@ -593,8 +714,11 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 
 ## Mesh import (cgltf)
 
-[`MeshImporter`](../../GanymedEngine/source/GanymedE/Renderer/MeshImporter.cpp) loads glTF 2.0
-(`.gltf`/`.glb`) via the header-only cgltf:
+[`MeshImporter::Import`](../../GanymedEngine/source/GanymedE/Renderer/MeshImporter.cpp) reads glTF
+2.0 (`.gltf`/`.glb`) via the header-only cgltf into a
+[`MeshSource`](../../GanymedEngine/source/GanymedE/Renderer/MeshSource.h) — **CPU data only, no bgfx
+call anywhere below it**, which is what lets it run on a worker. `BuildMesh` is the main-thread half
+that turns one into a live `Mesh`.
 
 - Walks the node tree **depth-first into a vector**, flattening every mesh primitive into one
   interleaved vertex/index buffer with a `Submesh` per primitive. Traversal order is part of the
@@ -604,10 +728,11 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
   no index accessor is legal glTF (triangle soup in draw order) and gets a synthesized `0..n-1`
   index list, since the engine always draws indexed.
 - Materials map from glTF PBR metallic-roughness: base color factor/texture, normal map,
-  metallic-roughness map, two-sided flag, alpha mode → `IsTransparent`. External texture URIs are
-  recorded as paths and resolved through `TextureImporter::LoadMaterialMap` (so they de-duplicate
-  through the asset index); **embedded** (glb) images are kept as compressed bytes on the `Material`
-  so the cache can persist them.
+  metallic-roughness map, two-sided flag, alpha mode → `IsTransparent`. The importer produces
+  `MeshMaterialSource` *descriptions* rather than `Material` objects: an external texture URI is
+  recorded as an asset-root-relative path, an **embedded** (glb) image as its compressed bytes.
+  `BuildMesh` is where a path becomes a texture, through `TextureImporter::LoadMaterialMap` so it
+  de-duplicates through the asset index.
 - `MeshImporter::Instantiate(scene, path)` — used by viewport drag-drop — imports the asset (minting
   its handle and sidecar if new) and creates an entity with a `StaticMeshComponent`.
 
@@ -700,12 +825,11 @@ untouched, which is the right answer for an `.hdr` environment — its expensive
 that cannot be precomputed into bytes — and for a `.gmat`, which is already the compact form of
 itself.
 
-The contract is that **a compiler is a pure function of its `CompileInput`**, because the epoch
-decides staleness from exactly what that carries. `MeshCompiler` breaks it and says so in its own
-header: it runs `MeshImporter::Load`, which builds a live `Mesh` with bgfx buffers and then
-serializes it, because nothing in the importer can emit CPU-side mesh data yet. The cost is that a
-*cold* mesh import creates its GPU buffers twice and must run on the submit thread; the warm path
-pays neither. Splitting `MeshImporter` is what fixes it, and it is the change Phase 5 cannot skip.
+The contract is that **a compiler is a pure function of its `CompileInput` and touches no GPU**,
+because the epoch decides staleness from exactly what that carries and because every compile now runs
+on a worker. `MeshCompiler` used to break the second half — it built a live `Mesh` purely so it could
+serialize it — which forced compilation onto the submit thread and created every GPU object twice on
+a cold import. `MeshSource` split that in Phase 5; both compilers honour the contract now.
 
 ### Epoch invalidation
 

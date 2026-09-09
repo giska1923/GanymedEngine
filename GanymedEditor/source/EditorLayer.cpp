@@ -360,15 +360,21 @@ namespace GanymedE {
 		// Resident is live objects; tracked is cache entries, which includes ones whose object
 		// has been collected. The gap between the two is eviction actually happening - close a
 		// scene and resident falls while tracked does not until those handles are loaded again.
-		ImGui::Text("Asset Cache (resident / tracked):");
+		// Loading is parses in flight, which is what a cold open looks like from here.
+		ImGui::Text("Asset Cache (resident / tracked / loading):");
 		for (const AssetCacheStats& cache : AssetManager::GetCacheStats())
-			ImGui::Text("%s: %zu / %zu", cache.TypeName, cache.Resident, cache.Tracked);
+		{
+			ImGui::Text("%s: %zu / %zu / %zu", cache.TypeName,
+				cache.Resident, cache.Tracked, cache.Pending);
+		}
 
 		// Compiles vs cache hits is the number that says whether the compiled tree is doing its
-		// job: a second run over an unchanged project must read 0 compiled.
-		const CompiledCache::Stats& compiled = CompiledCache::GetStats();
-		ImGui::Text("Compiled: %u built (%.0f ms), %u from cache",
-			compiled.Compiles, compiled.TotalCompileMs, compiled.CacheHits);
+		// job: a second run over an unchanged project must read 0 compiled. The in-flight count
+		// is what a cold open looks like while it is happening.
+		const CompiledCache::Stats compiled = CompiledCache::GetStats();
+		ImGui::Text("Compiled: %u built (%.0f ms), %u from cache, %u running",
+			compiled.Compiles, compiled.TotalCompileMs, compiled.CacheHits,
+			CompiledCache::CompilesInFlight());
 
 		ImGui::Separator();
 		ImGui::Text("Post Processing:");

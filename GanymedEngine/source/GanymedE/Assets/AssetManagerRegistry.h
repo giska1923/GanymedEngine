@@ -2,6 +2,7 @@
 
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Core/Core.h"
+#include "GanymedE/Core/JobSystem.h"
 #include "GanymedE/Core/Log.h"
 
 #include <array>
@@ -10,6 +11,9 @@
 #include <memory>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace GanymedE {
 
@@ -132,10 +136,23 @@ namespace GanymedE {
 		virtual void Evict(AssetHandle handle) = 0;
 		virtual void EvictAll() = 0;
 
+		// Apply whatever finished parsing. **Main thread**, once per frame, from
+		// AssetManager::Update - this is where every bgfx resource on the async path is created.
+		virtual void Update() = 0;
+
+		// Block until `handle` is loaded, applying it here. For the few callers that genuinely
+		// cannot proceed with an asset that is not there yet; see AssetManager::WaitFor.
+		virtual void WaitFor(AssetHandle handle) = 0;
+
+		// Ask every in-flight parse to stop. Does not wait - destruction does that, and
+		// cancelling first means the waits overlap instead of running back to back.
+		virtual void CancelPending() = 0;
+
 		// Live objects, and cache entries including ones whose object has been collected.
 		// The gap between them is eviction actually happening.
 		virtual std::size_t ResidentCount() const = 0;
 		virtual std::size_t TrackedCount() const = 0;
+		virtual std::size_t PendingCount() const = 0;
 	};
 
 	template<typename T>
@@ -157,8 +174,30 @@ namespace GanymedE {
 		{
 		}
 
+		// **Returns null while the asset is still loading**, and that is the whole shape of the
+		// async layer rather than an omission.
+		//
+		// The roadmap's decision 8 called for a placeholder per type - checkerboard texture, unit
+		// cube mesh, error material - on the argument that returning null "forces every call site
+		// to branch, and 24 call sites in a render loop is exactly where you don't want that."
+		// The premise does not hold here: every one of those call sites has branched on a null
+		// asset since long before this phase, because a missing asset has always been possible.
+		// What placeholders would actually change is what a *pending* asset looks like, and the
+		// fallbacks that already exist are better than the proposed placeholders: a material
+		// whose map has not arrived renders with its albedo colour (Material::Bind already gates
+		// on a null map), a sky light with no environment renders the procedural sky, an override
+		// slot that is not ready falls back to the mesh's own material, and an entity whose mesh
+		// is not ready draws nothing. A unit cube at the wrong scale is more confusing than
+		// nothing, and an error material would break instancing batches on Ref identity.
 		Ref<T> Load(AssetHandle handle)
 		{
+			// Load is main-thread-only, which is stronger than the roadmap's "assert on Apply"
+			// and cheaper to reason about: m_Cache, m_Pending and m_Failed are then plain
+			// containers with no lock, and every bgfx call downstream is inside Apply.
+			GE_CORE_ASSERT(JobSystem::IsMainThread(),
+				"AssetManager::Load must run on the main thread - the parse it queues is the "
+				"part that goes to a worker");
+
 			if (!IsAssetHandleValid(handle))
 				return nullptr;
 
@@ -175,9 +214,22 @@ namespace GanymedE {
 				m_Cache.erase(it);
 			}
 
+			// A load that failed is remembered, and that is not an optimisation. An AssetRef
+			// whose Get() returns null re-asks every frame by design, so without this a broken
+			// asset would queue a job, fail, and queue another - forever, at frame rate, with a
+			// log line each time. Reload and Evict clear it, which is how a fixed file recovers.
+			if (m_Failed.count(handle) != 0)
+				return nullptr;
+
+			if (m_Pending.count(handle) != 0)
+				return nullptr;
+
 			const AssetMetadata* metadata = Detail::FindAssetMetadata(handle);
 			if (!metadata)
 			{
+				// Deliberately *not* recorded as failed: a handle with no index entry may still
+				// gain one, because ImportAsset runs during scene deserialization. The warning
+				// is already once-per-handle.
 				Detail::WarnUnknownAssetHandle(handle, m_TypeName);
 				return nullptr;
 			}
@@ -188,23 +240,130 @@ namespace GanymedE {
 			if (metadata->Type != AssetTypeOf<T>::value)
 				return nullptr;
 
-			Scope<AssetParseResult> parsed;
-			if (m_Parse)
+			// No Parse stage means there is nothing to move off the main thread - Environment is
+			// the case, where the work is an IBL bake through bgfx views. Applying inline keeps
+			// its behaviour exactly what it was.
+			if (!m_Parse)
 			{
-				parsed = m_Parse(*metadata);
-				if (!parsed)
+				Ref<T> asset = m_Apply(*metadata, nullptr);
+				if (!asset)
+				{
+					m_Failed.insert(handle);
 					return nullptr;
+				}
+
+				m_Cache[handle] = asset;
+				m_Handoff[handle] = { asset, 0 };
+				return asset;
 			}
 
-			// Nothing may be held into m_Cache across this call. Apply loads nested assets - a
-			// mesh's materials pull textures - and while those land in *other* managers today,
-			// an iterator held across it would be a landmine for the first type that recurses.
-			Ref<T> asset = m_Apply(*metadata, std::move(parsed));
-			if (!asset)
-				return nullptr;
+			PendingLoad pending;
 
-			m_Cache[handle] = asset;
-			return asset;
+			// The metadata is **copied**, not pointed at. The registry's nodes are stable, so a
+			// pointer would in fact survive - but "in fact survives" is a property of today's
+			// container choice, and a worker reading engine state that the main thread can
+			// mutate is exactly the class of bug this phase is supposed to avoid.
+			pending.Metadata = *metadata;
+
+			ParseFn parse = m_Parse;
+			pending.Parse = JobSystem::Submit(JobPriority::Normal,
+				[metadata = pending.Metadata, parse]() -> Scope<AssetParseResult>
+				{
+					return parse(metadata);
+				});
+
+			m_Pending.emplace(handle, std::move(pending));
+			return nullptr;
+		}
+
+		void Update() override
+		{
+			GE_CORE_ASSERT(JobSystem::IsMainThread(), "Apply creates GPU resources - main thread only");
+
+			// Cancelled jobs, released once they have actually retired. Erasing a retired Future
+			// does not block; erasing one still running would, which is the whole point of
+			// deferring it to here instead of doing it inside Evict.
+			for (auto it = m_Draining.begin(); it != m_Draining.end(); )
+				it = it->IsReady() ? m_Draining.erase(it) : it + 1;
+
+			if (m_Pending.empty())
+				return;
+
+			// Collected before applying, rather than applied while iterating. Apply loads nested
+			// assets - a mesh pulls its textures - and while those land in *other* managers
+			// today, an iterator held across it would be a landmine for the first type that
+			// reaches back into its own manager.
+			std::vector<std::pair<AssetHandle, PendingLoad>> ready;
+			for (auto it = m_Pending.begin(); it != m_Pending.end(); )
+			{
+				if (!it->second.Parse.IsReady())
+				{
+					++it;
+					continue;
+				}
+
+				ready.emplace_back(it->first, std::move(it->second));
+				it = m_Pending.erase(it);
+			}
+
+			for (auto& [handle, pending] : ready)
+				Finish(handle, pending);
+
+			AgeHandoff();
+		}
+
+		void WaitFor(AssetHandle handle) override
+		{
+			GE_CORE_ASSERT(JobSystem::IsMainThread(), "WaitFor applies on the main thread");
+
+			auto it = m_Pending.find(handle);
+			if (it == m_Pending.end())
+				return;
+
+			// Future::Wait pumps other queued jobs while it blocks, so waiting here cannot
+			// deadlock the pool even though this is called from inside a frame.
+			it->second.Parse.Wait();
+
+			PendingLoad pending = std::move(it->second);
+			m_Pending.erase(it);
+			Finish(handle, pending);
+		}
+
+		void CancelPending() override
+		{
+			for (auto& [handle, pending] : m_Pending)
+				pending.Parse.Cancel();
+
+			for (Future<Scope<AssetParseResult>>& draining : m_Draining)
+				draining.Cancel();
+		}
+
+		// Assets applied recently enough that whoever asked for them may not have collected the
+		// result yet.
+		//
+		// **This exists because a weak cache and asynchronous loading do not compose on their
+		// own.** Load returns null while a parse is in flight, so the caller walks away with
+		// nothing; when Update finally applies the asset, the only reference to it is the local
+		// in Finish. Insert it into a weak cache and it is collected before the function returns,
+		// the next frame's Load sees an expired entry, and the whole parse runs again - forever,
+		// at frame rate. That is exactly what happened the first time this ran: one mesh stuck
+		// "pending", nothing rendered, and the compiled-cache hit counter climbed past 3800.
+		//
+		// So the manager holds the asset itself for a few frames. Anything that wants it is
+		// polling every frame - an AssetRef whose Get() returned null re-asks by design - so it
+		// takes ownership on the next call and the manager's grip stops mattering. Nothing takes
+		// it, it ages out and is collected, which is the weak cache behaving exactly as intended.
+		// The count is small and deliberate: one frame would be enough in principle and leaves no
+		// slack for a consumer that skips a frame.
+		void AgeHandoff()
+		{
+			for (auto it = m_Handoff.begin(); it != m_Handoff.end(); )
+			{
+				if (++it->second.FramesHeld >= kHandoffFrames)
+					it = m_Handoff.erase(it);
+				else
+					++it;
+			}
 		}
 
 		// Cache lookup only - never loads. For code that wants the object *if* it is already
@@ -223,11 +382,35 @@ namespace GanymedE {
 		void Evict(AssetHandle handle) override
 		{
 			m_Cache.erase(handle);
+			m_Failed.erase(handle);
+			m_Handoff.erase(handle);
+
+			// A load still in flight is cancelled and *set aside*, not waited on here.
+			//
+			// Waiting would be correct but slow in exactly the wrong place: a Reload issued
+			// while a large texture is mid-encode blocked the main thread for the rest of that
+			// encode - 186 ms, measured, before this. Cancellation cannot dequeue a started task
+			// (enkiTS has no such call), so the only choices are to block or to hold the Future
+			// somewhere until it retires. Holding it is safe because the job writes into its own
+			// result slot and nothing reads it: the pending entry is already gone, so the result
+			// can never be applied.
+			if (auto it = m_Pending.find(handle); it != m_Pending.end())
+			{
+				it->second.Parse.Cancel();
+				m_Draining.push_back(std::move(it->second.Parse));
+				m_Pending.erase(it);
+			}
+
 			++Detail::g_AssetEvictionEpoch;
 		}
 
 		void EvictAll() override
 		{
+			CancelPending();
+			m_Pending.clear();
+			m_Draining.clear();
+			m_Failed.clear();
+			m_Handoff.clear();
 			m_Cache.clear();
 			++Detail::g_AssetEvictionEpoch;
 		}
@@ -241,13 +424,78 @@ namespace GanymedE {
 		}
 
 		std::size_t TrackedCount() const override { return m_Cache.size(); }
+		std::size_t PendingCount() const override { return m_Pending.size(); }
+
+		~TypedAssetManager() override
+		{
+			// Ask everything to stop before any single Future's destructor starts waiting on
+			// it, so the waits overlap. Without this a scene's worth of in-flight parses would
+			// be cancelled and drained one at a time at shutdown.
+			CancelPending();
+		}
 
 	private:
+		struct PendingLoad
+		{
+			AssetMetadata Metadata;
+
+			// Move-only, and its destructor cancels and waits - which is the property this whole
+			// design leans on. Dropping a PendingLoad (a scene swap, a shutdown, an Evict) can
+			// never leave a worker writing into state that has gone away.
+			Future<Scope<AssetParseResult>> Parse;
+		};
+
+		void Finish(AssetHandle handle, PendingLoad& pending)
+		{
+			std::optional<Scope<AssetParseResult>> parsed = pending.Parse.Get();
+
+			// nullopt means the job was cancelled before its body ran; a null Scope means the
+			// parse itself failed. Both are terminal for this handle until something evicts it.
+			if (!parsed || !*parsed)
+			{
+				m_Failed.insert(handle);
+				return;
+			}
+
+			Ref<T> asset = m_Apply(pending.Metadata, std::move(*parsed));
+			if (!asset)
+			{
+				m_Failed.insert(handle);
+				return;
+			}
+
+			m_Cache[handle] = asset;
+			m_Handoff[handle] = { asset, 0 };
+		}
+
 		// Weak, so an asset is resident exactly as long as something references it. That is the
 		// fix for "nothing is ever unloaded": the four maps this replaced held strong refs and
 		// had no eviction path but Reload and Shutdown. The owner is now whoever holds an
 		// `AssetRef<T>` - which is a component, and therefore a scene.
 		std::unordered_map<AssetHandle, std::weak_ptr<T>> m_Cache;
+
+		// In flight. Keyed by handle so a second Load for the same asset joins the first rather
+		// than queueing a duplicate parse - the race decision 5's "two Load calls racing to
+		// insert" warns about, made impossible by Load being main-thread-only.
+		std::unordered_map<AssetHandle, PendingLoad> m_Pending;
+
+		// Handles whose load will not be retried. See the note in Load.
+		std::unordered_set<AssetHandle> m_Failed;
+
+		static constexpr uint32_t kHandoffFrames = 4;
+
+		struct Handoff
+		{
+			Ref<T> Asset;
+			uint32_t FramesHeld = 0;
+		};
+
+		// The only strong references this manager holds, and only briefly. See AgeHandoff.
+		std::unordered_map<AssetHandle, Handoff> m_Handoff;
+
+		// Cancelled parses waiting to retire. Nothing reads their results; they are held only so
+		// that dropping them cannot happen while the worker is still inside the body. See Evict.
+		std::vector<Future<Scope<AssetParseResult>>> m_Draining;
 
 		const char* m_TypeName;
 		ParseFn m_Parse;

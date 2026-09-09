@@ -11,6 +11,7 @@
 #include "GanymedE/Renderer/Environment.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/MeshImporter.h"
+#include "GanymedE/Renderer/MeshSource.h"
 #include "GanymedE/Renderer/Texture.h"
 
 #include <fstream>
@@ -261,6 +262,11 @@ namespace GanymedE {
 		s_Data.LegacyHandles.clear();
 		s_Data.LegacyRegistryPresent = false;
 		s_Data.WarnedUnknownHandles.clear();
+		// Cancel first, then destroy. Every manager's in-flight parses are asked to stop before
+		// any single Future's destructor starts waiting, so a shutdown with a scene's worth of
+		// loads in flight drains them concurrently rather than one at a time.
+		AssetManagerRegistry::ForEach([](IAssetManager& manager) { manager.CancelPending(); });
+
 		// Destroys the managers, and with them everything they retain. Runs from
 		// EditorLayer::OnDetach while Renderer::IsGpuAlive() is still true, so the GPU-resource
 		// destructors release real bgfx handles rather than tripping the is-alive guard.
@@ -393,15 +399,15 @@ namespace GanymedE {
 
 		// ---- Compiled blob ------------------------------------------------------------
 		//
-		// Mesh and Texture share a Parse stage: open the compiled artifact, compiling it first
-		// if the epoch record says it is stale. Their Apply stages differ, but neither knows
-		// whether the bytes came off disk or out of a compiler that just ran for two seconds.
+		// Every Parse below runs on a worker: it opens the compiled artifact, compiling it first
+		// if the epoch record says it is stale. Nothing here may touch bgfx, and since Phase 5
+		// nothing does - the mesh compiler was the last holdout and MeshSource split it.
 		struct CompiledBlob : AssetParseResult
 		{
 			std::vector<uint8_t> Bytes;
 		};
 
-		Scope<AssetParseResult> ParseCompiled(const AssetMetadata& metadata)
+		Scope<AssetParseResult> ParseTexture(const AssetMetadata& metadata)
 		{
 			auto parsed = CreateScope<CompiledBlob>();
 			if (!CompiledCache::Open(metadata, parsed->Bytes) || parsed->Bytes.empty())
@@ -411,15 +417,29 @@ namespace GanymedE {
 		}
 
 		// ---- Mesh ---------------------------------------------------------------------
-		//
-		// Apply is still where every bgfx call lives, and for meshes so is half of Parse: the
-		// mesh compiler reaches the GPU through MeshImporter (see MeshCompiler.h). Textures are
-		// the type whose Parse is genuinely free of it.
+		struct MeshParse : AssetParseResult
+		{
+			MeshSource Source;
+		};
+
+		Scope<AssetParseResult> ParseMesh(const AssetMetadata& metadata)
+		{
+			std::vector<uint8_t> blob;
+			if (!CompiledCache::Open(metadata, blob) || blob.empty())
+				return nullptr;
+
+			auto parsed = CreateScope<MeshParse>();
+			if (!MeshCompiler::Read(blob, metadata.FilePath, parsed->Source))
+				return nullptr;
+
+			return parsed;
+		}
+
 		Ref<Mesh> ApplyMesh(const AssetMetadata& metadata, Scope<AssetParseResult> parsed)
 		{
 			const std::filesystem::path relativePath = metadata.FilePath;
 
-			Ref<Mesh> mesh = MeshCompiler::Read(static_cast<CompiledBlob&>(*parsed).Bytes, relativePath);
+			Ref<Mesh> mesh = BuildMesh(static_cast<MeshParse&>(*parsed).Source);
 			if (!mesh)
 				return nullptr;
 
@@ -492,9 +512,14 @@ namespace GanymedE {
 		// form. The AssetType each manager serves comes from AssetTypeOf<T>, so this list cannot
 		// disagree with the GE_ASSET_TYPE declarations; a type missing from those does not
 		// compile here.
-		AssetManagerRegistry::Register<Mesh>("Mesh", &ParseCompiled, &ApplyMesh);
+		AssetManagerRegistry::Register<Mesh>("Mesh", &ParseMesh, &ApplyMesh);
+
+		// Environment has no Parse, so it applies inline on the calling thread and its IBL bake
+		// still hitches. That is not an omission: the bake is six cube faces plus prefilter mips
+		// rendered through bgfx views, which cannot leave the submit thread, and the only part
+		// that could - one stbi_loadf - is a few percent of it.
 		AssetManagerRegistry::Register<Environment>("Environment", nullptr, &ApplyEnvironment);
-		AssetManagerRegistry::Register<Texture2D>("Texture2D", &ParseCompiled, &ApplyTexture);
+		AssetManagerRegistry::Register<Texture2D>("Texture2D", &ParseTexture, &ApplyTexture);
 		AssetManagerRegistry::Register<Material>("Material", &ParseMaterial, &ApplyMaterial);
 
 		// Which types have an offline step. A type absent from this list still loads - the cache
@@ -569,12 +594,37 @@ namespace GanymedE {
 		GE_CORE_INFO("Reloading asset '{0}'", metadata->FilePath);
 	}
 
+	void AssetManager::Update()
+	{
+		GE_PROFILE_FUNCTION();
+
+		AssetManagerRegistry::ForEach([](IAssetManager& manager) { manager.Update(); });
+	}
+
+	void AssetManager::WaitFor(AssetHandle handle)
+	{
+		const AssetMetadata* metadata = GetMetadata(handle);
+		if (!metadata)
+			return;
+
+		if (IAssetManager* manager = AssetManagerRegistry::Find(metadata->Type))
+			manager->WaitFor(handle);
+	}
+
+	std::size_t AssetManager::PendingCount()
+	{
+		std::size_t count = 0;
+		AssetManagerRegistry::ForEach([&count](IAssetManager& manager) { count += manager.PendingCount(); });
+		return count;
+	}
+
 	std::vector<AssetCacheStats> AssetManager::GetCacheStats()
 	{
 		std::vector<AssetCacheStats> stats;
 		AssetManagerRegistry::ForEach([&stats](IAssetManager& manager)
 		{
-			stats.push_back({ manager.TypeName(), manager.ResidentCount(), manager.TrackedCount() });
+			stats.push_back({ manager.TypeName(), manager.ResidentCount(),
+				manager.TrackedCount(), manager.PendingCount() });
 		});
 
 		return stats;

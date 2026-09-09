@@ -236,8 +236,8 @@ question. Do not fold a Tracy adoption into this milestone.
 **T3 — First consumer: parallel BCn encode in the asset compiler. Done** — landed with asset
 Phase 4; see [T3 — done](#t3--done-2026-09-08) at the bottom.
 
-**T4 — Second consumer: async load.** Lands with asset Phase 5, which owns the risks. This milestone
-contributes the pinned-task drain, the cancel-and-wait `Future`, and the main-thread assert.
+**T4 — Second consumer: async load. Done** — landed with asset Phase 5; see
+[T4 — done](#t4--done-2026-09-09) at the bottom.
 
 ---
 
@@ -413,3 +413,47 @@ Debug (plus `NoRuntimeChecks`, since MSVC rejects `/O2` with `/RTC1`). Without t
 here is meaningful and the asset compiler is unusable in the configuration everyone develops in.
 
 **T4 remains open** and is asset Phase 5. Nothing in the frame runs on the scheduler yet.
+
+---
+
+# T4 — done (2026-09-09)
+
+The second consumer is the asset layer's Parse stage, landed with
+[`ASSET_PIPELINE_ROADMAP.md`](ASSET_PIPELINE_ROADMAP.md) Phase 5. Every asset load now submits its
+file IO, decode, deserialization and compilation as a job; `AssetManager::Update` applies the
+results on the main thread, once per frame, from `Application::Run`.
+
+**What this milestone contributed, and what it got wrong.**
+
+- **The cancel-and-wait `Future` is the thing that made this safe**, exactly as T1 argued. A scene
+  swap, a shutdown or an `Evict` drops a `Future`, and the drop cannot leave a worker writing into
+  freed state. Closing the editor with three loads pending and four compiles running exits cleanly.
+- **The main-thread assert paid for itself**, though it ended up on `Load` rather than on Apply —
+  which is stronger, and makes the manager's maps lock-free rather than merely correct.
+- **`SubmitToMainThread` was not used.** T1 built it as the bgfx handoff and it is still the right
+  shape for one, but the asset layer wanted a *drain point it owns*: `AssetManager::Update` iterates
+  its own pending set, applies what is ready, and ages the handoff window. Pushing per-asset
+  closures onto a shared queue would have scattered that bookkeeping. The queue remains unused by
+  anything, which is worth knowing before adding to it.
+
+**A finding that cost real time, now in [`core.md`](../engine/core.md#job-system):** `Future::Wait()`
+pumps the queue on the *calling* thread and will often run the very job it is waiting on. That is
+what makes `AssetManager::WaitFor` synchronous for free — and it is why the first attempt to
+negative-test the main-thread assert proved nothing at all, because the "worker" job ran on main.
+A test that needs work on a worker must poll `IsReady()`.
+
+**The measurement.** Five textures and a mesh, cold compiled tree:
+
+| | Time |
+| --- | --- |
+| Forced synchronous (`Get` then `WaitFor` each) | 845 ms, blocking the frame loop |
+| Asynchronous, worst steady frame | ~10 ms |
+
+~970 ms of compile work ran while the frame loop stayed at 7–11 ms. Unlike T3 — where making the
+encoder faster made the threading matter less — this is the consumer that justifies the milestone:
+the work is inherently serial per asset, there is a lot of it, and none of it needs the main thread
+until the last step.
+
+**Still open from this milestone:** decision 4's Jolt consolidation. Two pools of
+`hardware_concurrency() - 1` threads is still the state, and now there is a third source of load on
+the scheduler. Worth measuring before assuming it is harmless.

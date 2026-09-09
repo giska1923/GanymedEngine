@@ -1043,6 +1043,94 @@ tuning a scheduler, stop.
 | Thread sanity | Assert on bgfx-from-worker never fires; run the editor under the VS thread-safety analyzer or add a deliberate violation in a scratch build to confirm the assert works |
 | Docs | [`core.md`](../engine/core.md) job system section; [`assets.md`](../engine/assets.md) async loading, `Status`, placeholders, `WaitFor`; [`architecture.md`](../engine/architecture.md) frame-flow update for the drain point |
 
+### Phase 5 — execution notes (done)
+
+New files: `Renderer/MeshSource.h/.cpp`. Premake regeneration required and run. No new dependency,
+no new project.
+
+**The debt Phases 2 and 4 both deferred came due first, and it was the enabler.** `MeshCompiler`
+ran `MeshImporter::Load`, which built a live `Mesh` — bgfx buffers, materials, textures — purely so
+it could serialize it. That is a GPU call inside a Parse stage, so mesh compilation could not leave
+the main thread, and "asynchronous except the expensive part" is not asynchronous.
+`MeshSource` is the split: `MeshImporter::Import` emits CPU data, `MeshCompiler` serializes it,
+`BuildMesh` is the one main-thread step. The blob format did not change — it always stored material
+*descriptions* rather than material objects, which is why v7 stayed v7.
+
+**Three things the plan did not anticipate, in order of how much they mattered.**
+
+1. **A weak cache and asynchronous loading do not compose, and the failure is total.** `Load` returns
+   null while a parse is in flight, so the caller walks away with nothing; when `Update` applies the
+   asset, the only reference is a local in the manager. Insert it into a `weak_ptr` cache and it is
+   collected before the function returns, the next frame's `Load` sees an expired entry, and the
+   parse runs again — forever. Measured on the first run: one mesh stuck "pending", nothing
+   rendered, and the compiled-cache hit counter past 3800 in half a minute. The fix is a **handoff
+   window**: the manager holds a strong reference to anything it has just applied for four `Update`
+   calls, which is long enough for a polling `AssetRef` to take ownership and short enough that
+   nothing unwanted survives. This is the single most important thing in the phase and it is not in
+   the roadmap at all.
+
+2. **A `Material` captures its textures once, so async loading would leave it holding null forever.**
+   Materials are not `AssetRef` holders — they are built with `Ref<Texture2D>` in hand. Each map now
+   carries its `AssetHandle` and `Material::Bind` re-asks once for a map that is null and has an
+   identity. Embedded textures have no handle, are decoded during `BuildMesh`, and are never pending.
+   Without this, every material built during a cold open would render untextured permanently.
+
+3. **`Evict` on a pending load blocked the main thread for 186 ms.** enkiTS cannot dequeue a started
+   task, so cancel-and-wait means waiting for the running body — and a Reload issued while a
+   2560×1664 texture was mid-encode paid for the rest of that encode. Cancelled `Future`s now move to
+   a draining list that `Update` reaps once `IsReady()`; the stall is gone. Coarse cancellation
+   polling was added too (`CompiledCache::Open` before invoking a compiler, the texture encoder
+   between mips), which is what the threading milestone's contract asks of any long body.
+
+**Decision 8 is overturned: there are no placeholders.** The decision rests on "returning null forces
+every call site to branch, and 24 call sites in a render loop is exactly where you don't want that."
+Every one of those call sites has branched on a null asset since long before this phase — a missing
+asset has always been possible — so no new branching is introduced. What placeholders would change is
+what a *pending* asset looks like, and this engine's existing fallbacks are better than the proposed
+placeholders: a material with no map renders its albedo colour, a sky light with no environment
+renders the procedural sky, an override slot falls back to the mesh's own material, and an entity
+with no mesh draws nothing. A unit cube at the wrong scale is more confusing than nothing, and one
+shared error-material `Ref` would collapse every pending material into a single instancing batch.
+
+**Smaller deviations.**
+
+- **`Load` is main-thread-only and asserts it**, which is stronger than step 6's "assert that Apply
+  is". It is what makes the cache, pending and failed maps lock-free, and it makes step 2's "two
+  `Load` calls for the same handle racing to insert" impossible rather than handled.
+- **A failed load is remembered.** Not in the plan, and not optional: an `AssetRef` whose `Get()`
+  returns null re-asks every frame by design, so without a failed set a broken asset would queue a
+  job, fail, and queue another at frame rate with a log line each time.
+- **`Environment` stays synchronous** — no Parse stage, because the work is a GPU bake.
+- **Step 7 came for free.** Compilation runs inside Parse, so it moved to workers with no extra code.
+- **The metadata is copied into the job, not pointed at.** The registry's nodes are stable so a
+  pointer would in fact survive, but "in fact survives" is a property of today's container choice.
+
+**A `JobSystem` finding worth carrying:** `Future::Wait()` pumps the queue on the *calling* thread
+and will often run the very job being waited on. That is what makes `WaitFor` synchronous for free —
+and it is why the first attempt to negative-test the main-thread assert proved nothing. A test that
+wants work to run on a worker has to poll `IsReady()`. Written up in
+[`core.md`](../engine/core.md#job-system).
+
+**Verification results** (MSBuild x64 Debug, full solution clean).
+
+| Check | Result |
+| --- | --- |
+| Cold open does not hitch | Five textures + a mesh, cold `.compiled/`: **845 ms** of work when forced synchronous (`Get` + `WaitFor` each), versus a worst steady frame of **~10 ms** asynchronously while ~970 ms of compiles ran. The frame during a 566 ms BC3 encode measured 6.9 ms |
+| No call-site changes | `git diff` touches `Assets/`, `Core/`-adjacent `Renderer/` files that had to split, and exactly two lines elsewhere: the `AssetManager::Update` tick in `Application::Run` and the `WaitFor` in `MeshImporter::Instantiate`. No `Scene/Systems/` file changed |
+| Placeholders appear and resolve | **Not applicable** — see above. Textures resolve into materials over the following frames, which the probe observed going 0/5 → 2/5 → 4/5 → 5/5 across ~55 frames |
+| Cancellation is safe | Scene swapped on frame 1 with a load pending and a compile running: clean exit, no crash, pending drained to 0. Reload issued against a mid-flight load: cancelled, drained off the main thread, no stall |
+| Shutdown with work in flight | Closed with **3 loads pending and 4 compiles running**: exit code 0 |
+| Thread sanity | The main-thread assert was negative-tested by loading from a worker (polled, not waited — see above): `Assertion failed: AssetManager::Load must run on the main thread` and the process terminated on the breakpoint. Reverted |
+| Renders identically | `Phase5Test.ganymede` warm: 40 meshes, 32 frustum-culled, 5 instanced draws, 7 draw calls — the same numbers as Phases 2, 3 and 4 |
+| Warm open | Nothing compiled, no warnings |
+| Runtime boots | Compiles its mesh on a cold tree, scene loads, 10 entities, primary camera found, zero errors |
+
+**Left as adjacent work.** `Environment`'s bake is the remaining synchronous hitch and wants an
+async-friendly IBL path, not an asset-layer change. The handoff window's four frames is a constant
+that would want revisiting if anything ever loads assets outside a frame loop.
+
+---
+
 ---
 
 ## Phase 6 — Hot reload: file watching and dependency-driven invalidation

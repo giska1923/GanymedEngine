@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Renderer/Shader.h"
 #include "GanymedE/Renderer/Texture.h"
@@ -29,6 +30,16 @@ namespace GanymedE {
 
 		void SetRoughness(float roughness) { m_Roughness = roughness; }
 		float GetRoughness() const { return m_Roughness; }
+
+		// The handle beside each map is what makes asynchronous texture loading work through a
+		// Material. A Material captures its textures once, at construction, so a map that was
+		// still loading then would otherwise stay null forever - the object has no owner that
+		// re-resolves it the way an AssetRef on a component does. Storing the identity lets
+		// Bind() ask again, once, on a later frame. Zero for an embedded texture, which has no
+		// file and therefore no identity: those are decoded directly and never pending.
+		void SetAlbedoMapHandle(AssetHandle handle) { m_AlbedoMapHandle = handle; }
+		void SetNormalMapHandle(AssetHandle handle) { m_NormalMapHandle = handle; }
+		void SetMetallicRoughnessMapHandle(AssetHandle handle) { m_MetallicRoughnessMapHandle = handle; }
 
 		void SetAlbedoMap(const Ref<Texture2D>& texture) { m_AlbedoMap = texture; }
 		Ref<Texture2D> GetAlbedoMap() const { return m_AlbedoMap; }
@@ -78,9 +89,15 @@ namespace GanymedE {
 		float m_Metallic = 0.0f;
 		float m_Roughness = 0.5f;
 
-		Ref<Texture2D> m_AlbedoMap;
-		Ref<Texture2D> m_NormalMap;
-		Ref<Texture2D> m_MetallicRoughnessMap;
+		// Mutable so Bind() can fill in a map that finished loading after this material was
+		// built. Bind is const and called from the render path; see SetAlbedoMapHandle.
+		mutable Ref<Texture2D> m_AlbedoMap;
+		mutable Ref<Texture2D> m_NormalMap;
+		mutable Ref<Texture2D> m_MetallicRoughnessMap;
+
+		AssetHandle m_AlbedoMapHandle = InvalidAssetHandle;
+		AssetHandle m_NormalMapHandle = InvalidAssetHandle;
+		AssetHandle m_MetallicRoughnessMapHandle = InvalidAssetHandle;
 
 		std::string m_AlbedoMapPath;
 		std::string m_NormalMapPath;

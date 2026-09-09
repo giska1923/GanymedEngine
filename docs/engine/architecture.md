@@ -56,6 +56,8 @@ Application::Run loop
 ├─ compute Timestep from glfwGetTime()
 │
 ├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized)
+├─ AssetManager::Update                    apply parses that finished on workers (the only
+│                                          place the async asset path creates GPU resources)
 │
 ├─ Layer::OnUpdate for each layer          (EditorLayer in the editor)
 │   │
@@ -154,21 +156,20 @@ Two ordering facts worth internalizing:
 
 - **The frame is still single-threaded**, and a scheduler existing does not change that. One scene
   update per frame on the main thread; bgfx runs in single-threaded mode (`renderFrame()` before
-  `init`). [`Core/JobSystem`](core.md#job-system) has exactly one consumer, and it is offline work:
-  the texture compiler's block encode
-  ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3, measured at 1.8× on a
-  2560×1664 texture). Async loading is T4 and does not exist yet. Jolt still runs its own pool,
+  `init`). [`Core/JobSystem`](core.md#job-system) has two consumers and neither is in the frame: the
+  texture compiler's block encode
+  ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3, 1.8× on a 2560×1664 texture)
+  and asset parsing (T4). No ECS system runs on it. Jolt still runs its own pool,
   so there are currently two pools of `hardware_concurrency() - 1` threads. The ViewDesc machinery
   exists so ECS parallelism can be added without redesign.
-- **The asset layer is mid-milestone.** Identity is per-asset `.meta` sidecars, loading goes through
-  a registration-driven manager registry with a Parse/Apply split, `AssetRef<T>` is the reference
-  type components hold, and sources are compiled into `assets/.compiled/` with content-hash
-  invalidation — textures as mipped BCn, meshes as a binary blob. What is still missing is
-  **asynchrony**: every load, including a compile, blocks the calling thread, so a cold import of a
-  large project hitches. There is also no hot reload.
-  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) Phases 1–4 have landed;
-  `AssetRef` is the shim that lets Phase 5 make loading asynchronous without touching a call site,
-  which is why it came first.
+- **Asset loading is asynchronous.** Identity is per-asset `.meta` sidecars, loading goes through a
+  manager registry with a Parse/Apply split, `AssetRef<T>` is the reference type components hold,
+  sources are compiled into `assets/.compiled/` with content-hash invalidation, and the parse half
+  runs on `JobSystem` workers while `AssetManager::Update` applies the results on the main thread.
+  Measured: 845 ms of cold-import work that used to block the frame loop now costs it nothing
+  (see [assets.md](assets.md#asynchronous-loading)).
+  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) Phases 1–5 have landed. What
+  is left is **hot reload** (Phase 6): editing an asset on disk still needs a manual Reload.
 - **Component members are reflected, but nothing consumes it yet.**
   [`Reflection/`](scene.md#member-reflection) registers all 23 components over `entt::meta` and
   validates itself at boot; the serializer, the inspector and the Lua bindings still hand-list every

@@ -208,12 +208,13 @@ namespace GanymedE {
 				const std::string& Path;
 				void (Material::*SetPath)(const std::string&);
 				void (Material::*SetTexture)(const Ref<Texture2D>&);
+				void (Material::*SetHandle)(AssetHandle);
 			};
 
 			const MapField maps[] = {
-				{ desc.AlbedoMapPath,            &Material::SetAlbedoMapPath,            &Material::SetAlbedoMap },
-				{ desc.NormalMapPath,            &Material::SetNormalMapPath,            &Material::SetNormalMap },
-				{ desc.MetallicRoughnessMapPath, &Material::SetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMap },
+				{ desc.AlbedoMapPath,            &Material::SetAlbedoMapPath,            &Material::SetAlbedoMap,            &Material::SetAlbedoMapHandle },
+				{ desc.NormalMapPath,            &Material::SetNormalMapPath,            &Material::SetNormalMap,            &Material::SetNormalMapHandle },
+				{ desc.MetallicRoughnessMapPath, &Material::SetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMap, &Material::SetMetallicRoughnessMapHandle },
 			};
 
 			for (const MapField& map : maps)
@@ -222,9 +223,13 @@ namespace GanymedE {
 					continue;
 
 				(material.get()->*map.SetPath)(map.Path);
-				// De-duplicated through the registry, so two materials naming one image
-				// share a single bgfx texture.
-				(material.get()->*map.SetTexture)(TextureImporter::LoadMaterialMap(map.Path));
+
+				// De-duplicated through the registry, so two materials naming one image share a
+				// single bgfx texture. Null here means "not loaded yet", which the handle lets
+				// Material::Bind pick up on a later frame.
+				AssetHandle mapHandle = InvalidAssetHandle;
+				(material.get()->*map.SetTexture)(TextureImporter::LoadMaterialMap(map.Path, &mapHandle));
+				(material.get()->*map.SetHandle)(mapHandle);
 			}
 
 			return material;

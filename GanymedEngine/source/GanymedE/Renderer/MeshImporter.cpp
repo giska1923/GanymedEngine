@@ -23,23 +23,22 @@ namespace GanymedE {
 
 	namespace {
 
-		Ref<Texture2D> CreateTextureFromImage(const cgltf_image* image, const std::filesystem::path& basePath,
-			std::string* outRelativePath = nullptr, std::vector<uint8_t>* outEmbeddedData = nullptr)
+		// Records where a glTF image lives, without touching the GPU. A URI becomes an
+		// asset-root-relative path the material resolves later; an embedded buffer view becomes
+		// the compressed bytes themselves, because there is no file to point at.
+		void RecordImage(const cgltf_image* image, const std::filesystem::path& basePath,
+			std::string& outRelativePath, std::vector<uint8_t>& outEmbeddedData)
 		{
 			if (!image)
-				return nullptr;
+				return;
 
 			if (image->uri)
 			{
 				std::filesystem::path imagePath = basePath / image->uri;
 				std::error_code ec;
 				auto relative = std::filesystem::relative(imagePath, GetAssetRoot(), ec);
-				std::string recordedPath = ec ? imagePath.string() : relative.generic_string();
-
-				if (outRelativePath)
-					*outRelativePath = recordedPath;
-
-				return TextureImporter::LoadMaterialMap(recordedPath);
+				outRelativePath = ec ? imagePath.string() : relative.generic_string();
+				return;
 			}
 
 			if (image->buffer_view)
@@ -47,19 +46,10 @@ namespace GanymedE {
 				const cgltf_buffer_view* view = image->buffer_view;
 				const uint8_t* data = (const uint8_t*)view->buffer->data + view->offset;
 
-				// No file identity, so no registry entry and no de-duplication here.
-				Ref<Texture2D> texture = TextureImporter::LoadFromMemory(data, view->size, true);
-				if (!texture)
-					return nullptr;
-
-				// No file on disk to reload from — keep the compressed bytes so MeshCache can persist them
-				if (outEmbeddedData)
-					outEmbeddedData->assign(data, data + view->size);
-
-				return texture;
+				// No file identity, so no registry entry and no de-duplication. The bytes ride
+				// along in the mesh blob so a cache replay does not need the model file.
+				outEmbeddedData.assign(data, data + view->size);
 			}
-
-			return nullptr;
 		}
 
 		glm::mat4 GetNodeLocalTransform(const cgltf_node* node)
@@ -402,7 +392,7 @@ namespace GanymedE {
 
 	}
 
-	Ref<Mesh> MeshImporter::Load(const std::filesystem::path& path,
+	bool MeshImporter::Import(const std::filesystem::path& path, MeshSource& out,
 		std::vector<std::string>* outDependencies)
 	{
 		cgltf_options options = {};
@@ -411,7 +401,7 @@ namespace GanymedE {
 		if (result != cgltf_result_success)
 		{
 			GE_CORE_ERROR("Failed to parse glTF '{0}' (code {1})", path.string(), (int)result);
-			return nullptr;
+			return false;
 		}
 
 		result = cgltf_load_buffers(&options, data, path.string().c_str());
@@ -419,7 +409,7 @@ namespace GanymedE {
 		{
 			GE_CORE_ERROR("Failed to load glTF buffers for '{0}'", path.string());
 			cgltf_free(data);
-			return nullptr;
+			return false;
 		}
 
 		std::filesystem::path basePath = path.parent_path();
@@ -459,60 +449,48 @@ namespace GanymedE {
 				record(data->images[i].uri);
 		}
 
-		Ref<Shader> shader = MeshShader::Get();
-
-		// Materials
-		std::vector<Ref<Material>> materials;
+		// Materials, as descriptions. No Material object and no texture is created here - that
+		// is BuildMesh's job, on the main thread.
+		std::vector<MeshMaterialSource> materials;
 		materials.reserve(data->materials_count);
 		for (cgltf_size i = 0; i < data->materials_count; i++)
 		{
 			const cgltf_material& src = data->materials[i];
-			Ref<Material> material = Material::Create(shader);
-			if (src.name)
-				material->SetName(src.name);
 
-			material->SetTwoSided(src.double_sided);
-			material->SetTransparent(src.alpha_mode == cgltf_alpha_mode_blend);
+			MeshMaterialSource material;
+			if (src.name)
+				material.Name = src.name;
+
+			material.TwoSided = src.double_sided;
+			material.Transparent = src.alpha_mode == cgltf_alpha_mode_blend;
 
 			if (src.has_pbr_metallic_roughness)
 			{
 				const auto& pbr = src.pbr_metallic_roughness;
-				material->SetAlbedoColor(glm::make_vec4(pbr.base_color_factor));
-				material->SetMetallic(pbr.metallic_factor);
-				material->SetRoughness(pbr.roughness_factor);
+				material.Albedo = glm::make_vec4(pbr.base_color_factor);
+				material.Metallic = pbr.metallic_factor;
+				material.Roughness = pbr.roughness_factor;
 
 				if (pbr.base_color_texture.texture)
 				{
-					std::string texPath;
-					std::vector<uint8_t> embedded;
-					material->SetAlbedoMap(CreateTextureFromImage(pbr.base_color_texture.texture->image, basePath, &texPath, &embedded));
-					material->SetAlbedoMapPath(texPath);
-					material->SetAlbedoMapEmbeddedData(std::move(embedded));
+					RecordImage(pbr.base_color_texture.texture->image, basePath,
+						material.AlbedoMapPath, material.AlbedoEmbedded);
 				}
 				if (pbr.metallic_roughness_texture.texture)
 				{
-					std::string texPath;
-					std::vector<uint8_t> embedded;
-					material->SetMetallicRoughnessMap(CreateTextureFromImage(pbr.metallic_roughness_texture.texture->image, basePath, &texPath, &embedded));
-					material->SetMetallicRoughnessMapPath(texPath);
-					material->SetMetallicRoughnessMapEmbeddedData(std::move(embedded));
+					RecordImage(pbr.metallic_roughness_texture.texture->image, basePath,
+						material.MetallicRoughnessMapPath, material.MetallicRoughnessEmbedded);
 				}
 			}
 
 			if (src.normal_texture.texture)
 			{
-				std::string texPath;
-				std::vector<uint8_t> embedded;
-				material->SetNormalMap(CreateTextureFromImage(src.normal_texture.texture->image, basePath, &texPath, &embedded));
-				material->SetNormalMapPath(texPath);
-				material->SetNormalMapEmbeddedData(std::move(embedded));
+				RecordImage(src.normal_texture.texture->image, basePath,
+					material.NormalMapPath, material.NormalEmbedded);
 			}
 
-			materials.push_back(material);
+			materials.push_back(std::move(material));
 		}
-
-		if (materials.empty())
-			materials.push_back(Material::Create(shader));
 
 		// Node world transforms, in a deterministic depth-first order
 		std::vector<NodeEntry> sceneNodes;
@@ -802,13 +780,19 @@ namespace GanymedE {
 				submesh.LocalTransform = glm::mat4(1.0f);
 		}
 
-		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials,
-			std::move(skinVertices), skeleton, std::move(clips));
-		mesh->SetPath(MakeAssetRelative(path).generic_string());
-		GE_CORE_INFO("Loaded mesh '{0}' ({1} verts, {2} indices, {3} submeshes, {4} joints, {5} clips)",
-			path.filename().string(), vertices.size(), indices.size(), submeshes.size(),
-			skeleton.JointCount(), mesh->GetClips().size());
-		return mesh;
+		out.Vertices = std::move(vertices);
+		out.Indices = std::move(indices);
+		out.Submeshes = std::move(submeshes);
+		out.Materials = std::move(materials);
+		out.SkinVertices = std::move(skinVertices);
+		out.Skeleton = std::move(skeleton);
+		out.Clips = std::move(clips);
+		out.RelativePath = MakeAssetRelative(path).generic_string();
+
+		GE_CORE_INFO("Imported mesh '{0}' ({1} verts, {2} indices, {3} submeshes, {4} joints, {5} clips)",
+			path.filename().string(), out.Vertices.size(), out.Indices.size(), out.Submeshes.size(),
+			out.Skeleton.JointCount(), out.Clips.size());
+		return out.IsValid();
 	}
 
 	Entity MeshImporter::Instantiate(Scene* scene, const std::filesystem::path& path)
@@ -822,6 +806,14 @@ namespace GanymedE {
 		// before this scope ends: the manager cache is weak, and a mesh nobody holds is
 		// collected the moment the local goes out of scope.
 		AssetRef<Mesh> meshRef(handle);
+		meshRef.Get();
+
+		// The one blocking wait in the engine. Instantiate has to read the mesh's material list
+		// to size and fill the new entity's override slots, and "not loaded yet" is not an answer
+		// it can act on - the entity would end up with no slots at all. Everything else on a
+		// frame path tolerates a null asset for a frame or two instead.
+		AssetManager::WaitFor(handle);
+
 		const Ref<Mesh>& mesh = meshRef.Get();
 		if (!mesh)
 			return {};

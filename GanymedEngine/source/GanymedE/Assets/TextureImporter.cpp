@@ -94,8 +94,12 @@ namespace GanymedE {
 		return Upload(DecodeFromMemory(bytes, size, flipVertically));
 	}
 
-	Ref<Texture2D> TextureImporter::LoadMaterialMap(const std::filesystem::path& relativePath)
+	Ref<Texture2D> TextureImporter::LoadMaterialMap(const std::filesystem::path& relativePath,
+		AssetHandle* outHandle)
 	{
+		if (outHandle)
+			*outHandle = InvalidAssetHandle;
+
 		if (relativePath.empty())
 			return nullptr;
 
@@ -103,7 +107,12 @@ namespace GanymedE {
 		{
 			AssetHandle handle = AssetManager::ImportAsset(relativePath);
 			if (IsAssetHandleValid(handle))
+			{
+				if (outHandle)
+					*outHandle = handle;
+
 				return AssetManager::GetAsset<Texture2D>(handle);
+			}
 		}
 
 		// operator/ replaces the left side when relativePath is absolute, which is the

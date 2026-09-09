@@ -10,6 +10,7 @@
 #include "GanymedE/UI/UIEngine.h"
 
 #include "GanymedE/Core/Input.h"
+#include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Core/JobSystem.h"
 #include "GanymedE/Core/KeyCodes.h"
 
@@ -201,6 +202,12 @@ namespace GanymedE {
 			// this frame instead of a frame later. Outside, because a minimised window has
 			// not stopped background loading, and a queue nobody drains grows without bound.
 			JobSystem::OnUpdate();
+
+			// Immediately after, and for the same reason: a parse that finished on a worker
+			// becomes a usable GPU resource here, in time for the systems that draw with it this
+			// frame. This is the only place the asset layer creates bgfx resources off the
+			// synchronous path.
+			AssetManager::Update();
 
 			// The dormancy gate is a leftover migration kill-switch and is
 			// hard-false now that the scene path runs fully on bgfx; it goes

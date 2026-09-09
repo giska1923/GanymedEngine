@@ -1,5 +1,4 @@
 #include "gepch.h"
-#include "GanymedE/Renderer/MeshShader.h"
 #include "MeshCompiler.h"
 
 #include "GanymedE/Assets/AssetPaths.h"
@@ -206,111 +205,53 @@ namespace GanymedE {
 			return clips;
 		}
 
-		void WriteMaterials(std::ostream& out, const std::vector<Ref<Material>>& materials)
+		void WriteMaterials(std::ostream& out, const std::vector<MeshMaterialSource>& materials)
 		{
-			uint32_t count = (uint32_t)materials.size();
-			WriteValue(out, count);
-			for (const auto& material : materials)
+			WriteValue(out, (uint32_t)materials.size());
+			for (const MeshMaterialSource& material : materials)
 			{
-				if (!material)
-				{
-					WriteString(out, "");
-					WriteValue(out, glm::vec4(1.0f));
-					WriteValue(out, 0.0f);
-					WriteValue(out, 0.5f);
-					WriteValue(out, false);
-					WriteValue(out, false);
-					WriteString(out, "");
-					WriteBlob(out, {});
-					WriteString(out, "");
-					WriteBlob(out, {});
-					WriteString(out, "");
-					WriteBlob(out, {});
-					continue;
-				}
-
-				WriteString(out, material->GetName());
-				WriteValue(out, material->GetAlbedoColor());
-				WriteValue(out, material->GetMetallic());
-				WriteValue(out, material->GetRoughness());
-				WriteValue(out, material->IsTwoSided());
-				WriteValue(out, material->IsTransparent());
-				WriteString(out, material->GetAlbedoMapPath());
-				WriteBlob(out, material->GetAlbedoMapEmbeddedData());
-				WriteString(out, material->GetNormalMapPath());
-				WriteBlob(out, material->GetNormalMapEmbeddedData());
-				WriteString(out, material->GetMetallicRoughnessMapPath());
-				WriteBlob(out, material->GetMetallicRoughnessMapEmbeddedData());
+				WriteString(out, material.Name);
+				WriteValue(out, material.Albedo);
+				WriteValue(out, material.Metallic);
+				WriteValue(out, material.Roughness);
+				WriteValue(out, material.TwoSided);
+				WriteValue(out, material.Transparent);
+				WriteString(out, material.AlbedoMapPath);
+				WriteBlob(out, material.AlbedoEmbedded);
+				WriteString(out, material.NormalMapPath);
+				WriteBlob(out, material.NormalEmbedded);
+				WriteString(out, material.MetallicRoughnessMapPath);
+				WriteBlob(out, material.MetallicRoughnessEmbedded);
 			}
 		}
 
-		std::vector<Ref<Material>> ReadMaterials(std::istream& in)
+		std::vector<MeshMaterialSource> ReadMaterials(std::istream& in)
 		{
 			uint32_t count = 0;
 			ReadValue(in, count);
 
-			Ref<Shader> shader = MeshShader::Get();
-			std::vector<Ref<Material>> materials;
+			std::vector<MeshMaterialSource> materials;
 			materials.reserve(count);
 
 			for (uint32_t i = 0; i < count; i++)
 			{
-				Ref<Material> material = Material::Create(shader);
-				material->SetName(ReadString(in));
+				MeshMaterialSource material;
+				material.Name = ReadString(in);
+				ReadValue(in, material.Albedo);
+				ReadValue(in, material.Metallic);
+				ReadValue(in, material.Roughness);
+				ReadValue(in, material.TwoSided);
+				ReadValue(in, material.Transparent);
 
-				glm::vec4 albedo;
-				float metallic, roughness;
-				bool twoSided, transparent;
-				ReadValue(in, albedo);
-				ReadValue(in, metallic);
-				ReadValue(in, roughness);
-				ReadValue(in, twoSided);
-				ReadValue(in, transparent);
+				material.AlbedoMapPath = ReadString(in);
+				material.AlbedoEmbedded = ReadBlob(in);
+				material.NormalMapPath = ReadString(in);
+				material.NormalEmbedded = ReadBlob(in);
+				material.MetallicRoughnessMapPath = ReadString(in);
+				material.MetallicRoughnessEmbedded = ReadBlob(in);
 
-				material->SetAlbedoColor(albedo);
-				material->SetMetallic(metallic);
-				material->SetRoughness(roughness);
-				material->SetTwoSided(twoSided);
-				material->SetTransparent(transparent);
-
-				std::string albedoPath = ReadString(in);
-				std::vector<uint8_t> albedoEmbedded = ReadBlob(in);
-				std::string normalPath = ReadString(in);
-				std::vector<uint8_t> normalEmbedded = ReadBlob(in);
-				std::string mrPath = ReadString(in);
-				std::vector<uint8_t> mrEmbedded = ReadBlob(in);
-
-				material->SetAlbedoMapPath(albedoPath);
-				material->SetNormalMapPath(normalPath);
-				material->SetMetallicRoughnessMapPath(mrPath);
-
-				// Same resolve the cold-import path uses, so a cache load shares the
-				// manager's texture cache instead of decoding its own copies.
-				if (!albedoPath.empty())
-					material->SetAlbedoMap(TextureImporter::LoadMaterialMap(albedoPath));
-				else
-					material->SetAlbedoMap(TextureImporter::LoadFromMemory(albedoEmbedded.data(), albedoEmbedded.size(), true));
-
-				if (!normalPath.empty())
-					material->SetNormalMap(TextureImporter::LoadMaterialMap(normalPath));
-				else
-					material->SetNormalMap(TextureImporter::LoadFromMemory(normalEmbedded.data(), normalEmbedded.size(), true));
-
-				if (!mrPath.empty())
-					material->SetMetallicRoughnessMap(TextureImporter::LoadMaterialMap(mrPath));
-				else
-					material->SetMetallicRoughnessMap(TextureImporter::LoadFromMemory(mrEmbedded.data(), mrEmbedded.size(), true));
-
-				// Keep the bytes so a future cache rewrite doesn't drop the textures
-				material->SetAlbedoMapEmbeddedData(std::move(albedoEmbedded));
-				material->SetNormalMapEmbeddedData(std::move(normalEmbedded));
-				material->SetMetallicRoughnessMapEmbeddedData(std::move(mrEmbedded));
-
-				materials.push_back(material);
+				materials.push_back(std::move(material));
 			}
-
-			if (materials.empty())
-				materials.push_back(Material::Create(shader));
 
 			return materials;
 		}
@@ -321,33 +262,29 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		// See the note on the class: this reaches the GPU, which the compiler contract says it
-		// should not. It is what the importer can do today.
-		Ref<Mesh> mesh = MeshImporter::Load(input.SourceFullPath, &output.Dependencies);
-		if (!mesh)
+		MeshSource source;
+		if (!MeshImporter::Import(input.SourceFullPath, source, &output.Dependencies))
 			return false;
-
-		const std::string relativePath = input.Metadata->FilePath;
 
 		std::ostringstream out(std::ios::binary);
 		WriteValue(out, MESH_CACHE_MAGIC);
 		WriteValue(out, MESH_CACHE_VERSION);
-		WriteString(out, relativePath);
-		WriteArray(out, mesh->GetVertices());
-		WriteArray(out, mesh->GetIndices());
-		WriteSubmeshes(out, mesh->GetSubmeshes());
-		WriteMaterials(out, mesh->GetMaterials());
-		WriteArray(out, mesh->GetSkinVertices());
-		WriteSkeleton(out, mesh->GetSkeleton());
-		WriteClips(out, mesh->GetClips());
+		WriteString(out, input.Metadata->FilePath);
+		WriteArray(out, source.Vertices);
+		WriteArray(out, source.Indices);
+		WriteSubmeshes(out, source.Submeshes);
+		WriteMaterials(out, source.Materials);
+		WriteArray(out, source.SkinVertices);
+		WriteSkeleton(out, source.Skeleton);
+		WriteClips(out, source.Clips);
 
 		const std::string blob = out.str();
 		output.Bytes.assign(blob.begin(), blob.end());
 		return !output.Bytes.empty();
 	}
 
-	Ref<Mesh> MeshCompiler::Read(const std::vector<uint8_t>& blob,
-		const std::filesystem::path& sourceRelativePath)
+	bool MeshCompiler::Read(const std::vector<uint8_t>& blob,
+		const std::filesystem::path& sourceRelativePath, MeshSource& out)
 	{
 		GE_PROFILE_FUNCTION();
 
@@ -361,7 +298,7 @@ namespace GanymedE {
 		{
 			GE_CORE_WARN("Mesh blob for '{0}' is not v{1} - the compiled output is stale in a way "
 				"the epoch record did not catch", sourceRelativePath.generic_string(), MESH_CACHE_VERSION);
-			return nullptr;
+			return false;
 		}
 
 		// Written and checked because the output tree is keyed by a hash of this path: a
@@ -371,30 +308,19 @@ namespace GanymedE {
 		{
 			GE_CORE_ERROR("Mesh blob claims to be '{0}' but was opened for '{1}'",
 				storedPath, sourceRelativePath.generic_string());
-			return nullptr;
+			return false;
 		}
 
-		std::vector<MeshVertex> vertices;
-		std::vector<uint32_t> indices;
-		std::vector<Submesh> submeshes;
+		ReadArray(in, out.Vertices);
+		ReadArray(in, out.Indices);
+		ReadSubmeshes(in, out.Submeshes);
+		out.Materials = ReadMaterials(in);
+		ReadArray(in, out.SkinVertices);
+		out.Skeleton = ReadSkeleton(in);
+		out.Clips = ReadClips(in);
+		out.RelativePath = storedPath;
 
-		ReadArray(in, vertices);
-		ReadArray(in, indices);
-		ReadSubmeshes(in, submeshes);
-		std::vector<Ref<Material>> materials = ReadMaterials(in);
-
-		std::vector<SkinVertex> skinVertices;
-		ReadArray(in, skinVertices);
-		Skeleton skeleton = ReadSkeleton(in);
-		std::vector<AnimationClip> clips = ReadClips(in);
-
-		if (vertices.empty() || indices.empty())
-			return nullptr;
-
-		Ref<Mesh> mesh = Mesh::Create(vertices, indices, submeshes, materials,
-			std::move(skinVertices), std::move(skeleton), std::move(clips));
-		mesh->SetPath(sourceRelativePath.generic_string());
-		return mesh;
+		return out.IsValid();
 	}
 
 }

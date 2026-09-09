@@ -80,13 +80,20 @@ namespace GanymedE {
 			double TotalCompileMs = 0.0;
 		};
 
-		static const Stats& GetStats();
+		// **Open is called from worker threads.** Everything it touches is either local, passed
+		// in by value, or atomic; the compilers themselves are pure functions of their input,
+		// which is the contract IAssetCompiler states. Two loads of the same asset cannot race
+		// here because TypedAssetManager::Load dedupes by handle on the main thread before ever
+		// queueing a parse.
+
+		// By value, not by reference: the counters are written from worker threads now, so
+		// handing out a reference would be handing out a race.
+		static Stats GetStats();
 		static void ResetStats();
 
-		// True while a compile is running, for the editor's "compiling" indicator. Blocking
-		// compilation means this is only ever observed from inside a compile's own callbacks
-		// today; it becomes genuinely useful in Phase 5.
-		static bool IsCompiling();
+		// Compiles running right now, across every worker. Zero when the tree is warm, which is
+		// what the editor's status line keys on.
+		static uint32_t CompilesInFlight();
 	};
 
 }

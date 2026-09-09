@@ -207,10 +207,11 @@ many came out of `assets/.compiled/` instead. A second run over an unchanged pro
 0 built ([assets.md](../engine/assets.md#compiled-outputs)).
 
 The Asset Cache rows come from `AssetManager::GetCacheStats()`, one per registered manager, printed
-as `resident / tracked` — live objects, and cache entries including ones whose object has already
-been collected. The gap between the two *is* eviction: close a scene and resident falls while
-tracked does not, until those handles are loaded again (see
-[assets.md](../engine/assets.md#managers-and-caching)).
+as `resident / tracked / loading` — live objects, cache entries including ones whose object has
+already been collected, and parses in flight. The gap between the first two *is* eviction: close a
+scene and resident falls while tracked does not, until those handles are loaded again. The third
+column is a cold open in progress (see
+[assets.md](../engine/assets.md#asynchronous-loading)).
 
 ## Scene Hierarchy panel
 

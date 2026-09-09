@@ -61,6 +61,13 @@ namespace GanymedE {
 		// are compiled at different language levels. Left empty, encoding is serial.
 		using RangeFn = std::function<void(uint32_t begin, uint32_t end)>;
 		std::function<void(uint32_t count, uint32_t minRange, const RangeFn&)> ParallelFor;
+
+		// Polled between mips. A cancelled encode still has to run to *some* boundary - the
+		// scheduler cannot pull a started task back - so the question is only how coarse the
+		// boundary is. Between mips is the natural one here: mip 0 is most of the work, so this
+		// bounds the wait at roughly one mip rather than the whole chain. Left empty, nothing
+		// cancels and the encode always runs to completion.
+		std::function<bool()> ShouldCancel;
 	};
 
 	struct EncodeResult

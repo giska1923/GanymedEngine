@@ -83,6 +83,10 @@ namespace GanymedE {
 			});
 		};
 
+		// Coarse cancellation, per the threading milestone's contract: enkiTS cannot dequeue a
+		// started task, so a body that wants to stop early has to ask.
+		options.ShouldCancel = [] { return JobSystem::IsCurrentJobCancelled(); };
+
 		EncodeResult encoded;
 		if (!EncodeTexture(decoded.Pixels.get(), decoded.Width, decoded.Height, options, encoded))
 		{

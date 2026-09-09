@@ -17,6 +17,7 @@ namespace GanymedE {
 		const char* TypeName = nullptr;
 		std::size_t Resident = 0;  // live objects
 		std::size_t Tracked = 0;   // cache entries, including ones whose object was collected
+		std::size_t Pending = 0;   // parses in flight
 	};
 
 	class AssetManager
@@ -69,6 +70,23 @@ namespace GanymedE {
 			// whether a caller went through this facade or through an AssetRef.
 			return AssetManagerRegistry::Get<T>().Load(handle);
 		}
+
+		// Apply everything that finished parsing since the last call. **Main thread**, once per
+		// frame, from Application::Run - this is the only place the async path creates GPU
+		// resources, which is what keeps bgfx on the thread that owns it.
+		static void Update();
+
+		// Block until this asset is loaded and applied. Pumps other queued jobs while it waits,
+		// so it cannot deadlock the pool.
+		//
+		// **Keep the call sites countable.** There is one: MeshImporter::Instantiate, which has
+		// to enumerate a mesh's material slots to fill the new entity's overrides and therefore
+		// cannot proceed with "not yet". Everything else on a frame path should tolerate a null
+		// asset for a frame or two - that is the whole point of the phase.
+		static void WaitFor(AssetHandle handle);
+
+		// Assets whose parse is in flight, across every manager. Editor status, not a poll.
+		static std::size_t PendingCount();
 
 		// Evict a loaded asset so the next GetAsset re-reads it from disk. For a mesh
 		// this also drops its textures and the .meshcache file - "reimport now".

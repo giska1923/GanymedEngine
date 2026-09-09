@@ -2,7 +2,7 @@
 
 #include "GanymedE/Assets/AssetCompiler.h"
 #include "GanymedE/Core/Core.h"
-#include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Renderer/MeshSource.h"
 
 #include <filesystem>
 
@@ -16,15 +16,12 @@ namespace GanymedE {
 	// for every asset type - so a touched-but-unedited `.glb` no longer reimports, and bumping
 	// Version() below invalidates every mesh blob at once.
 	//
-	// **This compiler does not honour the interface's "pure function, no GPU" contract**, and
-	// that is a known debt rather than an oversight. `Compile` runs `MeshImporter::Load`, which
-	// builds a live `Mesh` - bgfx vertex buffers and all - and then serializes it, because
-	// nothing in the importer can produce CPU-side mesh data on its own yet. The consequences:
-	// a cold import creates its GPU buffers twice (once for the object that gets serialized and
-	// thrown away, once for the one parsed back out of the blob), and this compiler must run on
-	// the submit thread. The warm path - which is every load after the first - pays neither.
-	// Splitting `MeshImporter` so it can emit a CPU-side description is the change that fixes
-	// both, and it is the one Phase 5 cannot skip.
+	// **This compiler is GPU-free**, which it was not before Phase 5. `Compile` used to run the
+	// importer's `Load`, which built a live `Mesh` - bgfx buffers, materials, textures - purely so
+	// it could serialize it, so it had to run on the submit thread and created its GPU objects
+	// twice on a cold import. `MeshSource` split that: the importer emits CPU data, this
+	// serializes it, and `BuildMesh` is the only main-thread step. That is what makes mesh loading
+	// asynchronous rather than "asynchronous except the expensive part".
 	class MeshCompiler : public IAssetCompiler
 	{
 	public:
@@ -36,10 +33,10 @@ namespace GanymedE {
 
 		bool Compile(const CompileInput& input, CompileOutput& output) const override;
 
-		// Blob -> live Mesh. The Apply half of the mesh manager's load: this is where the bgfx
-		// buffers and the material textures are created, so it is main-thread only.
-		static Ref<Mesh> Read(const std::vector<uint8_t>& blob,
-			const std::filesystem::path& sourceRelativePath);
+		// Blob -> CPU-side mesh data. No bgfx call anywhere below it, so this is the manager's
+		// Parse stage and runs on a worker; `BuildMesh` turns the result into a live Mesh.
+		static bool Read(const std::vector<uint8_t>& blob,
+			const std::filesystem::path& sourceRelativePath, MeshSource& out);
 	};
 
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Core/Core.h"
 
 #include <cstdint>
@@ -69,9 +70,15 @@ namespace GanymedE {
 		// external image decode once and share one bgfx texture. Paths that escape
 		// the root have no registry identity and are decoded directly.
 		//
-		// Shared by cold import (MeshImporter) and cache replay (MeshCache) so the
-		// de-duplication rule lives in exactly one place.
-		static Ref<Texture2D> LoadMaterialMap(const std::filesystem::path& relativePath);
+		// Shared by BuildMesh and MaterialSerializer so the de-duplication rule lives in
+		// exactly one place.
+		//
+		// **Null is now a normal answer, not just a failure**: loading is asynchronous, so a
+		// texture that has only just been asked for is not here yet. `outHandle` gets the asset
+		// identity when there is one, which is what lets Material re-ask on a later frame
+		// instead of keeping a permanent hole - see Material::Bind.
+		static Ref<Texture2D> LoadMaterialMap(const std::filesystem::path& relativePath,
+			AssetHandle* outHandle = nullptr);
 	};
 
 }

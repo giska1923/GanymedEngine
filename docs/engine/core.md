@@ -203,6 +203,30 @@ import-compile / speculative and background I/O), asserted with a `static_assert
 `ENKITS_TASK_PRIORITIES_NUM` rather than translated. Waiting is bounded by the waited-on job's tier,
 so a thread blocked on frame work pumps other frame work and is never dragged into background I/O.
 
+**`Future::Wait()` can run the job on the thread that is waiting**, and this surprises people.
+enkiTS pumps the pipe while it blocks, and the task it picks up may be the very one being waited on.
+That is what makes waiting deadlock-free, and it means "submitted" does not imply "ran on a worker":
+a `Submit` followed immediately by `Wait` is often just a function call with extra steps. It matters
+in two places — `AssetManager::WaitFor` gets synchronous behaviour for free because of it, and a test
+that wants to prove something ran off the main thread has to poll `IsReady()` rather than `Wait()`,
+or it proves nothing.
+
+**`Future::Wait()` can run the job on the thread that is waiting**, and this surprises people.
+enkiTS pumps the pipe while it blocks, and the task it picks up may be the very one being waited on.
+That is what makes waiting deadlock-free, and it means "submitted" does not imply "ran on a worker":
+a `Submit` followed immediately by `Wait` is often just a function call with extra steps. It matters
+in two places — `AssetManager::WaitFor` gets synchronous behaviour for free because of it, and a test
+that wants to prove something ran off the main thread has to poll `IsReady()` rather than `Wait()`,
+or it proves nothing.
+
+**`Future::Wait()` can run the job on the thread that is waiting**, and this surprises people.
+enkiTS pumps the pipe while it blocks, and the task it picks up may be the very one being waited on.
+That is what makes waiting deadlock-free, and it means "submitted" does not imply "ran on a worker":
+a `Submit` followed immediately by `Wait` is often just a function call with extra steps. It matters
+in two places — `AssetManager::WaitFor` gets synchronous behaviour for free because of it, and a test
+that wants to prove something ran off the main thread has to poll `IsReady()` rather than `Wait()`,
+or it proves nothing.
+
 Two behaviours worth knowing:
 
 - **Every entry point works uninitialized**, by running the work inline on the calling thread. The
