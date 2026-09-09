@@ -41,6 +41,8 @@ namespace GanymedE {
 		// rate; once per handle is the AnimationSystem unknown-clip posture - loud, not
 		// broken.
 		std::unordered_set<AssetHandle> WarnedUnknownHandles;
+
+		AssetApplyStats LastApply;
 	};
 
 	static AssetManagerData s_Data;
@@ -446,6 +448,13 @@ namespace GanymedE {
 			if (!MeshCompiler::Read(blob, metadata.FilePath, parsed->Source))
 				return nullptr;
 
+			// The expensive half of what Apply used to do. Images embedded in a `.glb` have no
+			// file and therefore no asset handle, so they cannot go through the texture manager;
+			// they used to be stb-decoded inside BuildMesh, on the submit thread, at 50-60 ms for
+			// a 1K texture. Decoding here leaves Apply with the upload alone.
+			if (!DecodeEmbeddedMaps(parsed->Source))
+				return nullptr;   // cancelled; the result is discarded without reaching Apply
+
 			return parsed;
 		}
 
@@ -709,6 +718,21 @@ namespace GanymedE {
 		return true;
 	}
 
+	namespace {
+
+		// The asset layer's share of a frame for main-thread Apply work.
+		//
+		// Deliberately a constant rather than a setter. There is one call site, nothing has yet
+		// wanted a different number, and a knob nobody turns is worse than a number with a reason
+		// next to it. 4 ms is a quarter of a 60 Hz frame: enough that a handful of cheap applies
+		// still land together, small enough that a burst spreads over frames instead of stalling
+		// one. The budget is the asset layer's own allowance, not "whatever is left of the frame" -
+		// it does not know what else the frame has spent, and making it guess would trade a
+		// predictable cost for an erratic one.
+		constexpr double kApplyBudgetMs = 4.0;
+
+	}
+
 	void AssetManager::Update()
 	{
 		GE_PROFILE_FUNCTION();
@@ -718,7 +742,22 @@ namespace GanymedE {
 		// is the plan's "apply reloads at a frame boundary" satisfied by construction.
 		AssetWatcher::Poll();
 
-		AssetManagerRegistry::ForEach([](IAssetManager& manager) { manager.Update(); });
+		// One budget across every manager. They are visited in registration order, so a manager
+		// with expensive work can use the whole allowance and leave the later ones nothing this
+		// frame. That is acceptable and mildly useful: Mesh is first, so geometry appears before
+		// the textures that dress it, and the work is finite either way.
+		ApplyBudget budget(kApplyBudgetMs);
+		AssetManagerRegistry::ForEach([&budget](IAssetManager& manager) { manager.Update(budget); });
+
+		s_Data.LastApply.Applied = budget.Applied();
+		s_Data.LastApply.Deferred = budget.Deferred();
+		s_Data.LastApply.Milliseconds = budget.ElapsedMs();
+		s_Data.LastApply.BudgetMs = kApplyBudgetMs;
+	}
+
+	AssetApplyStats AssetManager::GetApplyStats()
+	{
+		return s_Data.LastApply;
 	}
 
 	void AssetManager::WaitFor(AssetHandle handle)

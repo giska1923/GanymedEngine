@@ -12,9 +12,10 @@ namespace GanymedE {
 	namespace {
 
 		// A file path resolves through the asset manager, so two materials naming one image share
-		// one decode and one GPU texture; embedded bytes have no file identity and are decoded
-		// directly. Same rule the cold import and the blob replay have always shared.
-		Ref<Texture2D> ResolveMap(const std::string& path, const std::vector<uint8_t>& embedded,
+		// one decode and one GPU texture; an embedded image has no file identity and was decoded
+		// into the source during Parse. Same rule the cold import and the blob replay have always
+		// shared.
+		Ref<Texture2D> ResolveMap(const std::string& path, const DecodedImage& decoded,
 			AssetHandle& outHandle)
 		{
 			outHandle = InvalidAssetHandle;
@@ -22,14 +23,45 @@ namespace GanymedE {
 			if (!path.empty())
 				return TextureImporter::LoadMaterialMap(path, &outHandle);
 
-			if (embedded.empty())
+			if (!decoded)
 				return nullptr;
 
-			// No file, so no handle and nothing to re-resolve: an embedded image is decoded here
-			// and now, and is never pending.
-			return TextureImporter::LoadFromMemory(embedded.data(), embedded.size(), true);
+			// The upload and nothing else - the decode happened on a worker. No handle, so
+			// nothing to re-resolve: an embedded image is never pending.
+			return TextureImporter::Upload(decoded);
 		}
 
+	}
+
+	bool DecodeEmbeddedMaps(MeshSource& source)
+	{
+		GE_PROFILE_FUNCTION();
+
+		// Flipped, because that is what LoadFromMemory did when this decode lived in BuildMesh -
+		// see the flip note in docs/engine/assets.md. Moving work between threads must not move
+		// the image.
+		auto decode = [](const std::string& path, const std::vector<uint8_t>& bytes) -> DecodedImage
+		{
+			if (!path.empty() || bytes.empty())
+				return {};
+
+			return TextureImporter::DecodeFromMemory(bytes.data(), bytes.size(), true);
+		};
+
+		for (MeshMaterialSource& material : source.Materials)
+		{
+			// Between materials rather than inside one: a decode cannot be interrupted, and this
+			// is the granularity the threading milestone asks a long body to poll at.
+			if (JobSystem::IsCurrentJobCancelled())
+				return false;
+
+			material.AlbedoDecoded = decode(material.AlbedoMapPath, material.AlbedoEmbedded);
+			material.NormalDecoded = decode(material.NormalMapPath, material.NormalEmbedded);
+			material.MetallicRoughnessDecoded =
+				decode(material.MetallicRoughnessMapPath, material.MetallicRoughnessEmbedded);
+		}
+
+		return true;
 	}
 
 	Ref<Mesh> BuildMesh(const MeshSource& source)
@@ -64,14 +96,14 @@ namespace GanymedE {
 
 			AssetHandle mapHandle = InvalidAssetHandle;
 
-			material->SetAlbedoMap(ResolveMap(desc.AlbedoMapPath, desc.AlbedoEmbedded, mapHandle));
+			material->SetAlbedoMap(ResolveMap(desc.AlbedoMapPath, desc.AlbedoDecoded, mapHandle));
 			material->SetAlbedoMapHandle(mapHandle);
 
-			material->SetNormalMap(ResolveMap(desc.NormalMapPath, desc.NormalEmbedded, mapHandle));
+			material->SetNormalMap(ResolveMap(desc.NormalMapPath, desc.NormalDecoded, mapHandle));
 			material->SetNormalMapHandle(mapHandle);
 
 			material->SetMetallicRoughnessMap(ResolveMap(desc.MetallicRoughnessMapPath,
-				desc.MetallicRoughnessEmbedded, mapHandle));
+				desc.MetallicRoughnessDecoded, mapHandle));
 			material->SetMetallicRoughnessMapHandle(mapHandle);
 
 			// Carried through so a re-serialize keeps the embedded image rather than dropping it,

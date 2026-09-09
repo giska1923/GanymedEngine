@@ -213,6 +213,11 @@ scene and resident falls while tracked does not, until those handles are loaded 
 column is a cold open in progress (see
 [assets.md](../engine/assets.md#asynchronous-loading)).
 
+`Apply: N done, M deferred, x / 4.0 ms` is the main-thread half of asynchronous loading against its
+per-frame budget. A non-zero **deferred** during a burst is the budget working, not a backlog — those
+parses are finished and land on the next frames (see
+[assets.md](../engine/assets.md#the-apply-budget)).
+
 Below it, **Hot reload assets/** is the watcher's switch, with `watched / ms-per-poll / reloaded /
 settling` under it and the last reloaded path. Editing an asset in an external tool updates the
 viewport within about half a second with no restart. Two of those numbers are worth reading rather

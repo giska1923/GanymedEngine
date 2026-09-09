@@ -1252,13 +1252,63 @@ the render path to force a map re-resolve takes bgfx down with
 `FATAL: Uniform 38 (u_AlbedoColor) was already set for this draw call`. The probe used the same
 lookup its `resolve` lambda performs instead.
 
-**Left as adjacent work.** Two things this phase made visible rather than caused. First,
-`HashDependency` is size+mtime rather than content (a deliberate Phase 4 asymmetry — it is checked on
-every load of every dependent), so *touching* a texture recompiles the mesh that references it even
-when the bytes are identical; the tradeoff still holds, but hot reload is what makes it reachable in
-normal editing. Second, `TypedAssetManager::Update` applies everything that is ready in one frame,
-which is where the storm's 110 ms went; an Apply budget per frame would smooth it, and would help a
-cold open equally.
+**Left as adjacent work.** `HashDependency` is size+mtime rather than content (a deliberate Phase 4
+asymmetry — it is checked on every load of every dependent), so *touching* a texture recompiles the
+mesh that references it even when the bytes are identical; the tradeoff still holds, but hot reload
+is what makes it reachable in normal editing.
+
+### Follow-up — the Apply budget (done)
+
+`TypedAssetManager::Update` applied everything that was ready in one frame. It now runs on a **4 ms
+budget shared across every manager**, held by an `ApplyBudget` passed through `IAssetManager::Update`;
+anything ready that does not fit stays pending and lands on a later frame. Time rather than a count,
+because a Material is a few uniforms and a Mesh is buffers plus every texture it pulls; and the first
+apply of a frame always runs, because an apply cannot be interrupted half way and a budget that can
+refuse everything stalls loading permanently the moment one asset exceeds the whole allowance.
+Written up in [`assets.md`](../engine/assets.md#the-apply-budget); the editor shows
+`Apply: N done, M deferred, x / 4.0 ms`.
+
+**A real bug found in the function being changed.** `AgeHandoff()` sat *after* an early `return`
+taken when nothing was pending, so the handoff window never closed once the last load completed: the
+manager kept a **strong** reference to every asset it had ever applied asynchronously, and the weak
+cache could not collect anything until some later load happened to make `Update` run to the end
+again. Phase 5 introduced this and its verification did not catch it, because the handoff was only
+ever exercised while loads were in flight. Confirmed by measurement rather than by reading: open a
+scene, then `NewScene`, and watch the mesh manager — `Mesh=1/1` before the fix, `Mesh=0/1` after,
+which is Phase 2's eviction signature.
+
+**The measurement, and a correction to the note above.** That note attributed the storm's 110 ms to
+batched Apply and implied a budget would smooth it away. The first half was right; the second was
+optimistic. Same build, same burst of 22 assets:
+
+| | Applies in the worst frame | Worst Apply | Worst frame |
+| --- | --- | --- | --- |
+| Unbounded | 12 | 108.7 ms | 130.6 ms |
+| 4 ms budget | 2 | 70.1 ms | 82.6 ms |
+
+**The residual is one apply, and it is not GPU work.** Timed inside `BuildMesh`:
+
+| Stage | CesiumMan.glb | Fox.glb | RiggedFigure.glb |
+| --- | --- | --- | --- |
+| Resolving materials (decoding embedded textures) | 62.8 ms | 52.3 ms | 0.04 ms |
+| `Mesh::Create` (the bgfx buffers) | 1.6 ms | 0.5 ms | 0.4 ms |
+
+So the dominant main-thread Apply cost is `stb_image` decoding of textures embedded in a `.glb` —
+CPU work of exactly the kind the Parse/Apply split exists to move off the main thread, left behind
+because an embedded image has no `AssetHandle` and so cannot go through the texture manager. An
+earlier guess that the cost was the by-value copy of animation clips into `Mesh::Create` was tested
+by moving them instead of copying: no change, 60 ms either way. **Decoding embedded images during
+Parse, into the `MeshSource`, is the actual fix** — the same move `MeshSource` itself was for Phase
+5, applied to the case Phase 5 missed. Done in the follow-up below.
+
+A cost-predicting budget (refuse an apply whose estimated cost will not fit the remaining time) was
+considered and rejected: it would recover roughly 10 ms of the 70 while the floor stays exactly where
+it is.
+
+**Verification.** Full solution clean. Scene render identical across four rounds of touching every
+asset — 40 meshes, 32 culled, 5 instanced draws, 7 draw calls, 60 reloads, 0 recompiles, 0 errors.
+Deferred applies drain rather than strand (`maxDeferred` 12 → 6 → 0, `pending` back to 0). Runtime
+boots with 0 errors and 0 warnings.
 
 ---
 
@@ -1342,3 +1392,90 @@ Files studied for this plan, for anyone re-reading the source design. All under
 | `resource/streaming_service.hpp` | The streaming budget service — read to understand the cost of what is being skipped |
 | `assets/compilers/texture_compiler.hpp` | A concrete compiler with a versioned `Cfg` and reported `Info` stats — the model for Phase 4's `TextureCompiler` |
 | `filesystem/virtual_file_system.hpp` | `IFile::readAsync` → `IAsyncData`, mounted filesystems |
+
+### Follow-up — decoding embedded images during Parse (done)
+
+`MeshSource` gained `*Decoded` slots holding a `DecodedImage` per map, `DecodeEmbeddedMaps` fills
+them on a worker from the mesh Parse stage, and `BuildMesh` is left with `TextureImporter::Upload`.
+No new file, no format change - the compiled blob still stores compressed bytes, so nothing on disk
+moved and the blob version stayed put.
+
+**The image is identical by construction, not by inspection.**
+`TextureImporter::LoadFromMemory(bytes, size, flip)` is *defined* as
+`Upload(DecodeFromMemory(bytes, size, flip))`. This change is that exact composition split across a
+thread boundary with `flip = true` preserved, which is a stronger guarantee than any visual check -
+and the flip is the one thing that could silently have gone wrong.
+
+| `BuildMesh`, main thread | CesiumMan.glb | Fox.glb | RiggedFigure.glb |
+| --- | --- | --- | --- |
+| Resolving materials, decode in Apply (before) | 62.8 ms | 52.3 ms | 0.04 ms |
+| Resolving materials, upload only (now) | 1.7 ms | 1.5 ms | 0.03 ms |
+| `Mesh::Create`, the bgfx buffers | 1.5 ms | 0.5 ms | 0.4 ms |
+
+The decode did not get cheaper, it moved: it now shows up on a worker at 58 ms (CesiumMan) and 61 ms
+(Fox). End to end, on the same 22-asset burst:
+
+| | Applies in the worst frame | Worst Apply |
+| --- | --- | --- |
+| Unbounded, decode in Apply | 12 | 108.7 ms |
+| 4 ms budget, decode in Apply | 2 | 70.1 ms |
+| 4 ms budget, decode in Parse | 4 | **7.7 ms** |
+
+The two changes are worth roughly 14x together and far less apart: the budget could not subdivide a
+single 60 ms apply, and moving the decode without a budget would still have let a dozen uploads
+stack in one frame.
+
+**Costs accepted.** A `MeshSource` in flight now holds both the compressed bytes (which
+`GenerateSidecars` still extracts to a file on first import) and the decoded RGBA8 - 4 MB for a 1K
+map against a few hundred KB - from the end of Parse until Apply. `MeshSource` is move-only as a
+result, since `DecodedImage` owns stb's buffer; nothing was copying one, so this cost nothing to
+adopt and is the right shape for a type carrying tens of megabytes.
+
+**Verification.** Full solution clean, 0 errors. Scene render identical across four rounds of
+touching every asset - 40 meshes, 32 culled, 5 instanced draws, 7 draw calls, 60 reloads, 0
+recompiles, 0 errors. Eviction still correct after the handoff fix (`Mesh=0/1` after `NewScene`).
+Runtime boots with 0 errors and 0 warnings. Note the editor's own test scene is *not* the case that
+benefits - it loads one mesh with a tiny embedded texture, so its frame times are unchanged; the
+meshes that pay for this are the ones with 1K embedded maps.
+
+### Follow-up — re-measured in Release
+
+Every number in the two follow-ups above is **x64 Debug**, which is the fast build-verify loop this
+project uses and is also where MSVC's checked iterators and unoptimised stb make CPU work look worse
+than it ships. Re-measured on x64 Release, same 22-asset burst, same probe. All three configurations
+(Debug, Release, Dist) build clean.
+
+| | Applies in the worst frame | Worst Apply (Release) | (Debug) |
+| --- | --- | --- | --- |
+| Unbounded, decode in Apply — the original | 12 | **34.9 ms** | 108.7 ms |
+| 4 ms budget, decode in Apply | 6 | 23.2 ms | 70.1 ms |
+| Unbounded, decode in Parse | 12 | 12.1 ms | not measured |
+| 4 ms budget, decode in Parse — shipped | 4 | **5.3 ms** | 7.7 ms |
+
+**The win is 6.6x in Release against 14x in Debug, and it is still worth having.** Debug exaggerates
+it because the decode is the part that optimises, but 34.9 ms is more than two frames at 60 Hz, so
+the original behaviour was a visible hitch in a shipped build too. Neither change is redundant:
+the budget alone gets 34.9 → 23.2, the decode move alone gets 34.9 → 12.1, and only together do they
+reach 5.3.
+
+**The most useful thing Release revealed** is in the per-mesh split (Debug in brackets):
+
+| `BuildMesh`, main thread | CesiumMan.glb | Fox.glb |
+| --- | --- | --- |
+| Resolving materials, decode in Apply | 23.0 ms *(62.8)* | 15.5 ms *(52.3)* |
+| Resolving materials, upload only | 1.4 ms *(1.7)* | 1.8 ms *(1.5)* |
+| `Mesh::Create` | 0.4 ms *(1.5)* | 0.1 ms *(0.1)* |
+
+The **upload cost does not improve in Release** - 1.4-1.8 ms either way - because it is driver and
+GPU work rather than compiled C++, while the decode optimises 3-4x. That is the useful conclusion:
+what remains on the main thread after this change is genuinely GPU-bound, so there is no further
+main-thread win available here without changing what is uploaded (fewer, smaller, or already
+block-compressed textures) rather than where the work runs.
+
+In Release a typical apply is ~1.5 ms, so the 4 ms budget admits two or three; the constant still
+reads sensibly and was left alone.
+
+**Other Release figures.** Watcher poll 0.33-0.68 ms for 22 assets (Debug 0.7-1.5). Four rounds of
+touching every asset under the live scene: worst frame 14-19 ms per round (Debug 27-40), render
+identical at 40 meshes / 32 culled / 5 instanced draws / 7 draw calls, 60 reloads, 0 recompiles,
+0 errors. Release runtime boots with 0 errors, 0 warnings, 10 entities, and no watcher line.

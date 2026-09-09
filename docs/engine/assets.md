@@ -288,7 +288,7 @@ itself if `Apply` never runs. Having the boundary in now means async loading lat
 |---|---|---|
 | **Texture2D** | `CompiledCache::Open` — the compiled DDS, block-compressed by `TextureCompiler` if stale | `Texture2D::CreateFromContainer` |
 | **Material** | `MaterialSerializer::ReadDesc` — `.gmat` YAML into a `MaterialDesc` | `MaterialSerializer::Build` — creates the `Material` and resolves its map paths through `LoadMaterialMap` |
-| **Mesh** | `CompiledCache::Open` then `MeshCompiler::Read` — the compiled blob, built by `MeshCompiler` if stale, deserialized into a `MeshSource` | `BuildMesh`; then `MaterialSerializer::GenerateSidecars` (see *Materials*) |
+| **Mesh** | `CompiledCache::Open` then `MeshCompiler::Read` — the compiled blob, built by `MeshCompiler` if stale, deserialized into a `MeshSource` — then `DecodeEmbeddedMaps` | `BuildMesh`; then `MaterialSerializer::GenerateSidecars` (see *Materials*) |
 | **Environment** | *none* | `Environment::Create` — runs the IBL bake, see [rendering.md](rendering.md#environment--ibl) |
 
 The two empty `Parse` stages are not the same kind of gap:
@@ -455,6 +455,98 @@ with it.
 The compiles themselves did not get faster — they moved. The frame loop ran at 7–11 ms throughout,
 including the frame during which a 566 ms BC3 encode was in flight.
 
+### The Apply budget
+
+Apply cannot leave the main thread — creating bgfx resources belongs to the submit thread — so it is
+the one half of an asynchronous load that can still cost a frame. It used to be unbounded: every
+parse that had finished was applied in the same `Update`, which was invisible while the only burst
+was a cold open of five textures and very visible once hot reload made bursts easy to cause.
+
+`AssetManager::Update` now runs on a **4 ms budget shared by every manager**. Anything ready that
+does not fit stays pending and lands on a later frame; nothing is lost and no work is repeated,
+because the parse is already done and only the GPU-side half is deferred. The editor's Stats panel
+shows `Apply: N done, M deferred, x / 4.0 ms`.
+
+Two properties are deliberate:
+
+- **Time, not a count.** Applies are not comparable to each other — a `Material` is a few uniforms,
+  a `Mesh` is vertex buffers plus every texture it pulls. A count low enough to spread meshes would
+  throttle materials for no reason.
+- **The first apply of a frame always runs**, whatever the clock says. An apply cannot be
+  interrupted half way, so a budget allowed to refuse everything would stall loading permanently the
+  moment one asset costs more than the whole allowance — and one does. Guaranteed forward progress
+  beats a ceiling that cannot be honoured anyway.
+
+Measured on a burst of 22 assets reloading at once, same build, same burst:
+
+A burst of 22 assets reloading at once, **x64 Release**, both changes measured independently:
+
+| | Applies in the worst frame | Worst Apply |
+|---|---|---|
+| Unbounded, decode in Apply *(what it used to do)* | 12 | **34.9 ms** |
+| 4 ms budget, decode in Apply | 6 | 23.2 ms |
+| Unbounded, decode in Parse | 12 | 12.1 ms |
+| 4 ms budget, decode in Parse *(what it does now)* | 4 | **5.3 ms** |
+
+Neither change is redundant and neither is sufficient. The budget bounds how many applies stack in a
+frame but cannot subdivide one; moving the decode shrinks the individual apply but still lets a
+dozen uploads land together. Together they are worth **6.6x** in Release. The same burst in Debug
+runs 108.7 ms unbounded against 7.7 ms with both, i.e. 14x — Debug exaggerates the win because the
+decode is the part that optimises, but it does not invent it: **34.9 ms is more than two frames at
+60 Hz.**
+
+A cost-predicting budget (refuse an apply whose estimated cost will not fit) was considered and
+rejected before the cause was found: it would have recovered about 10 ms of the 70 ms Debug figure
+while the floor stayed exactly where it was. In Release a typical apply is ~1.5 ms, so the 4 ms
+budget admits two or three of them.
+
+`WaitFor` is deliberately **not** budgeted: it means "I cannot proceed without this". Neither is
+`Environment`, which has no Parse stage and applies inline.
+
+### Embedded textures are decoded during Parse
+
+An image embedded in a `.glb` has no file, and therefore no `AssetHandle`, so it cannot go through
+the texture manager the way a map that names a file does. `BuildMesh` used to hand its compressed
+bytes straight to stb and decode them inline — on the submit thread, inside Apply. That single
+detail was the dominant cost of applying a mesh, and it dwarfed the GPU work beside it:
+
+**x64 Release**, with the Debug figure in brackets:
+
+| `BuildMesh`, main thread | CesiumMan.glb | Fox.glb | RiggedFigure.glb |
+|---|---|---|---|
+| Resolving materials — **decode** in Apply (before) | 23.0 ms *(62.8)* | 15.5 ms *(52.3)* | 0.00 ms *(0.04)* |
+| Resolving materials — **upload only** (now) | 1.4 ms *(1.7)* | 1.8 ms *(1.5)* | 0.00 ms *(0.03)* |
+| `Mesh::Create`, the actual bgfx buffers | 0.4 ms *(1.5)* | 0.1 ms *(0.5)* | 0.05 ms *(0.4)* |
+
+**The upload cost is the same in Release and Debug** — 1.4–1.8 ms either way — because it is driver
+and GPU work, not compiled C++. The decode is what optimises, 3–4x. So what is left on the main
+thread after this change is genuinely GPU-bound, which is the right place for it to be.
+
+`DecodeEmbeddedMaps` runs in the mesh Parse stage, on a worker, filling the `*Decoded` slots of
+[`MeshSource`](../../GanymedEngine/source/GanymedE/Renderer/MeshSource.h) with `DecodedImage`s — the
+same Parse/Apply seam type file-backed textures already use. Apply is left with `Upload` and nothing
+else. RiggedFigure has no texture at all and always applied in ~0.4 ms; that is what a mesh apply
+costs when it is only doing GPU work, and now every mesh is close to it.
+
+The decode did not get cheaper — it moved. It shows up on a worker at 23.0 ms (CesiumMan) and
+14.5 ms (Fox) in Release, 58 ms and 61 ms in Debug, which is what the job system is for.
+
+Three details worth knowing:
+
+- **The image cannot have changed.** `TextureImporter::LoadFromMemory(bytes, size, flip)` is defined
+  as `Upload(DecodeFromMemory(bytes, size, flip))`. The change is that exact composition split
+  across a thread boundary, with `flip = true` preserved, so the result is identical by
+  construction rather than by inspection.
+- **The compressed bytes are still carried.** `MaterialSerializer::GenerateSidecars` extracts them
+  to a real file on first import (see [Sidecar generation](#sidecar-generation-and-embedded-texture-extraction)),
+  and re-encoding RGBA8 to recover them would be absurd. So a `MeshSource` in flight holds both
+  forms; a decoded 1K map is 4 MB against a few hundred KB compressed, and it lives from the end of
+  Parse until Apply. That is the cost of this trade, and it is the same unbounded-work-in-flight
+  question a cold open already raises.
+- **`MeshSource` is move-only now**, because `DecodedImage` owns stb's buffer through a
+  `unique_ptr`. That is the correct shape for a type carrying tens of megabytes, and nothing was
+  copying one.
+
 ### There are no placeholders, and that is a decision
 
 [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) decision 8 called for a
@@ -489,7 +581,12 @@ first time this ran: one mesh stuck at "pending" forever, nothing rendered, and 
 hit counter climbed past 3800 in half a minute.
 
 So a manager holds a **strong** reference to anything it has just applied, for `kHandoffFrames`
-(four) calls to `Update`. Anything that wants the asset is polling every frame — an `AssetRef` whose
+(four) calls to `Update`. **`AgeHandoff` must therefore run on every `Update`, including one with
+nothing pending** — it used to sit after an early `return` taken when the pending set was empty, so
+the window never closed once the last load completed and the manager kept a strong reference to
+every asset it had ever applied asynchronously. The weak cache could not collect anything until some
+later load happened to make the function run to the end again. Symptom: close a scene and `resident`
+stays where it was instead of falling to 0. Anything that wants the asset is polling every frame — an `AssetRef` whose
 `Get()` returned null re-asks by design — so it takes ownership on the next call and the manager's
 grip stops mattering. Nothing takes it, it ages out and is collected, which is the weak cache
 behaving exactly as intended. One frame would do in principle; four leaves slack for a consumer that

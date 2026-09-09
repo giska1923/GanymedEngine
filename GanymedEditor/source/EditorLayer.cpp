@@ -369,6 +369,13 @@ namespace GanymedE {
 				cache.Resident, cache.Tracked, cache.Pending);
 		}
 
+		// Apply is the one half of an asynchronous load that cannot leave the main thread, so it
+		// is the one that needs a ceiling. Deferred is finished parses waiting for a later frame:
+		// a non-zero value during a burst is the budget working, not a backlog.
+		const AssetApplyStats apply = AssetManager::GetApplyStats();
+		ImGui::Text("Apply: %u done, %u deferred, %.2f / %.1f ms",
+			apply.Applied, apply.Deferred, apply.Milliseconds, apply.BudgetMs);
+
 		// Compiles vs cache hits is the number that says whether the compiled tree is doing its
 		// job: a second run over an unchanged project must read 0 compiled. The in-flight count
 		// is what a cold open looks like while it is happening.

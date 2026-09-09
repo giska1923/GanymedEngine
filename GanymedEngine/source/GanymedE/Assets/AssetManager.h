@@ -21,6 +21,16 @@ namespace GanymedE {
 		std::size_t Pending = 0;   // parses in flight
 	};
 
+	// What the last frame's main-thread Apply pass cost, and what it had to leave for later.
+	// Editor-facing; nothing in the engine reads it.
+	struct AssetApplyStats
+	{
+		uint32_t Applied = 0;    // assets that became GPU resources last frame
+		uint32_t Deferred = 0;   // finished parsing but over budget - they land on a later frame
+		double Milliseconds = 0.0;
+		double BudgetMs = 0.0;
+	};
+
 	class AssetManager
 	{
 	public:
@@ -77,10 +87,17 @@ namespace GanymedE {
 			return AssetManagerRegistry::Get<T>().Load(handle);
 		}
 
-		// Apply everything that finished parsing since the last call. **Main thread**, once per
-		// frame, from Application::Run - this is the only place the async path creates GPU
-		// resources, which is what keeps bgfx on the thread that owns it.
+		// Apply what finished parsing since the last call, up to a per-frame time budget. **Main
+		// thread**, once per frame, from Application::Run - this is the only place the async path
+		// creates GPU resources, which is what keeps bgfx on the thread that owns it.
+		//
+		// Bounded because Apply cannot leave the main thread and bursts are easy to cause: a hot
+		// reload across many files, or a cold open of a large scene, would otherwise turn every
+		// finished parse into GPU resources in one frame. Anything that does not fit stays
+		// pending and lands on a later frame - see AssetApplyStats and docs/engine/assets.md.
 		static void Update();
+
+		static AssetApplyStats GetApplyStats();
 
 		// Block until this asset is loaded and applied. Pumps other queued jobs while it waits,
 		// so it cannot deadlock the pool.

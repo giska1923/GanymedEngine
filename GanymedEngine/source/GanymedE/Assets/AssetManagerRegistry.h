@@ -6,6 +6,7 @@
 #include "GanymedE/Core/Log.h"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -121,6 +122,54 @@ namespace GanymedE {
 		virtual ~AssetParseResult() = default;
 	};
 
+	// How long `AssetManager::Update` may spend, in one frame, turning finished parses into GPU
+	// resources. One budget is shared by every manager, because the frame is shared.
+	//
+	// Apply is main-thread work by construction - bgfx resource creation belongs to the submit
+	// thread (roadmap decision 13) - so it is the one part of the asynchronous path that can still
+	// cost a frame. Phase 5 moved the expensive half to workers and left Apply unbounded, which was
+	// fine while the only burst was a cold open of five textures. Phase 6 made bursts easy to
+	// cause: rewriting 23 assets at once produced a 110 ms frame, and all of it was Apply.
+	//
+	// **Time, not a count**, because applies are not comparable to each other: a Material is a few
+	// uniforms, a Mesh is vertex and index buffers plus every texture it pulls. A count low enough
+	// to spread meshes acceptably would throttle materials for no reason.
+	class ApplyBudget
+	{
+	public:
+		explicit ApplyBudget(double milliseconds)
+			: m_Milliseconds(milliseconds), m_Start(std::chrono::steady_clock::now())
+		{
+		}
+
+		// "Is there room for one more?"
+		//
+		// **The first apply of a frame always says yes**, whatever the clock reads. An apply cannot
+		// be interrupted half way, so a budget allowed to refuse everything would stall loading
+		// permanently the moment one asset costs more than the whole allowance - and a single large
+		// mesh does. Guaranteed forward progress is worth more than a hard ceiling that cannot be
+		// honoured anyway.
+		bool HasRoom() const { return m_Applied == 0 || ElapsedMs() < m_Milliseconds; }
+
+		double ElapsedMs() const
+		{
+			return std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - m_Start).count();
+		}
+
+		void RecordApplied() { ++m_Applied; }
+		void RecordDeferred(std::size_t count) { m_Deferred += (uint32_t)count; }
+
+		uint32_t Applied() const { return m_Applied; }
+		uint32_t Deferred() const { return m_Deferred; }
+
+	private:
+		double m_Milliseconds;
+		std::chrono::steady_clock::time_point m_Start;
+		uint32_t m_Applied = 0;
+		uint32_t m_Deferred = 0;
+	};
+
 	// Everything `AssetManager` needs from a manager without knowing its type.
 	class IAssetManager
 	{
@@ -136,9 +185,10 @@ namespace GanymedE {
 		virtual void Evict(AssetHandle handle) = 0;
 		virtual void EvictAll() = 0;
 
-		// Apply whatever finished parsing. **Main thread**, once per frame, from
-		// AssetManager::Update - this is where every bgfx resource on the async path is created.
-		virtual void Update() = 0;
+		// Apply whatever finished parsing, within the frame's shared Apply budget. **Main thread**,
+		// once per frame, from AssetManager::Update - this is where every bgfx resource on the
+		// async path is created. Anything ready that does not fit stays pending and lands later.
+		virtual void Update(ApplyBudget& budget) = 0;
 
 		// Block until `handle` is loaded, applying it here. For the few callers that genuinely
 		// cannot proceed with an asset that is not there yet; see AssetManager::WaitFor.
@@ -276,7 +326,7 @@ namespace GanymedE {
 			return nullptr;
 		}
 
-		void Update() override
+		void Update(ApplyBudget& budget) override
 		{
 			GE_CORE_ASSERT(JobSystem::IsMainThread(), "Apply creates GPU resources - main thread only");
 
@@ -286,29 +336,51 @@ namespace GanymedE {
 			for (auto it = m_Draining.begin(); it != m_Draining.end(); )
 				it = it->IsReady() ? m_Draining.erase(it) : it + 1;
 
-			if (m_Pending.empty())
-				return;
-
-			// Collected before applying, rather than applied while iterating. Apply loads nested
-			// assets - a mesh pulls its textures - and while those land in *other* managers
-			// today, an iterator held across it would be a landmine for the first type that
-			// reaches back into its own manager.
-			std::vector<std::pair<AssetHandle, PendingLoad>> ready;
-			for (auto it = m_Pending.begin(); it != m_Pending.end(); )
+			if (!m_Pending.empty())
 			{
-				if (!it->second.Parse.IsReady())
+				// Collected before applying, rather than applied while iterating. Apply loads
+				// nested assets - a mesh pulls its textures - and while those land in *other*
+				// managers today, an iterator held across it would be a landmine for the first
+				// type that reaches back into its own manager. Handles rather than the loads
+				// themselves, so anything left unapplied stays where it is.
+				std::vector<AssetHandle> ready;
+				for (const auto& entry : m_Pending)
 				{
-					++it;
-					continue;
+					if (entry.second.Parse.IsReady())
+						ready.push_back(entry.first);
 				}
 
-				ready.emplace_back(it->first, std::move(it->second));
-				it = m_Pending.erase(it);
+				std::size_t applied = 0;
+				for (AssetHandle handle : ready)
+				{
+					// Out of budget: the rest keep their finished results and land on a later
+					// frame. Nothing is lost and no work is repeated - the parse is already done,
+					// only the GPU-side half is deferred.
+					if (!budget.HasRoom())
+						break;
+
+					// Re-found rather than trusted: an Apply above may have evicted this very
+					// handle, which erases it from underneath the list collected a moment ago.
+					auto it = m_Pending.find(handle);
+					if (it == m_Pending.end())
+						continue;
+
+					PendingLoad pending = std::move(it->second);
+					m_Pending.erase(it);
+
+					Finish(handle, pending);
+					budget.RecordApplied();
+					++applied;
+				}
+
+				budget.RecordDeferred(ready.size() - applied);
 			}
 
-			for (auto& [handle, pending] : ready)
-				Finish(handle, pending);
-
+			// Unconditionally, and that placement is a fix rather than a detail. This used to sit
+			// after an early `return` taken when nothing was pending, so the handoff window never
+			// closed once the last load completed: the manager kept a *strong* reference to every
+			// asset it had ever applied asynchronously, and the weak cache could not collect
+			// anything until some later load happened to make this function run to the end again.
 			AgeHandoff();
 		}
 

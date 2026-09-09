@@ -56,7 +56,8 @@ Application::Run loop
 ├─ compute Timestep from glfwGetTime()
 │
 ├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized)
-├─ AssetManager::Update                    apply parses that finished on workers (the only
+├─ AssetManager::Update                    poll assets/ for edits, then apply parses that
+│                                          finished on workers, within a 4 ms budget (the only
 │                                          place the async asset path creates GPU resources)
 │
 ├─ Layer::OnUpdate for each layer          (EditorLayer in the editor)
