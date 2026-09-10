@@ -461,11 +461,16 @@ judgement call per component: library container member ⇒ no sentinel.
 
 ### Current state
 
-**The inspector is the first consumer.** Eight of the editor's twenty component sections are now drawn
-from this registration rather than from a hand-written lambda — see
-[editor.md § The generic (reflected) inspector](../editor/editor.md#the-generic-reflected-inspector).
-The serializer and the Lua bindings still hand-list every field; collapsing the serializer is R3, and
-the bindings are deliberately out of scope.
+**Two consumers: the inspector and the serializer.** Eight of the editor's twenty component sections
+are drawn from this registration rather than from a hand-written lambda
+([editor.md](../editor/editor.md#the-generic-reflected-inspector)), and nine components are written
+and read generically by `SceneSerializer` (below). The Lua bindings still hand-list every field and
+are deliberately out of scope.
+
+The two consumers convert **independently**, which is worth seeing once: `SpotLightComponent` is
+serialized generically while its inspector section stays hand-written. What blocks it from the panel
+is a cross-field clamp (outer ≥ inner) that has nothing to do with how it is stored. "Reflected" is
+per-consumer, not a property of the component.
 
 Two facts that consumer established, both worth knowing before writing another one:
 
@@ -484,6 +489,41 @@ uses it today (`BoxColliderComponent::HalfExtents`), which is the same "forced b
 fact" bar every other attribute had to clear.
 
 ## Serialization
+
+### The reflected path
+
+Nine components are written and read by `WriteReflected` / `ReadReflected` in
+[`SceneYaml.h`](../../GanymedEngine/source/GanymedE/Scene/SceneYaml.h) instead of by a hand-written
+block per component: Sprite Renderer, Directional / Point / **Spot** Light, Audio Listener, Rigid
+Body, and the three colliders.
+
+**The gate was byte-identical output, not a working round-trip.** Every committed `.ganymede` is a
+file people diff; a serializer that reorders one key or reformats one float invalidates all of them
+at once. Three properties make that achievable rather than hopeful:
+
+1. `meta_type::data()` iterates in **registration order**, and `ComponentReflection.cpp` registers
+   fields in the order the hand-written writer emitted them.
+2. The registered field name **is** the YAML key — decision 3, which is why names are written out by
+   hand rather than stringified from the C++ token.
+3. Values go through the very same `operator<<` overloads, so a `float` written from a `meta_any`
+   reaches yaml-cpp identically to one written from the member.
+
+Verified by running the same four scenes through both writers and diffing: two are byte-identical
+outright, and the other two match field-for-field once the *pre-existing* per-run UUID churn is
+accounted for — a control run of the unmodified binary produces the same churn against itself.
+
+Two deliberate differences from the code it replaced:
+
+- **Reading is more tolerant.** The hand-written loader did `c.Field = node["Field"].as<T>()`
+  unguarded, so a missing key threw. The generic reader leaves the constructed value alone. That is
+  required, not a nicety: a field omitted because it equalled its default has to read back as that
+  default.
+- **`OmitIfDefault` is not implemented and asserts rather than being ignored.** It needs an equality
+  comparison entt cannot supply without a registration nothing has made. No converted component uses
+  it; any component that does stays hand-written until the flag is genuinely supported. Silently
+  dropping the semantics was the alternative and is worse.
+
+
 
 [`SceneSerializer`](../../GanymedEngine/source/GanymedE/Scene/SceneSerializer.h) writes/reads YAML
 `.ganymede` files: a `Scene` name plus an `Entities` sequence, each entity a map of component

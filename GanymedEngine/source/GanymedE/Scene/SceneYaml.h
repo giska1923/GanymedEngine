@@ -8,6 +8,11 @@
 
 #include "GanymedE/Core/Log.h"
 #include "GanymedE/Math/Curve.h"
+#include "GanymedE/Reflection/Reflection.h"
+
+#include <entt/entt.hpp>
+
+#include <unordered_map>
 
 #include <glm/glm.hpp>
 
@@ -182,6 +187,118 @@ namespace YAML {
 
 }
 namespace GanymedE {
+
+	// ---------------------------------------------------------------------------------------
+	// Reflected read/write: a component's YAML from what `entt::meta` knows about it.
+	//
+	// REFLECTION_ROADMAP.md R3. The gate is **byte-identical output**, not merely a working
+	// round-trip: every committed `.ganymede` and `.gprefab` is a file people diff, and a
+	// serializer that reorders a key or reformats a float invalidates all of them at once.
+	//
+	// Three things make byte-identity achievable rather than hopeful:
+	//
+	//  1. `meta_type::data()` iterates in **registration order** (verified in R2), and
+	//     `ComponentReflection.cpp` registers fields in the order the hand-written writer emitted
+	//     them. Key order therefore matches by construction.
+	//  2. The registered field name **is** the YAML key - decision 3 of the roadmap, which is why
+	//     names are written out by hand rather than stringified from the C++ token.
+	//  3. Values go through the very same `operator<<` overloads above. A `float` written from a
+	//     `meta_any` and one written from the member reach yaml-cpp identically.
+	//
+	// Reading is deliberately **more tolerant than the hand-written loader**, and this is not
+	// optional: the old code did `c.Field = node["Field"].as<T>()` unguarded, so a missing key
+	// threw. A field omitted because it equalled its default (`OmitIfDefault`) has to read back as
+	// that default, so a missing key must leave the constructed value alone.
+	namespace Detail {
+
+		using ReflectedWriter = void (*)(YAML::Emitter&, const entt::meta_any&);
+		using ReflectedReader = bool (*)(const YAML::Node&, const entt::meta_data&, entt::meta_any&);
+
+		struct ReflectedCodec
+		{
+			ReflectedWriter Write = nullptr;
+			ReflectedReader Read = nullptr;
+		};
+
+		inline std::unordered_map<entt::id_type, ReflectedCodec>& ReflectedCodecs()
+		{
+			static std::unordered_map<entt::id_type, ReflectedCodec> s_Codecs;
+			return s_Codecs;
+		}
+
+		template<typename T>
+		void RegisterReflectedCodec()
+		{
+			const entt::meta_type type = entt::resolve<T>();
+			if (!type)
+				return;
+
+			ReflectedCodecs()[type.id()] = {
+				[](YAML::Emitter& out, const entt::meta_any& value)
+				{
+					if (const T* typed = value.try_cast<T>())
+						out << *typed;
+				},
+				[](const YAML::Node& node, const entt::meta_data& field, entt::meta_any& instance)
+				{
+					return field.set(instance, node.as<T>());
+				}
+			};
+		}
+
+		// Enums persist as their ordinal, which is why `AssetType` and friends are append-only.
+		// One registration line per enum rather than a generic path: getting from a `meta_any`
+		// holding an enum to its underlying integer needs the concrete type, and an explicit line
+		// beside the component that uses it is cheaper than a conversion registration nobody else
+		// would read.
+		template<typename E>
+		void RegisterReflectedEnumCodec()
+		{
+			const entt::meta_type type = entt::resolve<E>();
+			if (!type)
+				return;
+
+			ReflectedCodecs()[type.id()] = {
+				[](YAML::Emitter& out, const entt::meta_any& value)
+				{
+					if (const E* typed = value.try_cast<E>())
+						out << (int)*typed;
+				},
+				[](const YAML::Node& node, const entt::meta_data& field, entt::meta_any& instance)
+				{
+					return field.set(instance, (E)node.as<int>());
+				}
+			};
+		}
+
+		void RegisterReflectedCodecs();
+
+	}
+
+	// Emits every serialized field of `instance` into an already-open map. Skips `NotSerialized`
+	// and `Custom`; `Flatten` writes a nested struct's fields as siblings, which is the shape a
+	// collider's PhysicsMaterial has always had on disk.
+	void WriteReflected(YAML::Emitter& out, const entt::meta_any& instance);
+
+	// The inverse. A key that is absent leaves the field at its constructed value.
+	void ReadReflected(const YAML::Node& node, entt::meta_any instance);
+
+	template<typename T>
+	void WriteReflectedComponent(YAML::Emitter& out, const char* key, const T& component)
+	{
+		out << YAML::Key << key;
+		out << YAML::BeginMap;
+		WriteReflected(out, entt::forward_as_meta(component));
+		out << YAML::EndMap;
+	}
+
+	template<typename T>
+	void ReadReflectedComponent(const YAML::Node& node, T& component)
+	{
+		entt::meta_any instance = entt::forward_as_meta(component);
+		ReadReflected(node, instance.as_ref());
+	}
+
 
 	inline YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec3& v)
 	{

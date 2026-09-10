@@ -101,15 +101,21 @@ namespace GanymedE {
 			out << YAML::EndMap; // CameraComponent
 		}
 
+		// ---- Reflected components ---------------------------------------------------------
+		//
+		// From here on, a component whose keys and order are exactly its registration is written
+		// and read generically. The registered field name IS the YAML key (roadmap decision 3),
+		// and `meta_type::data()` iterates in registration order, so the emitted bytes are the
+		// ones the hand-written block produced - verified by diffing both writers' output for the
+		// same input scene, not merely by round-tripping.
+		//
+		// SpotLightComponent is here while its *inspector* section is still hand-written: the
+		// cross-field clamp that stops it drawing generically has nothing to do with how it is
+		// stored. The two consumers of this registration convert independently.
 		if (entity.HasComponent<SpriteRendererComponent>())
 		{
-			out << YAML::Key << "SpriteRendererComponent";
-			out << YAML::BeginMap; // SpriteRendererComponent
-
-			auto& spriteRendererComponent = entity.GetComponent<SpriteRendererComponent>();
-			out << YAML::Key << "Color" << YAML::Value << spriteRendererComponent.Color;
-
-			out << YAML::EndMap; // SpriteRendererComponent
+			WriteReflectedComponent(out, "SpriteRendererComponent",
+				entity.GetComponent<SpriteRendererComponent>());
 		}
 
 		if (entity.HasComponent<StaticMeshComponent>())
@@ -214,45 +220,20 @@ namespace GanymedE {
 
 		if (entity.HasComponent<DirectionalLightComponent>())
 		{
-			out << YAML::Key << "DirectionalLightComponent";
-			out << YAML::BeginMap;
-
-			auto& dlc = entity.GetComponent<DirectionalLightComponent>();
-			out << YAML::Key << "Color" << YAML::Value << dlc.Color;
-			out << YAML::Key << "Intensity" << YAML::Value << dlc.Intensity;
-			out << YAML::Key << "CastShadows" << YAML::Value << dlc.CastShadows;
-
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "DirectionalLightComponent",
+				entity.GetComponent<DirectionalLightComponent>());
 		}
 
 		if (entity.HasComponent<PointLightComponent>())
 		{
-			out << YAML::Key << "PointLightComponent";
-			out << YAML::BeginMap;
-
-			auto& plc = entity.GetComponent<PointLightComponent>();
-			out << YAML::Key << "Color" << YAML::Value << plc.Color;
-			out << YAML::Key << "Intensity" << YAML::Value << plc.Intensity;
-			out << YAML::Key << "Radius" << YAML::Value << plc.Radius;
-			out << YAML::Key << "Falloff" << YAML::Value << plc.Falloff;
-
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "PointLightComponent",
+				entity.GetComponent<PointLightComponent>());
 		}
 
 		if (entity.HasComponent<SpotLightComponent>())
 		{
-			out << YAML::Key << "SpotLightComponent";
-			out << YAML::BeginMap;
-
-			auto& slc = entity.GetComponent<SpotLightComponent>();
-			out << YAML::Key << "Color" << YAML::Value << slc.Color;
-			out << YAML::Key << "Intensity" << YAML::Value << slc.Intensity;
-			out << YAML::Key << "Range" << YAML::Value << slc.Range;
-			out << YAML::Key << "InnerConeAngle" << YAML::Value << slc.InnerConeAngle;
-			out << YAML::Key << "OuterConeAngle" << YAML::Value << slc.OuterConeAngle;
-			out << YAML::Key << "Falloff" << YAML::Value << slc.Falloff;
-
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "SpotLightComponent",
+				entity.GetComponent<SpotLightComponent>());
 		}
 
 		if (entity.HasComponent<SkyLightComponent>())
@@ -295,11 +276,8 @@ namespace GanymedE {
 
 		if (entity.HasComponent<AudioListenerComponent>())
 		{
-			out << YAML::Key << "AudioListenerComponent";
-			out << YAML::BeginMap;
-			out << YAML::Key << "Primary" << YAML::Value
-				<< entity.GetComponent<AudioListenerComponent>().Primary;
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "AudioListenerComponent",
+				entity.GetComponent<AudioListenerComponent>());
 		}
 
 		if (entity.HasComponent<ParticleEmitterComponent>())
@@ -371,57 +349,32 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		// RigidBodyType persists as its ordinal, which is why that enum is append-only.
 		if (entity.HasComponent<RigidBodyComponent>())
 		{
-			out << YAML::Key << "RigidBodyComponent";
-			out << YAML::BeginMap;
-			auto& rb = entity.GetComponent<RigidBodyComponent>();
-			out << YAML::Key << "Type" << YAML::Value << (int)rb.Type;
-			out << YAML::Key << "Mass" << YAML::Value << rb.Mass;
-			out << YAML::Key << "LinearDamping" << YAML::Value << rb.LinearDamping;
-			out << YAML::Key << "AngularDamping" << YAML::Value << rb.AngularDamping;
-			out << YAML::Key << "UseGravity" << YAML::Value << rb.UseGravity;
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "RigidBodyComponent",
+				entity.GetComponent<RigidBodyComponent>());
 		}
 
-		auto serializePhysicsMaterial = [](YAML::Emitter& emitter, const PhysicsMaterial& mat)
-		{
-			emitter << YAML::Key << "Friction" << YAML::Value << mat.Friction;
-			emitter << YAML::Key << "Restitution" << YAML::Value << mat.Restitution;
-		};
-
+		// PhysicsMaterial rides on Trait::Flatten, so Friction and Restitution stay SIBLINGS of
+		// HalfExtents rather than moving under a "Material" sub-map - the shape every collider in
+		// every saved scene already has.
 		if (entity.HasComponent<BoxColliderComponent>())
 		{
-			out << YAML::Key << "BoxColliderComponent";
-			out << YAML::BeginMap;
-			auto& col = entity.GetComponent<BoxColliderComponent>();
-			out << YAML::Key << "HalfExtents" << YAML::Value << col.HalfExtents;
-			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
-			serializePhysicsMaterial(out, col.Material);
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "BoxColliderComponent",
+				entity.GetComponent<BoxColliderComponent>());
 		}
 
 		if (entity.HasComponent<SphereColliderComponent>())
 		{
-			out << YAML::Key << "SphereColliderComponent";
-			out << YAML::BeginMap;
-			auto& col = entity.GetComponent<SphereColliderComponent>();
-			out << YAML::Key << "Radius" << YAML::Value << col.Radius;
-			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
-			serializePhysicsMaterial(out, col.Material);
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "SphereColliderComponent",
+				entity.GetComponent<SphereColliderComponent>());
 		}
 
 		if (entity.HasComponent<CapsuleColliderComponent>())
 		{
-			out << YAML::Key << "CapsuleColliderComponent";
-			out << YAML::BeginMap;
-			auto& col = entity.GetComponent<CapsuleColliderComponent>();
-			out << YAML::Key << "Radius" << YAML::Value << col.Radius;
-			out << YAML::Key << "HalfHeight" << YAML::Value << col.HalfHeight;
-			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
-			serializePhysicsMaterial(out, col.Material);
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "CapsuleColliderComponent",
+				entity.GetComponent<CapsuleColliderComponent>());
 		}
 
 		out << YAML::EndMap; // Entity
@@ -667,8 +620,7 @@ namespace GanymedE {
 		auto spriteRendererComponent = entityNode["SpriteRendererComponent"];
 		if (spriteRendererComponent)
 		{
-			auto& src = deserializedEntity.AddComponent<SpriteRendererComponent>();
-			src.Color = spriteRendererComponent["Color"].as<glm::vec4>();
+			ReadReflectedComponent(spriteRendererComponent, deserializedEntity.AddComponent<SpriteRendererComponent>());
 		}
 
 		auto staticMeshComponent = entityNode["StaticMeshComponent"];
@@ -769,32 +721,19 @@ namespace GanymedE {
 		auto directionalLightComponent = entityNode["DirectionalLightComponent"];
 		if (directionalLightComponent)
 		{
-			auto& dlc = deserializedEntity.AddComponent<DirectionalLightComponent>();
-			dlc.Color = directionalLightComponent["Color"].as<glm::vec3>();
-			dlc.Intensity = directionalLightComponent["Intensity"].as<float>();
-			dlc.CastShadows = directionalLightComponent["CastShadows"].as<bool>();
+			ReadReflectedComponent(directionalLightComponent, deserializedEntity.AddComponent<DirectionalLightComponent>());
 		}
 
 		auto pointLightComponent = entityNode["PointLightComponent"];
 		if (pointLightComponent)
 		{
-			auto& plc = deserializedEntity.AddComponent<PointLightComponent>();
-			plc.Color = pointLightComponent["Color"].as<glm::vec3>();
-			plc.Intensity = pointLightComponent["Intensity"].as<float>();
-			plc.Radius = pointLightComponent["Radius"].as<float>();
-			plc.Falloff = pointLightComponent["Falloff"].as<float>();
+			ReadReflectedComponent(pointLightComponent, deserializedEntity.AddComponent<PointLightComponent>());
 		}
 
 		auto spotLightComponent = entityNode["SpotLightComponent"];
 		if (spotLightComponent)
 		{
-			auto& slc = deserializedEntity.AddComponent<SpotLightComponent>();
-			slc.Color = spotLightComponent["Color"].as<glm::vec3>();
-			slc.Intensity = spotLightComponent["Intensity"].as<float>();
-			slc.Range = spotLightComponent["Range"].as<float>();
-			slc.InnerConeAngle = spotLightComponent["InnerConeAngle"].as<float>();
-			slc.OuterConeAngle = spotLightComponent["OuterConeAngle"].as<float>();
-			slc.Falloff = spotLightComponent["Falloff"].as<float>();
+			ReadReflectedComponent(spotLightComponent, deserializedEntity.AddComponent<SpotLightComponent>());
 		}
 
 		auto skyLightComponent = entityNode["SkyLightComponent"];
@@ -848,9 +787,7 @@ namespace GanymedE {
 		auto audioListenerComponent = entityNode["AudioListenerComponent"];
 		if (audioListenerComponent)
 		{
-			auto& listener = deserializedEntity.AddComponent<AudioListenerComponent>();
-			if (auto primary = audioListenerComponent["Primary"])
-				listener.Primary = primary.as<bool>();
+			ReadReflectedComponent(audioListenerComponent, deserializedEntity.AddComponent<AudioListenerComponent>());
 		}
 
 		auto particleEmitterComponent = entityNode["ParticleEmitterComponent"];
@@ -918,48 +855,25 @@ namespace GanymedE {
 		auto rigidBodyComponent = entityNode["RigidBodyComponent"];
 		if (rigidBodyComponent)
 		{
-			auto& rb = deserializedEntity.AddComponent<RigidBodyComponent>();
-			rb.Type = (RigidBodyType)rigidBodyComponent["Type"].as<int>();
-			rb.Mass = rigidBodyComponent["Mass"].as<float>();
-			rb.LinearDamping = rigidBodyComponent["LinearDamping"].as<float>();
-			rb.AngularDamping = rigidBodyComponent["AngularDamping"].as<float>();
-			rb.UseGravity = rigidBodyComponent["UseGravity"].as<bool>();
+			ReadReflectedComponent(rigidBodyComponent, deserializedEntity.AddComponent<RigidBodyComponent>());
 		}
-
-		auto readPhysicsMaterial = [](const YAML::Node& node, PhysicsMaterial& mat)
-		{
-			if (node["Friction"])
-				mat.Friction = node["Friction"].as<float>();
-			if (node["Restitution"])
-				mat.Restitution = node["Restitution"].as<float>();
-		};
 
 		auto boxColliderComponent = entityNode["BoxColliderComponent"];
 		if (boxColliderComponent)
 		{
-			auto& col = deserializedEntity.AddComponent<BoxColliderComponent>();
-			col.HalfExtents = boxColliderComponent["HalfExtents"].as<glm::vec3>();
-			col.Offset = boxColliderComponent["Offset"].as<glm::vec3>();
-			readPhysicsMaterial(boxColliderComponent, col.Material);
+			ReadReflectedComponent(boxColliderComponent, deserializedEntity.AddComponent<BoxColliderComponent>());
 		}
 
 		auto sphereColliderComponent = entityNode["SphereColliderComponent"];
 		if (sphereColliderComponent)
 		{
-			auto& col = deserializedEntity.AddComponent<SphereColliderComponent>();
-			col.Radius = sphereColliderComponent["Radius"].as<float>();
-			col.Offset = sphereColliderComponent["Offset"].as<glm::vec3>();
-			readPhysicsMaterial(sphereColliderComponent, col.Material);
+			ReadReflectedComponent(sphereColliderComponent, deserializedEntity.AddComponent<SphereColliderComponent>());
 		}
 
 		auto capsuleColliderComponent = entityNode["CapsuleColliderComponent"];
 		if (capsuleColliderComponent)
 		{
-			auto& col = deserializedEntity.AddComponent<CapsuleColliderComponent>();
-			col.Radius = capsuleColliderComponent["Radius"].as<float>();
-			col.HalfHeight = capsuleColliderComponent["HalfHeight"].as<float>();
-			col.Offset = capsuleColliderComponent["Offset"].as<glm::vec3>();
-			readPhysicsMaterial(capsuleColliderComponent, col.Material);
+			ReadReflectedComponent(capsuleColliderComponent, deserializedEntity.AddComponent<CapsuleColliderComponent>());
 		}
 
 		return deserializedEntity;

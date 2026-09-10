@@ -411,3 +411,61 @@ anything else groups fields. The R1 note's suggestion to promote reflection to i
 `docs/engine/reflection.md` was **not** taken: the drawer registry is editor-side and belongs in
 `editor.md`, the registration stays in `scene.md`, and neither is yet large enough on its own. Worth
 revisiting when R3 puts the serializer contract in the same place.
+
+---
+
+## R3 — executed (2026-09-10)
+
+Landed: `WriteReflected` / `ReadReflected` in
+[`SceneYaml.h`](../../GanymedEngine/source/GanymedE/Scene/SceneYaml.h) plus a new `SceneYaml.cpp`
+(one new file, premake regeneration required). Nine components converted on **both** save and load:
+Sprite Renderer, Directional / Spot / Point Light, Audio Listener, Rigid Body, Box / Sphere /
+Capsule Collider. Written up in [scene.md](../engine/scene.md#the-reflected-path).
+
+**The gate was byte-identical output**, as the plan asked, and it is worth being precise about how
+that was measured, because a naive round-trip would have passed while hiding a real difference.
+The method: run the *same four committed scenes* through both writers and diff the two outputs
+directly. Result:
+
+| Scene | Hand-written vs reflected |
+| --- | --- |
+| `BoxesPhysicsExample` (rigid bodies + colliders) | **byte-identical** |
+| `Phase5Test` (42 entities) | **byte-identical** |
+| `3DExample`, `Example` | field-for-field identical; differ only in entity UUIDs |
+
+Those last two needed a control before the result meant anything: **the unmodified binary produces
+different bytes for them across two runs of itself**, because entities in those files mint fresh
+UUIDs on load. Pre-existing non-determinism, unrelated to this change - and exactly the kind of
+thing that would otherwise have been read as "the new serializer broke something". Every writer is
+also a fixpoint: pass 2 is byte-identical to pass 1 in all four.
+
+**Two deliberate differences from the code replaced.**
+
+- **Reading is more tolerant, and had to be.** The hand-written loader did
+  `c.Field = node["Field"].as<T>()` unguarded, so a missing key threw. The generic reader leaves the
+  constructed value alone. This is not a nicety: `OmitIfDefault` means a field can legitimately be
+  absent, and it has to read back as the default.
+- **`OmitIfDefault` is not implemented, and asserts rather than being ignored.** It needs an
+  equality comparison entt cannot supply without a registration nothing has made. No converted
+  component carries the flag, so the generic writer refuses it loudly and those components stay
+  hand-written. Half-implementing it would have silently dropped a field from a saved scene.
+
+**The two consumers convert independently**, which R3 demonstrated rather than assumed:
+`SpotLightComponent` is now serialized generically while its inspector section is still
+hand-written. The cross-field clamp that blocks it from the panel says nothing about how it is
+stored. "Reflected" is per-consumer, not a property of a component - worth knowing before R4.
+
+**Enums persist by ordinal via one registration line each** (`RegisterReflectedEnumCodec<E>()`).
+Getting from a `meta_any` holding an enum to its underlying integer needs the concrete type, and an
+explicit line beside the component that uses it is cheaper and more readable than a conversion
+registration nobody would find. `RigidBodyType` is the only one so far.
+
+**Verification.** Debug, Release and Dist build clean. The byte comparison above. The scene
+regression is unchanged - 40 meshes / 32 culled / 5 instanced draws / 7 draw calls across four hot
+reload rounds, 48 reloads, 0 errors - and the runtime boots with 0 errors, 0 warnings, 10 entities,
+which exercises the *read* path on a scene containing converted components.
+
+**Left as adjacent work.** `PrefabSerializer` was not converted; it reads the same component blocks
+out of a different container and is the obvious next user of `ReadReflectedComponent`. The
+per-run UUID churn in `3DExample` and `Example` is a real diff-noise problem for committed scenes
+and predates all of this.
