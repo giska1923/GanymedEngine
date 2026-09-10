@@ -469,3 +469,280 @@ which exercises the *read* path on a scene containing converted components.
 out of a different container and is the obvious next user of `ReadReflectedComponent`. The
 per-run UUID churn in `3DExample` and `Example` is a real diff-noise problem for committed scenes
 and predates all of this.
+
+---
+
+## R4a - executed (2026-09-10): per-property prefab overrides
+
+R4 as sketched bundles two independent features and says to "scope them properly when they are
+next". Scoped, and split: **R4a is per-property prefab overrides** (this section), **R4b is
+multi-entity editing** (not started). They share nothing but the reflection layer, and R4a needed a
+design decision that R4b does not.
+
+Landed: `PrefabMemberComponent`, [`EditorPrefabOverrides.h/.cpp`](../../GanymedEditor/source/EditorPrefabOverrides.h),
+`EmitReflectedValue` split into [`ReflectedValue.h`](../../GanymedEngine/source/GanymedE/Scene/ReflectedValue.h),
+and an override hook threaded through the property drawer. Three new files, premake regeneration
+required. Written up in [editor.md](../editor/editor.md#per-property-overrides) and
+[scene.md](../engine/scene.md#prefab-member-links).
+
+**The design question the plan flagged - "a stable property path per field" - turned out to be the
+wrong half of the problem.** The property path is trivial: R1 made the registered field name the
+serialized key, so `meta_data::name()` *is* the path. What is hard is the **entity** path: an
+instance's entities get fresh UUIDs, so nothing says which prefab object a given instance entity
+came from. Investigating found the answer already half-built - `PrefabSerializer` writes prefab
+entities with canonical ids 1..N in DFS order - so the fix was to stop throwing that pairing away.
+`PrefabMemberComponent::CanonicalID`, recorded inside `Instantiate`, is the whole mechanism.
+
+**Overrides are computed, not stored, and that is the load-bearing decision.** Unity records an
+override list on the instance. A recorded list is a second source of truth: it goes stale when the
+prefab changes, needs migrating when a field is renamed, and every edit path has to remember to
+maintain it. A diff cannot be stale, and it needs no format change beyond the canonical link. The
+cost is recomputation, which was measured rather than assumed - see below.
+
+**The comparison reuses R3.** `EmitReflectedValue`: *a field that would serialize identically is not
+an override.* That keeps "overridden" and "would be written differently" the same statement, where a
+hand-written `operator==` per type would eventually stop being. A type with no YAML codec reports
+*not* overridden - "cannot tell" must not become a claim. R3 paying off inside R4a was not planned;
+it is a good sign the phases were ordered right.
+
+**Queries are templates on the component type, not `meta_type`-keyed.** Going from a `meta_type` to
+a component's storage needs raw `entt::registry` access that neither `Entity` nor `Scene` exposes,
+and every call site knows the concrete type anyway. Adding a by-type-id accessor to the engine for
+an editor feature was the alternative and was not worth it.
+
+**Verification.** Debug, Release and Dist build clean.
+
+| Check | Result |
+| --- | --- |
+| A fresh instance has no overrides | `RateOverTime overridden=false` |
+| An edited field is detected | `overridden=true`, and the section marker agrees |
+| **An untouched field in the same component is not** | `Looping overridden=false` - the precision check a coarse implementation fails |
+| Revert restores the prefab value | `RateOverTime=0 overridden=false` |
+| The link survives a save/load round trip | After `Serialize` + `OpenScene`: `canonicalID=1`, value 7 preserved, still reported overridden |
+| Cost | **0.136 ms/frame** worst case - a selected prefab instance with a particle emitter (46 fields), section marker plus every per-field query, Release. Zero when nothing selected is a prefab member, so no caching was added |
+| No regression | Scene render unchanged (40 meshes / 32 culled / 5 instanced / 7 draws, 48 reloads, 0 errors); runtime boots clean with `33 types, 120 members` |
+
+**Limitations, stated rather than discovered later.**
+
+- **Prefab instances already in committed scenes have no canonical link** - they were instantiated
+  before it existed - so they report no overrides until re-instantiated. *Revert Instance* does
+  that, since it rebuilds the subtree from the file. Backfilling by DFS order was considered and
+  rejected: structural edits are allowed, so position in the tree is not identity.
+- **The per-field affordance only appears in reflected sections**, because the hook lives in the
+  property drawer. Hand-written sections get the section-level `*` and nothing finer. That boundary
+  moves on its own as more sections convert.
+- **The template cache cannot notice a `.gprefab` edited on disk**; it is dropped on scene change.
+  Hooking `AssetWatcher` would fix it, but prefabs are path-resolved and have no asset manager, so
+  `OnAssetModified` currently returns false for them.
+- **Apply-to-prefab still writes the whole instance.** Per-property *apply* ("push just this field
+  to the prefab") is the natural next step now that the diff exists, and is not done.
+
+**R4b - multi-entity editing - is executed below.**
+
+---
+
+## R4b - executed (2026-09-10): multi-entity editing
+
+Ctrl+click builds a selection; the inspector shows the components common to it, marks fields the
+selection disagrees about, and applies an edit to all of them as one undo entry. Written up in
+[editor.md](../editor/editor.md#multi-entity-editing).
+
+**The selection model change cost six call sites, not thirty.** The plan estimated ~30 because it
+assumed `Entity m_SelectionContext` becomes a set. It does not: `m_SelectionContext` stays as the
+**primary** - the entity clicked last - and `m_Selection` is added beside it, primary first.
+`GetSelectedEntity()` returns what it always did, so gizmos, the tag field and every prefab action
+were untouched. Only the six `Get/SetSelectedEntity` uses in `EditorLayer` were even read.
+
+**Edits propagate after the fact rather than driving N widgets**, which is what keeps every property
+drawer single-entity and unaware multi-edit exists. The widgets drive the primary; on a frame a
+widget reports an edit, the primary's new value is copied to the rest. Selecting several entities
+therefore never flattens their differing values - only an actual edit does. This is the same shape
+as R4a's override hook, and it is why the two features compose without knowing about each other:
+`MultiEditHook` and `OverrideHook` are separate optional hooks on the same drawer, and mixed wins
+over overridden when a field is both.
+
+**The undo work is where the care went**, as the milestone's risk section predicted - though not for
+the reason it gave. The commit boundary already collapsed a gesture into one command; what it could
+not do was span entities. `PendingEdit` gained a `Secondary` vector, captured at the same instant as
+the primary's command, and `CommitPendingEdit` folds them into one `CompositeCommand`. Pushing N
+commands would have made Ctrl+Z walk back through the selection one entity at a time - the same
+class of wrongness as one command per frame of a drag.
+
+**Verification.** Debug, Release and Dist build clean. Three entities with intensities 1 / 2 / 1,
+only one of which also has a box collider:
+
+| Check | Result |
+| --- | --- |
+| Mixed detection | `Intensity mixed=true` (1/2/1), `Radius mixed=false` (all default) |
+| Common components | `PointLight=true`, `BoxCollider=false` - the section only one entity has is not drawn |
+| Propagation | `A=9 B=9 C=9`, and the field stops reporting mixed |
+| **One gesture = one undo entry** | `UndoDepth == 1` after a 3-entity gesture, not 3 |
+| **Undo restores per-entity values** | One Ctrl+Z gives back `1 / 2 / 1` - the individual prior values, not a flattened one. This is the check that would catch capturing the primary's before-value N times |
+| No regression | Scene render unchanged (40 meshes / 32 culled / 5 instanced / 7 draws, 48 reloads, 0 errors); runtime clean |
+
+**Left undone, deliberately.**
+
+- **Shift-range selection.** It needs a flattened view of a tree the panel draws recursively and
+  does not keep. Ctrl covers the case multi-edit exists for.
+- **The gizmo still moves the primary only.** Transform composition across a selection is a
+  viewport feature, not an inspector one.
+- **The no-active-phase edit path stays single-entity for undo** (a drag-drop onto a section, a
+  popup that closes in the same frame). It has no gesture to wait for, so the other entities'
+  before-values are gone by the time it runs; fixing it means moving the per-frame pre-copy up
+  into `DrawComponent`, which costs a copy per section per frame for a case that currently has no
+  multi-entity consumer.
+- **Hand-written sections get no mixed-value marking**, for the same reason they get no per-field
+  override marking: the hook lives in the reflected property drawer. That boundary moves on its own
+  as more sections convert.
+
+---
+
+## Milestone status
+
+R1-R4 are done. What the milestone set out to make possible - per-property prefab overrides and
+multi-entity editing - both exist, and both are what R1's registration was shaped for.
+
+The two consumers are converted unevenly and on purpose: **15 of 20** inspector sections and 9 of 21
+serialized components go through reflection, with each remaining one held back by something
+specific rather than by effort. The reflected/hand-written boundary is where the per-field
+affordances stop.
+
+Still out of scope by decision: reflection-driven Lua bindings, reflection in engine systems
+(decision 4), reflection across a DLL boundary, and a code generator.
+
+---
+
+## Follow-up - converting the remaining inspector sections (2026-09-10)
+
+Converted **Transform** and **Spot Light**, taking the inspector to 10 of 20 sections. Two drawer
+capabilities were added for them, both of which R1's registration had already anticipated:
+`Trait::Radians` on a vec3 (Transform's rotation) and a bare `AssetHandle` drawer keyed on
+`Attr::Slot` - the exact case the two-tier vocabulary was introduced for, since `AssetHandle` is an
+alias for `UUID` and the type alone cannot say a field is an asset reference.
+
+**The pattern that unlocked both: handle what reflection cannot express *around* the generic call,
+not inside it.**
+
+- Transform runs `MarkChanged<TransformComponent>` after `DrawReflectedComponent` returns true. A
+  side effect is not expressible as an attribute, but nothing stops the section from running one.
+- Spot Light clamps outer >= inner afterwards. A generic drawer sees one field at a time and cannot
+  express a cross-field invariant, but the section can fix up what the drawer just wrote.
+
+That distinction is what separates the sections that could convert from the ones that could not:
+**a rule you can apply after the fact is fine; one that changes what gets drawn is not.**
+
+**Verification, and a result better than "identical".** The screenshot comparison against the
+hand-written version showed one small difference - a scrollbar thumb, meaning the content height had
+changed. Rather than accept or hand-wave it, the hypothesis (the type-level note string) was tested
+by temporarily aligning the registered text to the panel's and re-running: **pixel-identical**. So
+the note string was the entire delta, proven rather than assumed.
+
+The alignment was then reverted, leaving the registered prose in place. Two components now display
+the registration's wording rather than the panel's older string (`DirectionalLightComponent`, which
+changed silently back in R2 because that phase's probe did not include it, and now
+`SpotLightComponent`). That is the registration being the single source of truth doing its job; the
+shorter wording is one line away in `ComponentReflection.cpp` if it is preferred.
+
+Also checked, because the degrees round-trip is where a generic drawer would quietly corrupt data:
+after ~2 s of drawing with no input, Transform's rotation reads exactly 30 / 45 / -60 and
+`UndoDepth` is 0. A drawer that wrote back unconditionally would drift and mint a phantom command
+per frame.
+
+**Where the boundary now is, and why it is structural.** Six sections stay hand-written:
+
+| Section | Blocked by |
+| --- | --- |
+| Camera, Sky Light | Field **visibility** depends on another field's value. Unlike a clamp, this cannot be applied after the fact - you cannot un-draw a field |
+| Static Mesh, Animator, Script | The UI is driven by **asset** data (a mesh's material slots, its clip names, a Lua class's fields), not by component members. There is nothing to reflect |
+| Particle Emitter | Paired min/max fields whose clamp *direction* depends on which of the pair moved, which post-hoc fixup cannot reconstruct; plus Play/Stop/Restart, which are actions rather than fields |
+
+**Audio Source and Prefab Instance were then converted too**, on an explicit decision that the layout
+change is acceptable - the one call in this milestone that was the owner's to make rather than mine,
+since every other conversion preserved the shipped UI exactly. Audio Source's checkboxes no longer
+share lines and `Group` moved to the end, because field order is now registration order. Taking the
+inspector to **12 of 20** sections.
+
+That conversion surfaced a real correctness point rather than only a cosmetic one: `ReadOnly` on an
+asset slot has to suppress the **drop target** explicitly. `BeginDisabled` blocks item clicks, but a
+drag-drop payload is not an item click, so without the guard a field the registration marks
+non-editable would silently accept one. Verified: both sections drawn for ~2 s leave `UndoDepth` at
+0, and no field reports a missing drawer.
+
+**The Particle Emitter then converted too, via the ranged field type**, taking the inspector to
+**13 of 20**.
+
+`RangeF` is a min/max pair authored as one thing. It exists for exactly one reason: a drawer seeing
+`LifetimeMin` and `LifetimeMax` as unrelated floats can draw them but cannot **clamp** them, because
+which half to push depends on which half the author moved. One drawer owning both halves knows.
+
+**It is invisible on disk and in Lua, deliberately.** `RangeF` is layout-identical to the two floats
+it replaced, and two things were kept byte-for-byte:
+
+- `SceneSerializer` still writes `LifetimeMin` / `LifetimeMax`, from `Lifetime.Min` / `.Max`.
+  Verified by instantiating the SparkBurst prefab and dumping the scene: the keys and values are
+  unchanged. No migration was needed and no committed scene moved.
+- The Lua bindings gained an overload taking a `RangeF` member pointer plus a `float RangeF::*`, so
+  `GetParticleLifetimeMin` still exists and still reads the same value. A C++ refactor must not
+  silently rewrite a scripting API that shipped - that surface was the single biggest risk in this
+  change and it cost 8 call sites to protect.
+
+Everything else the emitter needed already existed as attributes R1 had written and nothing had yet
+consumed: the four `CollapsingHeader` groups are `Attr::Section` (grouping added to
+`DrawReflectedProperties`), and the curve and gradient editors are drawers keyed on `FloatCurve` and
+`ColorGradient`, reusing the house widgets that own `ActiveId` for a whole drag. Play / Stop /
+Restart stay hand-written because they are **actions, not fields**.
+
+**A generic consumer exposed two wrong registrations**, which is the recurring pattern of this
+milestone: `Playing` and `Time` were `ReadOnly | NotSerialized`. That was right while the section
+drew its own status line and nothing else; as generic fields they became two disabled rows repeating
+that line. They are `Runtime` now. Nothing was wrong until something tried to consume the
+registration - the same way `Speed` on a vec3 was inert until a drawer read it.
+
+**Verification.** Debug, Release and Dist clean. The four sections draw in registration order with
+the right first field and type (`Initial -> Lifetime (RangeF)`, `Over Lifetime -> SizeCurve
+(FloatCurve)`, `Rendering -> RenderMode` enum); no field reports a missing drawer; values read back
+correctly from the prefab (`lifetime=0.25..0.5 speed=2..4 size=0.04..0.08`); `UndoDepth` stays 0
+while the section is merely drawn. Scene regression unchanged, runtime clean.
+
+**Stated honestly: the emitter section was not captured visually.** It is taller than the Properties
+panel, and the one attempt to scroll it programmatically was wrong (`ImGui::Begin` from `OnUpdate` is
+outside the ImGui frame and took the app down). The evidence above is structural and behavioural
+rather than pixel-level, unlike every other conversion in this milestone.
+
+**Camera and Sky Light then converted too, via a field filter**, taking the inspector to **15 of 20**.
+
+Their blocker was field *visibility* depending on another field's value. A clamp can be applied after
+the generic drawer runs; visibility cannot, because you cannot un-draw a field - it has to be decided
+first. `EditorUI::FieldFilter` is a predicate asked per field before anything is submitted.
+
+**Deliberately a predicate in editor C++ rather than an attribute.** "Show this when that other field
+equals X" is a small expression language, and the vocabulary is not the place for one - a predicate
+costs nothing, expresses anything, and keeps UI conditionals out of the engine's registration where
+R1 said they do not belong.
+
+Camera also needed a **nested-struct fallback**: a reflected struct with no drawer of its own is now
+drawn inline, so `SceneCamera`'s fields become rows of the Camera section exactly as the hand-written
+version had them. Worth being precise about why this is not `Trait::Flatten`: the camera really *is*
+a nested map on disk, so Flatten would have been a false statement that the first generic writer to
+touch CameraComponent would have believed. Inline-in-the-inspector and siblings-in-the-file are
+different claims, and only the second is a serialization trait.
+
+**Another registration corrected by a generic consumer** - the fourth time this milestone.
+SkyLightComponent's Environment carried the Tip "Using HDR IBL (procedural colors are fallback)",
+which was true only while an environment was assigned, because the hand-written section drew that
+line only then. A field-level Tip is static text and shows either way, so with no environment
+assigned the panel now asserted something false. Reworded to hold in both states.
+
+**Verification.** Debug, Release and Dist clean. Camera: perspective shows Vertical FOV 52.000 and
+Near 0.050, orthographic shows Size 10.000 and Near -1.000, the projection combo comes from the enum
+registration, and the FOV survives a switch to orthographic and back. Sky Light: colours present with
+no environment, gone once one is assigned. Both leave `UndoDepth` at 0 while merely drawn, and no
+field reports a missing drawer. Scene regression unchanged; runtime clean at `34 types, 117 members`.
+
+**Remaining hand-written (5 of 20):** Static Mesh, Animator and Script - the UI is driven by asset or
+Lua data (a mesh's material slots, its clip names, a Lua class's fields), not by component members,
+so there is nothing to reflect - plus the Tag field and the prefab action buttons, which are not
+component sections at all.
+
+That is the honest end of this line of work: every section whose shape comes from component *data*
+is now generic, and the five that are left are driven by something else entirely.

@@ -1,6 +1,7 @@
 #include "SceneHierarchyPanel.h"
 #include "../AssetDragDrop.h"
 #include "../EditorInspector.h"
+#include "../EditorPrefabOverrides.h"
 #include "../EditorWidgets.h"
 
 #include <imgui/imgui.h>
@@ -31,7 +32,7 @@ namespace GanymedE {
 	void SceneHierarchyPanel::SetContext(const Ref<Scene>& context)
 	{
 		m_Context = context;
-		m_SelectionContext = {};
+		SelectSingle({});
 
 		// A pending edit names an entity in the scene we are leaving.
 		DiscardPendingEdit();
@@ -48,7 +49,7 @@ namespace GanymedE {
 			return;
 
 		if (!m_Context || !m_Context->Reg().valid((entt::entity)m_SelectionContext))
-			m_SelectionContext = {};
+			SelectSingle({});
 	}
 
 	void SceneHierarchyPanel::OnImGuiRender()
@@ -78,7 +79,7 @@ namespace GanymedE {
 
 			if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
 			{
-				m_SelectionContext = {};
+				SelectSingle({});
 			}
 
 			// Drop onto empty space → unparent
@@ -101,7 +102,7 @@ namespace GanymedE {
 				{
 					Entity created = m_Context->CreateEntity("Empty Entity");
 					PushAddedEntities("Create Entity", created);
-					m_SelectionContext = created;
+					SelectSingle(created);
 				}
 
 				if (ImGui::MenuItem("Instantiate Prefab..."))
@@ -133,6 +134,40 @@ namespace GanymedE {
 		FlushPendingEdit();
 	}
 
+	bool SceneHierarchyPanel::IsSelected(Entity entity) const
+	{
+		return std::find(m_Selection.begin(), m_Selection.end(), entity) != m_Selection.end();
+	}
+
+	void SceneHierarchyPanel::SelectSingle(Entity entity)
+	{
+		m_SelectionContext = entity;
+
+		m_Selection.clear();
+		if (entity)
+			m_Selection.push_back(entity);
+	}
+
+	// Ctrl+click. The primary stays the entity clicked *last*, because everything single-entity
+	// in the editor reads GetSelectedEntity() and an author expects the thing they just clicked
+	// to be the one the gizmo grabs.
+	void SceneHierarchyPanel::ToggleSelection(Entity entity)
+	{
+		if (!entity)
+			return;
+
+		auto it = std::find(m_Selection.begin(), m_Selection.end(), entity);
+		if (it != m_Selection.end())
+		{
+			m_Selection.erase(it);
+			m_SelectionContext = m_Selection.empty() ? Entity{} : m_Selection.front();
+			return;
+		}
+
+		m_Selection.insert(m_Selection.begin(), entity);
+		m_SelectionContext = entity;
+	}
+
 	void SceneHierarchyPanel::DrawEntityNode(Entity entity)
 	{
 		auto& tag = entity.GetComponent<TagComponent>().Tag;
@@ -142,7 +177,7 @@ namespace GanymedE {
 		// UUIDs can collide in older scene files that serialized a hardcoded ID.
 		ImGui::PushID((int32_t)(entt::entity)entity);
 
-		ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0)
+		ImGuiTreeNodeFlags flags = (IsSelected(entity) ? ImGuiTreeNodeFlags_Selected : 0)
 			| ImGuiTreeNodeFlags_OpenOnArrow
 			| ImGuiTreeNodeFlags_SpanAvailWidth;
 		if (relationship.Children.empty())
@@ -151,7 +186,13 @@ namespace GanymedE {
 		bool opened = ImGui::TreeNodeEx("Entity", flags, "%s", tag.c_str());
 		if (ImGui::IsItemClicked())
 		{
-			m_SelectionContext = entity;
+			// Ctrl adds to or removes from the selection; a plain click replaces it. Shift-range
+			// is deliberately not here - it needs a flattened view of the tree that this panel
+			// draws recursively and does not keep, and Ctrl covers the case multi-edit exists for.
+			if (ImGui::GetIO().KeyCtrl)
+				ToggleSelection(entity);
+			else
+				SelectSingle(entity);
 		}
 
 		if (ImGui::BeginDragDropSource())
@@ -321,6 +362,120 @@ namespace GanymedE {
 		return edited;
 	}
 
+	// Binds the prefab-override queries for one component type into the inspector's type-erased
+	// hook, and draws the component through it. The binding lives on the stack for exactly the
+	// duration of the section, which is all the hook's Owner pointer has to outlive.
+	//
+	// Nothing inside the property drawers knows what a prefab is; this is the whole of the
+	// coupling between the two features.
+	namespace {
+
+		template<typename T>
+		struct OverrideBinding
+		{
+			Entity Target;
+			Scene* Context = nullptr;
+
+			static bool IsOverridden(void* owner, const entt::meta_data& field)
+			{
+				auto* self = static_cast<OverrideBinding*>(owner);
+				return EditorUI::IsPropertyOverridden<T>(self->Target, *self->Context, field);
+			}
+
+			static bool Revert(void* owner, const entt::meta_data& field)
+			{
+				auto* self = static_cast<OverrideBinding*>(owner);
+				return EditorUI::RevertProperty<T>(self->Target, *self->Context, field);
+			}
+		};
+
+		// Multi-edit binding. `Others` excludes the primary, which is the entity the widgets are
+		// actually driving.
+		template<typename T>
+		struct MultiBinding
+		{
+			Entity Primary;
+			const std::vector<Entity>* Others = nullptr;
+
+			static bool IsMixed(void* owner, const entt::meta_data& field)
+			{
+				auto* self = static_cast<MultiBinding*>(owner);
+				if (!self->Primary.HasComponent<T>())
+					return false;
+
+				const std::string primary = EmitReflectedValue(
+					entt::forward_as_meta(self->Primary.GetComponent<T>()), field);
+
+				if (primary.empty())
+					return false;   // no codec: cannot tell, so do not claim a disagreement
+
+				for (Entity other : *self->Others)
+				{
+					if (other == self->Primary || !other.HasComponent<T>())
+						continue;
+
+					if (EmitReflectedValue(entt::forward_as_meta(other.GetComponent<T>()), field)
+						!= primary)
+					{
+						return true;
+					}
+				}
+
+				return false;
+			}
+
+			static void Propagate(void* owner, const entt::meta_data& field)
+			{
+				auto* self = static_cast<MultiBinding*>(owner);
+				if (!self->Primary.HasComponent<T>())
+					return;
+
+				entt::meta_any value = field.get(
+					entt::forward_as_meta(self->Primary.GetComponent<T>()));
+
+				if (!value)
+					return;
+
+				for (Entity other : *self->Others)
+				{
+					if (other == self->Primary || !other.HasComponent<T>())
+						continue;
+
+					entt::meta_any target = entt::forward_as_meta(other.GetComponent<T>());
+					field.set(target, value);
+				}
+			}
+		};
+
+		template<typename T>
+		bool DrawReflected(Entity entity, Scene* scene, const std::vector<Entity>& selection,
+			T& component, const EditorUI::FieldFilter& filter = {})
+		{
+			OverrideBinding<T> binding{ entity, scene };
+
+			EditorUI::OverrideHook hook;
+			if (scene && entity.HasComponent<PrefabMemberComponent>())
+			{
+				hook.IsOverridden = &OverrideBinding<T>::IsOverridden;
+				hook.Revert = &OverrideBinding<T>::Revert;
+				hook.Owner = &binding;
+			}
+
+			MultiBinding<T> multiBinding{ entity, &selection };
+
+			EditorUI::MultiEditHook multi;
+			if (selection.size() > 1)
+			{
+				multi.IsMixed = &MultiBinding<T>::IsMixed;
+				multi.Propagate = &MultiBinding<T>::Propagate;
+				multi.Owner = &multiBinding;
+			}
+
+			return EditorUI::DrawReflectedComponent(component, hook, multi, filter);
+		}
+
+	}
+
 	// ---------------------------------------------------------------------------------------
 	// The commit boundary.
 	//
@@ -379,6 +534,21 @@ namespace GanymedE {
 		{
 			m_Pending.Command = CreateScope<ComponentEditCommand<T>>(
 				"Edit " + name, entity.GetUUID(), before);
+
+			// The rest of the selection, captured in the same frame and from the same signal.
+			// Their before-values are read here rather than snapshotted alongside `before` in
+			// DrawComponent, because that copy happens every frame for every section and this
+			// one happens once per gesture.
+			m_Pending.Secondary.clear();
+			for (Entity other : m_Selection)
+			{
+				if (other == entity || !other.HasComponent<T>())
+					continue;
+
+				m_Pending.Secondary.push_back(CreateScope<ComponentEditCommand<T>>(
+					"Edit " + name, other.GetUUID(), other.GetComponent<T>()));
+			}
+
 			m_Pending.ActiveId = activeOnExit;
 			m_Pending.Edited = edited;
 			m_Pending.Visited = true;
@@ -389,6 +559,10 @@ namespace GanymedE {
 		// that closed in the same frame. There is nothing to wait for.
 		if (edited && entity.HasComponent<T>())
 		{
+			// No gesture to wait for, so the before-value for the others is already lost - they
+			// were propagated to in the same frame. Recording just the primary would be a lie, so
+			// this path stays single-entity and a multi-selection drop is not undoable across the
+			// rest. Stated rather than hidden; it needs the pre-copy to move into DrawComponent.
 			m_UndoStack->Push(CreateScope<ComponentEditCommand<T>>(
 				"Edit " + name, entity.GetUUID(), before, entity.GetComponent<T>()));
 		}
@@ -402,7 +576,29 @@ namespace GanymedE {
 		if (m_Pending.Edited && m_UndoStack && m_Context)
 		{
 			m_Pending.Command->CaptureAfter(*m_Context);
-			m_UndoStack->Push(std::move(m_Pending.Command));
+
+			if (m_Pending.Secondary.empty())
+			{
+				m_UndoStack->Push(std::move(m_Pending.Command));
+			}
+			else
+			{
+				// One gesture over N entities is one undo entry. Pushing N commands would make
+				// Ctrl+Z walk back through the selection one entity at a time, which is the same
+				// class of wrongness as one command per frame of a drag.
+				std::vector<Scope<EditorCommand>> children;
+				children.reserve(m_Pending.Secondary.size() + 1);
+				children.push_back(std::move(m_Pending.Command));
+
+				for (Scope<ComponentEditCommandBase>& command : m_Pending.Secondary)
+				{
+					command->CaptureAfter(*m_Context);
+					children.push_back(std::move(command));
+				}
+
+				const std::string label = "Edit " + std::to_string(children.size()) + " entities";
+				m_UndoStack->Push(CreateScope<CompositeCommand>(label, std::move(children)));
+			}
 		}
 
 		m_Pending = {};
@@ -534,6 +730,15 @@ namespace GanymedE {
 	void SceneHierarchyPanel::DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
 	{
 		const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+		// "Components common to the selection": a section is drawn only when *every* selected
+		// entity has it. Showing a component only some of them have would make an edit either
+		// silently skip entities or silently add the component to them, and both are surprises.
+		for (Entity selected : m_Selection)
+		{
+			if (!selected.HasComponent<T>())
+				return;
+		}
+
 		if (entity.HasComponent<T>())
 		{
 			ImVec2 contentRegionAvailable = ImGui::GetContentRegionAvail();
@@ -541,7 +746,15 @@ namespace GanymedE {
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
 			float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
 			ImGui::Separator();
-			bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags, name.c_str());
+			// The section-level marker is the only override affordance a *hand-written* section
+			// gets: the per-field one lives inside the reflected property drawer, so a component
+			// the panel still draws by hand can say "something in here differs from the prefab"
+			// but not which field.
+			const bool sectionOverridden = m_Context
+				&& EditorUI::IsComponentOverridden<T>(entity, *m_Context);
+
+			const std::string header = sectionOverridden ? name + "  *" : name;
+			bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags, header.c_str());
 			ImGui::PopStyleVar();
 			ImGui::SameLine(contentRegionAvailable.x - lineHeight * 0.5f);
 			ImGui::PushID((int)typeid(T).hash_code());
@@ -671,7 +884,7 @@ namespace GanymedE {
 		RemoveSubtree(*m_Context, snapshots);
 
 		if (selectionInside)
-			m_SelectionContext = {};
+			SelectSingle({});
 	}
 
 	// ---- Prefabs -----------------------------------------------------------------------------
@@ -830,7 +1043,7 @@ namespace GanymedE {
 				"Revert '" + rebuilt.GetComponent<TagComponent>().Tag + "'", std::move(steps)));
 		}
 
-		m_SelectionContext = rebuilt;
+		SelectSingle(rebuilt);
 		GE_INFO("Reverted instance from '{0}'", metadata->FilePath);
 	}
 
@@ -848,7 +1061,7 @@ namespace GanymedE {
 			return {};
 
 		PushAddedEntities("Instantiate '" + root.GetComponent<TagComponent>().Tag + "'", root);
-		m_SelectionContext = root;
+		SelectSingle(root);
 		return root;
 	}
 
@@ -971,12 +1184,15 @@ namespace GanymedE {
 			return;
 
 		PushAddedEntities("Duplicate '" + copy.GetComponent<TagComponent>().Tag + "'", copy);
-		m_SelectionContext = copy;
+		SelectSingle(copy);
 	}
 
 	void SceneHierarchyPanel::DeleteSelectedEntity()
 	{
-		DeleteEntity(m_SelectionContext);
+		// A copy, because DeleteEntity mutates the selection as it goes.
+		const std::vector<Entity> targets = m_Selection;
+		for (Entity entity : targets)
+			DeleteEntity(entity);
 	}
 
 	void SceneHierarchyPanel::DrawComponents(Entity entity)
@@ -1042,21 +1258,10 @@ namespace GanymedE {
 
 		DrawComponent<TransformComponent>("Transform", entity, [&](auto& component)
 		{
-			bool edited = EditorUI::DrawVec3Control("Translation", component.Translation);
-
-			// Rotation is stored in radians and shown in degrees, and the round-trip is not
-			// exact. Writing back unconditionally therefore changed the stored value on frames
-			// with no user input at all - harmless for rendering, but under any value-diff
-			// scheme it mints a phantom undo command and marks the scene dirty on selection.
-			// Write back only when the row says it was edited.
-			glm::vec3 rotation = glm::degrees(component.Rotation);
-			if (EditorUI::DrawVec3Control("Rotation", rotation))
-			{
-				component.Rotation = glm::radians(rotation);
-				edited = true;
-			}
-
-			edited |= EditorUI::DrawVec3Control("Scale", component.Scale, 1.0f);
+			// The degrees round-trip is Trait::Radians on Rotation, and the reset values are
+			// Attr::Reset - both registered, both honoured by the vec3 drawer. What stays here is
+			// the one thing reflection cannot express: a side effect.
+			const bool edited = DrawReflected(entity, m_Context.get(), m_Selection, component);
 
 			// Editing the component directly is invisible to change tracking, so the cached
 			// world transform would never be refreshed.
@@ -1068,99 +1273,34 @@ namespace GanymedE {
 
 		// Read-only: the link is created by "Create Prefab" and followed by the Apply / Revert
 		// buttons above the sections. There is no field to type a handle into on purpose.
-		DrawComponent<PrefabInstanceComponent>("Prefab Instance", entity, [](auto& component)
+		// Source is ReadOnly, so the drawer renders it disabled and reports no edit - the section
+		// used to return false by hand for the same reason. ReadOnly also suppresses the drop
+		// target, which BeginDisabled alone would not: a payload drop is not an item click.
+		DrawComponent<PrefabInstanceComponent>("Prefab Instance", entity, [&](auto& component)
 		{
-			const AssetMetadata* metadata = AssetManager::GetMetadata(component.Source);
-			if (metadata)
-				ImGui::Text("Source: %s", metadata->FilePath.c_str());
-			else
-				ImGui::TextDisabled("Source %llu is not in the registry",
-					static_cast<uint64_t>(component.Source));
-
-			ImGui::TextDisabled("Removing this unlinks the entity from its prefab");
-			return false;
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
-		DrawComponent<CameraComponent>("Camera", entity, [](auto& component)
+		// SceneCamera's fields are drawn inline by the nested-struct fallback, so Projection and
+		// its clip planes appear as rows of this section exactly as they did by hand. The one
+		// thing left is which of the two projections' fields to show, and that is visibility
+		// rather than a clamp - it has to be decided before anything is submitted, which is what
+		// the field filter is for.
+		DrawComponent<CameraComponent>("Camera", entity, [&](auto& component)
 		{
-			auto& camera = component.Camera;
+			const bool ortho = component.Camera.GetProjectionType()
+				== SceneCamera::ProjectionType::Orthographic;
 
-			bool edited = ImGui::Checkbox("Primary", &component.Primary);
-
-			const char* projectionTypeStrings[] = { "Perspective", "Orthographic" };
-			const char* currentProjectionTypeString = projectionTypeStrings[(int)camera.GetProjectionType()];
-			if (ImGui::BeginCombo("Projection", currentProjectionTypeString))
-			{
-				for (int i = 0; i < 2; i++)
+			return DrawReflected(entity, m_Context.get(), m_Selection, component,
+				[ortho](const entt::meta_data& field)
 				{
-					bool isSelected = currentProjectionTypeString == projectionTypeStrings[i];
-					if (ImGui::Selectable(projectionTypeStrings[i], isSelected))
-					{
-						currentProjectionTypeString = projectionTypeStrings[i];
-						camera.SetProjectionType((SceneCamera::ProjectionType)i);
-						edited = true;
-					}
-
-					if (isSelected)
-					{
-						ImGui::SetItemDefaultFocus();
-					}
-				}
-
-				ImGui::EndCombo();
-			}
-
-			if (camera.GetProjectionType() == SceneCamera::ProjectionType::Perspective)
-			{
-				float perspectiveVerticalFov = glm::degrees(camera.GetPerspectiveVerticalFOV());
-				if (ImGui::DragFloat("Vertical FOV", &perspectiveVerticalFov))
-				{
-					camera.SetPerspectiveVerticalFOV(glm::radians(perspectiveVerticalFov));
-					edited = true;
-				}
-
-				float perspectiveNear = camera.GetPerspectiveNearClip();
-				if (ImGui::DragFloat("Near", &perspectiveNear))
-				{
-					camera.SetPerspectiveNearClip(perspectiveNear);
-					edited = true;
-				}
-
-				float perspectiveFar = camera.GetPerspectiveFarClip();
-				if (ImGui::DragFloat("Far", &perspectiveFar))
-				{
-					camera.SetPerspectiveFarClip(perspectiveFar);
-					edited = true;
-				}
-			}
-
-			if (camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
-			{
-				float orthoSize = camera.GetOrthographicSize();
-				if (ImGui::DragFloat("Size", &orthoSize))
-				{
-					camera.SetOrthographicSize(orthoSize);
-					edited = true;
-				}
-
-				float orthoNear = camera.GetOrthographicNearClip();
-				if (ImGui::DragFloat("Near", &orthoNear))
-				{
-					camera.SetOrthographicNearClip(orthoNear);
-					edited = true;
-				}
-
-				float orthoFar = camera.GetOrthographicFarClip();
-				if (ImGui::DragFloat("Far", &orthoFar))
-				{
-					camera.SetOrthographicFarClip(orthoFar);
-					edited = true;
-				}
-
-				edited |= ImGui::Checkbox("Fixed Aspect Ratio", &component.FixedAspectRatio);
-			}
-
-			return edited;
+					const std::string name = field.name() ? field.name() : "";
+					if (name.rfind("Perspective", 0) == 0)
+						return !ortho;
+					if (name.rfind("Orthographic", 0) == 0)
+						return ortho;
+					return true;
+				});
 		});
 
 		// ---- Reflected sections -------------------------------------------------------------
@@ -1172,9 +1312,9 @@ namespace GanymedE {
 		//
 		// The sections that stay hand-written are not leftovers; each has its reason stated at
 		// its own site, and R1 anticipated most of them in the registration comments.
-		DrawComponent<SpriteRendererComponent>("Sprite Renderer", entity, [](auto& component)
+		DrawComponent<SpriteRendererComponent>("Sprite Renderer", entity, [&](auto& component)
 		{
-			return EditorUI::DrawReflectedComponent(component);
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
 		DrawComponent<StaticMeshComponent>("Static Mesh", entity, [](auto& component)
@@ -1383,139 +1523,79 @@ namespace GanymedE {
 			return edited;
 		});
 
-		DrawComponent<DirectionalLightComponent>("Directional Light", entity, [](auto& component)
+		DrawComponent<DirectionalLightComponent>("Directional Light", entity, [&](auto& component)
 		{
-			return EditorUI::DrawReflectedComponent(component);
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
-		DrawComponent<PointLightComponent>("Point Light", entity, [](auto& component)
+		DrawComponent<PointLightComponent>("Point Light", entity, [&](auto& component)
 		{
-			return EditorUI::DrawReflectedComponent(component);
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
-		DrawComponent<SpotLightComponent>("Spot Light", entity, [](auto& component)
+		DrawComponent<SpotLightComponent>("Spot Light", entity, [&](auto& component)
 		{
-			bool edited = ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
-			edited |= ImGui::DragFloat("Intensity", &component.Intensity, 0.05f, 0.0f, 1000.0f);
-			edited |= ImGui::DragFloat("Range", &component.Range, 0.1f, 0.0f, 1000.0f);
+			// Drawn generically, then the one cross-field invariant is enforced afterwards. That
+			// ordering matters: a generic drawer cannot express "outer >= inner" because it sees
+			// one field at a time, but nothing stops the section from fixing up the component the
+			// drawer just wrote. The clamp is the section's job; the widgets are not.
+			const bool edited = DrawReflected(entity, m_Context.get(), m_Selection, component);
 
-			float inner = glm::degrees(component.InnerConeAngle);
-			if (ImGui::DragFloat("Inner Cone", &inner, 0.5f, 0.0f, 89.0f))
-			{
-				component.InnerConeAngle = glm::radians(inner);
-				edited = true;
-			}
+			if (edited && component.OuterConeAngle < component.InnerConeAngle)
+				component.OuterConeAngle = component.InnerConeAngle;
 
-			float outer = glm::degrees(component.OuterConeAngle);
-			if (ImGui::DragFloat("Outer Cone", &outer, 0.5f, 0.0f, 89.0f))
-			{
-				component.OuterConeAngle = glm::radians(glm::max(outer, inner));
-				edited = true;
-			}
-
-			edited |= ImGui::DragFloat("Falloff", &component.Falloff, 0.05f, 0.01f, 16.0f);
-			ImGui::TextDisabled("Direction = entity -Z (rotate to aim)");
 			return edited;
 		});
 
-		DrawComponent<SkyLightComponent>("Sky Light", entity, [](auto& component)
+		// An assigned environment makes the two procedural colours unreachable fallbacks, so they
+		// are filtered out rather than drawn disabled - showing an author a control that cannot
+		// affect anything is worse than not showing it.
+		DrawComponent<SkyLightComponent>("Sky Light", entity, [&](auto& component)
 		{
-			bool edited = false;
-			if (component.Environment.HasHandle())
-			{
-				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Environment.Handle());
-				if (metadata)
-					ImGui::Text("Environment: %s", metadata->FilePath.c_str());
-				ImGui::TextDisabled("Using HDR IBL (procedural colors are fallback)");
-			}
-			else
-			{
-				edited |= ImGui::ColorEdit3("Sky Color", glm::value_ptr(component.SkyColor));
-				edited |= ImGui::ColorEdit3("Ground Color", glm::value_ptr(component.GroundColor));
-			}
+			const bool hasEnvironment = component.Environment.HasHandle();
 
-			AssetRef<Environment> dropped = EditorUI::AcceptAssetDropRef<Environment>();
-			if (dropped.HasHandle())
-			{
-				component.Environment = dropped;
-				edited = true;
-			}
-
-			edited |= ImGui::DragFloat("Intensity", &component.Intensity, 0.02f, 0.0f, 20.0f);
-			edited |= ImGui::Checkbox("Draw Skybox", &component.DrawSkybox);
-			return edited;
-		});
-
-		DrawComponent<AudioSourceComponent>("Audio Source", entity, [](auto& component)
-		{
-			bool edited = false;
-			if (IsAssetHandleValid(component.Clip))
-			{
-				const AssetMetadata* metadata = AssetManager::GetMetadata(component.Clip);
-				if (metadata)
-					ImGui::Text("Clip: %s", metadata->FilePath.c_str());
-				else
-					ImGui::Text("Clip handle: %llu", static_cast<uint64_t>(component.Clip));
-
-				if (ImGui::Button("Clear"))
+			return DrawReflected(entity, m_Context.get(), m_Selection, component,
+				[hasEnvironment](const entt::meta_data& field)
 				{
-					component.Clip = InvalidAssetHandle;
-					edited = true;
-				}
-			}
-			else
-			{
-				ImGui::TextDisabled("No clip assigned");
-			}
-
-			ImGui::TextDisabled("Drop a .wav, .mp3 or .flac file here");
-
-			// Typed drop: AssetTypeFromExtension is the single source of truth for what this
-			// field accepts, so a .lua dragged here is simply ignored.
-			AssetHandle dropped = EditorUI::AcceptAssetDropHandle(AssetType::Audio);
-			if (IsAssetHandleValid(dropped))
-			{
-				component.Clip = dropped;
-				edited = true;
-			}
-
-			const char* groupStrings[] = { "Master", "Music", "SFX" };
-			int group = (int)component.Group;
-			if (ImGui::Combo("Group", &group, groupStrings, 3))
-			{
-				component.Group = (AudioGroup)group;
-				edited = true;
-			}
-
-			edited |= ImGui::DragFloat("Volume", &component.Volume, 0.01f, 0.0f, 1.0f);
-			edited |= ImGui::DragFloat("Pitch", &component.Pitch, 0.01f, 0.25f, 4.0f);
-
-			edited |= ImGui::Checkbox("Loop", &component.Loop);
-			ImGui::SameLine();
-			edited |= ImGui::Checkbox("Play On Start", &component.PlayOnStart);
-
-			edited |= ImGui::Checkbox("Spatialize", &component.Spatialize);
-			ImGui::SameLine();
-			edited |= ImGui::Checkbox("Stream", &component.Stream);
-
-			// Worth saying out loud, because the other four fields DO apply live: these three
-			// are baked into the voice when it is created.
-			ImGui::TextDisabled("Clip, Spatialize and Stream apply when play starts");
-			return edited;
+					const std::string name = field.name() ? field.name() : "";
+					if (name == "SkyColor" || name == "GroundColor")
+						return !hasEnvironment;
+					return true;
+				});
 		});
 
-		DrawComponent<AudioListenerComponent>("Audio Listener", entity, [](auto& component)
+		// The clip slot, its Clear button and its typed drop target all come from the bare
+		// AssetHandle drawer, which identifies the field as an asset slot from Attr::Slot -
+		// AssetHandle is an alias for UUID, so the type alone could never have said so.
+		//
+		// Converting moved Group to the end and unpaired the checkboxes that shared a line: the
+		// attribute vocabulary has no way to say "put these two together", and adding layout knobs
+		// to it was rejected in R1. The order is now the registration order, which is the point.
+		DrawComponent<AudioSourceComponent>("Audio Source", entity, [&](auto& component)
 		{
-			return EditorUI::DrawReflectedComponent(component);
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
-		DrawComponent<ParticleEmitterComponent>("Particle Emitter", entity, [entity](auto& component)
+		DrawComponent<AudioListenerComponent>("Audio Listener", entity, [&](auto& component)
 		{
-			bool edited = false;
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
+		});
 
-			// Preview only. These mutate Playing/pool/RNG — not authored, not serialized —
+		// The largest section in the panel, and the last one to convert. What blocked it was the
+		// five min/max pairs: the clamp direction depends on which half the author moved, and a
+		// drawer seeing two unrelated floats cannot know. `RangeF` makes each pair one field with
+		// one drawer, which does know - see Components.h.
+		//
+		// Everything else came for free from attributes R1 had already written: the four
+		// CollapsingHeaders are `Attr::Section`, the curve and gradient editors are drawers keyed
+		// on FloatCurve and ColorGradient, and the three asset slots are AssetRef<T>.
+		DrawComponent<ParticleEmitterComponent>("Particle Emitter", entity, [&](auto& component)
+		{
+			// Preview transport. These mutate Playing/pool/RNG - not authored, not serialized -
 			// so they must not join `edited`. A Button still takes ActiveId for the click;
-			// TrackCommitBoundary drops the pending edit because Edited stayed false.
+			// TrackCommitBoundary drops the pending edit because Edited stayed false. They are
+			// actions rather than fields, which is why they stay hand-written above the
+			// reflected ones rather than being expressed as an attribute.
 			if (ImGui::Button("Play"))
 				component.PlayPreview(entity.GetUUID());
 			ImGui::SameLine();
@@ -1530,156 +1610,33 @@ namespace GanymedE {
 				(uint32_t)component.Pool.size(),
 				component.Time);
 
-			auto minMax = [&](const char* minLabel, float& minV, const char* maxLabel, float& maxV, float speed)
-			{
-				if (ImGui::DragFloat(minLabel, &minV, speed))
-				{
-					if (minV > maxV)
-						maxV = minV;
-					edited = true;
-				}
-				if (ImGui::DragFloat(maxLabel, &maxV, speed))
-				{
-					if (maxV < minV)
-						minV = maxV;
-					edited = true;
-				}
-			};
-
-			if (ImGui::CollapsingHeader("Emission", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				edited |= ImGui::DragFloat("Rate Over Time", &component.RateOverTime, 0.1f, 0.0f, 100000.0f);
-				int maxParticles = (int)component.MaxParticles;
-				if (ImGui::DragInt("Max Particles", &maxParticles, 1.0f, 0, 100000))
-				{
-					component.MaxParticles = (uint32_t)std::max(maxParticles, 0);
-					edited = true;
-				}
-				edited |= ImGui::Checkbox("Looping", &component.Looping);
-				edited |= ImGui::DragFloat("Duration", &component.Duration, 0.05f, 0.0f, 1000.0f);
-				edited |= ImGui::Checkbox("Play On Start", &component.PlayOnStart);
-			}
-
-			if (ImGui::CollapsingHeader("Initial", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				minMax("Lifetime Min", component.LifetimeMin, "Lifetime Max", component.LifetimeMax, 0.02f);
-				minMax("Speed Min", component.SpeedMin, "Speed Max", component.SpeedMax, 0.05f);
-				edited |= ImGui::DragFloat("Cone Angle", &component.ConeAngle, 0.5f, 0.0f, 180.0f);
-				minMax("Start Size Min", component.StartSizeMin, "Start Size Max", component.StartSizeMax, 0.01f);
-				minMax("Start Rotation Min", component.StartRotationMin, "Start Rotation Max", component.StartRotationMax, 1.0f);
-				minMax("Rotation Speed Min", component.RotationSpeedMin, "Rotation Speed Max", component.RotationSpeedMax, 1.0f);
-				edited |= ImGui::DragFloat("Gravity Modifier", &component.GravityModifier, 0.05f);
-				edited |= ImGui::Checkbox("World Space", &component.WorldSpace);
-				int seed = (int)component.Seed;
-				if (ImGui::DragInt("Seed", &seed, 1.0f, 0, 2147483647))
-				{
-					component.Seed = (uint32_t)std::max(seed, 0);
-					edited = true;
-				}
-				ImGui::TextDisabled("0 derives from the entity UUID at play");
-			}
-
-			if (ImGui::CollapsingHeader("Over Lifetime", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				edited |= EditorUI::CurveEditor("Size Curve", component.SizeCurve, 0.0f, 2.0f);
-				edited |= EditorUI::GradientEditor("Color Over Lifetime", component.ColorOverLifetime);
-			}
-
-			if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				const char* modeStrings[] = { "Billboard", "Mesh" };
-				int mode = (int)component.RenderMode;
-				if (ImGui::Combo("Render Mode", &mode, modeStrings, 2))
-				{
-					component.RenderMode = (ParticleEmitterComponent::Mode)mode;
-					edited = true;
-				}
-
-				// Generic over the slot's asset type rather than taking an AssetType next to an
-				// untyped handle: the drop filter comes from the field itself now, so a slot
-				// cannot accept something the component would not know how to load.
-				auto assetSlot = [&](const char* label, auto& slot, const char* dropHint)
-				{
-					using SlotType = typename std::decay_t<decltype(slot)>::AssetT;
-
-					if (slot.HasHandle())
-					{
-						const AssetMetadata* metadata = AssetManager::GetMetadata(slot.Handle());
-						if (metadata)
-							ImGui::Text("%s: %s", label, metadata->FilePath.c_str());
-						else
-							ImGui::Text("%s handle: %llu", label, static_cast<uint64_t>(slot.Handle()));
-
-						ImGui::PushID(label);
-						if (ImGui::Button("Clear"))
-						{
-							slot.Reset();
-							edited = true;
-						}
-						ImGui::PopID();
-					}
-					else
-					{
-						ImGui::TextDisabled("No %s assigned", label);
-					}
-
-					ImGui::TextDisabled("%s", dropHint);
-					AssetRef<SlotType> dropped = EditorUI::AcceptAssetDropRef<SlotType>();
-					if (dropped.HasHandle())
-					{
-						slot = dropped;
-						edited = true;
-					}
-				};
-
-				if (component.RenderMode == ParticleEmitterComponent::Mode::Billboard)
-				{
-					assetSlot("Texture", component.Texture, "Drop a texture here; unset is white");
-					const char* blendStrings[] = { "Alpha", "Additive" };
-					int blend = (int)component.Blend;
-					if (ImGui::Combo("Blend", &blend, blendStrings, 2))
-					{
-						component.Blend = (ParticleBlend)blend;
-						edited = true;
-					}
-				}
-				else
-				{
-					assetSlot("Mesh", component.Mesh, "Drop a mesh here");
-					assetSlot("Material", component.Material, "Drop a .gmat here; unset is the mesh default");
-					ImGui::TextDisabled("Mesh particles must use opaque materials");
-					if (ImGui::IsItemHovered())
-						ImGui::SetTooltip("A Transparent .gmat submits one draw per particle instead of the opaque instanced path.");
-				}
-			}
-
-			return edited;
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
-		DrawComponent<RigidBodyComponent>("Rigid Body", entity, [](auto& component)
+		DrawComponent<RigidBodyComponent>("Rigid Body", entity, [&](auto& component)
 		{
 			// The Type combo's entries come from RigidBodyType's own registration, so adding a
 			// body type is one line beside the enum instead of a parallel string array here.
-			return EditorUI::DrawReflectedComponent(component);
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
 		// PhysicsMaterial is drawn by Trait::Flatten, which puts Friction and Restitution beside
 		// the collider's own fields rather than under a sub-header - the same shape the flag
 		// already forces on SceneSerializer. The `drawPhysicsMaterial` lambda these three shared
 		// is gone with them.
-		DrawComponent<BoxColliderComponent>("Box Collider", entity, [](auto& component)
+		DrawComponent<BoxColliderComponent>("Box Collider", entity, [&](auto& component)
 		{
-			return EditorUI::DrawReflectedComponent(component);
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
-		DrawComponent<SphereColliderComponent>("Sphere Collider", entity, [](auto& component)
+		DrawComponent<SphereColliderComponent>("Sphere Collider", entity, [&](auto& component)
 		{
-			return EditorUI::DrawReflectedComponent(component);
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
-		DrawComponent<CapsuleColliderComponent>("Capsule Collider", entity, [](auto& component)
+		DrawComponent<CapsuleColliderComponent>("Capsule Collider", entity, [&](auto& component)
 		{
-			return EditorUI::DrawReflectedComponent(component);
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 	}
 }

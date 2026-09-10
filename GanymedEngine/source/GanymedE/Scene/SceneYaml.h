@@ -9,6 +9,7 @@
 #include "GanymedE/Core/Log.h"
 #include "GanymedE/Math/Curve.h"
 #include "GanymedE/Reflection/Reflection.h"
+#include "GanymedE/Scene/ReflectedValue.h"
 
 #include <entt/entt.hpp>
 
@@ -282,6 +283,10 @@ namespace GanymedE {
 
 	// The inverse. A key that is absent leaves the field at its constructed value.
 	void ReadReflected(const YAML::Node& node, entt::meta_any instance);
+
+	// EmitReflectedValue is declared in ReflectedValue.h and implemented in SceneYaml.cpp - split
+	// so the editor can ask "what would this field serialize to" without compiling against
+	// yaml-cpp. See that header for why prefab overrides are defined in terms of it.
 
 	template<typename T>
 	void WriteReflectedComponent(YAML::Emitter& out, const char* key, const T& component)

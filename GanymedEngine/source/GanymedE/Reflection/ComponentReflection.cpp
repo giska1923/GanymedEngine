@@ -52,6 +52,10 @@ namespace GanymedE::Reflection {
 			// writes a flow sequence, silently changing the file format; R2/R3 identify them by
 			// type_info comparison instead, which needs no registration.
 
+			GE_REFLECT_TYPE(RangeF)
+				.data<&RangeF::Min>("Min")
+				.data<&RangeF::Max>("Max");
+
 			GE_REFLECT_TYPE(PhysicsMaterial)
 				.data<&PhysicsMaterial::Friction>("Friction")
 					.custom<Attr>(Attr{}.Range(0.0f, 10.0f).Speed(0.01f))
@@ -152,7 +156,7 @@ namespace GanymedE::Reflection {
 					.traits(Trait::Radians)
 					.custom<Attr>(Attr{}.Speed(0.1f))
 				.data<&TransformComponent::Scale>("Scale")
-					.custom<Attr>(Attr{}.Speed(0.1f));
+					.custom<Attr>(Attr{}.Speed(0.1f).Reset(1.0f));
 
 			// Derived data: recomputed by TransformSystem from TransformComponent plus
 			// RelationshipComponent, never authored and never saved.
@@ -270,14 +274,19 @@ namespace GanymedE::Reflection {
 				.data<&SpotLightComponent::Falloff>("Falloff")
 					.custom<Attr>(Attr{}.Range(0.01f, 16.0f).Speed(0.05f));
 
-			// Environment gates the two procedural colors: with a baked HDR cubemap assigned they
-			// are unreachable fallbacks. Another hand-written drawer.
+			// Environment gates the two procedural colours: with a baked HDR cubemap assigned they
+			// are unreachable fallbacks, so the inspector filters them out rather than drawing
+			// controls that cannot affect anything (see the field filter in EditorInspector.h).
+			//
+			// The Tip is worded to hold in BOTH states. It used to read "Using HDR IBL...", which
+			// was true only while an environment was assigned because the hand-written section
+			// drew it only then; a field-level Tip is static text and is shown either way.
 			GE_REFLECT_COMPONENT(SkyLightComponent)
 				.custom<Attr>(Attr{}.Label("Sky Light"))
 				.data<&SkyLightComponent::Environment>("Environment")
 					.traits(Trait::OmitIfDefault)
 					.custom<Attr>(Attr{}.Asset(AssetType::Environment)
-						.Tip("Using HDR IBL (procedural colors are fallback)"))
+						.Tip("An assigned HDR replaces the procedural colours"))
 				.data<&SkyLightComponent::SkyColor>("SkyColor")
 					.traits(Trait::Color)
 					.custom<Attr>(Attr{}.Label("Sky Color"))
@@ -396,6 +405,15 @@ namespace GanymedE::Reflection {
 		{
 			// Read-only on purpose: the link is created by "Create Prefab" and followed by
 			// Apply/Revert. There is no field to type a handle into.
+			// Structural bookkeeping, not authored data: hidden from the inspector and written by
+			// hand in SceneSerializer, so both generic paths skip it. It is registered anyway so
+			// that "every ComponentList entry is reflected" stays true and Validate keeps its
+			// teeth.
+			GE_REFLECT_COMPONENT(PrefabMemberComponent)
+				.custom<Attr>(Attr{}.Label("Prefab Member"))
+				.data<&PrefabMemberComponent::CanonicalID>("CanonicalID")
+					.traits(Trait::Hidden | Trait::Custom);
+
 			GE_REFLECT_COMPONENT(PrefabInstanceComponent)
 				.custom<Attr>(Attr{}.Label("Prefab Instance")
 					.Tip("Removing this unlinks the entity from its prefab"))
@@ -438,42 +456,28 @@ namespace GanymedE::Reflection {
 					.traits(Trait::OmitIfDefault)
 					.custom<Attr>(Attr{}.Label("Play On Start").In("Emission"))
 
-				// Initial state. The Min/Max pairs are drawn as one row that clamps the other half,
-				// so they keep a hand-written widget; the attributes below still drive R3.
-				.data<&ParticleEmitterComponent::LifetimeMin>("LifetimeMin")
+				// Initial state. Each Min/Max pair is one `RangeF` field with one drawer, which is
+				// what let this component go through the generic inspector at all - a drawer that
+				// owns both halves knows which one the author moved and can clamp the other.
+				.data<&ParticleEmitterComponent::Lifetime>("Lifetime")
 					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Lifetime Min").In("Initial").Speed(0.02f))
-				.data<&ParticleEmitterComponent::LifetimeMax>("LifetimeMax")
+					.custom<Attr>(Attr{}.Label("Lifetime").In("Initial").Speed(0.02f))
+				.data<&ParticleEmitterComponent::Speed>("Speed")
 					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Lifetime Max").In("Initial").Speed(0.02f))
-				.data<&ParticleEmitterComponent::SpeedMin>("SpeedMin")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Speed Min").In("Initial").Speed(0.05f))
-				.data<&ParticleEmitterComponent::SpeedMax>("SpeedMax")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Speed Max").In("Initial").Speed(0.05f))
+					.custom<Attr>(Attr{}.Label("Speed").In("Initial").Speed(0.05f))
 				// Degrees on disk and in the widget, unlike the spot-light cone: no Radians here.
 				.data<&ParticleEmitterComponent::ConeAngle>("ConeAngle")
 					.traits(Trait::OmitIfDefault)
 					.custom<Attr>(Attr{}.Label("Cone Angle").In("Initial").Range(0.0f, 180.0f).Speed(0.5f))
-				.data<&ParticleEmitterComponent::StartSizeMin>("StartSizeMin")
+				.data<&ParticleEmitterComponent::StartSize>("StartSize")
 					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Start Size Min").In("Initial").Speed(0.01f))
-				.data<&ParticleEmitterComponent::StartSizeMax>("StartSizeMax")
+					.custom<Attr>(Attr{}.Label("Start Size").In("Initial").Speed(0.01f))
+				.data<&ParticleEmitterComponent::StartRotation>("StartRotation")
 					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Start Size Max").In("Initial").Speed(0.01f))
-				.data<&ParticleEmitterComponent::StartRotationMin>("StartRotationMin")
+					.custom<Attr>(Attr{}.Label("Start Rotation").In("Initial").Speed(1.0f))
+				.data<&ParticleEmitterComponent::RotationSpeed>("RotationSpeed")
 					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Start Rotation Min").In("Initial").Speed(1.0f))
-				.data<&ParticleEmitterComponent::StartRotationMax>("StartRotationMax")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Start Rotation Max").In("Initial").Speed(1.0f))
-				.data<&ParticleEmitterComponent::RotationSpeedMin>("RotationSpeedMin")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Rotation Speed Min").In("Initial").Speed(1.0f))
-				.data<&ParticleEmitterComponent::RotationSpeedMax>("RotationSpeedMax")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Rotation Speed Max").In("Initial").Speed(1.0f))
+					.custom<Attr>(Attr{}.Label("Rotation Speed").In("Initial").Speed(1.0f))
 				.data<&ParticleEmitterComponent::GravityModifier>("GravityModifier")
 					.traits(Trait::OmitIfDefault)
 					.custom<Attr>(Attr{}.Label("Gravity Modifier").In("Initial").Speed(0.05f))
@@ -515,13 +519,18 @@ namespace GanymedE::Reflection {
 					.custom<Attr>(Attr{}.In("Rendering").Asset(AssetType::Material)
 						.Tip("Drop a .gmat here; unset is the mesh default"))
 
-				// Runtime. Playing, Time and the live count are shown in the emitter's status line
-				// but never edited or saved; the rest is not shown at all. Scene::Copy resets all
-				// of it through ResetRuntime().
+				// Runtime. None of it is authored or saved, and none of it is drawn as a field.
+				//
+				// Playing and Time were ReadOnly|NotSerialized while the panel was hand-written,
+				// because the section rendered them itself in its status line beside the transport
+				// buttons - it still does. Once the section became generic, that spelling produced
+				// two disabled rows repeating what the status line already says, so they are
+				// Runtime like the rest. `Hidden` means "no field row", not "no way to see it".
+				// Scene::Copy resets all of this through ResetRuntime().
 				.data<&ParticleEmitterComponent::Playing>("Playing")
-					.traits(Trait::ReadOnly | Trait::NotSerialized)
+					.traits(Trait::Runtime)
 				.data<&ParticleEmitterComponent::Time>("Time")
-					.traits(Trait::ReadOnly | Trait::NotSerialized)
+					.traits(Trait::Runtime)
 				.data<&ParticleEmitterComponent::EmitAccumulator>("EmitAccumulator")
 					.traits(Trait::Runtime)
 				.data<&ParticleEmitterComponent::BurstPending>("BurstPending")
@@ -570,6 +579,7 @@ namespace GanymedE::Reflection {
 		static_assert(sizeof(SphereColliderComponent) == 24, "SphereColliderComponent changed - reflect the new field");
 		static_assert(sizeof(CapsuleColliderComponent) == 28, "CapsuleColliderComponent changed - reflect the new field");
 		static_assert(sizeof(PrefabInstanceComponent) == 8, "PrefabInstanceComponent changed - reflect the new field");
+		static_assert(sizeof(PrefabMemberComponent) == 8, "PrefabMemberComponent changed - reflect the new field");
 
 		// Not in ComponentList, but reflected here and equally worth guarding.
 		static_assert(sizeof(IDComponent) == 8, "IDComponent changed - reflect the new field");

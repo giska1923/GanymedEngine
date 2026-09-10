@@ -488,6 +488,43 @@ not go through the generic drawer without changing what their reset buttons do. 
 uses it today (`BoxColliderComponent::HalfExtents`), which is the same "forced by a specific measured
 fact" bar every other attribute had to clear.
 
+### Ranges
+
+`RangeF` is a min/max pair authored as one thing, used by the particle emitter's five ranges
+(lifetime, speed, start size, start rotation, rotation speed).
+
+It exists for one reason, and it is not tidiness: **the clamp direction**. The panel pushes Max up
+when Min passes it and pulls Min down when Max drops below, and a drawer seeing two unrelated floats
+cannot know which half the author just moved. One drawer owning both halves does.
+
+It is **layout-identical** to the two floats it replaced (`float Min, Max;` in that order), and two
+things were deliberately kept byte-for-byte:
+
+- **The YAML keys.** `SceneSerializer` still writes `LifetimeMin` / `LifetimeMax`, reading them from
+  `Lifetime.Min` / `Lifetime.Max`. No scene or prefab on disk changed, and no migration was needed.
+- **The Lua API.** `GetParticleLifetimeMin` still exists and still reads the same value; the
+  bindings gained an overload taking a `RangeF` member pointer plus a `float RangeF::*` half. A C++
+  refactor must not silently rewrite a scripting API that shipped.
+
+### Prefab member links
+
+Every entity `PrefabSerializer::Instantiate` creates carries a **`PrefabMemberComponent`** holding
+its `CanonicalID` — the id it has *inside the prefab file*, which the writer assigns as 1..N in DFS
+order. `PrefabInstanceComponent` still marks only the instance root, so "is this an instance root"
+is the same question it always was.
+
+This is the link per-property overrides key on, and nothing else could serve: an instance's entities
+get fresh UUIDs every time, so without it there is no way to say which prefab object a given instance
+entity corresponds to. Recording it is only possible inside `Instantiate`, which is the one place
+that still holds the pairing.
+
+Entities added by hand inside an instance carry no `PrefabMemberComponent` and take part in no diff,
+which preserves the "structural freedom inside an instance is allowed and unmarked" rule.
+
+It is written by hand in `SceneSerializer` rather than generically, for the same reason
+`PrefabInstanceComponent` is: a `UUID` persists as a plain integer, and the generic path has no codec
+for one.
+
 ## Serialization
 
 ### The reflected path

@@ -87,6 +87,7 @@ namespace GanymedE {
 		SphereColliderComponent,
 		CapsuleColliderComponent,
 		PrefabInstanceComponent,
+		PrefabMemberComponent,
 		ParticleEmitterComponent
 	>;
 }

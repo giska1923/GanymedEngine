@@ -76,6 +76,18 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		// Hand-written like PrefabInstanceComponent above, and for the same reason: a UUID is
+		// persisted as a plain integer key, and the generic path has no codec that would write a
+		// UUID rather than the handle-shaped fields it is used to.
+		if (entity.HasComponent<PrefabMemberComponent>())
+		{
+			out << YAML::Key << "PrefabMemberComponent";
+			out << YAML::BeginMap;
+			out << YAML::Key << "CanonicalID" << YAML::Value
+				<< static_cast<uint64_t>(entity.GetComponent<PrefabMemberComponent>().CanonicalID);
+			out << YAML::EndMap;
+		}
+
 		if (entity.HasComponent<CameraComponent>())
 		{
 			out << YAML::Key << "CameraComponent";
@@ -299,28 +311,28 @@ namespace GanymedE {
 			if (p.PlayOnStart != d.PlayOnStart)
 				out << YAML::Key << "PlayOnStart" << YAML::Value << p.PlayOnStart;
 
-			if (p.LifetimeMin != d.LifetimeMin)
-				out << YAML::Key << "LifetimeMin" << YAML::Value << p.LifetimeMin;
-			if (p.LifetimeMax != d.LifetimeMax)
-				out << YAML::Key << "LifetimeMax" << YAML::Value << p.LifetimeMax;
-			if (p.SpeedMin != d.SpeedMin)
-				out << YAML::Key << "SpeedMin" << YAML::Value << p.SpeedMin;
-			if (p.SpeedMax != d.SpeedMax)
-				out << YAML::Key << "SpeedMax" << YAML::Value << p.SpeedMax;
+			if (p.Lifetime.Min != d.Lifetime.Min)
+				out << YAML::Key << "LifetimeMin" << YAML::Value << p.Lifetime.Min;
+			if (p.Lifetime.Max != d.Lifetime.Max)
+				out << YAML::Key << "LifetimeMax" << YAML::Value << p.Lifetime.Max;
+			if (p.Speed.Min != d.Speed.Min)
+				out << YAML::Key << "SpeedMin" << YAML::Value << p.Speed.Min;
+			if (p.Speed.Max != d.Speed.Max)
+				out << YAML::Key << "SpeedMax" << YAML::Value << p.Speed.Max;
 			if (p.ConeAngle != d.ConeAngle)
 				out << YAML::Key << "ConeAngle" << YAML::Value << p.ConeAngle;
-			if (p.StartSizeMin != d.StartSizeMin)
-				out << YAML::Key << "StartSizeMin" << YAML::Value << p.StartSizeMin;
-			if (p.StartSizeMax != d.StartSizeMax)
-				out << YAML::Key << "StartSizeMax" << YAML::Value << p.StartSizeMax;
-			if (p.StartRotationMin != d.StartRotationMin)
-				out << YAML::Key << "StartRotationMin" << YAML::Value << p.StartRotationMin;
-			if (p.StartRotationMax != d.StartRotationMax)
-				out << YAML::Key << "StartRotationMax" << YAML::Value << p.StartRotationMax;
-			if (p.RotationSpeedMin != d.RotationSpeedMin)
-				out << YAML::Key << "RotationSpeedMin" << YAML::Value << p.RotationSpeedMin;
-			if (p.RotationSpeedMax != d.RotationSpeedMax)
-				out << YAML::Key << "RotationSpeedMax" << YAML::Value << p.RotationSpeedMax;
+			if (p.StartSize.Min != d.StartSize.Min)
+				out << YAML::Key << "StartSizeMin" << YAML::Value << p.StartSize.Min;
+			if (p.StartSize.Max != d.StartSize.Max)
+				out << YAML::Key << "StartSizeMax" << YAML::Value << p.StartSize.Max;
+			if (p.StartRotation.Min != d.StartRotation.Min)
+				out << YAML::Key << "StartRotationMin" << YAML::Value << p.StartRotation.Min;
+			if (p.StartRotation.Max != d.StartRotation.Max)
+				out << YAML::Key << "StartRotationMax" << YAML::Value << p.StartRotation.Max;
+			if (p.RotationSpeed.Min != d.RotationSpeed.Min)
+				out << YAML::Key << "RotationSpeedMin" << YAML::Value << p.RotationSpeed.Min;
+			if (p.RotationSpeed.Max != d.RotationSpeed.Max)
+				out << YAML::Key << "RotationSpeedMax" << YAML::Value << p.RotationSpeed.Max;
 			if (p.GravityModifier != d.GravityModifier)
 				out << YAML::Key << "GravityModifier" << YAML::Value << p.GravityModifier;
 			if (p.WorldSpace != d.WorldSpace)
@@ -597,6 +609,14 @@ namespace GanymedE {
 				prefab.Source = AssetHandle{ source.as<uint64_t>() };
 		}
 
+		auto prefabMemberComponent = entityNode["PrefabMemberComponent"];
+		if (prefabMemberComponent)
+		{
+			auto& member = deserializedEntity.AddComponent<PrefabMemberComponent>();
+			if (auto id = prefabMemberComponent["CanonicalID"])
+				member.CanonicalID = UUID{ id.as<uint64_t>() };
+		}
+
 		auto cameraComponent = entityNode["CameraComponent"];
 		if (cameraComponent)
 		{
@@ -807,27 +827,27 @@ namespace GanymedE {
 				p.PlayOnStart = n.as<bool>();
 
 			if (auto n = particleEmitterComponent["LifetimeMin"])
-				p.LifetimeMin = n.as<float>();
+				p.Lifetime.Min = n.as<float>();
 			if (auto n = particleEmitterComponent["LifetimeMax"])
-				p.LifetimeMax = n.as<float>();
+				p.Lifetime.Max = n.as<float>();
 			if (auto n = particleEmitterComponent["SpeedMin"])
-				p.SpeedMin = n.as<float>();
+				p.Speed.Min = n.as<float>();
 			if (auto n = particleEmitterComponent["SpeedMax"])
-				p.SpeedMax = n.as<float>();
+				p.Speed.Max = n.as<float>();
 			if (auto n = particleEmitterComponent["ConeAngle"])
 				p.ConeAngle = n.as<float>();
 			if (auto n = particleEmitterComponent["StartSizeMin"])
-				p.StartSizeMin = n.as<float>();
+				p.StartSize.Min = n.as<float>();
 			if (auto n = particleEmitterComponent["StartSizeMax"])
-				p.StartSizeMax = n.as<float>();
+				p.StartSize.Max = n.as<float>();
 			if (auto n = particleEmitterComponent["StartRotationMin"])
-				p.StartRotationMin = n.as<float>();
+				p.StartRotation.Min = n.as<float>();
 			if (auto n = particleEmitterComponent["StartRotationMax"])
-				p.StartRotationMax = n.as<float>();
+				p.StartRotation.Max = n.as<float>();
 			if (auto n = particleEmitterComponent["RotationSpeedMin"])
-				p.RotationSpeedMin = n.as<float>();
+				p.RotationSpeed.Min = n.as<float>();
 			if (auto n = particleEmitterComponent["RotationSpeedMax"])
-				p.RotationSpeedMax = n.as<float>();
+				p.RotationSpeed.Max = n.as<float>();
 			if (auto n = particleEmitterComponent["GravityModifier"])
 				p.GravityModifier = n.as<float>();
 			if (auto n = particleEmitterComponent["WorldSpace"])

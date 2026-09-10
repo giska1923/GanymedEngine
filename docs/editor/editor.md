@@ -165,8 +165,41 @@ pre-revert state rather than halfway. If instantiation fails, the captured subtr
 rather than leaving a hole.
 
 Structural freedom inside an instance is **allowed and unmarked**: add, remove and re-parent
-children at will. Selection is single-entity, so "create from selection" means the selected entity's
-subtree — no multi-select semantics were invented.
+children at will. "Create from selection" means the *primary* selection's subtree — prefab actions
+are single-entity even though the selection no longer is.
+
+### Per-property overrides
+
+A field of a prefab instance that differs from the prefab is **tinted blue in the inspector**, and
+right-clicking it offers **Revert to Prefab**. A component with any differing field gets a `*` on its
+section header.
+
+**Overrides are computed, not stored.** Unity records an override list on the instance; Ganymed diffs
+the instance against the prefab instead. A recorded list is a second source of truth that goes stale
+when the prefab changes, needs migrating when a field is renamed, and has to be maintained by every
+edit path. A diff cannot be stale — it is recomputed from the two things it compares — and it needs
+no format change beyond the canonical link.
+
+The comparison is the serializer's own: **a field that would serialize identically is not an
+override** (`EmitReflectedValue`). That keeps "overridden" and "would be written differently" the
+same statement. A type with no YAML codec reports *not* overridden — "cannot tell" must not become a
+claim.
+
+| | |
+|---|---|
+| What makes it possible | `PrefabMemberComponent::CanonicalID` on every instantiated entity — see [scene.md](../engine/scene.md#prefab-member-links) |
+| Per-field affordance | Reflected sections only; the per-field hook lives in the property drawer |
+| Hand-written sections | Section-level `*` marker only — "something in here differs", not which field |
+| Cost | **0.14 ms/frame** worst case (a selected prefab instance with a particle emitter: 46 fields, section marker plus every per-field query, Release). Zero when nothing selected is a prefab member |
+
+Two limitations worth knowing:
+
+- **Prefab instances already in committed scenes have no canonical link**, because they were
+  instantiated before it existed. They report no overrides until they are re-instantiated — which
+  *Revert Instance* does, since it rebuilds the subtree from the file.
+- The template cache is keyed on the prefab handle and dropped when the scene changes. Editing a
+  `.gprefab` on disk while a scene is open will not refresh it until the scene is reopened; the
+  cache has no way to notice a file edit on its own.
 
 ### Play / Stop (toolbar)
 
@@ -310,16 +343,70 @@ edit), `Color` selects `ColorEdit` over the X/Y/Z row, `Radians` converts to deg
 `Flatten` draws a nested struct's fields as siblings — the shape `SceneSerializer` already forces for
 a collider's `PhysicsMaterial`.
 
-**Converted:** Sprite Renderer, Directional Light, Point Light, Audio Listener, Rigid Body, and the
-three colliders. Verified by screenshot: the Properties panel is **pixel-identical** to the
-hand-written version for all seven, with the entity carrying every one of them.
+**Converted (15 of 20):** Sprite Renderer, Directional / Point / Spot Light, Transform, **Camera**,
+**Sky Light**, Audio Listener, Audio Source, Prefab Instance, Particle Emitter, Rigid Body, and the
+three colliders.
 
-**Still hand-written, each for a stated reason at its own site:** Transform (degrees round-trip plus
-a `MarkChanged` hook), Prefab Instance (draws its source and returns false), Camera (the projection
-type gates which fields exist), Static Mesh (material-override list), Animator, Script (schema comes
-from Lua, not from C++), Spot Light (clamps outer ≥ inner — cross-field), Sky Light (an assigned
-environment makes two colour fields unreachable), Audio Source, Particle Emitter (sections, curves
-and gradients).
+Two of those needed something the generic path alone cannot do, and both are handled *around* it
+rather than inside it:
+
+- **Transform** does `MarkChanged<TransformComponent>` after an edit. Editing a component directly
+  is invisible to change tracking, so the cached world transform would never refresh. A side effect
+  is not something reflection can express — but nothing stops the section from running one after
+  `DrawReflectedComponent` returns true. Its degrees round-trip and reset values *are* expressed, as
+  `Trait::Radians` and `Attr::Reset`.
+- **Spot Light** clamps outer ≥ inner afterwards. A generic drawer sees one field at a time and
+  cannot express a cross-field invariant, but the section can fix up the component the drawer just
+  wrote. The clamp is the section's job; the widgets are not.
+
+**Still hand-written, and none of it for want of effort** — each is blocked by something the
+vocabulary deliberately cannot say:
+
+| Section | Why |
+|---|---|
+| Static Mesh | The material-override list is sized by the **mesh asset**, not by component members |
+| Animator | Clip names come from the mesh asset |
+| Script | The field schema comes from Lua, not from C++ |
+
+**Camera and Sky Light converted via a field filter.** Their blocker was field *visibility*
+depending on another field's value — and unlike a clamp, that cannot be applied after the generic
+drawer has run, because you cannot un-draw a field. `EditorUI::FieldFilter` is a predicate asked per
+field *before* anything is submitted, so the section keeps its one cross-field rule and stops
+hand-drawing every widget around it:
+
+- **Camera** shows the perspective fields or the orthographic ones. `SceneCamera`'s own fields appear
+  as rows of the section via the nested-struct fallback — a reflected struct with no drawer of its
+  own is drawn inline. That is an *inspector* decision and says nothing about serialization, where
+  the camera really is a nested map on disk; using `Trait::Flatten` to get the layout would have been
+  a lie the first generic writer believed.
+- **Sky Light** hides the two procedural colours when an environment is assigned, because they are
+  unreachable fallbacks then. Showing an author a control that cannot affect anything is worse than
+  not showing it.
+
+The filter is deliberately a predicate in editor C++ rather than an attribute: "show this when that
+other field equals X" is a small expression language, and the vocabulary is not the place for one.
+
+**The Particle Emitter converted once ranges became a type.** Its five min/max pairs are now
+`RangeF` fields (see [scene.md](../engine/scene.md#ranges)), so one drawer owns both halves and can
+clamp in the direction the edit implies — which two independent float drawers never could. Its four
+`CollapsingHeader` groups are `Attr::Section`, its curve and gradient editors are drawers keyed on
+`FloatCurve` and `ColorGradient`, and its three asset slots are `AssetRef<T>`. What stayed
+hand-written is the Play / Stop / Restart transport, which are **actions, not fields**.
+
+Converting it also corrected two registrations that only a generic consumer could expose:
+`Playing` and `Time` were `ReadOnly | NotSerialized`, which was right while the section drew its own
+status line and nothing else — as generic fields they became two disabled rows repeating that line,
+so they are `Runtime` (hidden) now.
+
+**Audio Source and Prefab Instance were converted with a deliberate layout change.** Audio Source's
+checkboxes no longer share lines and `Group` moved to the end, because the field order is now the
+registration order and the vocabulary has no way to say "put these two together" — adding layout
+knobs to it was rejected in R1. Prefab Instance's `Source` is `ReadOnly`, so the drawer renders it
+disabled and reports no edit, which is what the hand-written section did by returning false.
+
+`ReadOnly` on an asset slot also suppresses the drop target, which `BeginDisabled` alone would not:
+a payload drop is not an item click, so without the explicit guard a read-only field would silently
+accept one.
 
 **Custom canvas widgets** live in [`EditorWidgets.cpp`](../../GanymedEditor/source/EditorWidgets.cpp)
 (`CurveEditor`, `GradientEditor`, and `DrawVec3Control`, which moved there from the panel in R2 so
@@ -403,6 +490,38 @@ Notable behaviors:
 Adding a component type means extending this panel's Add-Component popup and `DrawComponents` —
 one of the two remaining hand-maintained per-component lists (the other is the serializer). Undo
 needs nothing: it is driven by `ComponentList`, so a new component type joins it automatically.
+
+## Multi-entity editing
+
+**Ctrl+click** adds an entity to the selection or removes it; a plain click replaces the selection.
+Every selected entity is highlighted in the hierarchy.
+
+The design keeps a **primary** selection — the entity clicked last, `GetSelectedEntity()` — and adds
+the full set beside it as `GetSelection()`, primary first. That is why multi-select cost six call
+sites outside the panel instead of thirty: gizmos, the tag field and every prefab action still read
+the primary and did not change at all.
+
+| Behaviour | Rule |
+|---|---|
+| Which sections appear | Only components **every** selected entity has. Showing one that only some have would make an edit either silently skip entities or silently add the component to them |
+| Fields that disagree | Tinted **amber**. Mixed wins over the prefab-override blue when both apply — "these entities disagree" is the more urgent fact, because the widget is showing one of several values rather than the value |
+| Editing | The widgets drive the **primary**; the new value is copied to the rest *after* a widget reports an edit. Merely selecting several entities never flattens their differing values |
+| Undo | **One entry per gesture, spanning the whole selection.** Verified: a 3-entity drag produces `UndoDepth == 1`, and one Ctrl+Z restores all three to their *individual* prior values |
+| Delete | Deletes every selected entity |
+
+Propagating after the fact, rather than driving N widgets, is what keeps every property drawer
+single-entity and unaware that multi-edit exists — the same trick the prefab-override hook uses.
+
+Two gaps, deliberate in v1:
+
+- **Shift-range selection is not implemented.** It needs a flattened view of the tree that this panel
+  draws recursively and does not keep; Ctrl covers the case multi-edit exists for.
+- **The gizmo still moves the primary only.** Moving N entities is transform composition across a
+  selection, which is a viewport feature rather than an inspector one.
+- **A drop or popup edit with no active phase records undo for the primary only.** That path has no
+  gesture to wait for, so the other entities' before-values are already gone by the time it runs;
+  making it multi-entity means moving the pre-copy up into `DrawComponent`. Stated rather than
+  hidden.
 
 ## Content Browser panel
 

@@ -9,6 +9,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace GanymedE {
 
@@ -27,8 +28,17 @@ namespace GanymedE {
 
 		void OnImGuiRender();
 
+		// The **primary** selection: the entity clicked last, and the one every single-entity
+		// path in the editor keeps operating on - gizmos, the tag field, prefab actions. Adding
+		// multi-selection deliberately did not change what this returns, which is why it cost
+		// six call sites outside this panel instead of thirty.
 		Entity GetSelectedEntity() const { return m_SelectionContext; }
-		void SetSelectedEntity(Entity entity) { m_SelectionContext = entity; }
+		void SetSelectedEntity(Entity entity) { SelectSingle(entity); }
+
+		// Every selected entity, primary first. Empty when nothing is selected; otherwise
+		// `front()` is always the primary.
+		const std::vector<Entity>& GetSelection() const { return m_Selection; }
+		bool IsSelected(Entity entity) const;
 
 		// Driven by the editor's Ctrl+D / Delete shortcuts as well as the context menus.
 		void DuplicateSelectedEntity();
@@ -38,6 +48,10 @@ namespace GanymedE {
 		// blank-space menu) and selects the new instance root.
 		Entity InstantiatePrefab(const std::filesystem::path& relativePath);
 	private:
+		// The one place the selection changes shape. `SelectSingle({})` clears.
+		void SelectSingle(Entity entity);
+		void ToggleSelection(Entity entity);
+
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
 
@@ -96,7 +110,18 @@ namespace GanymedE {
 			uint32_t ActiveId = 0;                     // ImGuiID of the widget that owns it
 			bool Edited = false;                       // any frame reported a real widget edit
 			bool Visited = false;                      // its section was drawn this frame
+
+			// The other selected entities' commands, captured at the same instant as Command.
+			// One gesture over a multi-selection has to be one undo entry, so on commit these
+			// are folded with Command into a single CompositeCommand rather than pushed
+			// separately - otherwise Ctrl+Z would walk back through the selection one entity at
+			// a time, which is the same "worse than no undo" failure the per-frame case is.
+			std::vector<Scope<ComponentEditCommandBase>> Secondary;
 		};
 		PendingEdit m_Pending;
+
+		// Primary first. m_SelectionContext is always m_Selection.front() when non-empty; the
+		// two are kept in step by SelectSingle/ToggleSelection and by nothing else.
+		std::vector<Entity> m_Selection;
 	};
 }

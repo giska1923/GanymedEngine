@@ -31,14 +31,14 @@ namespace GanymedE {
 			RegisterReflectedEnumCodec<RigidBodyType>();
 		}
 
-		namespace {
+		const ReflectedCodec* FindCodec(const entt::meta_type& type)
+		{
+			auto& codecs = ReflectedCodecs();
+			auto it = codecs.find(type.id());
+			return it == codecs.end() ? nullptr : &it->second;
+		}
 
-			const ReflectedCodec* FindCodec(const entt::meta_type& type)
-			{
-				auto& codecs = ReflectedCodecs();
-				auto it = codecs.find(type.id());
-				return it == codecs.end() ? nullptr : &it->second;
-			}
+		namespace {
 
 			// A field the generic path cannot honour must stop the conversion loudly rather than
 			// write a file that is quietly missing something. Every case here means "this
@@ -104,6 +104,26 @@ namespace GanymedE {
 			out << YAML::Key << field.name() << YAML::Value;
 			codec->Write(out, value);
 		}
+	}
+
+	std::string EmitReflectedValue(const entt::meta_any& instance, const entt::meta_data& field)
+	{
+		Detail::RegisterReflectedCodecs();
+
+		const Detail::ReflectedCodec* codec = Detail::FindCodec(field.type());
+		if (!codec)
+			return {};
+
+		entt::meta_any value = field.get(instance);
+		if (!value)
+			return {};
+
+		YAML::Emitter out;
+		out << YAML::BeginMap << YAML::Key << "v" << YAML::Value;
+		codec->Write(out, value);
+		out << YAML::EndMap;
+
+		return out.c_str() ? out.c_str() : std::string{};
 	}
 
 	void ReadReflected(const YAML::Node& node, entt::meta_any instance)

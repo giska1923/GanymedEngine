@@ -1,12 +1,14 @@
 #include "EditorInspector.h"
 
 #include "AssetDragDrop.h"
+#include "GanymedE/Math/Curve.h"
 #include "EditorWidgets.h"
 
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetRef.h"
 #include "GanymedE/Core/Log.h"
 #include "GanymedE/Renderer/Environment.h"
+#include "GanymedE/Scene/Components.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Renderer/Texture.h"
@@ -15,6 +17,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
 
 #include <string>
 #include <unordered_map>
@@ -198,15 +201,27 @@ namespace GanymedE::EditorUI {
 			if (!ReadField(ctx, value))
 				return false;
 
+			// Stored in radians, authored in degrees. The round-trip is NOT exact, which is why
+			// the write below is gated on `edited`: writing back unconditionally changed the
+			// stored value on frames with no user input, and under any value-diff scheme that
+			// mints a phantom undo command and marks the scene dirty on mere selection. Returning
+			// `edited && Write` keeps that discipline for free - it is the house rule the whole
+			// commit boundary is built on.
+			const bool radians = Reflection::Has(ctx.Traits, Trait::Radians);
+			glm::vec3 shown = radians ? glm::degrees(value) : value;
+
 			// Color is what separates the two vec3 widgets, and it has to: a colour wants a swatch
 			// and a picker, a position wants the X/Y/Z row with reset buttons. The type cannot
 			// tell them apart, which is the two-tier vocabulary earning its keep.
 			const bool edited = Reflection::Has(ctx.Traits, Trait::Color)
-				? ImGui::ColorEdit3(ctx.Label, glm::value_ptr(value))
-				: DrawVec3Control(ctx.Label, value,
+				? ImGui::ColorEdit3(ctx.Label, glm::value_ptr(shown))
+				: DrawVec3Control(ctx.Label, shown,
 					ctx.Attributes ? ctx.Attributes->ResetValue : 0.0f, 100.0f, ctx.Speed(0.1f));
 
-			return edited && WriteField(ctx, value);
+			if (!edited)
+				return false;
+
+			return WriteField(ctx, radians ? glm::radians(shown) : shown);
 		}
 
 		bool DrawVec4(const PropertyContext& ctx)
@@ -275,6 +290,83 @@ namespace GanymedE::EditorUI {
 			return edited;
 		}
 
+		// ---- Ranges --------------------------------------------------------------------
+		//
+		// The reason `RangeF` is a type. A generic drawer that saw `LifetimeMin` and `LifetimeMax`
+		// as two unrelated floats could draw them, but it could not clamp them: the hand-written
+		// panel pushes Max up when Min passes it and pulls Min down when Max drops below, and
+		// which of those to do depends on **which half the author just moved**. One drawer owning
+		// both halves knows; two independent drawers never can.
+		bool DrawRange(const PropertyContext& ctx)
+		{
+			RangeF value;
+			if (!ReadField(ctx, value))
+				return false;
+
+			float lo = 0.0f, hi = 0.0f;
+			const bool hasRange = ctx.Range(lo, hi);
+			const float speed = ctx.Speed(0.05f);
+
+			ImGui::PushID(ctx.Label);
+			ImGui::PushMultiItemsWidths(2, ImGui::CalcItemWidth());
+
+			const bool editedMin = ImGui::DragFloat("##Min", &value.Min, speed, lo,
+				hasRange ? hi : 0.0f);
+			ImGui::PopItemWidth();
+			ImGui::SameLine();
+
+			const bool editedMax = ImGui::DragFloat("##Max", &value.Max, speed, lo,
+				hasRange ? hi : 0.0f);
+			ImGui::PopItemWidth();
+			ImGui::SameLine();
+
+			ImGui::TextUnformatted(ctx.Label);
+			ImGui::PopID();
+
+			if (!editedMin && !editedMax)
+				return false;
+
+			// Push the other half out of the way, in the direction the edit implies.
+			if (editedMin && value.Max < value.Min)
+				value.Max = value.Min;
+			if (editedMax && value.Min > value.Max)
+				value.Min = value.Max;
+
+			return WriteField(ctx, value);
+		}
+
+		// ---- Curves and gradients ------------------------------------------------------
+		//
+		// The house widgets from EditorWidgets, which own ActiveId for a whole drag - the
+		// property the undo commit boundary cannot work without. Attr::Range carries the Y range
+		// the curve editor draws, which is what that attribute means on a FloatCurve.
+		bool DrawCurve(const PropertyContext& ctx)
+		{
+			FloatCurve value;
+			if (!ReadField(ctx, value))
+				return false;
+
+			float lo = 0.0f, hi = 1.0f;
+			ctx.Range(lo, hi);
+
+			if (!CurveEditor(ctx.Label, value, lo, hi))
+				return false;
+
+			return WriteField(ctx, value);
+		}
+
+		bool DrawGradient(const PropertyContext& ctx)
+		{
+			ColorGradient value;
+			if (!ReadField(ctx, value))
+				return false;
+
+			if (!GradientEditor(ctx.Label, value))
+				return false;
+
+			return WriteField(ctx, value);
+		}
+
 		// ---- Asset slots ---------------------------------------------------------------
 
 		template<typename T>
@@ -302,6 +394,62 @@ namespace GanymedE::EditorUI {
 				return false;
 
 			return WriteField(ctx, dropped);
+		}
+
+		// ---- Bare asset handles --------------------------------------------------------
+		//
+		// `AssetHandle` is an alias for `UUID`, the same type as `RelationshipComponent::Parent`,
+		// so the type alone cannot say this is an asset slot - `Attr::Slot` does, which is the
+		// exact case the two-tier vocabulary was introduced for. A UUID field with no Slot is not
+		// an asset reference and is shown read-only rather than given a drop target.
+		bool DrawAssetHandle(const PropertyContext& ctx)
+		{
+			AssetHandle value = InvalidAssetHandle;
+			if (!ReadField(ctx, value))
+				return false;
+
+			const AssetType slot = ctx.Attributes ? ctx.Attributes->Slot : AssetType::None;
+			if (slot == AssetType::None)
+			{
+				ImGui::Text("%s: %llu", ctx.Label, (unsigned long long)(uint64_t)value);
+				return false;
+			}
+
+			std::string path;
+			if (IsAssetHandleValid(value))
+			{
+				if (const AssetMetadata* metadata = AssetManager::GetMetadata(value))
+					path = metadata->FilePath;
+			}
+
+			ImGui::Text("%s: %s", ctx.Label,
+				IsAssetHandleValid(value) ? (path.empty() ? "<missing>" : path.c_str()) : "None");
+
+			// ReadOnly has to gate the *interactive* parts explicitly. `BeginDisabled` around the
+			// call blocks clicks, but a drag-drop target is not an item click - it would still
+			// accept a payload and silently write a field the registration says is not editable.
+			if (Reflection::Has(ctx.Traits, Trait::ReadOnly))
+				return false;
+
+			bool edited = false;
+
+			if (IsAssetHandleValid(value))
+			{
+				ImGui::SameLine();
+				ImGui::PushID(ctx.Label);
+				if (ImGui::SmallButton("Clear"))
+				{
+					edited = WriteField(ctx, InvalidAssetHandle);
+					value = InvalidAssetHandle;
+				}
+				ImGui::PopID();
+			}
+
+			const AssetHandle dropped = AcceptAssetDropHandle(slot);
+			if (IsAssetHandleValid(dropped))
+				edited = WriteField(ctx, dropped) || edited;
+
+			return edited;
 		}
 
 		// ---- The dispatch --------------------------------------------------------------
@@ -357,16 +505,28 @@ namespace GanymedE::EditorUI {
 		RegisterPropertyDrawer(entt::resolve<glm::vec3>(), &DrawVec3);
 		RegisterPropertyDrawer(entt::resolve<glm::vec4>(), &DrawVec4);
 
+		// Every AssetHandle-typed field routes here; the drawer itself decides whether the field
+		// is an asset slot by looking for Attr::Slot.
+		RegisterPropertyDrawer(entt::resolve<AssetHandle>(), &DrawAssetHandle);
+
+		RegisterPropertyDrawer(entt::resolve<RangeF>(), &DrawRange);
+		RegisterPropertyDrawer(entt::resolve<FloatCurve>(), &DrawCurve);
+		RegisterPropertyDrawer(entt::resolve<ColorGradient>(), &DrawGradient);
+
 		RegisterPropertyDrawer(entt::resolve<AssetRef<Mesh>>(), &DrawAssetRef<Mesh>);
 		RegisterPropertyDrawer(entt::resolve<AssetRef<Material>>(), &DrawAssetRef<Material>);
 		RegisterPropertyDrawer(entt::resolve<AssetRef<Texture2D>>(), &DrawAssetRef<Texture2D>);
 		RegisterPropertyDrawer(entt::resolve<AssetRef<Environment>>(), &DrawAssetRef<Environment>);
 	}
 
-	bool DrawProperty(entt::meta_any& instance, const entt::meta_data& field)
+	bool DrawProperty(entt::meta_any& instance, const entt::meta_data& field,
+		const OverrideHook& overrides, const MultiEditHook& multi, const FieldFilter& filter)
 	{
 		const Trait traits = field.traits<Trait>();
 		if (Reflection::Has(traits, Trait::Hidden) || Reflection::Has(traits, Trait::Custom))
+			return false;
+
+		if (filter && !filter(field))
 			return false;
 
 		const Attr* attr = Reflection::Attributes(field);
@@ -380,8 +540,10 @@ namespace GanymedE::EditorUI {
 			if (!nested)
 				return false;
 
+			// The nested fields keep the parent's override hook: an overridden Friction belongs
+			// to the collider, which is what the hook is keyed on.
 			entt::meta_any ref = nested.as_ref();
-			if (!DrawReflectedProperties(ref.as_ref()))
+			if (!DrawReflectedProperties(ref.as_ref(), overrides, multi, filter))
 				return false;
 
 			// Written back rather than edited in place: `get` may have handed back a copy, and
@@ -392,6 +554,26 @@ namespace GanymedE::EditorUI {
 		PropertyDrawer drawer = FindDrawer(field.type());
 		if (!drawer)
 		{
+			// A reflected struct with no drawer of its own is drawn inline: its fields become rows
+			// of the parent, which is what the hand-written Camera section did with SceneCamera.
+			//
+			// This is an *inspector* decision only. It says nothing about serialization, where
+			// SceneCamera really is a nested map on disk - `Trait::Flatten` is the statement that
+			// a nested struct's fields are siblings in the file, and putting it here to get this
+			// layout would have been a lie the first generic writer believed.
+			if (Reflection::IsReflected(field.type()) && field.type().is_class())
+			{
+				entt::meta_any nested = field.get(instance);
+				if (!nested)
+					return false;
+
+				entt::meta_any ref = nested.as_ref();
+				if (!DrawReflectedProperties(ref.as_ref(), overrides, multi, filter))
+					return false;
+
+				return field.set(instance, nested);
+			}
+
 			WarnOnce(field, instance.type());
 			return false;
 		}
@@ -407,10 +589,50 @@ namespace GanymedE::EditorUI {
 		if (readOnly)
 			ImGui::BeginDisabled();
 
+		// A field that differs from the prefab is tinted for its whole row. Unity bolds just the
+		// label; doing that here would need a second font the editor does not load, and a colour
+		// is unambiguous without disturbing layout - which matters because the row is drawn by
+		// the widget itself, not by this function.
+		// Mixed wins over overridden when both apply: "these entities disagree" is the more urgent
+		// fact, because the widget is showing one of several values rather than the value.
+		const bool mixed = multi && multi.IsMixed(multi.Owner, field);
+		const bool overridden = !mixed && overrides && overrides.IsOverridden(overrides.Owner, field);
+
+		if (mixed)
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{ 1.0f, 0.78f, 0.35f, 1.0f });
+		else if (overridden)
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{ 0.45f, 0.72f, 1.0f, 1.0f });
+
 		const bool edited = drawer(ctx);
+
+		if (mixed || overridden)
+			ImGui::PopStyleColor();
+
+		// The primary now holds the new value; give it to the rest of the selection. Only on a
+		// frame a widget actually reported an edit, so merely selecting several entities never
+		// flattens their differing values.
+		if (edited && multi && multi.Propagate)
+			multi.Propagate(multi.Owner, field);
 
 		if (readOnly)
 			ImGui::EndDisabled();
+
+		// Right-click the field itself, which is where an author looks for it.
+		if (overridden && ImGui::BeginPopupContextItem(field.name()))
+		{
+			if (ImGui::MenuItem("Revert to Prefab"))
+			{
+				// Reported as an edit so the section's commit boundary turns it into one undo
+				// command, exactly as a drag would - a revert is a scene edit like any other.
+				if (overrides.Revert(overrides.Owner, field))
+				{
+					ImGui::EndPopup();
+					return true;
+				}
+			}
+
+			ImGui::EndPopup();
+		}
 
 		// Rendered under the widget as TextDisabled, which is what every hand-written section
 		// that has a note already does. A hover tooltip was the alternative; matching the
@@ -421,15 +643,38 @@ namespace GanymedE::EditorUI {
 		return edited && !readOnly;
 	}
 
-	bool DrawReflectedProperties(entt::meta_any instance)
+	bool DrawReflectedProperties(entt::meta_any instance, const OverrideHook& overrides,
+		const MultiEditHook& multi, const FieldFilter& filter)
 	{
 		const entt::meta_type type = instance.type();
 		if (!Reflection::IsReflected(type))
 			return false;
 
+		// Fields carrying Attr::Section are grouped under a CollapsingHeader, in registration
+		// order, exactly as the hand-written particle-emitter section did by hand. A section ends
+		// when the next field names a different one - the registration lists them contiguously,
+		// which is a property worth keeping if you reorder it.
 		bool edited = false;
+		const char* openSection = nullptr;
+		bool sectionVisible = true;
+
 		for (auto&& [id, field] : type.data())
-			edited |= DrawProperty(instance, field);
+		{
+			const Reflection::Attr* attr = Reflection::Attributes(field);
+			const char* section = attr ? attr->Section : nullptr;
+
+			if (section != openSection)
+			{
+				openSection = section;
+				sectionVisible = section == nullptr
+					|| ImGui::CollapsingHeader(section, ImGuiTreeNodeFlags_DefaultOpen);
+			}
+
+			if (!sectionVisible)
+				continue;
+
+			edited |= DrawProperty(instance, field, overrides, multi, filter);
+		}
 
 		return edited;
 	}

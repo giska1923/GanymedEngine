@@ -82,6 +82,25 @@ namespace GanymedE {
 				p->*field = value;
 		}
 
+		// The five min/max fields became `RangeF` members when the emitter's inspector was made
+		// generic. These two overloads exist so **every Lua name stays exactly what it was** -
+		// `GetParticleLifetimeMin` still reads the same value it always did. A C++ refactor must
+		// not silently rewrite a scripting API that shipped.
+		float ParticleGet(Entity& e, RangeF ParticleEmitterComponent::* range,
+			float RangeF::* half, float fallback)
+		{
+			if (ParticleEmitterComponent* p = ParticleEmitter(e))
+				return (p->*range).*half;
+			return fallback;
+		}
+
+		void ParticleSet(Entity& e, RangeF ParticleEmitterComponent::* range,
+			float RangeF::* half, float value)
+		{
+			if (ParticleEmitterComponent* p = ParticleEmitter(e))
+				(p->*range).*half = value;
+		}
+
 		// The system that owns every voice. Same shape as Physics() above, and for the same
 		// reason: nothing outside AudioSystem may create or destroy a voice.
 		AudioSystem* Audio()
@@ -382,28 +401,28 @@ namespace GanymedE {
 				"SetParticleDuration", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::Duration, v); },
 				"GetParticlePlayOnStart", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::PlayOnStart, false); },
 				"SetParticlePlayOnStart", [](Entity& e, bool v) { ParticleSet(e, &ParticleEmitterComponent::PlayOnStart, v); },
-				"GetParticleLifetimeMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::LifetimeMin, 0.0f); },
-				"SetParticleLifetimeMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::LifetimeMin, v); },
-				"GetParticleLifetimeMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::LifetimeMax, 0.0f); },
-				"SetParticleLifetimeMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::LifetimeMax, v); },
-				"GetParticleSpeedMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::SpeedMin, 0.0f); },
-				"SetParticleSpeedMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::SpeedMin, v); },
-				"GetParticleSpeedMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::SpeedMax, 0.0f); },
-				"SetParticleSpeedMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::SpeedMax, v); },
+				"GetParticleLifetimeMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::Lifetime, &RangeF::Min, 0.0f); },
+				"SetParticleLifetimeMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::Lifetime, &RangeF::Min, v); },
+				"GetParticleLifetimeMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::Lifetime, &RangeF::Max, 0.0f); },
+				"SetParticleLifetimeMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::Lifetime, &RangeF::Max, v); },
+				"GetParticleSpeedMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::Speed, &RangeF::Min, 0.0f); },
+				"SetParticleSpeedMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::Speed, &RangeF::Min, v); },
+				"GetParticleSpeedMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::Speed, &RangeF::Max, 0.0f); },
+				"SetParticleSpeedMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::Speed, &RangeF::Max, v); },
 				"GetParticleConeAngle", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::ConeAngle, 0.0f); },
 				"SetParticleConeAngle", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::ConeAngle, v); },
-				"GetParticleStartSizeMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartSizeMin, 0.0f); },
-				"SetParticleStartSizeMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartSizeMin, v); },
-				"GetParticleStartSizeMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartSizeMax, 0.0f); },
-				"SetParticleStartSizeMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartSizeMax, v); },
-				"GetParticleStartRotationMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartRotationMin, 0.0f); },
-				"SetParticleStartRotationMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartRotationMin, v); },
-				"GetParticleStartRotationMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartRotationMax, 0.0f); },
-				"SetParticleStartRotationMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartRotationMax, v); },
-				"GetParticleRotationSpeedMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::RotationSpeedMin, 0.0f); },
-				"SetParticleRotationSpeedMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::RotationSpeedMin, v); },
-				"GetParticleRotationSpeedMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::RotationSpeedMax, 0.0f); },
-				"SetParticleRotationSpeedMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::RotationSpeedMax, v); },
+				"GetParticleStartSizeMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartSize, &RangeF::Min, 0.0f); },
+				"SetParticleStartSizeMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartSize, &RangeF::Min, v); },
+				"GetParticleStartSizeMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartSize, &RangeF::Max, 0.0f); },
+				"SetParticleStartSizeMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartSize, &RangeF::Max, v); },
+				"GetParticleStartRotationMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartRotation, &RangeF::Min, 0.0f); },
+				"SetParticleStartRotationMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartRotation, &RangeF::Min, v); },
+				"GetParticleStartRotationMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::StartRotation, &RangeF::Max, 0.0f); },
+				"SetParticleStartRotationMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::StartRotation, &RangeF::Max, v); },
+				"GetParticleRotationSpeedMin", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::RotationSpeed, &RangeF::Min, 0.0f); },
+				"SetParticleRotationSpeedMin", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::RotationSpeed, &RangeF::Min, v); },
+				"GetParticleRotationSpeedMax", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::RotationSpeed, &RangeF::Max, 0.0f); },
+				"SetParticleRotationSpeedMax", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::RotationSpeed, &RangeF::Max, v); },
 				"GetParticleGravityModifier", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::GravityModifier, 0.0f); },
 				"SetParticleGravityModifier", [](Entity& e, float v) { ParticleSet(e, &ParticleEmitterComponent::GravityModifier, v); },
 				"GetParticleWorldSpace", [](Entity& e) { return ParticleGet(e, &ParticleEmitterComponent::WorldSpace, false); },
