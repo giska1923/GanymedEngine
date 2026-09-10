@@ -40,7 +40,7 @@ namespace GanymedE::Reflection {
 	// (is_class, is_enum, ...) and shifts user traits into the upper half, so a user enum gets
 	// exactly 16 bits (meta_traits::_user_defined_traits == 0xFFFF, meta/node.hpp). entt also
 	// asserts value < 0xFFFF, so all sixteen set at once is rejected - academic, but real.
-	// Ten are spent below. Do not spend one on something that wants a number or a string.
+	// Eleven are spent below. Do not spend one on something that wants a number or a string.
 	//
 	// Every flag here exists because the current inspector or serializer measurably needs it.
 	// ReadOnly is PrefabInstanceComponent, which draws its source and returns false. There is
@@ -64,12 +64,27 @@ namespace GanymedE::Reflection {
 
 		// ---- Structural ----
 		Component     = 1 << 8,  // type-level: this is an ECS component, not a supporting type
-		Custom        = 1 << 9,  // both generic paths must skip it; a bespoke drawer/writer owns it
+
+		// "A bespoke implementation owns this field", asked separately of each consumer.
+		//
+		// These were ONE flag until the serializer conversion finished, and the conflation was
+		// load-bearing in the wrong direction: AnimatorComponent::Clip, SizeCurve and
+		// ColorOverLifetime need a bespoke *widget* (a combo over the mesh's clip names, a curve
+		// editor, a gradient editor) and nothing bespoke at all on disk - a string and two
+		// sequences. Spelled as one flag they were locked out of the generic writer by a fact
+		// about the inspector, which is exactly the coupling the roadmap's "the two consumers
+		// convert independently" line rejects. One extra bit buys that independence back.
+		CustomDrawer  = 1 << 9,  // the inspector's generic drawer must skip it
+		CustomWriter  = 1 << 10, // the generic serializer must skip it
 
 		// Runtime state a system owns: not authored, not saved, not shown. A composite rather
 		// than a flag of its own, because "Transient" would carry no information the other two
 		// do not already carry, and flags are a budget.
-		Runtime = Hidden | NotSerialized
+		Runtime = Hidden | NotSerialized,
+
+		// Both consumers at once - the common case, and the spelling every existing registration
+		// used before the split, so nothing that meant "nobody touches this generically" moved.
+		Custom = CustomDrawer | CustomWriter
 	};
 
 	constexpr Trait operator|(Trait a, Trait b)
@@ -133,6 +148,18 @@ namespace GanymedE::Reflection {
 		// drawer without changing what their reset buttons do.
 		float ResetValue = 0.0f;
 
+		// What a Flatten'ed field prefixes its children's YAML keys with. Empty for the shape
+		// PhysicsMaterial has always had on disk (Friction and Restitution, bare), set to
+		// "Lifetime" for the RangeF that must keep writing LifetimeMin and LifetimeMax.
+		//
+		// A per-field value rather than a trait on RangeF itself, even though every RangeF field
+		// wants one: a type-level rule is invisible at the point a reader is looking at the
+		// field, which is the same objection the particle block already records against an
+		// inherited "all my fields omit" flag. It is also not derivable - the prefix HAPPENS to
+		// equal the field name for all five today, and encoding that coincidence as a rule would
+		// make the on-disk key a function of the C++ member name, which decision 3 forbids.
+		const char* KeyPrefix = nullptr;
+
 		// What an AssetHandle field accepts. AssetHandle is a plain UUID alias, identical to the
 		// type of RelationshipComponent::Parent, so the TYPE cannot express this - which is
 		// exactly why the two-tier vocabulary exists.
@@ -144,6 +171,7 @@ namespace GanymedE::Reflection {
 		Attr& Range(float lo, float hi) { Min = lo; Max = hi; HasRange = true; return *this; }
 		Attr& Speed(float step) { DragSpeed = step; return *this; }
 		Attr& Reset(float value) { ResetValue = value; return *this; }
+		Attr& Keys(const char* prefix) { KeyPrefix = prefix; return *this; }
 		Attr& Asset(AssetType type) { Slot = type; return *this; }
 	};
 

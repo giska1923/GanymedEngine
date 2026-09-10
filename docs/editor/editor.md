@@ -338,10 +338,21 @@ from the editor would *overwrite* the engine's attributes rather than add to the
 `AssetRef<T>`; `RegisterPropertyDrawer` overrides one for a type. A field whose type has no drawer is
 skipped and named once in the log — a missing drawer should be loud, not invisible.
 
-Trait handling: `Hidden` and `Custom` are skipped, `ReadOnly` draws disabled (and never reports an
-edit), `Color` selects `ColorEdit` over the X/Y/Z row, `Radians` converts to degrees for display, and
-`Flatten` draws a nested struct's fields as siblings — the shape `SceneSerializer` already forces for
-a collider's `PhysicsMaterial`.
+Trait handling: `Hidden` and **`CustomDrawer`** are skipped, `ReadOnly` draws disabled (and never
+reports an edit), `Color` selects `ColorEdit` over the X/Y/Z row, and `Radians` converts to degrees
+for display.
+
+The inspector reads `CustomDrawer`, never `CustomWriter` — the two halves of the old single `Custom`
+flag, split when the serializer conversion finished. That split is what lets `AnimatorComponent::Clip`
+and the two particle curves keep bespoke widgets while serializing generically; see
+[scene.md](../engine/scene.md).
+
+**A registered drawer wins over `Trait::Flatten`.** That ordering is load-bearing rather than
+incidental: `Flatten` is a statement about the *file* — "this struct's fields are siblings on disk" —
+and the two types that make it want opposite things from the inspector. `PhysicsMaterial` has no
+drawer and falls through to the nested-struct fallback below, so a collider still shows `Friction`
+and `Restitution` as its own rows. `RangeF` has one, and drawing its `Min` and `Max` as two loose
+rows is precisely the widget that type was introduced to replace.
 
 **Converted (15 of 20):** Sprite Renderer, Directional / Point / Spot Light, Transform, **Camera**,
 **Sky Light**, Audio Listener, Audio Source, Prefab Instance, Particle Emitter, Rigid Body, and the
@@ -377,8 +388,8 @@ hand-drawing every widget around it:
 - **Camera** shows the perspective fields or the orthographic ones. `SceneCamera`'s own fields appear
   as rows of the section via the nested-struct fallback — a reflected struct with no drawer of its
   own is drawn inline. That is an *inspector* decision and says nothing about serialization, where
-  the camera really is a nested map on disk; using `Trait::Flatten` to get the layout would have been
-  a lie the first generic writer believed.
+  the camera really is a nested map on disk; using `Trait::Flatten` to get that layout would have
+  been a lie, and the generic writer now depends on it not being told one.
 - **Sky Light** hides the two procedural colours when an environment is assigned, because they are
   unreachable fallbacks then. Showing an author a control that cannot affect anything is worse than
   not showing it.

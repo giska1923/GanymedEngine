@@ -94,7 +94,9 @@ namespace GanymedE::EditorUI {
 
 		for (auto&& [id, field] : type.data())
 		{
-			if (Reflection::Has(field.traits<Reflection::Trait>(), Reflection::Trait::Custom))
+			// The DRAWER half: a field with no per-field revert affordance still counts towards
+			// "this component is overridden", which is the whole point of the section marker.
+			if (Reflection::Has(field.traits<Reflection::Trait>(), Reflection::Trait::CustomDrawer))
 				continue;
 
 			const std::string a = EmitReflectedValue(live, field);

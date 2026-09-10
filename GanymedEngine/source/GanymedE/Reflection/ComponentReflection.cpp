@@ -193,15 +193,19 @@ namespace GanymedE::Reflection {
 				// than from this vector - the panel resizes it to match. Nothing generic can draw
 				// that, and the YAML is a flow sequence of handles.
 				.data<&StaticMeshComponent::MaterialOverrides>("MaterialOverrides")
-					.traits(Trait::Custom)
+					.traits(Trait::Custom)   // both: a per-slot row, and a flow sequence keyed by index
 					.custom<Attr>(Attr{}.Asset(AssetType::Material));
 
 			GE_REFLECT_COMPONENT(AnimatorComponent)
 				.custom<Attr>(Attr{}.Label("Animator"))
 				// A combo over the mesh's own clip names, not a text field: the name IS the
 				// reference, so the option list comes from the asset.
+				// CustomDrawer, not Custom: the widget is a combo over the mesh's own clip names,
+				// but on disk this is a std::string omitted when empty - which is exactly what
+				// OmitIfDefault means, and what the hand-written block spelled as `if
+				// (!animator.Clip.empty())`.
 				.data<&AnimatorComponent::Clip>("Clip")
-					.traits(Trait::OmitIfDefault | Trait::Custom)
+					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
 				.data<&AnimatorComponent::Speed>("Speed")
 					.custom<Attr>(Attr{}.Range(-10.0f, 10.0f).Speed(0.01f))
 				.data<&AnimatorComponent::Playing>("Playing")
@@ -210,7 +214,7 @@ namespace GanymedE::Reflection {
 				// happened to be. Still editable - scrubbing is the only way to move a rig in edit
 				// mode - but the scrub range is the clip's duration, which only the asset knows.
 				.data<&AnimatorComponent::Time>("Time")
-					.traits(Trait::NotSerialized | Trait::Custom)
+					.traits(Trait::NotSerialized | Trait::CustomDrawer)
 					.custom<Attr>(Attr{}.Speed(0.01f))
 				.data<&AnimatorComponent::Palette>("Palette")
 					.traits(Trait::Runtime);
@@ -333,6 +337,11 @@ namespace GanymedE::Reflection {
 					.traits(Trait::OmitIfDefault)
 					.custom<Attr>(Attr{}.Asset(AssetType::Audio)
 						.Tip("Drop a .wav, .mp3 or .flac file here"))
+				// Group sits second because registration order IS the on-disk key order, and
+				// Clip/Group/Volume/... is the order every saved scene already has. It was last
+				// here while the writer was hand-written and the two orders were free to differ;
+				// they are the same list now, so the inspector draws Group second as well.
+				.data<&AudioSourceComponent::Group>("Group")
 				.data<&AudioSourceComponent::Volume>("Volume")
 					.custom<Attr>(Attr{}.Range(0.0f, 1.0f).Speed(0.01f))
 				.data<&AudioSourceComponent::Pitch>("Pitch")
@@ -341,8 +350,7 @@ namespace GanymedE::Reflection {
 				.data<&AudioSourceComponent::PlayOnStart>("PlayOnStart")
 					.custom<Attr>(Attr{}.Label("Play On Start"))
 				.data<&AudioSourceComponent::Spatialize>("Spatialize")
-				.data<&AudioSourceComponent::Stream>("Stream")
-				.data<&AudioSourceComponent::Group>("Group");
+				.data<&AudioSourceComponent::Stream>("Stream");
 
 			GE_REFLECT_COMPONENT(AudioListenerComponent)
 				.custom<Attr>(Attr{}.Label("Audio Listener")
@@ -403,16 +411,18 @@ namespace GanymedE::Reflection {
 
 		void RegisterPrefabs()
 		{
-			// Read-only on purpose: the link is created by "Create Prefab" and followed by
-			// Apply/Revert. There is no field to type a handle into.
-			// Structural bookkeeping, not authored data: hidden from the inspector and written by
-			// hand in SceneSerializer, so both generic paths skip it. It is registered anyway so
-			// that "every ComponentList entry is reflected" stays true and Validate keeps its
-			// teeth.
+			// Structural bookkeeping, not authored data: hidden from the inspector, but written
+			// generically now that a UUID has a codec. It used to be Custom for the stated reason
+			// that "the generic path has no codec that would write a UUID rather than the
+			// handle-shaped fields it is used to" - that reason is gone, and the flag went with
+			// it rather than staying as a comment nobody would re-check.
 			GE_REFLECT_COMPONENT(PrefabMemberComponent)
 				.custom<Attr>(Attr{}.Label("Prefab Member"))
 				.data<&PrefabMemberComponent::CanonicalID>("CanonicalID")
-					.traits(Trait::Hidden | Trait::Custom);
+					.traits(Trait::Hidden);
+
+			// Read-only on purpose: the link is created by "Create Prefab" and followed by
+			// Apply/Revert. There is no field to type a handle into.
 
 			GE_REFLECT_COMPONENT(PrefabInstanceComponent)
 				.custom<Attr>(Attr{}.Label("Prefab Instance")
@@ -459,25 +469,29 @@ namespace GanymedE::Reflection {
 				// Initial state. Each Min/Max pair is one `RangeF` field with one drawer, which is
 				// what let this component go through the generic inspector at all - a drawer that
 				// owns both halves knows which one the author moved and can clamp the other.
+				//
+				// On disk each pair stays TWO keys, LifetimeMin and LifetimeMax, which is what the
+				// key prefix on Flatten buys: the C++ shape changed when RangeF replaced ten loose
+				// floats, and the file did not.
 				.data<&ParticleEmitterComponent::Lifetime>("Lifetime")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Lifetime").In("Initial").Speed(0.02f))
+					.traits(Trait::OmitIfDefault | Trait::Flatten)
+					.custom<Attr>(Attr{}.Label("Lifetime").In("Initial").Speed(0.02f).Keys("Lifetime"))
 				.data<&ParticleEmitterComponent::Speed>("Speed")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Speed").In("Initial").Speed(0.05f))
+					.traits(Trait::OmitIfDefault | Trait::Flatten)
+					.custom<Attr>(Attr{}.Label("Speed").In("Initial").Speed(0.05f).Keys("Speed"))
 				// Degrees on disk and in the widget, unlike the spot-light cone: no Radians here.
 				.data<&ParticleEmitterComponent::ConeAngle>("ConeAngle")
 					.traits(Trait::OmitIfDefault)
 					.custom<Attr>(Attr{}.Label("Cone Angle").In("Initial").Range(0.0f, 180.0f).Speed(0.5f))
 				.data<&ParticleEmitterComponent::StartSize>("StartSize")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Start Size").In("Initial").Speed(0.01f))
+					.traits(Trait::OmitIfDefault | Trait::Flatten)
+					.custom<Attr>(Attr{}.Label("Start Size").In("Initial").Speed(0.01f).Keys("StartSize"))
 				.data<&ParticleEmitterComponent::StartRotation>("StartRotation")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Start Rotation").In("Initial").Speed(1.0f))
+					.traits(Trait::OmitIfDefault | Trait::Flatten)
+					.custom<Attr>(Attr{}.Label("Start Rotation").In("Initial").Speed(1.0f).Keys("StartRotation"))
 				.data<&ParticleEmitterComponent::RotationSpeed>("RotationSpeed")
-					.traits(Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Label("Rotation Speed").In("Initial").Speed(1.0f))
+					.traits(Trait::OmitIfDefault | Trait::Flatten)
+					.custom<Attr>(Attr{}.Label("Rotation Speed").In("Initial").Speed(1.0f).Keys("RotationSpeed"))
 				.data<&ParticleEmitterComponent::GravityModifier>("GravityModifier")
 					.traits(Trait::OmitIfDefault)
 					.custom<Attr>(Attr{}.Label("Gravity Modifier").In("Initial").Speed(0.05f))
@@ -493,10 +507,10 @@ namespace GanymedE::Reflection {
 
 				// Over lifetime. Min/Max is the Y range the curve editor draws.
 				.data<&ParticleEmitterComponent::SizeCurve>("SizeCurve")
-					.traits(Trait::OmitIfDefault | Trait::Custom)
+					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
 					.custom<Attr>(Attr{}.Label("Size Curve").In("Over Lifetime").Range(0.0f, 2.0f))
 				.data<&ParticleEmitterComponent::ColorOverLifetime>("ColorOverLifetime")
-					.traits(Trait::OmitIfDefault | Trait::Custom)
+					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
 					.custom<Attr>(Attr{}.Label("Color Over Lifetime").In("Over Lifetime"))
 
 				// Rendering. RenderMode gates which asset slots are meaningful.
@@ -677,6 +691,15 @@ namespace GanymedE::Reflection {
 			if (Has(field, Trait::Flatten) && !IsReflected(type))
 			{
 				GE_CORE_ERROR("Reflection: {0}::{1} is marked Flatten but its type is not reflected", owner, field.name());
+				ok = false;
+			}
+
+			// A key prefix with nothing to prefix is silently ignored by the writer, which is the
+			// worst way for it to fail: the field still serializes, just under keys nobody meant.
+			if (attr && attr->KeyPrefix && !Has(field, Trait::Flatten))
+			{
+				GE_CORE_ERROR("Reflection: {0}::{1} has a key prefix but is not marked Flatten",
+					owner, field.name());
 				ok = false;
 			}
 

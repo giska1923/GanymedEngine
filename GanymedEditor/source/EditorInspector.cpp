@@ -523,7 +523,7 @@ namespace GanymedE::EditorUI {
 		const OverrideHook& overrides, const MultiEditHook& multi, const FieldFilter& filter)
 	{
 		const Trait traits = field.traits<Trait>();
-		if (Reflection::Has(traits, Trait::Hidden) || Reflection::Has(traits, Trait::Custom))
+		if (Reflection::Has(traits, Trait::Hidden) || Reflection::Has(traits, Trait::CustomDrawer))
 			return false;
 
 		if (filter && !filter(field))
@@ -531,36 +531,23 @@ namespace GanymedE::EditorUI {
 
 		const Attr* attr = Reflection::Attributes(field);
 
-		// A Flatten'ed member is a struct whose fields belong to the parent - the shape
-		// SceneSerializer already writes for a collider's PhysicsMaterial, and the shape the
-		// hand-written collider sections already draw.
-		if (Reflection::Has(traits, Trait::Flatten))
-		{
-			entt::meta_any nested = field.get(instance);
-			if (!nested)
-				return false;
-
-			// The nested fields keep the parent's override hook: an overridden Friction belongs
-			// to the collider, which is what the hook is keyed on.
-			entt::meta_any ref = nested.as_ref();
-			if (!DrawReflectedProperties(ref.as_ref(), overrides, multi, filter))
-				return false;
-
-			// Written back rather than edited in place: `get` may have handed back a copy, and
-			// which of the two it is depends on entt's policy rather than on anything here.
-			return field.set(instance, nested);
-		}
-
+		// A registered drawer wins over any structural layout rule, INCLUDING Trait::Flatten.
+		//
+		// This ordering is load-bearing and was the other way round until RangeF started
+		// flattening: `Flatten` is a statement about the FILE - "this struct's fields are
+		// siblings on disk" - and a collider's PhysicsMaterial and a particle's RangeF make that
+		// same statement while wanting opposite things from the inspector. PhysicsMaterial has no
+		// drawer and falls through to the inline path below; RangeF has one, and drawing its Min
+		// and Max as two loose rows is exactly the widget the type was introduced to replace.
 		PropertyDrawer drawer = FindDrawer(field.type());
 		if (!drawer)
 		{
 			// A reflected struct with no drawer of its own is drawn inline: its fields become rows
-			// of the parent, which is what the hand-written Camera section did with SceneCamera.
+			// of the parent, which is what the hand-written Camera section did with SceneCamera
+			// and what the collider sections did with PhysicsMaterial.
 			//
-			// This is an *inspector* decision only. It says nothing about serialization, where
-			// SceneCamera really is a nested map on disk - `Trait::Flatten` is the statement that
-			// a nested struct's fields are siblings in the file, and putting it here to get this
-			// layout would have been a lie the first generic writer believed.
+			// The nested fields keep the parent's override hook: an overridden Friction belongs to
+			// the collider, which is what the hook is keyed on.
 			if (Reflection::IsReflected(field.type()) && field.type().is_class())
 			{
 				entt::meta_any nested = field.get(instance);
@@ -571,6 +558,9 @@ namespace GanymedE::EditorUI {
 				if (!DrawReflectedProperties(ref.as_ref(), overrides, multi, filter))
 					return false;
 
+				// Written back rather than edited in place: `get` may have handed back a copy,
+				// and which of the two it is depends on entt's policy rather than on anything
+				// here.
 				return field.set(instance, nested);
 			}
 

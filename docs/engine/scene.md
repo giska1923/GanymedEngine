@@ -363,11 +363,13 @@ Attributes split by cost, because entt stores them differently:
 - **`Trait`** — a 16-bit flag word packed into the meta node itself. Free to read, no allocation, no
   lookup. entt reserves the low 16 bits of a node's traits word for its own flags (`is_class`,
   `is_enum`, …) and shifts user traits into the upper half, so a user enum gets exactly 16 bits and no
-  more — a hard ceiling, and it also asserts that not all sixteen are set at once. Ten are spent:
+  more — a hard ceiling, and it also asserts that not all sixteen are set at once. Eleven are spent:
   `Hidden`, `ReadOnly`, `Color`, `Radians`, `NotSerialized`, `OmitIfDefault`, `Flatten`,
-  `SerializeByName`, `Component`, `Custom`, plus the composite `Runtime = Hidden | NotSerialized`.
+  `SerializeByName`, `Component`, `CustomDrawer`, `CustomWriter`, plus the composites
+  `Runtime = Hidden | NotSerialized` and `Custom = CustomDrawer | CustomWriter`.
 - **`Attr`** — one payload struct behind `.custom<>`: display label, section, note, min/max, drag
-  speed, and the `AssetType` an `AssetHandle` field accepts. One struct rather than one per attribute
+  speed, the key prefix a `Flatten`ed field gives its children, and the `AssetType` an `AssetHandle`
+  field accepts. One struct rather than one per attribute
   kind because **entt holds a single `.custom<>` payload per meta object — a second call replaces the
   first, it does not append.** That single fact is also why registration is engine-side only: an
   editor-side second pass would silently overwrite everything the engine registered. Editor-only
@@ -379,15 +381,28 @@ seemed generally useful:
 - `Color` — 11 `ColorEdit3/4` call sites the type system cannot distinguish from a `DragFloat3`.
 - `Radians` — `TransformComponent::Rotation`, the spot cone half-angles and the camera FOV are stored
   in radians and authored in degrees. When it is set, `Attr`'s min/max are in **display** units.
-- `OmitIfDefault` — `ParticleEmitterComponent` guards all ~20 of its keys with `if (p.X != d.X)`
-  against a default-constructed `d`; every asset handle is written only when valid.
-- `Flatten` — `SceneSerializer` emits a collider's `PhysicsMaterial` **flattened**, as `Friction` and
-  `Restitution` siblings of `HalfExtents`, not under a `Material` sub-map. Without the flag a generic
-  writer would nest them and invalidate every saved collider.
+- `OmitIfDefault` — the key is written only when the field differs from the same field of a
+  default-constructed instance. `ParticleEmitterComponent` puts it on all ~20 of its authored fields,
+  and every asset handle carries it so an unset slot writes nothing. The comparison needs equality
+  on the field type, which entt cannot synthesize — `meta_any::operator==` compares *addresses*
+  unless a comparison function was registered — so each YAML codec carries an `Equal` alongside its
+  read/write pair, and a type with no codec is never omitted (writing a redundant key costs a diff
+  line; omitting a differing one is data loss).
+- `Flatten` — the nested struct's fields are emitted as **siblings**, not as a sub-map. A collider's
+  `PhysicsMaterial` writes `Friction` and `Restitution` beside `HalfExtents`; a particle's `RangeF`
+  writes `LifetimeMin` and `LifetimeMax`, using `Attr::KeyPrefix` to prefix each child key. Without
+  the flag a generic writer would nest them and invalidate every saved collider and emitter.
 - `SerializeByName` — type-level, on `AudioGroup`, the one enum persisted by name rather than ordinal.
-- `Custom` — a field both generic paths must skip because a bespoke drawer/writer owns it
-  (`RelationshipComponent`'s two ends, `ScriptComponent::Fields`, `StaticMeshComponent`'s per-slot
-  override list, the curve editors).
+  The names come from the enumerators registered on the enum type, so the file and the inspector's
+  combo read the same list.
+- `CustomDrawer` / `CustomWriter` — "a bespoke implementation owns this field", asked **separately of
+  each consumer**. These were one flag until the serializer conversion finished, and the conflation
+  ran the wrong way: `AnimatorComponent::Clip` and the two particle curves need a bespoke *widget*
+  (a combo over the mesh's clip names, a curve editor, a gradient editor) and nothing bespoke at all
+  on disk — a string and two sequences — yet a fact about the inspector locked them out of the
+  generic writer. `Custom` remains as the composite for the genuinely-both cases:
+  `RelationshipComponent`'s two ends, `ScriptComponent::Fields`, and `StaticMeshComponent`'s
+  per-slot override list.
 
 There is deliberately no `AdvancedOnly` and no `EnumNames`: nothing in the panel has an advanced
 section, and enum value names are registered on the **enum type**, so they live once beside the enum
@@ -461,16 +476,21 @@ judgement call per component: library container member ⇒ no sentinel.
 
 ### Current state
 
-**Two consumers: the inspector and the serializer.** Eight of the editor's twenty component sections
-are drawn from this registration rather than from a hand-written lambda
-([editor.md](../editor/editor.md#the-generic-reflected-inspector)), and nine components are written
-and read generically by `SceneSerializer` (below). The Lua bindings still hand-list every field and
-are deliberately out of scope.
+**Two consumers: the inspector and the serializer.** Fifteen of the editor's twenty component
+sections are drawn from this registration rather than from a hand-written lambda
+([editor.md](../editor/editor.md#the-generic-reflected-inspector)), and **every** component is
+written and read generically by `SceneSerializer` (below). The Lua bindings still hand-list every
+field and are deliberately out of scope.
 
-The two consumers convert **independently**, which is worth seeing once: `SpotLightComponent` is
-serialized generically while its inspector section stays hand-written. What blocks it from the panel
-is a cross-field clamp (outer ≥ inner) that has nothing to do with how it is stored. "Reflected" is
-per-consumer, not a property of the component.
+The two consumers convert **independently**, which is worth seeing once: Static Mesh, Animator and
+Script are serialized generically while their inspector sections stay hand-written. What blocks them
+from the panel is that their UI is driven by asset or Lua data — a mesh's material slots, its clip
+names, a Lua class's declared fields — which has nothing to do with how the component is stored.
+"Reflected" is per-consumer, not a property of the component.
+
+That independence is what the `CustomDrawer` / `CustomWriter` split makes expressible per *field*
+rather than only per component. `AnimatorComponent::Clip` is the smallest case: a combo over the
+mesh's clip names in the panel, an ordinary omitted-when-empty string on disk.
 
 Two facts that consumer established, both worth knowing before writing another one:
 
@@ -521,18 +541,48 @@ that still holds the pairing.
 Entities added by hand inside an instance carry no `PrefabMemberComponent` and take part in no diff,
 which preserves the "structural freedom inside an instance is allowed and unmarked" rule.
 
-It is written by hand in `SceneSerializer` rather than generically, for the same reason
-`PrefabInstanceComponent` is: a `UUID` persists as a plain integer, and the generic path has no codec
-for one.
+It is written generically like everything else. It used to be hand-written because "a `UUID`
+persists as a plain integer and the generic path has no codec for one" — there is a `UUID` codec now,
+so the exception went with the reason for it.
 
 ## Serialization
 
 ### The reflected path
 
-Nine components are written and read by `WriteReflected` / `ReadReflected` in
-[`SceneYaml.h`](../../GanymedEngine/source/GanymedE/Scene/SceneYaml.h) instead of by a hand-written
-block per component: Sprite Renderer, Directional / Point / **Spot** Light, Audio Listener, Rigid
-Body, and the three colliders.
+**Every component** is written and read by `WriteReflected` / `ReadReflected` in
+[`SceneYaml.h`](../../GanymedEngine/source/GanymedE/Scene/SceneYaml.h) rather than by a hand-written
+block. Three *fields* remain hand-written, and each is marked `Trait::Custom` so the generic path
+skips exactly them while the rest of their component still goes through it:
+
+| Field | Why |
+|---|---|
+| `RelationshipComponent::Parent` / `::Children` | The two ends of a link must agree; writing either half generically would corrupt the hierarchy. Reparenting goes through `Scene`'s API. |
+| `StaticMeshComponent::MaterialOverrides` | A flow sequence whose **index is the meaning** — the slot count comes from the mesh asset, not from the vector. |
+| `ScriptComponent::Fields` | A sequence of `{Name, Type, Value}` maps over a closed variant, because the declaring script may not be loadable when the scene is read. |
+
+`TagComponent` is written generically but read by hand, because the tag is needed to *create* the
+entity and so cannot go through a reader that needs an entity to read into.
+
+Four things the generic writer had to learn to cover the rest:
+
+- **`OmitIfDefault`**, against a default-constructed instance of the owning type. That instance is a
+  parameter of `WriteReflected` rather than something it builds: getting a default-constructed `T`
+  out of an `entt::meta_type` would need `.ctor<>()` registered on every component, where passing one
+  down from `WriteReflectedComponent<T>` — which already knows `T` — needs nothing and cannot be
+  forgotten for one type.
+- **Codecs for `UUID`, `AssetRef<T>`, the curve types and the enums.** An `AssetRef<T>` writes the
+  bare `uint64` handle a plain `AssetHandle` field writes, which is what kept every scene valid
+  across the asset milestone. Its reader deliberately does **not** resolve: warming every reference
+  at load would run a full IBL bake for an `AssetRef<Environment>`. The one field that wants warming,
+  `StaticMeshComponent::Mesh`, asks for it at its own call site.
+- **Prefixed `Flatten`**, so a `RangeF` keeps writing `LifetimeMin` / `LifetimeMax` while a
+  `PhysicsMaterial` keeps writing `Friction` / `Restitution` bare. The prefix is an `Attr` value per
+  field, not a rule derived from the field name — that would make an on-disk key a function of a C++
+  member name, which decision 3 forbids.
+- **Nested sub-maps** for a reflected struct with no codec, which is how `CameraComponent::Camera`
+  keeps its `Camera:` block. `SceneCamera`'s seven fields are registered against accessors, so
+  `RecalculateProjection` runs per field on load exactly as the hand-written setter calls made it,
+  and the private projection matrix never reaches the file.
 
 **The gate was byte-identical output, not a working round-trip.** Every committed `.ganymede` is a
 file people diff; a serializer that reorders one key or reformats one float invalidates all of them
@@ -545,20 +595,21 @@ at once. Three properties make that achievable rather than hopeful:
 3. Values go through the very same `operator<<` overloads, so a `float` written from a `meta_any`
    reaches yaml-cpp identically to one written from the member.
 
-Verified by running the same four scenes through both writers and diffing: two are byte-identical
-outright, and the other two match field-for-field once the *pre-existing* per-run UUID churn is
-accounted for — a control run of the unmodified binary produces the same churn against itself.
+Verified by running all seven committed scenes and prefabs through both writers and diffing the
+outputs: five are byte-identical, and the other two match block-for-block once the *pre-existing*
+per-run UUID churn in `3DExample` and `Example` is accounted for — a control run of the unmodified
+binary produces the same churn against itself. Note that the committed fixture files are themselves
+stale: **both** writers reformat them, because the curve emitters changed style after they were last
+saved. That is why the diff is taken between two runs rather than against what is in git.
 
-Two deliberate differences from the code it replaced:
+The four components no fixture exercises (Animator, Point Light, Spot Light, and the sphere and
+capsule colliders) are covered by a save → load → save fixed-point check over one entity carrying
+every component at non-default values.
 
-- **Reading is more tolerant.** The hand-written loader did `c.Field = node["Field"].as<T>()`
-  unguarded, so a missing key threw. The generic reader leaves the constructed value alone. That is
-  required, not a nicety: a field omitted because it equalled its default has to read back as that
-  default.
-- **`OmitIfDefault` is not implemented and asserts rather than being ignored.** It needs an equality
-  comparison entt cannot supply without a registration nothing has made. No converted component uses
-  it; any component that does stays hand-written until the flag is genuinely supported. Silently
-  dropping the semantics was the alternative and is worse.
+One deliberate difference from the code it replaced: **reading is more tolerant.** The hand-written
+loader did `c.Field = node["Field"].as<T>()` unguarded, so a missing key threw. The generic reader
+leaves the constructed value alone. That is required, not a nicety — a field omitted because it
+equalled its default has to read back as that default.
 
 
 

@@ -580,7 +580,9 @@ namespace GanymedE {
 			};
 
 			// "Master" | "Music" | "SFX". An unknown name warns and falls back to SFX rather
-			// than throwing - AudioGroupFromString is the same parser the scene serializer uses.
+			// than throwing. The scene serializer accepts the same three spellings but reaches
+			// them differently - through the enumerators registered on AudioGroup, which is what
+			// Trait::SerializeByName means - so a fourth group has to be added in both places.
 			audio["SetGroupVolume"] = [](const std::string& group, float volume)
 			{
 				AudioEngine::SetGroupVolume(AudioGroupFromString(group), volume);

@@ -746,3 +746,81 @@ component sections at all.
 
 That is the honest end of this line of work: every section whose shape comes from component *data*
 is now generic, and the five that are left are driven by something else entirely.
+
+
+---
+
+## R5 execution notes - `OmitIfDefault`, and the rest of the serializer
+
+**Every component is now written and read generically.** Three *fields* stay hand-written, each
+marked `Trait::Custom`: `RelationshipComponent`'s two ends (the halves of a link must agree),
+`StaticMeshComponent::MaterialOverrides` (a flow sequence whose index is the meaning) and
+`ScriptComponent::Fields` (a `{Name, Type, Value}` sequence over a closed variant). `TagComponent`
+is written generically but read by hand, because the tag is needed to *create* the entity.
+
+**The blocker was larger than the flag.** R3 stopped at nine components and named `OmitIfDefault` as
+the reason. Implementing it was necessary and not sufficient - three more things were in the way:
+
+1. **`Custom` conflated two questions.** `AnimatorComponent::Clip`, `SizeCurve` and
+   `ColorOverLifetime` were flagged `Custom` because they need a bespoke *widget* - a combo over the
+   mesh's clip names, a curve editor, a gradient editor. On disk they are a string and two
+   sequences, needing nothing bespoke at all. One flag meaning "both consumers skip this" locked
+   them out of the generic writer over a fact about the inspector, which contradicts this
+   milestone's own "the two consumers convert independently" line. Split into `CustomDrawer` and
+   `CustomWriter`, with `Custom = CustomDrawer | CustomWriter` kept as the composite so every
+   genuinely-both registration is unchanged. Cost: one trait bit, eleven of sixteen now spent.
+2. **`Flatten` could not express `LifetimeMin`.** It emitted the nested type's field names verbatim,
+   which is right for a collider's `PhysicsMaterial` (`Friction`, `Restitution`) and collides five
+   ways for `RangeF` (five `Min` keys). Added `Attr::KeyPrefix` - a valued attribute, per field.
+   Deliberately not derived from the field name even though the prefix equals it for all five today:
+   that coincidence as a rule would make an on-disk key a function of a C++ member name, which
+   decision 3 forbids.
+3. **No nested sub-maps.** `CameraComponent::Camera` is a `Camera:` block on disk. A reflected struct
+   with no codec now writes as a nested map, which is the *serialization* counterpart of the
+   inspector's nested-struct fallback and, unlike it, a real statement about the file.
+
+**How `OmitIfDefault` compares.** Against a default-constructed instance of the owning type, passed
+*in* to `WriteReflected` rather than built by it: recovering a default-constructed `T` from an
+`entt::meta_type` would need `.ctor<>()` on every component, where `WriteReflectedComponent<T>`
+already knows `T` and cannot forget one. Equality lives on the YAML codec, because entt has none to
+synthesize - `meta_any::operator==` compares the *addresses* two anys point at unless a comparison
+function was registered, so the naive version would have been false for every field every time and
+made the flag a silent no-op. A field whose type registered no equality is never omitted: a
+redundant key costs a diff line, an omitted differing one is data loss.
+
+**One regression found and fixed in the inspector.** Marking the `RangeF` fields `Flatten` broke the
+paired range widget, because `DrawProperty` tested `Flatten` *before* looking up a drawer, so
+`Lifetime` started drawing as two loose rows. The two branches turned out to do the same thing, so
+the fix removed the `Flatten` special case entirely and let the drawer lookup come first -
+`PhysicsMaterial` has no drawer and still falls through to the inline path, `RangeF` has one and
+keeps it. The inspector now reads no serialization trait at all, which is what it should always have
+been doing.
+
+**Verification.**
+
+- **Byte-identity, measured rather than assumed.** All seven committed scenes and prefabs were
+  loaded and re-saved by both writers and the outputs diffed. Five byte-identical; `3DExample` and
+  `Example` match block-for-block once the pre-existing per-run UUID churn is accounted for, and a
+  control run of the *unmodified* binary reproduces that churn against itself.
+- **A finding worth recording: the committed fixtures are stale.** Both writers reformat them - the
+  curve emitters changed style after those files were last saved. So `git diff` is not a valid
+  identity test here, which is why the comparison is between two runs.
+- **Round-trip fixed point** over one entity carrying every component at non-default values:
+  save -> load -> save is byte-identical, covering the four components no fixture exercises
+  (Animator, Point Light, Spot Light, sphere and capsule colliders), the by-name `AudioGroup`, the
+  flattened `RangeF` and `PhysicsMaterial`, the nested camera map, all four `AssetRef<T>` slots, both
+  curve types, and an empty `Clip` correctly omitted.
+- **Inspector**, by screenshot: `Lifetime` still one paired row, a collider's `Friction` and
+  `Restitution` still inline rows, Audio Source's Group combo now the second row. No rotation drift
+  and `UndoDepth` 0 while merely drawing.
+- Debug, Release and Dist clean.
+
+**One layout change, pre-approved.** `AudioSourceComponent::Group` moved to second in the
+registration, because registration order *is* on-disk key order and `Clip, Group, Volume, ...` is the
+order every saved scene already has. The inspector draws it second now as well; the two orders were
+free to differ only while the writer was hand-written.
+
+**Adjacent, not done.** `PrefabSerializer::Save` copies `PrefabMemberComponent` into the prefab file
+when the source subtree is itself part of an instance - it strips `PrefabInstanceComponent` for
+exactly that reason and should strip this too. Pre-existing, found by the round-trip probe, and out
+of scope here.
