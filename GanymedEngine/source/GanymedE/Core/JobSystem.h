@@ -9,6 +9,11 @@
 #include <optional>
 #include <type_traits>
 
+// Forward declaration only, so that exposing the scheduler to an adapter (see
+// Detail::NativeScheduler below) does not put enkiTS on the include path of every consumer that
+// merely holds a Future.
+namespace enki { class TaskScheduler; }
+
 namespace GanymedE {
 
 	// Three tiers, mapped 1:1 onto enkiTS's default ENKITS_TASK_PRIORITIES_NUM == 3.
@@ -52,6 +57,18 @@ namespace GanymedE {
 		};
 
 		using JobStatePtr = std::shared_ptr<JobState>;
+
+		// The underlying enkiTS scheduler, or nullptr before Init and after Shutdown.
+		//
+		// **For adapters only, and there is exactly one.** Jolt owns its own `JPH::JobSystem`
+		// interface and cannot be expressed in terms of `Future<T>`: its jobs are reference
+		// counted, fire-and-forget, and tracked by Jolt's own barriers, where a Future's whole
+		// contract is that dropping it cancels and waits. Bridging the two needs enkiTS's own
+		// vocabulary, so this hands it over rather than growing a second half-API beside Submit.
+		//
+		// Anything that can be written as ParallelFor or Submit must be. Reaching for this to
+		// avoid a Future is bypassing the one property this subsystem exists to guarantee.
+		enki::TaskScheduler* NativeScheduler();
 
 		// Result storage, separate from JobState so JobState stays non-template.
 		template<typename T>

@@ -283,6 +283,15 @@ namespace GanymedE {
 		}
 	}
 
+	namespace Detail {
+
+		enki::TaskScheduler* NativeScheduler()
+		{
+			return s_Scheduler.get();
+		}
+
+	}
+
 	void JobSystem::Init()
 	{
 		if (s_Scheduler)

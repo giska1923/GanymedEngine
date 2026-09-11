@@ -232,10 +232,19 @@ Two behaviours worth knowing:
 - **Every entry point works uninitialized**, by running the work inline on the calling thread. The
   asset compiler is meant to run from tools that never construct an `Application`, and a scheduler
   that *must* exist is one that gets a null check at every call site instead.
-- **Jolt still owns its own pool** of `hardware_concurrency() - 1` threads
-  ([physics.md](physics.md)), so today there are two pools of that size and the oversubscription is
-  real. Consolidating Jolt onto `JobSystem` via `JPH::JobSystemWithBarrier` is the fix; shrinking
-  this pool on a guess is not.
+- **Jolt runs on this scheduler**, not a pool of its own ([physics.md](physics.md#the-job-system)).
+  It used to create `hardware_concurrency() - 1` threads beside the ones here; consolidating removed
+  15 threads from a 16-thread machine's editor process.
+
+**`Detail::NativeScheduler()` hands out the raw enkiTS scheduler, and exists for exactly one
+caller.** Jolt owns its own `JPH::JobSystem` interface and cannot be expressed in terms of
+`Future<T>`: its jobs are reference counted, fire-and-forget, and tracked by Jolt's own barriers,
+where a `Future`'s whole contract is that dropping it cancels and waits. Bridging the two needs
+enkiTS's vocabulary, so the accessor hands it over rather than growing a second half-API beside
+`Submit`. It is declared behind a forward declaration of `enki::TaskScheduler`, so enkiTS stays off
+the include path of everything that merely holds a `Future`. Anything expressible as `ParallelFor`
+or `Submit` must use those instead — reaching for this to dodge a `Future` bypasses the one property
+this subsystem exists to guarantee.
 
 `RunSelfTest()` runs from `Init` in Debug builds and checks the three things worth catching at boot
 rather than during a scene swap: a `ParallelFor` sum matches the serial result, a `Future` dropped

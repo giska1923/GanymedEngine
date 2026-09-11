@@ -30,16 +30,17 @@ documented.** A file here is a promise, not a description.
 | Document | Covers | Items |
 |---|---|---|
 | [rendering.md](rendering.md) | bgfx Phase 7: backend selection, caps-driven projection, multi-backend validation | 3 + optional |
-| [threading.md](threading.md) | Consolidating Jolt onto `JobSystem` | 1 |
 | [reflection.md](reflection.md) | Prefab serialization, apply-to-prefab, multi-entity editing gaps | 6 |
 | [assets.md](assets.md) | Dependency hashing, parse backpressure, naming and cleanup chores | 6 |
 | [cross-cutting.md](cross-cutting.md) | Platform coverage, verification gaps | 2 |
 
 **Priority, as a recommendation rather than a schedule:** [rendering.md](rendering.md)'s §9.3 first —
 it is a latent correctness bug on any backend that is not D3D11, and it blocks the Linux/macOS
-validation in [cross-cutting.md](cross-cutting.md). Then [threading.md](threading.md), which is the
-only item here that changes how the engine behaves under load. The rest is polish, and several of
-the [assets.md](assets.md) entries are one-liners worth batching.
+validation in [cross-cutting.md](cross-cutting.md). The rest is polish, and several of the
+[assets.md](assets.md) entries are one-liners worth batching.
+
+Threading is **done**: T1–T4 and decision 4 have all landed, so there is no threading file here any
+more. Jolt now runs on `Core/JobSystem` — see [physics.md](../engine/physics.md#the-job-system).
 
 ## Known-stale entries in `docs/history/`
 

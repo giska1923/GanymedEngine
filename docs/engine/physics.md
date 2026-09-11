@@ -47,7 +47,7 @@ Inside `Step`:
 1. **Kinematic bodies** are pushed *into* Jolt from their current world transform (gameplay code
    moves the component; physics follows).
 2. Previous poses ← current poses (for interpolation), then `PhysicsSystem::Update` (1 collision
-   step; Jolt's own temp allocator + job system).
+   step; Jolt's own temp allocator, and the shared job system below).
 3. Current poses are captured, and contact add/remove events queued by the contact listener
    (thread-safe; Jolt callbacks fire from job threads) are drained and translated to
    `PhysicsCollisionEvent{ EntityA, EntityB, Entered }` via the body↔UUID maps.
@@ -89,6 +89,44 @@ writing its `TransformComponent` instead is overwritten by `SyncTransforms` on t
 Each wakes the body before acting — Jolt sleeps idle bodies and silently discards a velocity set on
 a sleeping one. All of them no-op when the entity has no body or play is not running, rather than
 asserting: a script poking at the wrong entity should not take the editor down.
+
+## The job system
+
+**Jolt's jobs run on `Core/JobSystem`, not on a thread pool of Jolt's own.** `JoltJobSystem` in
+`PhysicsScene.cpp` implements `JPH::JobSystemWithBarrier`, which supplies the barrier half and
+leaves four functions to the host: `GetMaxConcurrency`, `CreateJob`, `FreeJob` and `QueueJob(s)`.
+
+Why it was worth doing ([THREADING_ROADMAP.md](../history/THREADING_ROADMAP.md) decision 4): Jolt's
+stock `JobSystemThreadPool` creates `hardware_concurrency() - 1` threads, and
+[`JobSystem`](core.md#job-system) had already created that many, so the process ran two full-width
+pools for one machine. Measured on a 16-thread box, the editor went from **75 threads to 60** —
+exactly the 15 Jolt was creating.
+
+What did **not** change: Jolt still owns its job graph, its dependencies and its barriers. Only the
+threads underneath are shared. `GetMaxConcurrency()` reports `JobSystem::ThreadCount()`, which is
+the same number the old pool reported (`workers + 1`, because the thread waiting on a barrier runs
+jobs too) — so Jolt splits its stages into the same number of chunks it always did.
+
+Three details carry the design:
+
+- **A job is queued by handing an enkiTS task a reference to it.** Jolt guarantees the job is alive
+  only for the duration of `QueueJob`, so the adapter calls `AddRef()` and the task calls
+  `Release()` once the job has run.
+- **Task objects are pooled with a two-condition claim.** A slot is reusable only when it is both
+  unclaimed *and* `GetIsComplete()` — enkiTS touches a task once more after `ExecuteRange` returns
+  in order to retire it, and documents that the task must not be accessed after its running count
+  reaches zero. Claiming on either condition alone is a race: the flag alone hands out a slot enkiTS
+  is still finishing with, and completion alone lets two threads claim the same idle slot.
+- **Falling back to the calling thread is always legal.** If every slot is busy, or the scheduler is
+  unavailable (a tool with no `Application`, or physics stepped from a thread enkiTS does not know),
+  the job runs inline. That is not a degraded special case — it is the same assumption Jolt's own
+  pool makes when it has no worker threads, and it is self-limiting, since the thread that would
+  have queued work performs it instead.
+
+Verified by running the same scene through both implementations at a fixed timestep: body positions
+are identical to six decimal places after 300 steps, and 8,688 of 8,688 jobs were dispatched to
+enkiTS workers with none falling back inline — the check that separates "correctly parallel" from
+"accidentally serial", since both produce the same answer.
 
 ## Debug draw
 
