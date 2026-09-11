@@ -33,6 +33,7 @@ documented.** A file here is a promise, not a description.
 | [reflection.md](reflection.md) | Apply-to-prefab, template cache, multi-entity editing gaps | 4 |
 | [assets.md](assets.md) | Dependency hashing, parse backpressure, naming and cleanup chores | 6 |
 | [cross-cutting.md](cross-cutting.md) | Platform coverage, verification gaps | 2 |
+| [editor-visual-parity.md](editor-visual-parity.md) | Editor look-and-feel milestone: theme tokens, fonts/icons, panel furniture, status bar, custom window chrome | 10 phases |
 
 **Priority, as a recommendation rather than a schedule:** [cross-cutting.md](cross-cutting.md)'s
 platform coverage is now the interesting one — D3D11, D3D12 and **OpenGL 3.3** all render correctly
