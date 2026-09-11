@@ -302,7 +302,7 @@ namespace GanymedE {
 		{
 			// The runtime never writes into assets/. One flag, one meaning, shared with the
 			// registry writer - see docs/engine/assets.md.
-			if (!mesh || !AssetManager::IsRegistryWritable())
+			if (!mesh || !AssetManager::IsAssetsWritable())
 				return;
 
 			const auto& materials = mesh->GetMaterials();

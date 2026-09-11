@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string>
 
 namespace GanymedE {
 
@@ -56,6 +57,33 @@ namespace GanymedE {
 	void ContentBrowserPanel::OnImGuiRender()
 	{
 		ImGui::Begin("Content Browser");
+
+		// Asset-tree maintenance, on the panel's background rather than on a file. It acts on
+		// what the last scan found, so it is deliberately not enabled when there is nothing to
+		// reap - the disabled item with a count is the report.
+		if (ImGui::BeginPopupContextWindow("##ContentBrowserContext", ImGuiPopupFlags_MouseButtonRight
+			| ImGuiPopupFlags_NoOpenOverItems))
+		{
+			const std::size_t orphans = AssetManager::OrphanedMetaCount();
+			const std::string label = orphans == 0
+				? std::string("No orphaned `.meta` sidecars")
+				: "Clean " + std::to_string(orphans) + " orphaned `.meta` sidecar(s)";
+
+			if (ImGui::MenuItem(label.c_str(), nullptr, false, orphans != 0))
+				GE_CORE_INFO("Cleaned {0} orphaned sidecar(s)", AssetManager::CleanOrphanedMeta());
+
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			{
+				ImGui::SetTooltip("Deletes `.meta` files whose asset is missing. Each sidecar "
+					"holds the handle scenes use to name its asset, so only do this once you "
+					"know the assets are gone rather than not checked out.");
+			}
+
+			if (ImGui::MenuItem("Rescan assets/"))
+				AssetManager::ScanAssets();
+
+			ImGui::EndPopup();
+		}
 
 		if (m_CurrentDirectory != m_BaseDirectory)
 		{

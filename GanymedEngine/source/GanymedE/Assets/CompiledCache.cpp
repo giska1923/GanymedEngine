@@ -525,7 +525,7 @@ namespace GanymedE {
 		// still works - that is what the fallback above is for - but every boot pays for it, and
 		// on a first run of a large project that is minutes. Said once, because a whole project
 		// missing its outputs would otherwise say it per asset.
-		if (!AssetManager::IsRegistryWritable() && !s_Data.WarnedAboutReadOnlyCompile.test_and_set())
+		if (!AssetManager::IsAssetsWritable() && !s_Data.WarnedAboutReadOnlyCompile.test_and_set())
 		{
 			GE_CORE_WARN("This install treats assets/ as read-only but had to compile "
 				"'{0}' - the assets/.compiled tree was not shipped with it. Compiled output is "

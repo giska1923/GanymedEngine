@@ -52,6 +52,16 @@ namespace GanymedE {
 		// references is more useful stale than absent.
 		static void ScanAssets();
 
+		// `.meta` sidecars the last scan found with no asset beside them, and the action that
+		// deletes them. Split in two because the detection is safe and the delete is not: a
+		// sidecar holds the handle every scene uses to name that asset, so reaping one whose
+		// file is only *temporarily* absent - an incomplete checkout, a branch without it -
+		// permanently breaks every reference. Detection therefore runs at every scan and only
+		// warns; the delete is a person's decision. CleanOrphanedMeta re-checks each file
+		// before removing it and returns how many it took.
+		static std::size_t OrphanedMetaCount();
+		static std::size_t CleanOrphanedMeta();
+
 		// "Ensure this file has a sidecar, and tell me its handle" (idempotent). Returns
 		// InvalidAssetHandle for an unsupported extension. This is the entry point for a file
 		// created *after* the scan - an extracted `.glb` texture, a generated `.gmat`.
@@ -112,7 +122,7 @@ namespace GanymedE {
 		static std::size_t PendingCount();
 
 		// Evict a loaded asset so the next GetAsset re-reads it from disk. For a mesh
-		// this also drops its textures and the .meshcache file - "reimport now".
+		// this also drops its textures and its compiled blob - "reimport now".
 		// Safe to call mid-frame from editor UI; see docs/engine/assets.md for why.
 		static void Reload(AssetHandle handle);
 
@@ -135,7 +145,11 @@ namespace GanymedE {
 		// "This process may write into assets/." False in the shipped runtime, which treats
 		// assets/ as read-only content. The sidecar writer and every other asset-file writer
 		// share this one flag rather than each inventing a parallel one.
-		static bool IsRegistryWritable();
+		//
+		// Named IsRegistryWritable until it was renamed: it never gated the registry. The
+		// registry it referred to is the legacy assets/AssetRegistry.gr, which is read once for
+		// migration and never written at all.
+		static bool IsAssetsWritable();
 
 	private:
 		// Reads the legacy assets/AssetRegistry.gr, if it still exists, into a path -> handle

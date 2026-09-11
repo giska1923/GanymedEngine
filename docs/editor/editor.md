@@ -539,8 +539,8 @@ Two gaps, deliberate in v1:
 ## Content Browser panel
 
 [`ContentBrowserPanel`](../../GanymedEditor/source/Panels/ContentBrowserPanel.h) — a grid view of
-`assets/`. Two classes of entry are hidden: anything whose name starts with `.` (the `.compiled/`
-mesh cache today, `.compiled/` when the asset compiler lands) and `.meta`/`.meta.bad` sidecars.
+`assets/`. Two classes of entry are hidden: anything whose name starts with `.` (`.compiled/`, the
+asset compiler's output) and `.meta`/`.meta.bad` sidecars.
 Hiding the sidecars is not cosmetic — one per asset would double every row in the grid and offer
 **Import** on a file that is not an asset. They are the `AssetManager`'s to write, never a human's
 (see [assets.md](../engine/assets.md#the-meta-sidecar)):
@@ -565,6 +565,14 @@ Hiding the sidecars is not cosmetic — one per asset would double every row in 
   setting edited by hand, or simple doubt about what is in the cache. It **blocks**, and a large
   texture is seconds; the menu item's tooltip says so rather than letting the editor look hung.
   Making it non-blocking is asset Phase 5's job.
+- Right-click the **panel background** (`BeginPopupContextWindow` with `NoOpenOverItems`, so it
+  never competes with the per-file menu) → asset-tree maintenance: **Rescan `assets/`**, and
+  **Clean N orphaned `.meta` sidecar(s)**. The clean item carries its own count and is *disabled*
+  when the count is zero — the disabled item with "No orphaned `.meta` sidecars" on it is the
+  report, which is why it is drawn rather than hidden. Its tooltip says what a sidecar holds,
+  because the action is not undoable: see
+  [assets.md](../engine/assets.md#orphaned-sidecars) for why the editor asks a person rather than
+  reaping at boot.
 
 ## Typed drag-drop
 

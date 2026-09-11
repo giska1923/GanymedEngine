@@ -40,13 +40,14 @@ one derived index plus a registry of per-type managers (see *Managers and cachin
 | `GetAsset<T>(handle)` | Cached load through the type’s manager. Available for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those, enforced by an `IsAssetType<T>` `static_assert`. Prefer an [`AssetRef<T>`](#assetreft) member; this is for one-shot lookups |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
 | `GetCacheStats()` | One `{TypeName, Resident, Retained}` row per registered manager, for the editor’s Stats panel |
-| `IsRegistryWritable()` | "This process may write into `assets/`" — one flag, one meaning, for sidecars and every other asset-file writer |
+| `OrphanedMetaCount()` / `CleanOrphanedMeta()` | `.meta` sidecars the last scan found with no asset beside them, and the action that deletes them. Split because detection is safe and deletion is not — see [Orphaned sidecars](#orphaned-sidecars) |
+| `IsAssetsWritable()` | "This process may write into `assets/`" — one flag, one meaning, for sidecars and every other asset-file writer |
 
 `Init(false)` is for a **shipped game**: it must not write into its own install directory (under
 Program Files that fails outright), and it has nothing to persist anyway. The guard is checked at the
 one place identity is decided rather than at each call site, so no future caller can bypass it — and
 that matters, because imports happen *during scene deserialization* for path-based components, long
-before any explicit save. `IsRegistryWritable()` exposes the same flag for code that writes other
+before any explicit save. `IsAssetsWritable()` exposes the same flag for code that writes other
 files into `assets/`; asset writers use that one gate rather than each inventing a parallel guard.
 Handles minted in a read-only session still work; they just do not outlive it, which is the right
 lifetime for something nobody authored. The corollary for a shipped build is that **every shipped
@@ -95,12 +96,49 @@ gone, along with `LoadRegistry`/`SaveRegistry`. It existed only because one impo
 shared file, so writes had to be deferred to the end of a user-visible action. A ~90-byte sidecar
 with no shared file needs no batching: `ImportAsset` writes, and there is nothing to flush.
 
+### Orphaned sidecars
+
+A `.meta` whose asset is no longer on disk is **detected on every scan and deleted only on
+request**, and the split is the whole design.
+
+Detection is free: the walk already visits the file, so an orphan costs one `exists()` on the path
+with `.meta` stripped. Each one is logged **by path**, not counted:
+
+```
+1 orphaned `.meta` sidecar(s) - the asset each one names is not on disk. ...
+  orphaned sidecar: textures/_deleted_ghost.png.meta
+```
+
+Deleting is a separate, explicit action — **Content Browser → right-click the background → Clean
+orphaned `.meta`** — for a reason that outweighs the tidiness. A sidecar is the *only* record of the
+handle every scene uses to name that asset. "The asset is not there" and "the asset is not there
+*yet*" look identical on disk, and the second case is ordinary: a partial checkout, a branch that
+does not carry it, a file mid-move, an LFS pointer not yet fetched. A boot-time sweep would silently
+destroy identity in exactly the situations where the tree is least trustworthy, and the damage is
+unrecoverable — the next scan mints a fresh handle and every scene reference is dead. Reporting is
+always safe; reaping never is. Reaping therefore needs a person who has looked at the paths.
+
+Two narrower rules fall out of the same reasoning:
+
+- **`.bad` files are never orphans.** A quarantined sidecar exists precisely so its handle can be
+  recovered by hand; reaping it would defeat the quarantine.
+- **A sidecar beside an unindexed file is not an orphan.** `notes.txt.meta` has its asset — it is
+  simply not an extension the scan recognizes. Treating it as debris would make the sweep an
+  arbiter of which extensions are allowed to exist.
+
+`CleanOrphanedMeta()` re-checks each path before removing it, because the list is as old as the last
+scan and the asset may have arrived in between — verified: a sidecar listed as an orphan whose asset
+appears before the sweep runs is skipped, and both files survive. It is a no-op when `assets/` is
+read-only, which is every shipped runtime.
+
 ### The scan
 
 `ScanAssets()` walks `assets/` with a `recursive_directory_iterator`, calls
 `disable_recursion_pending()` on any directory whose name starts with `.` (`.compiled/`, and the
-abandoned `.assets/`), and skips `.meta`/`.bad` files and any extension
-`AssetTypeFromExtension` does not recognize. Paths are collected, **`std::sort`ed**, and only then
+abandoned `.assets/`), and skips `.bad` files and any extension
+`AssetTypeFromExtension` does not recognize. A `.meta` is skipped as an *asset* but not ignored:
+the walk is already standing on it, so it costs one `exists()` to notice that the file it names is
+gone (see [Orphaned sidecars](#orphaned-sidecars)). Paths are collected, **`std::sort`ed**, and only then
 registered. The sort is load-bearing rather than cosmetic: iteration order is unspecified, and the
 duplicate-handle rule below is "first one wins", so an unsorted scan would pick a different winner
 on NTFS than on ext4 and two developers with the same copy-pasted `.meta` would see different assets
@@ -132,6 +170,9 @@ Asset scan: 19 files, 19 adopted from sidecars, 0 adopted from the legacy regist
 0 handles minted, 0 sidecars written, 0 quarantined, 0 handle collisions, 0 types corrected
 ```
 
+Orphaned sidecars are reported separately and by name rather than as another counter on that line,
+because each one needs a decision rather than a tally.
+
 A second boot over an unchanged tree must read **0 minted, 0 written** — verified on both apps, with
 byte-identical handles across runs. Legacy adoption is counted apart from a fresh mint on purpose:
 on the one boot that performs the migration, that number is what says the migration was lossless.
@@ -161,7 +202,7 @@ the old registry recorded or every scene referencing it breaks. Both editor and 
 name exactly such paths.
 
 If `AssetRegistry.gr` exists but **fails to parse**, the session goes read-only
-(`IsRegistryWritable()` becomes false) instead of quarantining the file. Nothing overwrites it any
+(`IsAssetsWritable()` becomes false) instead of quarantining the file. Nothing overwrites it any
 more, so leaving it in place is what lets a hand-repair work; what matters is that a broken seed must
 not bake a lossy migration into the tree. Every asset would otherwise mint a fresh handle and write a
 sidecar claiming it, permanently breaking every scene that referenced the old one. Read-only means
@@ -216,11 +257,6 @@ that did not travel with its asset. It fires **once per handle** (`WarnedUnknown
 `RenderSystem` re-fetches assets by handle every frame per entity and an unguarded warning would
 arrive at frame rate — the same loud-but-not-broken posture `AnimationSystem` takes for an unknown
 clip name.
-
-One gap remains and is worth naming: nothing yet detects a sidecar whose asset was deleted. An
-orphaned `foo.png.meta` is harmless (the scan never sees it, since it walks assets and not sidecars)
-but it accumulates, and a "clean orphaned `.meta`" maintenance action is the cheap fix when it starts
-to matter.
 
 `GetAsset<T>` for an unsupported `T` is still a **compile error naming the supported types**, not
 an unresolved external at link time. It used to be a primary template whose body was
@@ -665,7 +701,7 @@ Edit an asset on disk, see it in the viewport — no restart, no button.
 [`AssetWatcher`](../../GanymedEngine/source/GanymedE/Assets/AssetWatcher.h) polls `assets/` and turns
 a file change into an eviction; everything after that is machinery Phases 3–5 already built.
 
-Watching is **on in the editor, off in the runtime** — the switch is `IsRegistryWritable()`, because
+Watching is **on in the editor, off in the runtime** — the switch is `IsAssetsWritable()`, because
 an install that treats `assets/` as read-only has no editor to reload into and its content does not
 change under it.
 
@@ -820,7 +856,7 @@ A malformed or missing `.gmat` logs and returns null — the `SceneSerializer::D
 
 Runs from the mesh manager’s Apply stage, after either load path succeeds — that is the one point cold
 import and cache replay both pass through, so a cached mesh still gets its sidecars instead of
-needing its `.meshcache` deleted first. Gated on `IsRegistryWritable()`: the runtime never writes
+needing its `.meshcache` deleted first. Gated on `IsAssetsWritable()`: the runtime never writes
 into `assets/`.
 
 - One `.gmat` per material slot at `<meshdir>/<meshstem>_mat<i>_<name>.gmat`, **iff absent**. The

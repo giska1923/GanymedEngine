@@ -21,14 +21,10 @@ Entities:
       SpeedMin: 2
       SpeedMax: 4
       ConeAngle: 20
-      StartSizeMin: 0.04
-      StartSizeMax: 0.08
+      StartSizeMin: 0.0399999991
+      StartSizeMax: 0.0799999982
       GravityModifier: 1
       WorldSpace: true
-      SizeCurve:
-        - [0, 1]
-        - [1, 0]
-      ColorOverLifetime:
-        - [0, 1, 0.65, 0.15, 1]
-        - [1, 1, 0.25, 0, 0]
+      SizeCurve: [[0, 1], [1, 0]]
+      ColorOverLifetime: [[0, 1, 0.649999976, 0.150000006, 1], [1, 1, 0.25, 0, 0]]
       Blend: 1

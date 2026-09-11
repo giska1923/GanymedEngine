@@ -29,18 +29,21 @@ documented.** A file here is a promise, not a description.
 
 | Document | Covers | Items |
 |---|---|---|
-| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA is broken | 1 |
+| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred | 1 (parked) |
 | [reflection.md](reflection.md) | Apply-to-prefab, template cache, multi-entity editing gaps | 4 |
-| [assets.md](assets.md) | Dependency hashing, parse backpressure, naming and cleanup chores | 6 |
+| [assets.md](assets.md) | Dependency hashing, parse backpressure | 2 |
 | [cross-cutting.md](cross-cutting.md) | Platform coverage, verification gaps | 2 |
 
 **Priority, as a recommendation rather than a schedule:** [cross-cutting.md](cross-cutting.md)'s
 platform coverage — **all four backends now render correctly on Windows**, D3D12 and Vulkan
 pixel-identically to D3D11 and OpenGL within 5/255, so nothing in the renderer blocks a Linux build
-any more. Otherwise the [assets.md](assets.md) entries are one-liners worth batching, and async
-[rendering.md](rendering.md) has one item left and it is a feature rather than a check: **MSAA is
-dead plumbing that aborts if enabled**, and fixing it needs an answer for resolving the entity-ID
-attachment. Picking and sRGB are both done.
+any more. [assets.md](assets.md)'s one-liner batch is done — what is left there is two design
+questions, each wanting a measurement first. [rendering.md](rendering.md) is effectively closed — all four backends render, pick and agree on
+colour. Its one remaining entry, **MSAA, is parked on purpose**: the abort is diagnosed and the fix
+is one line, but whether MSAA is wanted at all is the open question, and FXAA already ships. Nothing
+there blocks anything else.
+
+That leaves [cross-cutting.md](cross-cutting.md)'s platform coverage as the live work.
 
 Threading is **done**: T1–T4 and decision 4 have all landed, so there is no threading file here any
 more. Jolt now runs on `Core/JobSystem` — see [physics.md](../engine/physics.md#the-job-system).
@@ -55,5 +58,12 @@ describe problems that were fixed later. Verified stale, recorded here so nobody
 - `REFLECTION_ROADMAP.md` R2 note "`Attr::Section` is unread by the generic path" — it is read, at
   `EditorInspector.cpp`'s section grouping.
 - `ASSET_PIPELINE_ROADMAP.md` Phase 3 note "a canonical entity order would fix it" — canonical order
-  landed; only the per-run UUID churn survives, tracked in [assets.md](assets.md).
+  landed, and the per-run UUID churn it left is gone too: the duplicate handles in `3DExample` and
+  `Example` were re-minted by a one-off re-save of all seven fixtures, verified idempotent (a second
+  load+save pass remaps nothing and produces byte-identical files).
+- `ASSET_PIPELINE_ROADMAP.md` Phase 1 note "orphaned `.meta` cleanup is cheap insurance, not built" —
+  built: detected at every scan, reaped only by an explicit editor action
+  ([assets.md](../engine/assets.md#orphaned-sidecars)).
+- `ASSET_PIPELINE_ROADMAP.md` Phase 1 note on `IsRegistryWritable` being misnamed — renamed to
+  `IsAssetsWritable`.
 - `THREADING_ROADMAP.md` "T4 remains open" — history inside T3's notes; T4 is done.
