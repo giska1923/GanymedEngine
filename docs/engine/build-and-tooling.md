@@ -16,10 +16,17 @@ bx/bimg/bgfx, Lua. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug r
 `Dist` (no Jolt debug renderer). Output goes to `bin/<config>-<os>-<arch>/<project>/`,
 intermediates to `temp/`.
 
-Workspace-wide define worth knowing: **`GLM_FORCE_DEPTH_ZERO_TO_ONE`** — bgfx normalizes clip
-space to [0,1] on D3D/Vulkan/Metal; glm defaults to GL's [-1,1]. It is set at workspace scope on
-purpose: glm is header-only, and a project disagreeing would silently change the layout of shared
-glm types across the static-library boundary. `BgfxContext` asserts the live backend agrees.
+Workspace-wide defines worth knowing:
+
+- **`GLM_FORCE_DEPTH_ZERO_TO_ONE`** — bgfx normalizes clip space to [0,1] on D3D/Vulkan/Metal; glm
+  defaults to GL's [-1,1]. It is set at workspace scope on purpose: glm is header-only, and a
+  project disagreeing would silently change the layout of shared glm types across the
+  static-library boundary. `BgfxContext` asserts the live backend agrees.
+- **`IMGUI_ENABLE_FREETYPE`** — ImGui rasterizes through FreeType instead of `stb_truetype`.
+  Workspace-wide so `imgui_draw.cpp` (which assigns the builder) and every TU that includes
+  `imgui_internal.h` agree. A define only on the ImGui project would silently fall back to
+  stb in editor TUs. `extern/ImGui.lua` also compiles `imgui/misc/freetype/imgui_freetype.cpp`
+  and repeats the define; dropping either side links, but you get muddy 18 px text.
 
 Other build facts that have bitten before (details in
 [`BGFX_MIGRATION.md`](../history/BGFX_MIGRATION.md) Phase 0):
@@ -87,7 +94,8 @@ Other build facts that have bitten before (details in
   libraries do not propagate their links outside Visual Studio, so each executable repeats the
   dependency list — and off MSVC the *order* is load-bearing: GNU ld walks archives once, left to
   right, pulling only objects that resolve symbols undefined so far, so a library must precede the
-  ones it depends on (RmlUi before Lua and FreeType, bgfx before bimg and bx). The lists in
+  ones it depends on (RmlUi and ImGui before FreeType — both rasterize with it — then Lua; bgfx
+  before bimg and bx). The lists in
   `GanymedEditor`, `GanymedRuntime` and `Sandbox` must stay in step; a divergence links fine on
   Windows and fails on Linux with symbols that are plainly present in the archive list.
 - **Angled includes on the xcode4 exporter.** premake maps `includedirs` to
@@ -99,8 +107,9 @@ Other build facts that have bitten before (details in
   `filter "action:xcode4"`. It is scoped to that action so vs2022/gmake2 output is unchanged.
   Any dependency whose sources use `#include <Lib/Header.h>` for its *own* headers must declare
   its include paths through this helper, not `includedirs` — currently bx/bimg/bgfx, Jolt, RmlUi
-  and FreeType. GLFW and ImGui do not need it (their angled includes are all system frameworks),
-  and yaml-cpp and Lua have none.
+  and FreeType. GLFW's angled includes are system frameworks. ImGui's own headers are quoted, but
+  `imgui_freetype.cpp` includes `<ft2build.h>`, so the ImGui project now calls `angledIncludeDirs`
+  for FreeType's include path. yaml-cpp and Lua have none.
   The engine and editor solve the same problem the older way, with
   `ALWAYS_SEARCH_USER_PATHS = YES` — that relies on the traditional headermap Xcode 26 now warns
   is unsupported, and should migrate to the helper.
@@ -124,7 +133,7 @@ Other build facts that have bitten before (details in
 | entt 3.16 | ECS registry the view layer wraps |
 | glm | Math (with `GLM_FORCE_DEPTH_ZERO_TO_ONE`) |
 | Jolt | Physics |
-| ImGui + ImGuizmo | Editor UI + transform gizmo |
+| ImGui + ImGuizmo | Editor UI + transform gizmo. ImGui builds with FreeType (`imgui_freetype.cpp`) |
 | yaml-cpp | Scene + asset-registry serialization |
 | cgltf | glTF import (header-only) |
 | miniaudio 0.11.25 | Audio playback (header-only — see below) |
@@ -133,7 +142,7 @@ Other build facts that have bitten before (details in
 | Lua 5.4.8 | Gameplay scripting VM (built as a C static lib) |
 | sol2 3.5.0 | C++ binding layer over Lua (header-only) |
 | RmlUi 6.2 | Game UI (HTML/CSS-style documents); Core + Lua plugin only |
-| FreeType 2.14.3 | RmlUi's font engine (its one hard dependency) |
+| FreeType 2.14.3 | RmlUi's font engine, and ImGui's atlas rasterizer |
 | enkiTS v1.12 | Task scheduler behind [`Core/JobSystem`](core.md#job-system) |
 
 **miniaudio** is a committed single header (`extern/miniaudio/miniaudio.h`), not a submodule — the

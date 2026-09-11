@@ -15,6 +15,39 @@ a default layout with DockBuilder: toolbar strip on top (no tab bar), Scene Hier
 Properties below it, Viewport center, Stats right, Content Browser bottom. After that, layout
 changes persist in `GanymedEditor/imgui.ini`.
 
+## Look and feel
+
+Editor chrome is Inter + Lucide, rasterized by FreeType. Colour tokens and density land in a
+later pass; this is the type stack.
+
+`EditorFonts::Load` runs from `EditorLayer::OnAttach`, after `ImGuiLayer` has created the context.
+The engine ships ImGui's embedded font and nothing else — Sandbox has no `assets/fonts` and must
+not warn (or assert) on a missing TTF. `Load` `Clear()`s the atlas, so `io.FontDefault` is
+reassigned in the same call; `ImFont*` values held across a `Clear()` dangle.
+`ImGuiRendererBgfx::NewFrame` already rebuilds the bgfx font texture when `!io.Fonts->IsBuilt()`,
+which is why this needs no engine API.
+
+| Use | Face | Size |
+|---|---|---|
+| Body (`io.FontDefault`) | Inter Regular | 18 px |
+| Panel/section headers, active tab | Inter Medium | 18 px |
+| Status bar, hints, column headers | Inter Regular | 16 px |
+
+Rasterizer flags: `ImGuiFreeTypeBuilderFlags_LightHinting` on the atlas. Do **not** use
+`io.FontGlobalScale` — it scales an already-rasterized atlas and smears glyphs. Each size is its
+own font.
+
+Icons are Lucide, merged into every editor face (`MergeMode`, 16 px, `GlyphMinAdvanceX = 18` so
+toolbar cells align). An `ICON_LC_*` string is just text: it scales with DPI, tints with
+`ImGuiCol_Text`, and needs no texture. Codepoints live in `EditorIcons.h`, which wraps the
+vendored `IconsLucide.h` (IconFontCppHeaders). Swap that one include to change icon sets. The
+TTF is `assets/fonts/lucide/lucide.ttf`; `VERSION` next to it is the `lucide-static` package the
+font was taken from.
+
+RmlUi game UI is a separate atlas and still uses Montserrat (`UIEngine` loads Regular/Bold/Italic
+from `assets/fonts/montserrat/`). Those three faces stay; they are the Play-mode HUD, not editor
+chrome.
+
 ## EditorLayer
 
 Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pair, the
@@ -204,6 +237,10 @@ Two limitations worth knowing:
   cache has no way to notice a file edit on its own.
 
 ### Play / Stop (toolbar)
+
+The centred control is an `ICON_LC_PLAY` / `ICON_LC_SQUARE_STOP` button from the merged Lucide
+font, not a PNG. The toolbar itself is still a docked window; making it a fixed strip is a later
+pass.
 
 ```
 Play: m_ActiveScene = Scene::Copy(m_EditorScene); OnRuntimeStart(); panels retarget the copy

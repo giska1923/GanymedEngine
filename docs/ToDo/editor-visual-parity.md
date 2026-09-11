@@ -63,7 +63,7 @@ noise rather than as a system.
 | Per-panel toolbar row | 44 px, `#313131`, ends in a 1 px `#1A1A1A` rule | none |
 | Column-header row | 26 px, `#272727` | none |
 | Status bar | 41 px, `#1A1A1A` | none |
-| Font | neutral grotesque, ~18 px, ~26 px line | **Montserrat** 18 px |
+| Font | neutral grotesque, ~18 px, ~26 px line | **Inter Regular** 18 px (phase 0) |
 
 ### The accent, worked out rather than guessed
 
@@ -100,8 +100,8 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | # | Gap | Impact | Effort | Phase |
 |---|---|---|---|---|
 | 1 | White OS title bar against a dark app | very high | high | 9 |
-| 2 | No icons anywhere; two PNG buttons total | very high | medium | 0 |
-| 3 | Montserrat (geometric display face) instead of a UI grotesque | high | low | 0 |
+| 2 | Icon font in the atlas; most panels still unlabeled | very high | medium | 0 **done** (play/stop uses `ICON_LC_*`; remaining chrome in 4–6) |
+| 3 | Montserrat (geometric display face) instead of a UI grotesque | high | low | 0 **done** (Inter; Montserrat remains for RmlUi HUD) |
 | 4 | Noisy near-identical greys; rounding on | high | low | 1 |
 | 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 |
 | 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 |
@@ -183,13 +183,11 @@ Design rules, and why:
 
 ### Where theming should live
 
-Today `ImGuiLayer::SetDarkThemeColors()` and the Montserrat paths are in **engine** code
-(`GanymedEngine/source/GanymedE/ImGui/ImGuiLayer.cpp:38-64`), which is why Sandbox logs a
-font-not-found warning on every start. Move both editor-side:
+Today `ImGuiLayer::SetDarkThemeColors()` is still in **engine** code. Fonts moved editor-side in
+phase 0 (`EditorFonts::Load`). Phase 1 moves the theme too:
 
-- `ImGuiLayer::OnAttach` keeps `ImGui::StyleColorsDark()` and the built-in font. Nothing else. It
-  stops shipping the editor's brand from the engine library, and Sandbox stops warning.
-- `EditorLayer::OnAttach` calls `EditorFonts::Load()` then `ApplyTheme(...)`.
+- `ImGuiLayer::OnAttach` keeps `ImGui::StyleColorsDark()` and the built-in font. Nothing else.
+- `EditorLayer::OnAttach` already calls `EditorFonts::Load()`; phase 1 adds `ApplyTheme(...)`.
 
 **No engine API is needed for the font swap.** `ImGuiRendererBgfx::NewFrame()` already rebuilds the
 atlas whenever `!io.Fonts->IsBuilt()` (`ImGuiRendererBgfx.cpp:89`), so the editor can
@@ -214,72 +212,13 @@ Phases that add files need `scripts\Win_GenerateProjects.bat` re-run first.
 
 ---
 
-### Phase 0 — Typography and icons
+### Phase 0 — Typography and icons — **done**
 
-The cheapest large win. Nothing structural changes; every subsequent phase depends on it.
-
-**0.1 Enable ImGui's FreeType rasterizer.** `stb_truetype` is what makes ImGui text look soft and
-slightly muddy at 18 px; FreeType's hinting and gamma-correct blending is most of the perceived
-"crispness" difference between the two screenshots.
-
-This is **free** — no new dependency:
-
-- `GanymedEngine/extern/imgui/misc/freetype/imgui_freetype.cpp` is already vendored (unused).
-- `FreeType.lua` / `FreeType.vcxproj` already exist as a project, because RmlUi links it.
-- Edit `GanymedEngine/extern/ImGui.lua`: add `imgui/misc/freetype/imgui_freetype.cpp`, add the
-  FreeType include dir, `defines { "IMGUI_ENABLE_FREETYPE" }`.
-- Link FreeType from `GanymedEditor` (and Sandbox) — note the **left-to-right archive ordering**
-  constraint already documented in `GanymedEditor/premake5.lua` for the Linux link step.
-- Set `io.Fonts->FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_LightHinting` (best match for a
-  grotesque at this size; `NoHinting` is blurrier, `MonoHinting` too hard).
-
-**0.2 Replace Montserrat.** Montserrat is a *geometric display* face: circular bowls, wide advances,
-tall x-height. It is the largest non-colour reason the two editors look unrelated, and no shipping
-editor uses a display face for chrome. Cold War's is a neutral grotesque in the Segoe UI / Inter
-family.
-
-Recommendation: **Inter** (SIL OFL 1.1, ships in-repo cleanly), three weights:
-
-| Use | Font | Size |
-|---|---|---|
-| Body (default) | Inter Regular | 18 px |
-| Panel/section headers, active tab | Inter Medium | 18 px |
-| Status bar, hints, column headers | Inter Regular | 16 px |
-
-Keep 18 px — Cold War's measured pitch (26 px) matches 18 px + `FramePadding.y = 3` almost exactly,
-so the density target is reached through padding, not through shrinking text. Do **not** use
-`io.FontGlobalScale`; it scales an already-rasterized atlas and is what makes ImGui text look
-smeared. Build each size as its own font.
-
-Delete `GanymedEditor/assets/fonts/montserrat/` (25 files) in the same change, or it becomes dead
-weight nobody dares remove later.
-
-**0.3 Merge an icon font.** Recommendation: **Lucide** (ISC licence, line-drawn 16 px grid — the
-closest match to Cold War's icons; Font Awesome 6 Free is heavier and more filled, Material Symbols
-noticeably rounder).
-
-```cpp
-ImFontConfig cfg;
-cfg.MergeMode        = true;
-cfg.PixelSnapH       = true;
-cfg.GlyphMinAdvanceX = 18.0f;          // monospaced icon cells, so toolbars align
-cfg.GlyphOffset      = ImVec2(0, 3);   // sit icons on the text baseline
-static const ImWchar range[] = { ICON_MIN_LC, ICON_MAX_LC, 0 };
-io.Fonts->AddFontFromFileTTF("assets/fonts/lucide/lucide.ttf", 16.0f, &cfg, range);
-```
-
-`EditorIcons.h` holds the codepoint defines (`IconFontCppHeaders` generates these; single header,
-zlib). Wrap it rather than including the vendored name directly, so swapping icon sets later touches
-one file.
-
-- **Files:** `extern/ImGui.lua`, `GanymedEditor/premake5.lua`, `ImGuiLayer.cpp` (strip the editor
-  font paths), new `EditorFonts.h/.cpp`, `EditorIcons.h`, new `assets/fonts/inter/`,
-  `assets/fonts/lucide/`.
-- **Verify:** editor starts; text is visibly crisper; `ICON_LC_PLAY` renders in a `ImGui::Text`
-  call; Sandbox still starts and **no longer** logs a font warning.
-- **Docs:** `engine/build-and-tooling.md` (ImGui now builds with FreeType and links it),
-  `engine/platform.md` (ImGuiLayer no longer owns fonts or the theme), `editor/editor.md` (new
-  "Look and feel" section: the font stack and the icon convention).
+Inter Regular/Medium + Lucide, FreeType `LightHinting`, `EditorFonts::Load` from the editor.
+Sandbox no longer warns about missing Montserrat. Play/Stop is `ICON_LC_PLAY` /
+`ICON_LC_SQUARE_STOP`. Montserrat Regular/Bold/Italic stay under `assets/fonts/montserrat/`
+because RmlUi still loads them for the Play-mode HUD — deleting the folder as originally
+planned would empty the HUD. Live description: [editor.md](../editor/editor.md#look-and-feel).
 
 ---
 
@@ -652,7 +591,7 @@ menu buttons that move the window instead of opening.
 
 | Phase | Estimate |
 |---|---|
-| 0 — fonts + icons | 0.5 day |
+| 0 — fonts + icons | **done** |
 | 1 — token layer | 1 day |
 | 2 — toolbar geometry | 0.5 day |
 | 3 — furniture helpers | 1 day |
@@ -681,11 +620,8 @@ as phase 1 does.
 
 ## Open questions
 
-1. **Font family** — Inter (recommended), Noto Sans, or load the system Segoe UI on Windows? The
-   last is closest to the reference and costs zero repo bytes, but has no Linux/macOS equivalent, so
-   the editor would look different per platform.
-2. **Icon set** — Lucide (recommended, ISC, line style matches), Font Awesome 6 Free, or Material
-   Symbols?
+1. **Font family** — **Inter** (done, phase 0).
+2. **Icon set** — **Lucide** (done, phase 0).
 3. **Accent** — is `#B182ED` (lilac fill, dark glyph, keeps Cold War's treatment) the right read of
    "Ganymed's accent", or would you rather keep `#7B43C2` exactly and accept light-on-violet
    selections?

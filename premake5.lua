@@ -26,7 +26,12 @@ workspace "GanymedEngine"
 	-- library boundary. BgfxContext asserts the live backend agrees.
 	defines
 	{
-		"GLM_FORCE_DEPTH_ZERO_TO_ONE"
+		"GLM_FORCE_DEPTH_ZERO_TO_ONE",
+		-- ImGui's FreeType builder. Workspace-wide so imgui_draw.cpp (which
+		-- assigns the builder) and any TU including imgui_internal.h agree.
+		-- A define only on the ImGui project would silently fall back to
+		-- stb_truetype in editor TUs that include the internal header.
+		"IMGUI_ENABLE_FREETYPE"
 	}
 
 	-- Enable multi-processor compilation (compatible with older Premake5 versions)

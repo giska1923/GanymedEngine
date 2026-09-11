@@ -1,5 +1,7 @@
 #include "EditorLayer.h"
 #include "AssetDragDrop.h"
+#include "EditorFonts.h"
+#include "EditorIcons.h"
 #include "EditorInspector.h"
 
 #include <imgui/imgui.h>
@@ -43,13 +45,16 @@ namespace GanymedE {
 
 		AssetManager::Init();
 
+		// After ImGuiLayer::OnAttach (Application's constructor pushed that overlay
+		// first): the context exists, the default atlas is already uploaded, and
+		// Clear() here makes NewFrame rebuild it with Inter + Lucide.
+		EditorUI::EditorFonts::Load();
+
 		// After Reflection::Init (Application's constructor), because a drawer is keyed on a
 		// meta_type that has to exist first.
 		EditorUI::InitPropertyDrawers();
 
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
-		m_IconPlay = Texture2D::Create("resources/icons/PlayButton.png");
-		m_IconStop = Texture2D::Create("resources/icons/StopButton.png");
 
 		m_SceneRenderer = CreateRef<SceneRenderer>(1280, 720);
 
@@ -643,18 +648,17 @@ namespace GanymedE {
 		float size = ImGui::GetWindowHeight() - 8.0f;
 		if (size < 16.0f)
 			size = 16.0f;
-		Ref<Texture2D> icon = m_SceneState == SceneState::Edit ? m_IconPlay : m_IconStop;
+		const char* icon = m_SceneState == SceneState::Edit ? ICON_LC_PLAY : ICON_LC_SQUARE_STOP;
 		ImGui::SetCursorPosX((ImGui::GetWindowSize().x - size) * 0.5f);
-		// Plain textures need no flip: Texture2D loads them in bgfx's top-left
-		// origin already. The {0,1}-{1,0} UVs here were compensating for the GL
-		// loader's vertical flip, which is gone.
-		if (ImGui::ImageButton("##playstop", (ImTextureID)(uintptr_t)icon->GetRendererID(), ImVec2(size, size)))
+		ImGui::PushID("playstop");
+		if (ImGui::Button(icon, ImVec2(size, size)))
 		{
 			if (m_SceneState == SceneState::Edit)
 				OnScenePlay();
 			else if (m_SceneState == SceneState::Play)
 				OnSceneStop();
 		}
+		ImGui::PopID();
 
 		ImGui::End();
 

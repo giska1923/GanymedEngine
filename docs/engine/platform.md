@@ -81,12 +81,15 @@ Two halves:
   pushed by `Application` **when `ApplicationSpecification::EnableImGui` is set** — a non-editor
   front-end runs with no ImGui at all, so nothing here initializes and
   `Application::GetImGuiLayer()` is null) owns the ImGui context: docking enabled, dark theme
-  (`SetDarkThemeColors`), font loading with a graceful fallback to the built-in font when
-  `assets/fonts` is missing (a hard assert killed Sandbox once). `Begin()`/`End()` bracket each
-  frame's UI; `OnEvent` marks events handled when ImGui wants the mouse/keyboard **unless**
+  (`SetDarkThemeColors`), **built-in font only**. Editor fonts (Inter + Lucide) are loaded by
+  `EditorFonts::Load` after this layer attaches; the engine must not hold `ImFont*` values the
+  editor then invalidates with `io.Fonts->Clear()`. `Begin()`/`End()` bracket each frame's UI;
+  `OnEvent` marks events handled when ImGui wants the mouse/keyboard **unless**
   `BlockEvents(false)` — which the editor sets while the viewport is hovered/focused so camera and
   gizmo input reach the layers beneath. Platform half is stock `ImGui_ImplGlfw`, initialized with
-  `InitForOther` (there is no GL context to assume).
+  `InitForOther` (there is no GL context to assume). The atlas is rasterized by FreeType
+  (`IMGUI_ENABLE_FREETYPE`, `imgui_freetype.cpp` compiled into the ImGui static lib); see
+  [build-and-tooling.md](build-and-tooling.md).
 - [`ImGuiRendererBgfx`](../../GanymedEngine/source/Platform/Bgfx/ImGuiRendererBgfx.h) (the render
   half, replacing `ImGui_ImplOpenGL3`): draw lists go into transient vertex/index buffers, one
   submit per `ImDrawCmd` with scissor, all on `RenderPass::ImGui` (view 200, `Sequential` mode so

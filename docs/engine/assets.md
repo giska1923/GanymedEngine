@@ -885,9 +885,10 @@ origin to top-left, which is why `Texture2D(const std::string&)` explicitly does
 embedded path flips only because that is what it did before the loaders were consolidated;
 reconciling it changes rendering on that path, so it is a separate change.
 
-Editor chrome (`EditorLayer` icons, `ContentBrowserPanel` icons, the checkerboard) deliberately
+Editor chrome that is still a texture (`ContentBrowserPanel` file/folder icons, the checkerboard)
 stays on the `Texture2D(path)` constructor with hard-coded `resources/` paths — outside the asset
-cache, since it has no asset identity and no reason to be evictable.
+cache, since it has no asset identity and no reason to be evictable. Play/Stop in the toolbar is
+an icon-font glyph, not a texture.
 
 ## Reload
 

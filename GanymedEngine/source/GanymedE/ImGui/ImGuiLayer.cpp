@@ -6,7 +6,6 @@
 
 #include "GanymedE/main/Application.h"
 
-#include <filesystem>
 #include "Platform/Bgfx/ImGuiRendererBgfx.h"
 
 #include <GLFW/glfw3.h>
@@ -32,22 +31,9 @@ namespace GanymedE {
 		//io.ConfigViewportsNoAutoMerge = true;
 		//io.ConfigViewportsNoTaskBarIcon = true;
 
-		// AddFontFromFileTTF asserts hard on a missing file, which takes the whole
-		// app down. Not every app ships the editor's fonts (Sandbox does not), so
-		// check first and fall back to ImGui's built-in font.
-		auto addFont = [&io](const char* path) -> ImFont*
-		{
-			if (!std::filesystem::exists(path))
-			{
-				GE_CORE_WARN("Font '{0}' not found; falling back to the default ImGui font", path);
-				return nullptr;
-			}
-			return io.Fonts->AddFontFromFileTTF(path, 18.0f);
-		};
-
-		addFont("assets/fonts/montserrat/Montserrat-Bold.ttf");
-		if (ImFont* regular = addFont("assets/fonts/montserrat/Montserrat-Regular.ttf"))
-			io.FontDefault = regular;
+		// Fonts stay at ImGui's embedded default here. The editor swaps the atlas
+		// in EditorFonts::Load after this layer attaches; Sandbox has no assets/fonts
+		// and must not warn (or assert) on a missing TTF.
 
 		// Setup Dear ImGui style
 		ImGui::StyleColorsDark();

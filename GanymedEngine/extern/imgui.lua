@@ -21,13 +21,25 @@ project "ImGui"
 		"imgui/imgui_demo.cpp",
 		"imgui/imstb_rectpack.h",
 		"imgui/imstb_textedit.h",
-		"imgui/imstb_truetype.h"
+		"imgui/imstb_truetype.h",
+		"imgui/misc/freetype/imgui_freetype.cpp",
+		"imgui/misc/freetype/imgui_freetype.h"
 	}
+
+	-- IMGUI_ENABLE_FREETYPE is also a workspace define so every TU that includes
+	-- imgui_internal.h agrees on the builder. It is repeated here because this is
+	-- the project that actually compiles imgui_draw.cpp, which hooks the builder.
+	defines { "IMGUI_ENABLE_FREETYPE" }
 
 	includedirs
 	{
 		"imgui"
 	}
+
+	-- imgui_freetype.cpp includes <ft2build.h>. FreeType's public headers are
+	-- angled, so this path has to go through angledIncludeDirs for the xcode4
+	-- exporter (see the helper in the workspace premake5.lua).
+	angledIncludeDirs { "%{IncludeDir.freetype}" }
 
 	filter "system:windows"
 		systemversion "latest"

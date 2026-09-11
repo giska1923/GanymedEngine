@@ -62,9 +62,9 @@ project "GanymedEditor"
 	--
 	-- Order matters here in a way it does not on MSVC: GNU ld walks archives once,
 	-- left to right, pulling only the objects that resolve symbols undefined *so far*.
-	-- A library must therefore appear before the ones it depends on - RmlUi before
-	-- Lua and FreeType, bgfx before bimg and bx - or the link fails on symbols that
-	-- are plainly present in the archive list.
+	-- A library must therefore appear before the ones it depends on - RmlUi and ImGui
+	-- before FreeType (both rasterize with it), bgfx before bimg and bx - or the link
+	-- fails on symbols that are plainly present in the archive list.
 	filter "system:linux"
 		systemversion "latest"
 
