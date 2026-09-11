@@ -131,7 +131,22 @@ vec3 CookTorrance(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float meta
 	return (kD * albedo / PI + specular) * radiance * NdotL;
 }
 
-float SampleCascade(BgfxSampler2D shadowMap, vec4 lightSpacePos, vec3 N, vec3 L)
+// bgfx's BgfxSampler2D is a STRUCT bundling a SamplerState with a Texture2D, and it is declared
+// only for HLSL, SPIR-V and Metal - GLSL has a real `sampler2D` type and gets no such struct. A
+// function that takes a sampler therefore has to name the language's own spelling, or the GLSL
+// profile fails to parse the signature. Sampling inside the body needs no such care: `texture2D`
+// is bgfx's portable macro and already resolves per language.
+//
+// This is why the shader never compiled on OpenGL. The failure was invisible until BgfxContext
+// installed a bgfx::CallbackI - bgfx's default stub reports fatals to the debugger only, so the
+// editor appeared to hang during startup with nothing in the log.
+#if BGFX_SHADER_LANGUAGE_GLSL
+#	define Sampler2DParam sampler2D
+#else
+#	define Sampler2DParam BgfxSampler2D
+#endif
+
+float SampleCascade(Sampler2DParam shadowMap, vec4 lightSpacePos, vec3 N, vec3 L)
 {
 	vec3 proj = lightSpacePos.xyz / lightSpacePos.w;
 
@@ -234,7 +249,9 @@ void main()
 		N = normalize(mul(TBN, sampled)); // HLSL has no matrix * vector operator
 	}
 
-	vec3 V = normalize(u_CameraPosition - v_worldpos);
+	// .xyz explicitly: bgfx uniforms are always vec4, and HLSL silently truncates a vec4-minus-
+	// vec3 while GLSL rejects it outright. The uniform's own comment already says ".xyz".
+	vec3 V = normalize(u_CameraPosition.xyz - v_worldpos);
 	vec3 F0 = mix(vec3_splat(0.04), albedo, metallic);
 
 	vec3 Lo = vec3_splat(0.0);

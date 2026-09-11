@@ -138,6 +138,12 @@ is the right default for shipping. Accepted: `auto`, `d3d11`, `d3d12`, `vulkan`,
 Case-insensitive, last one wins. Parsed in
 [`BgfxContext.cpp`](../../GanymedEngine/source/Platform/Bgfx/BgfxContext.cpp).
 
+The engine requests a **GL 3.3 core context** (`BGFX_CONFIG_RENDERER_OPENGL_MIN_VERSION=33` in
+`extern/bgfx.lua`); bgfx otherwise asks for its minimum and gets a GL 2.1 compatibility context.
+Set the *MIN_VERSION*, never `BGFX_CONFIG_RENDERER_OPENGL` itself — bgfx applies its per-platform
+renderer defaults inside one `#if !defined(...)` block that tests every `BGFX_CONFIG_RENDERER_*`
+macro, so defining that one silently disables Direct3D 11/12 and Vulkan.
+
 It is a launch-time switch rather than a config key on purpose: which backend to debug on belongs to
 the run, not to the build — which is also why it is absent from `runtime.yaml`, a file whose own
 header reserves it for what "belongs to the build rather than to the launch".
@@ -157,6 +163,65 @@ and says plainly when they differ.
 Note for anything reading positional arguments: use `ApplicationCommandLineArgs::FirstPositional()`,
 not `Args[1]`. Both apps take a path positionally and both used to index slot 1 directly, which broke
 the moment the engine grew its first flag.
+
+### bgfx diagnostics
+
+**`BgfxContext` installs a `bgfx::CallbackI` that forwards into the engine logger.** Without one,
+bgfx uses its own stub, which on Windows writes traces and fatals to the *debugger* via
+`OutputDebugString` and nowhere else — so every bgfx warning the engine ever produced was absent
+from `GanymedE.log`.
+
+That blindness was expensive: a backend could fail to compile a shader and the editor would appear
+to hang during startup with a clean log. Both OpenGL bugs below were found within minutes of the
+callback existing, having previously been misdiagnosed from the outside.
+
+- `fatal` logs, and asserts for everything except `DeviceLost` (which bgfx survives).
+- `traceVargs` logs at TRACE, because bgfx is chatty in Debug (`BX_CONFIG_DEBUG=1`).
+- `screenShot` writes an uncompressed 32-bit TGA. Taking over the callback means taking over
+  `bgfx::requestScreenShot`, including the stub's convention of appending `.tga` to the name.
+- The shader/texture cache hooks decline, and the profiler hooks are deliberately empty — routing
+  bgfx's per-draw scopes into the mutex-guarded Instrumentor would measure the tracer
+  ([core.md](core.md#thread-naming-and-profiler-callbacks) makes the same point about the job
+  system's wait callbacks).
+
+### Uniform lifetime: create before the program links
+
+**bgfx binds a program's uniforms by name when the program is linked.** A uniform handle that does
+not exist at that moment is never wired to the program — and on OpenGL it then reads as **zero** in
+the shader for the life of that program, announced only as
+`WARN User defined uniform 'u_Exposure' is not found, it won't be set`. Direct3D resolves uniforms
+per draw instead and tolerates late creation, so this asymmetry hides completely on D3D.
+
+`Shader` creates its uniforms lazily, on the first `SetFloat`/`SetTexture`/… for a given name, which
+is always *after* the constructor linked the program. `Shader::GetUniform` therefore **relinks the
+program whenever a new name appears**. It settles immediately — a uniform is only ever new once —
+and costs a few relinks during the first frames that exercise a shader.
+
+Two details the implementation depends on:
+
+- **The old program must be destroyed first.** bgfx caches programs by their (vertex, fragment)
+  stage pair and returns the existing handle for a repeat request, so calling `createProgram` again
+  on the same stages relinks nothing. That is why `Shader` keeps its stage handles alive
+  (`destroyShaders = false`) and owns their destruction.
+- **The bound program is re-set after a relink**, because `Bind()` runs before the `Set*` calls that
+  trigger one, and `RenderCommand` would otherwise submit the handle that was just replaced.
+
+`FrameUniforms` avoids all of this by creating its uniforms eagerly in `Init()`, before any shader
+exists — which is why the scene itself always rendered on OpenGL while the post-process chain, whose
+exposure arrived as 0, produced a black viewport.
+
+### Writing shaders that compile on every profile
+
+Shader bytecode is built per profile, and **HLSL is permissive where GLSL is strict**, so a shader
+that compiles for `dx11` proves nothing about `glsl`. Two rules, both learned from shaders that had
+never once compiled on OpenGL:
+
+- **`BgfxSampler2D` is not a portable type.** It is a struct bundling a `SamplerState` with a
+  `Texture2D`, declared only for HLSL, SPIR-V and Metal; GLSL has a real `sampler2D` and gets no
+  such struct. A function taking a sampler needs a per-language alias (see `Sampler2DParam` in
+  `fs_Phong.sc`). Sampling inside the body is fine — `texture2D` is bgfx's portable macro.
+- **Truncate vec4 uniforms explicitly.** bgfx uniforms are always `vec4`. HLSL silently truncates
+  `u_CameraPosition - v_worldpos`; GLSL rejects it. Write `.xyz`.
 
 ### Projection matrices
 

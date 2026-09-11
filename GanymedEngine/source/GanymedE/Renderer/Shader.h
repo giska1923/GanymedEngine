@@ -77,11 +77,22 @@ namespace GanymedE {
 	private:
 		// Uniform handles are created on first use and live for the program's
 		// lifetime; bgfx dedupes by name internally but this avoids the lookup.
+		// Rebuilds the program so that uniforms created since the last link are bound to it.
+		// See the comment in Shader.cpp: bgfx wires uniforms by name at link time, and OpenGL
+		// never picks up one that did not exist then.
+		void RelinkProgram();
+
 		bgfx::UniformHandle GetUniform(const std::string& name, bgfx::UniformType::Enum type, uint16_t num = 1);
 	private:
 		std::string m_Name;
 		bgfx::ProgramHandle m_Program = BGFX_INVALID_HANDLE;
 		std::unordered_map<std::string, bgfx::UniformHandle> m_Uniforms;
+
+		// The stages, kept alive so the program can be relinked. createProgram is therefore
+		// called with destroyShaders = false and these are destroyed here instead.
+		bgfx::ShaderHandle m_VertexStage = BGFX_INVALID_HANDLE;
+		bgfx::ShaderHandle m_FragmentStage = BGFX_INVALID_HANDLE;
+
 	};
 
 	class ShaderLibrary

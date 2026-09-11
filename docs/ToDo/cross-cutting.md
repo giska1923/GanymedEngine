@@ -18,9 +18,10 @@ choices:
 - **The shader profile set.** `ProfileDirectory()` in `Shader.cpp` asks for `compiled/metal/` on
   macOS; if the profile folder ↔ backend mapping and the compile script disagree, every shader
   silently fails to load. See [build-and-tooling.md](../engine/build-and-tooling.md).
-- **Clip-space depth.** `GLM_FORCE_DEPTH_ZERO_TO_ONE` is a workspace define and the GL backend wants
-  `[-1,1]` — which is [rendering.md](rendering.md)'s §9.3, and the reason that item is sequenced
-  first. A Linux build defaulting to the GL backend hits this immediately.
+- **Clip-space depth.** Handled: §9.3 made projections caps-driven and **OpenGL 3.3 now renders
+  correctly on Windows**, which is the same backend a Linux build defaults to. That removes the
+  largest known obstacle, though it says nothing about the platform layer itself (GLFW native
+  handles, `pthread_setname_np`, file paths).
 
 Not scheduled, because a platform you do not build is a platform you do not support, and deciding to
 support one is a bigger call than a ToDo entry. Recorded so the claim "cross-platform" is read with

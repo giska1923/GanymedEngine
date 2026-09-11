@@ -29,17 +29,15 @@ documented.** A file here is a promise, not a description.
 
 | Document | Covers | Items |
 |---|---|---|
-| [rendering.md](rendering.md) | bgfx Phase 7: D3D12 renders nothing, OpenGL hangs, Vulkan untested | 3 + optional |
+| [rendering.md](rendering.md) | bgfx Phase 7: Vulkan untested, per-backend checks | 1 + matrix |
 | [reflection.md](reflection.md) | Prefab serialization, apply-to-prefab, multi-entity editing gaps | 6 |
 | [assets.md](assets.md) | Dependency hashing, parse backpressure, naming and cleanup chores | 6 |
 | [cross-cutting.md](cross-cutting.md) | Platform coverage, verification gaps | 2 |
 
-**Priority, as a recommendation rather than a schedule:** [rendering.md](rendering.md) is where the
-concrete bugs are now. §9.2 and §9.3 are done, and running the other backends turned "multi-backend
-hardening" into three specific, reproducible failures — **D3D11 is currently the only backend that
-renders correctly.** Fixing those is also what unblocks the Linux/macOS validation in
-[cross-cutting.md](cross-cutting.md), since a Linux build defaults to the GL backend. The rest is
-polish, and several of the [assets.md](assets.md) entries are one-liners worth batching.
+**Priority, as a recommendation rather than a schedule:** [cross-cutting.md](cross-cutting.md)'s
+platform coverage is now the interesting one — D3D11, D3D12 and **OpenGL 3.3** all render correctly
+on Windows, and a Linux build defaults to the GL backend, so the thing that used to block it is
+gone. Otherwise the [assets.md](assets.md) entries are one-liners worth batching.
 
 Threading is **done**: T1–T4 and decision 4 have all landed, so there is no threading file here any
 more. Jolt now runs on `Core/JobSystem` — see [physics.md](../engine/physics.md#the-job-system).

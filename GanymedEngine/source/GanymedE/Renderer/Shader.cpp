@@ -104,8 +104,11 @@ namespace GanymedE {
 			return;
 		}
 
-		// destroyShaders = true: the program owns the stages from here on.
-		m_Program = bgfx::createProgram(vs, fs, true);
+		// destroyShaders = false, and the stages are kept: the program has to be relinkable.
+		// See RelinkProgram for why.
+		m_VertexStage = vs;
+		m_FragmentStage = fs;
+		m_Program = bgfx::createProgram(vs, fs, false);
 
 		if (!bgfx::isValid(m_Program))
 			GE_CORE_ERROR("Failed to link shader program '{0}'", name);
@@ -127,6 +130,12 @@ namespace GanymedE {
 
 		if (bgfx::isValid(m_Program))
 			bgfx::destroy(m_Program);
+
+		// Owned here because createProgram was told not to take them - see RelinkProgram.
+		if (bgfx::isValid(m_VertexStage))
+			bgfx::destroy(m_VertexStage);
+		if (bgfx::isValid(m_FragmentStage))
+			bgfx::destroy(m_FragmentStage);
 	}
 
 	void Shader::Bind() const
@@ -141,6 +150,32 @@ namespace GanymedE {
 		RenderCommand::SetProgram(BGFX_INVALID_HANDLE);
 	}
 
+	void Shader::RelinkProgram()
+	{
+		if (!bgfx::isValid(m_VertexStage) || !bgfx::isValid(m_FragmentStage))
+			return;
+
+		const bool wasBound = bgfx::isValid(m_Program)
+			&& RenderCommand::GetProgram().idx == m_Program.idx;
+
+		// **The old program has to be released first.** bgfx caches programs by their (vertex,
+		// fragment) stage pair and hands back the existing handle for a repeat request, so
+		// calling createProgram again on the same stages relinks nothing - it returns the very
+		// program whose uniform bindings are the problem, with one more reference.
+		//
+		// Destroying mid-frame is safe: bgfx defers the actual teardown, and a relink only ever
+		// happens during the Set* calls that precede this shader's first draw of the frame.
+		if (bgfx::isValid(m_Program))
+			bgfx::destroy(m_Program);
+
+		m_Program = bgfx::createProgram(m_VertexStage, m_FragmentStage, false);
+
+		// Bind() runs before the Set* calls that trigger a relink, so the draw about to be
+		// submitted is still holding the handle we just replaced.
+		if (wasBound && bgfx::isValid(m_Program))
+			RenderCommand::SetProgram(m_Program);
+	}
+
 	bgfx::UniformHandle Shader::GetUniform(const std::string& name, bgfx::UniformType::Enum type, uint16_t num)
 	{
 		auto it = m_Uniforms.find(name);
@@ -149,6 +184,24 @@ namespace GanymedE {
 
 		bgfx::UniformHandle handle = bgfx::createUniform(name.c_str(), type, num);
 		m_Uniforms[name] = handle;
+
+		// **bgfx binds a program's uniforms by name when the program is LINKED.** A uniform that
+		// did not exist at that moment is not wired to the program, and on OpenGL it then reads
+		// as ZERO in the shader forever - `bgfx WARN User defined uniform 'u_Exposure' is not
+		// found, it won't be set`. Direct3D resolves per draw instead and tolerates it, which is
+		// why this only ever showed on GL: the post-process chain multiplied by an exposure of 0
+		// and the viewport rendered black while the scene target held the correct image.
+		//
+		// Uniforms are created lazily by the Set* calls above, always after the constructor
+		// linked the program, so the fix is to relink once a new name appears. It settles after
+		// the first frames that exercise a shader - a uniform is only ever new once.
+		//
+		// The obvious alternative, creating everything up front, cannot work here:
+		// getShaderUniforms reports nothing for GLSL binaries (their uniform table is empty,
+		// unlike the D3D ones), and some names are built at runtime (`s_shadowMap0..3`), so
+		// there is no complete list to pre-register from.
+		RelinkProgram();
+
 		return handle;
 	}
 

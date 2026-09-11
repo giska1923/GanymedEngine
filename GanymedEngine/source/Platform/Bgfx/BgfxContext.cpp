@@ -5,7 +5,11 @@
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/main/Application.h"
 
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <vector>
 
 #if defined(GE_PLATFORM_WINDOWS)
 	#define GLFW_EXPOSE_NATIVE_WIN32
@@ -70,6 +74,144 @@ namespace GanymedE {
 	}
 
 	namespace {
+
+		// ---- bgfx diagnostics ------------------------------------------------------------
+		//
+		// Until this existed, `init.callback` was null, so bgfx used its own stub: on Windows that
+		// writes traces and fatals to the DEBUGGER via OutputDebugString and nowhere else. Every
+		// bgfx warning the engine ever produced was invisible in `GanymedE.log`, which is how a
+		// backend could render an empty frame and still look clean in the log.
+		//
+		// Everything here forwards into the engine logger instead. Traces are TRACE rather than
+		// INFO because bgfx is chatty in Debug (it is compiled with BX_CONFIG_DEBUG=1, see
+		// extern/bgfx.lua) and this is diagnostic detail, not boot narration.
+		class BgfxCallback final : public bgfx::CallbackI
+		{
+		public:
+			~BgfxCallback() override = default;
+
+			void fatal(const char* filePath, uint16_t line, bgfx::Fatal::Enum code,
+				const char* str) override
+			{
+				GE_CORE_ERROR("bgfx FATAL [{0}] {1}:{2}: {3}", (int)code,
+					filePath ? filePath : "?", line, str ? str : "");
+
+				// DeviceLost is recoverable in principle and bgfx keeps going; the rest are not,
+				// and bgfx's own stub aborts on them. Assert so a Debug run stops at the cause
+				// rather than at whatever fails next.
+				//
+				// Braced because GE_CORE_ASSERT compiles to nothing outside Debug, which would
+				// otherwise leave `if (...) ;` and the warning that goes with it.
+				if (code != bgfx::Fatal::DeviceLost)
+				{
+					GE_CORE_ASSERT(false, "bgfx reported a fatal error - see the log");
+				}
+			}
+
+			void traceVargs(const char* filePath, uint16_t line, const char* format,
+				va_list argList) override
+			{
+				char message[2048];
+
+				// va_list is single-use; bgfx may pass one already partially consumed, so copy.
+				va_list args;
+				va_copy(args, argList);
+				const int written = std::vsnprintf(message, sizeof(message), format, args);
+				va_end(args);
+
+				if (written <= 0)
+					return;
+
+				// bgfx terminates most traces with a newline; the logger adds its own.
+				std::string text(message);
+				while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
+					text.pop_back();
+
+				if (text.empty())
+					return;
+
+				GE_CORE_TRACE("bgfx {0}:{1}: {2}", filePath ? filePath : "?", line, text);
+			}
+
+			// No shader/texture cache: bgfx asks, the engine declines, and compiled shader
+			// bytecode is already cached on disk by the shaderc step.
+			uint32_t cacheReadSize(uint64_t) override { return 0; }
+			bool cacheRead(uint64_t, void*, uint32_t) override { return false; }
+			void cacheWrite(uint64_t, const void*, uint32_t) override {}
+
+			// Frame capture (bgfx's video-capture hook) is not wired to anything.
+			void captureBegin(uint32_t, uint32_t, uint32_t, bgfx::TextureFormat::Enum, bool) override {}
+			void captureEnd() override {}
+			void captureFrame(const void*, uint32_t) override {}
+
+			// Profiler scopes: deliberately empty. The job system already feeds the Instrumentor
+			// (see core.md) and routing bgfx's per-draw scopes into a mutex-guarded Chrome-trace
+			// writer would measure the tracer. Named rather than removed so the hook is visible
+			// to whoever adopts a real frame profiler.
+			void profilerBegin(const char*, uint32_t, const char*, uint16_t) override {}
+			void profilerBeginLiteral(const char*, uint32_t, const char*, uint16_t) override {}
+			void profilerEnd() override {}
+
+			// Taking over the callback means taking over `bgfx::requestScreenShot`, which the
+			// stub used to service. Uncompressed 32-bit TGA, which is what the stub wrote.
+			void screenShot(const char* filePath, uint32_t width, uint32_t height, uint32_t pitch,
+				bgfx::TextureFormat::Enum format, const void* data, uint32_t /*size*/,
+				bool yflip) override
+			{
+				if (format != bgfx::TextureFormat::BGRA8 && format != bgfx::TextureFormat::RGBA8)
+				{
+					GE_CORE_WARN("Screenshot '{0}' skipped: unexpected format {1}",
+						filePath ? filePath : "?", (int)format);
+					return;
+				}
+
+				// bgfx hands over the name exactly as `requestScreenShot` received it, and its own
+				// stub appends the extension - so a caller that passed "shot" expects "shot.tga".
+				// Taking over the callback means taking over that convention too.
+				std::string path(filePath ? filePath : "screenshot");
+				if (path.size() < 4 || path.compare(path.size() - 4, 4, ".tga") != 0)
+					path += ".tga";
+
+				std::ofstream out(path, std::ios::binary);
+				if (!out)
+				{
+					GE_CORE_ERROR("Screenshot '{0}' could not be opened for writing", path);
+					return;
+				}
+
+				uint8_t header[18] = {};
+				header[2] = 2;                              // uncompressed true-colour
+				header[12] = (uint8_t)(width & 0xFF);
+				header[13] = (uint8_t)((width >> 8) & 0xFF);
+				header[14] = (uint8_t)(height & 0xFF);
+				header[15] = (uint8_t)((height >> 8) & 0xFF);
+				header[16] = 32;                            // bits per pixel
+				header[17] = 0x28;                          // 8 alpha bits, top-left origin
+				out.write((const char*)header, sizeof(header));
+
+				const uint8_t* source = (const uint8_t*)data;
+				std::vector<uint8_t> row(width * 4);
+
+				for (uint32_t y = 0; y < height; y++)
+				{
+					// TGA rows are written top-down here (descriptor 0x20), so a bottom-left
+					// source is read in reverse rather than re-flagged.
+					const uint32_t sourceRow = yflip ? (height - 1 - y) : y;
+					std::memcpy(row.data(), source + (size_t)sourceRow * pitch, width * 4);
+
+					// TGA stores BGRA for 32-bit, so BGRA8 goes out untouched.
+					if (format == bgfx::TextureFormat::RGBA8)
+					{
+						for (uint32_t x = 0; x < width; x++)
+							std::swap(row[x * 4 + 0], row[x * 4 + 2]);
+					}
+
+					out.write((const char*)row.data(), row.size());
+				}
+			}
+		};
+
+		BgfxCallback s_Callback;
 
 		// ---- Backend selection: `--renderer=<name>` -------------------------------------
 		//
@@ -223,6 +365,7 @@ namespace GanymedE {
 
 		bgfx::Init init;
 		init.type = requested;   // Count == let bgfx choose; see RequestedBackend above
+		init.callback = &s_Callback;   // or bgfx talks to the debugger and nowhere else
 		init.vendorId = BGFX_PCI_ID_NONE;
 		init.platformData.nwh = NativeWindowHandle(m_WindowHandle);
 		init.platformData.ndt = NativeDisplayHandle();

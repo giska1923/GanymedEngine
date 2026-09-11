@@ -224,6 +224,24 @@ project "bgfx"
 
 	bxDefines()
 
+	-- Ask for a GL 3.3 core context instead of bgfx's default.
+	--
+	-- bgfx only requests a specific GL context when BGFX_CONFIG_RENDERER_OPENGL is >= 31, and it
+	-- otherwise defaults to BGFX_CONFIG_RENDERER_OPENGL_MIN_VERSION, which is 1 on Windows and
+	-- Linux. That produced a GL 2.1 compatibility context, and the engine needs GL 3.x.
+	--
+	-- **MIN_VERSION, not BGFX_CONFIG_RENDERER_OPENGL.** config.h applies its per-platform
+	-- renderer defaults inside one `#if !defined(...)` block that tests every
+	-- BGFX_CONFIG_RENDERER_* macro, so defining the OpenGL one opts out of the whole block and
+	-- silently disables Direct3D 11/12 and Vulkan - a build where `--renderer=d3d11` reports
+	-- "this build does not support" and bgfx auto-picks GL. MIN_VERSION is not part of that test,
+	-- so it raises the GL version while leaving every other backend at its platform default.
+	--
+	-- 3.3 rather than 4.3: it is what the engine actually needs (framebuffer objects and integer
+	-- textures are 3.0, instanced drawing is 3.3) and nothing here uses compute, so demanding
+	-- 4.x would drop hardware for no feature. bgfx reads it as major = value / 10, minor = % 10.
+	defines { "BGFX_CONFIG_RENDERER_OPENGL_MIN_VERSION=33" }
+
 	filter "system:windows"
 		systemversion "latest"
 		includedirs { BGFX_DIR .. "/3rdparty/directx-headers/include/directx" }
