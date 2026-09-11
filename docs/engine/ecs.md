@@ -12,7 +12,7 @@ not:
    fixed point with a fixed ordering.
 
 The design was ported from a production engine; the full rationale and the porting plan live in
-[`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](../toDo&done/ECS_VIEWS_IMPLEMENTATION_GUIDE.md). This page
+[`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](../history/ECS_VIEWS_IMPLEMENTATION_GUIDE.md). This page
 documents what is actually in the tree.
 
 ## File map
@@ -65,7 +65,7 @@ using ComponentList = TypeList<TransformComponent, WorldTransformComponent, Rela
    `ComponentList` entry is registered — see [scene.md](scene.md#member-reflection).
 5. Add serialization in `SceneSerializer.cpp` and editor UI in `SceneHierarchyPanel.cpp` (these two
    are still per-component by hand — collapsing them onto the reflection data is R2–R4 of
-   [REFLECTION_ROADMAP.md](../toDo&done/REFLECTION_ROADMAP.md)).
+   [REFLECTION_ROADMAP.md](../history/REFLECTION_ROADMAP.md)).
 6. If a `Scene` needs post-add fixup, declare a `Scene::OnComponentAdded<T>` specialization in
    `Scene.h` (see the `CameraComponent` one — it sizes the camera viewport).
 

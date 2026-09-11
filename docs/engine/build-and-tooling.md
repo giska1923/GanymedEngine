@@ -22,7 +22,7 @@ purpose: glm is header-only, and a project disagreeing would silently change the
 glm types across the static-library boundary. `BgfxContext` asserts the live backend agrees.
 
 Other build facts that have bitten before (details in
-[`BGFX_MIGRATION.md`](../toDo&done/BGFX_MIGRATION.md) Phase 0):
+[`BGFX_MIGRATION.md`](../history/BGFX_MIGRATION.md) Phase 0):
 
 - bx requires **C++20**; the bgfx projects build at C++20 while the engine stays C++17 — safe
   because `<bgfx/bgfx.h>` includes no bx headers. The asset pipeline's block compressor does need

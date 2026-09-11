@@ -40,23 +40,33 @@ The repository contains four projects:
 | ----------------------------- | ----------------------------------------------------------------------------------------------- |
 | [Runtime](runtime/runtime.md) | GanymedRuntime: boot sequence, runtime.yaml config, backbuffer render mode, the assets snapshot |
 
-### Historical / planning documents
+### ToDo
 
-`docs/toDo&done/` holds the working documents that drove the engine's big refactors and the plan
-for the current milestone. They are kept because they record _why_ things are the way they are,
-including verification evidence:
+| Document | Covers |
+| --- | --- |
+| [ToDo](ToDo/README.md) | **Everything not done yet** — milestone plans, known bugs, deferred follow-ups, verification gaps. Start here for what to work on next. |
 
-- [`3D_ROADMAP.md`](toDo&done/3D_ROADMAP.md) — the original 2D→3D plan (phases 0–8, essentially complete)
-- [`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](toDo&done/ECS_VIEWS_IMPLEMENTATION_GUIDE.md) — the file-by-file plan for the view/access-wrapper ECS (complete)
-- [`BGFX_MIGRATION.md`](toDo&done/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except some Phase 7 hardening)
-- [`Scripting-And-UI-Integration.md`](toDo&done/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
-- [`ANIMATION_ROADMAP.md`](toDo&done/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
-- [`RUNTIME_AUDIO_ROADMAP.md`](toDo&done/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; **complete** — phases 1–5 executed, read the per-phase execution notes)
-- [`CONTENT_AUTHORING_ROADMAP.md`](toDo&done/CONTENT_AUTHORING_ROADMAP.md) — the content authoring milestone (serialization hygiene, editor undo/redo, `.gmat` material assets, linked prefabs; complete — see [editor.md](editor/editor.md), [scene.md](engine/scene.md) and [assets.md](engine/assets.md))
-- [`PARTICLE_ROADMAP.md`](toDo&done/PARTICLE_ROADMAP.md) — the particle system milestone (CPU-simulated emitters, billboard + instanced-mesh rendering, keyframed curves with an in-house curve editor; **phases 1–5 complete** — curve/RNG, deterministic CPU sim, billboard + mesh draws, curve editor + inspector preview, Lua + runtime spark demo)
-- [`ASSET_PIPELINE_ROADMAP.md`](toDo&done/ASSET_PIPELINE_ROADMAP.md) — the asset pipeline + resource management milestone, drawn from BlankEngine's `AssetService`/`ResourceService` design (`.meta` sidecars, a typed manager registry with weak caches, `AssetRef<T>`, compiled outputs with epoch invalidation, async loading, hot reload; **complete** — all six phases are live in [assets.md](engine/assets.md); it deliberately excludes most of BlankEngine, so read the scope assessment and "Not doing" first)
-- [`THREADING_ROADMAP.md`](toDo&done/THREADING_ROADMAP.md) — `Core/JobSystem` over enkiTS: a parallel-for and cancellable background tasks with a bgfx-submit-thread handoff, drawn from BlankEngine's `ThreadService` (**T1 done** — the scheduler is built, self-tested and documented in [core.md](engine/core.md#job-system), with no consumer yet; T2–T4 remain sketches, sequenced so the first consumer is asset Phase 4's parallel BCn encode)
-- [`REFLECTION_ROADMAP.md`](toDo&done/REFLECTION_ROADMAP.md) — member-level reflection on `entt::meta` for the generic inspector, generic serializer, and prefab per-property overrides (**done** — all 23 components registered and self-validating, 15 of 20 inspector sections and every component's serialization now driven from that registration, plus prefab per-property overrides; see [scene.md](engine/scene.md#member-reflection))
+### Historical records
+
+`docs/history/` holds the working documents that drove the engine's big refactors. They are kept
+because they record _why_ things are the way they are, including the verification evidence and the
+alternatives that were rejected.
+
+**They are historical and are not rewritten when the code moves on**, so some describe problems that
+were fixed later. [`ToDo/README.md`](ToDo/README.md) lists the entries known to be stale. For what
+the code does *now*, read the subsystem docs above; for what is still open, read `ToDo/`.
+
+- [`3D_ROADMAP.md`](history/3D_ROADMAP.md) — the original 2D→3D plan (phases 0–8, essentially complete)
+- [`ECS_VIEWS_IMPLEMENTATION_GUIDE.md`](history/ECS_VIEWS_IMPLEMENTATION_GUIDE.md) — the file-by-file plan for the view/access-wrapper ECS (complete)
+- [`BGFX_MIGRATION.md`](history/BGFX_MIGRATION.md) — the OpenGL→bgfx migration log, including every bug found along the way (complete except Phase 7 multi-backend hardening — see [ToDo/rendering.md](ToDo/rendering.md))
+- [`Scripting-And-UI-Integration.md`](history/Scripting-And-UI-Integration.md) — scripting + game UI (revised 2026-07-19 for the post-bgfx/post-ECS engine; complete — see [scripting.md](engine/scripting.md) and [ui.md](engine/ui.md))
+- [`ANIMATION_ROADMAP.md`](history/ANIMATION_ROADMAP.md) — the skeletal animation milestone (phases 1–5 executed; complete — read the per-phase execution notes)
+- [`RUNTIME_AUDIO_ROADMAP.md`](history/RUNTIME_AUDIO_ROADMAP.md) — the standalone runtime + audio milestone (GanymedRuntime app, miniaudio subsystem; **complete** — phases 1–5 executed, read the per-phase execution notes)
+- [`CONTENT_AUTHORING_ROADMAP.md`](history/CONTENT_AUTHORING_ROADMAP.md) — the content authoring milestone (serialization hygiene, editor undo/redo, `.gmat` material assets, linked prefabs; complete — see [editor.md](editor/editor.md), [scene.md](engine/scene.md) and [assets.md](engine/assets.md))
+- [`PARTICLE_ROADMAP.md`](history/PARTICLE_ROADMAP.md) — the particle system milestone (CPU-simulated emitters, billboard + instanced-mesh rendering, keyframed curves with an in-house curve editor; **phases 1–5 complete** — curve/RNG, deterministic CPU sim, billboard + mesh draws, curve editor + inspector preview, Lua + runtime spark demo)
+- [`ASSET_PIPELINE_ROADMAP.md`](history/ASSET_PIPELINE_ROADMAP.md) — the asset pipeline + resource management milestone, drawn from BlankEngine's `AssetService`/`ResourceService` design (`.meta` sidecars, a typed manager registry with weak caches, `AssetRef<T>`, compiled outputs with epoch invalidation, async loading, hot reload; **complete** — all six phases are live in [assets.md](engine/assets.md); it deliberately excludes most of BlankEngine, so read the scope assessment and "Not doing" first)
+- [`THREADING_ROADMAP.md`](history/THREADING_ROADMAP.md) — `Core/JobSystem` over enkiTS: a parallel-for and cancellable background tasks with a bgfx-submit-thread handoff, drawn from BlankEngine's `ThreadService` (**complete** — T1 the scheduler, T2 thread naming and profiler callbacks, T3 parallel BCn encode, T4 async loading; see [core.md](engine/core.md#job-system). Decision 4, consolidating Jolt onto it, is open — see [ToDo/threading.md](ToDo/threading.md))
+- [`REFLECTION_ROADMAP.md`](history/REFLECTION_ROADMAP.md) — member-level reflection on `entt::meta` for the generic inspector, generic serializer, and prefab per-property overrides (**done** — all 23 components registered and self-validating, 15 of 20 inspector sections and every component's serialization now driven from that registration, plus prefab per-property overrides; see [scene.md](engine/scene.md#member-reflection))
 
 ## Building & running
 

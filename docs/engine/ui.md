@@ -3,7 +3,7 @@
 HTML/CSS-style game UI on **RmlUi 6.2**, rendered through a custom bgfx backend. This is the
 *game's* UI — the editor's own UI is ImGui and stays that way.
 
-Plan of record: [`Scripting-And-UI-Integration.md`](../toDo&done/Scripting-And-UI-Integration.md).
+Plan of record: [`Scripting-And-UI-Integration.md`](../history/Scripting-And-UI-Integration.md).
 
 ## Layout
 

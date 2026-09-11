@@ -4,7 +4,7 @@ The renderer runs entirely on [bgfx](https://github.com/bkaradzic/bgfx): one cod
 auto-selected at startup (Direct3D 11/12, Vulkan, Metal, OpenGL). The engine-facing classes
 (`Shader`, `Texture2D`, `Framebuffer`, …) are **concrete wrappers over bgfx handles** — the old
 virtual per-API layer is gone. The migration that produced this design, including every bug found
-and how it was verified, is recorded in [`BGFX_MIGRATION.md`](../toDo&done/BGFX_MIGRATION.md);
+and how it was verified, is recorded in [`BGFX_MIGRATION.md`](../history/BGFX_MIGRATION.md);
 read it before touching anything subtle here.
 
 ## The bgfx mental model (read this first)

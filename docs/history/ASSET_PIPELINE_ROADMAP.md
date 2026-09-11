@@ -661,7 +661,7 @@ Sandbox, all clean, no new warnings).
 
    ```cpp
    // Derives from Ref<T> so it substitutes for one at every existing call site (see
-   // docs/toDo&done/ASSET_PIPELINE_ROADMAP.md decision 6). Adds no data members beyond
+   // docs/history/ASSET_PIPELINE_ROADMAP.md decision 6). Adds no data members beyond
    // the handle, so slicing to Ref<T> loses API, never state.
    template<typename T>
    class AssetRef : public Ref<T>

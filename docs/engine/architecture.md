@@ -159,7 +159,7 @@ Two ordering facts worth internalizing:
   update per frame on the main thread; bgfx runs in single-threaded mode (`renderFrame()` before
   `init`). [`Core/JobSystem`](core.md#job-system) has two consumers and neither is in the frame: the
   texture compiler's block encode
-  ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3, 1.8× on a 2560×1664 texture)
+  ([`THREADING_ROADMAP.md`](../history/THREADING_ROADMAP.md) T3, 1.8× on a 2560×1664 texture)
   and asset parsing (T4). No ECS system runs on it. Jolt still runs its own pool,
   so there are currently two pools of `hardware_concurrency() - 1` threads. The ViewDesc machinery
   exists so ECS parallelism can be added without redesign.
@@ -171,13 +171,13 @@ Two ordering facts worth internalizing:
   (see [assets.md](assets.md#asynchronous-loading)).
   Editing an asset on disk reloads it in the viewport within about half a second, through an mtime
   poll that evicts what changed and whatever captured it.
-  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) is **complete** — all six
+  [`ASSET_PIPELINE_ROADMAP.md`](../history/ASSET_PIPELINE_ROADMAP.md) is **complete** — all six
   phases have landed.
 - **Component members are reflected, but nothing consumes it yet.**
   [`Reflection/`](scene.md#member-reflection) registers all 23 components over `entt::meta` and
   validates itself at boot; the serializer, the inspector and the Lua bindings still hand-list every
   field, and behaviour is unchanged. Collapsing them is R2–R4 of
-  [`REFLECTION_ROADMAP.md`](../toDo&done/REFLECTION_ROADMAP.md).
+  [`REFLECTION_ROADMAP.md`](../history/REFLECTION_ROADMAP.md).
 - Scripting is Lua 5.4 + sol2 (`ScriptComponent`, hot-reloadable, TypeScript-authored via
   TypeScriptToLua) *and* C++ `NativeScriptComponent`. See [scripting.md](scripting.md).
   `Scripting-And-UI-Integration.md` is the plan that delivered it, not a plan for the future.

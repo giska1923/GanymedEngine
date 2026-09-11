@@ -4,7 +4,7 @@ Gameplay scripting on **Lua 5.4** via **sol2**, alongside — not replacing — 
 `NativeScriptComponent` path. Authoring in TypeScript (compiled to Lua by TypeScriptToLua) is a
 tooling layer on top; the engine only ever loads `.lua`.
 
-Plan of record: [`Scripting-And-UI-Integration.md`](../toDo&done/Scripting-And-UI-Integration.md).
+Plan of record: [`Scripting-And-UI-Integration.md`](../history/Scripting-And-UI-Integration.md).
 
 ## Layout
 

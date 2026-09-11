@@ -258,7 +258,7 @@ type registered but not declared will not compile at the call site, which is the
 noticed. The shape is BlankEngine’s `IResourceManager` / `ResourceManager<T, Cache>` with its RTTR
 registration DSL removed — a reflected registry is not worth a reflection dependency at this scale,
 and `entt::meta` is not in the asset layer for the reasons in
-[`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) decision 14.
+[`ASSET_PIPELINE_ROADMAP.md`](../history/ASSET_PIPELINE_ROADMAP.md) decision 14.
 
 ### Type ids
 
@@ -377,7 +377,7 @@ There is deliberately **no `operator bool`**: "has a handle" and "has an object"
 questions, and one implicit answer would hide which a call site meant.
 
 **It is composition, not inheritance from `Ref<T>`.** The plan
-([`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) decision 6) called for
+([`ASSET_PIPELINE_ROADMAP.md`](../history/ASSET_PIPELINE_ROADMAP.md) decision 6) called for
 deriving from `Ref<T>` the way BlankEngine's `ResPtr` derives from `shared_ptr`, on the argument that
 slicing is harmless because the wrapper "adds no data members, so a slice loses only API, not
 state." That is true of `ResPtr`, which has no members because it resolves eagerly at construction.
@@ -548,7 +548,7 @@ Three details worth knowing:
 
 ### There are no placeholders, and that is a decision
 
-[`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) decision 8 called for a
+[`ASSET_PIPELINE_ROADMAP.md`](../history/ASSET_PIPELINE_ROADMAP.md) decision 8 called for a
 per-type placeholder — checkerboard texture, unit cube mesh, deliberately-ugly error material — on
 the argument that returning null *"forces every call site to branch, and 24 call sites in a render
 loop is exactly where you don't want that."*
@@ -1158,7 +1158,7 @@ every scene, and that is a rendering change rather than an asset-pipeline one.
 
 The mip encode is split into horizontal bands and dispatched through
 [`JobSystem::ParallelFor`](core.md#job-system) — the threading milestone's first consumer
-([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3), and the right one to be first:
+([`THREADING_ROADMAP.md`](../history/THREADING_ROADMAP.md) T3), and the right one to be first:
 offline work with no frame budget and no lifetime hazards, where a bug costs import time rather
 than a corrupted frame.
 

@@ -335,7 +335,7 @@ not reflect is component **members**: the serializer, the inspector and the Lua 
 hand-listed every field, so a new `float` had to be added in four places and silently did nothing if
 one was missed. [`Reflection/`](../../GanymedEngine/source/GanymedE/Reflection/Reflection.h) is the
 member half, built on **entt's own `entt::meta`** rather than a second reflection library — see
-[REFLECTION_ROADMAP.md](../toDo&done/REFLECTION_ROADMAP.md) for why (short version: "add component by
+[REFLECTION_ROADMAP.md](../history/REFLECTION_ROADMAP.md) for why (short version: "add component by
 type name", copy/paste-a-component and prefab diffing all have to get from a reflected type *back* to
 entt storage, and only entt's own meta can).
 

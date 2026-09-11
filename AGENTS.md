@@ -50,6 +50,28 @@ Read `docs/README.md` first — it is the index and describes the whole layout.
 **Any change to engine or editor code must update the matching doc in the same
 change.** A code change with no doc update is incomplete work, not a follow-up.
 
+### Three folders, three tenses
+
+`docs/` splits by *when*, and putting something in the wrong one is the common
+mistake:
+
+| Folder | Holds | Tense |
+|---|---|---|
+| `docs/ToDo/` | Roadmaps, milestone plans, known bugs, deferred follow-ups, verification gaps — **anything not done yet** | future |
+| `docs/engine/`, `docs/editor/`, `docs/runtime/` | What the code does **now** | present |
+| `docs/history/` | Completed milestone records: why the code got this way, with the rationale and the verification evidence | past |
+
+- **Planning work?** It goes in `docs/ToDo/`, not into a subsystem doc. Do not
+  document a feature that does not exist yet as though it does.
+- **Delivered work?** It goes in the matching `docs/engine`/`editor`/`runtime`
+  doc, in the table below, *in the same change* — and the corresponding
+  `docs/ToDo/` entry is deleted. An item leaves `ToDo/` only when the thing is
+  actually done and documented.
+- **Finished a whole milestone** whose execution notes and measured evidence are
+  worth keeping? Move that record to `docs/history/` and link it from
+  `docs/README.md`. For an ordinary fix, the live doc update *is* the record —
+  do not manufacture history for it.
+
 | You changed | Update |
 |---|---|
 | `GanymedEngine/source/Core/` | `docs/engine/core.md` |
@@ -71,9 +93,15 @@ Rules:
   add "Recent changes" sections, do not create new top-level docs without asking.
 - If a change adds a new subsystem that fits no existing doc, propose the new file
   and its place in `docs/README.md` before writing it.
-- `docs/toDo&done/` is historical. It records why past refactors happened and is
-  referenced from code comments by path. Do not rewrite history there; only append
-  to a plan doc when actively executing that plan.
+- `docs/history/` is **immutable**. It records why past refactors happened and is
+  referenced from code comments by path, so a file there is never rewritten, never
+  corrected, and never moved. When history has been overtaken by later work, say so
+  in `docs/ToDo/README.md`'s stale list — do not edit the record.
+- `docs/ToDo/` is the opposite: edit it freely. Add items as you find them, and
+  delete them as they land. Stale entries there are a bug.
+- If you find work worth doing that is outside the current scope, write it into
+  `docs/ToDo/` rather than folding it in or dropping it. That is the mechanism the
+  "stay inside the scope asked" rule below depends on.
 - Sandbox is deliberately undocumented. Leave it that way.
 
 ## Code conventions
@@ -105,6 +133,6 @@ Do not claim something builds unless you built it.
 
 - For non-trivial changes, state the approach and the tradeoff before writing code.
 - Stay inside the scope asked. If you find adjacent work worth doing, name it as a
-  separate item rather than folding it in.
+  separate item and write it into `docs/ToDo/` rather than folding it in.
 - Prefer editing existing files over creating new ones.
 - Never create README or summary markdown files outside `docs/` unless asked.

@@ -167,7 +167,7 @@ if (auto data = job.Get())
 ```
 
 There is no task graph and no per-frame system scheduling; see
-[`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) for why that was ruled out rather than
+[`THREADING_ROADMAP.md`](../history/THREADING_ROADMAP.md) for why that was ruled out rather than
 deferred, and for the survey of the alternatives (cpp-taskflow, Marl, in-house) that landed on enkiTS.
 
 **`ParallelFor(count, minRange, fn)`** splits `[0, count)` across workers and does not return until
