@@ -30,7 +30,7 @@ documented.** A file here is a promise, not a description.
 | Document | Covers | Items |
 |---|---|---|
 | [rendering.md](rendering.md) | bgfx Phase 7: Vulkan untested, per-backend checks | 1 + matrix |
-| [reflection.md](reflection.md) | Prefab serialization, apply-to-prefab, multi-entity editing gaps | 6 |
+| [reflection.md](reflection.md) | Apply-to-prefab, template cache, multi-entity editing gaps | 4 |
 | [assets.md](assets.md) | Dependency hashing, parse backpressure, naming and cleanup chores | 6 |
 | [cross-cutting.md](cross-cutting.md) | Platform coverage, verification gaps | 2 |
 

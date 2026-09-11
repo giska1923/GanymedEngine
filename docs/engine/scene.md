@@ -561,7 +561,10 @@ skips exactly them while the rest of their component still goes through it:
 | `ScriptComponent::Fields` | A sequence of `{Name, Type, Value}` maps over a closed variant, because the declaring script may not be loadable when the scene is read. |
 
 `TagComponent` is written generically but read by hand, because the tag is needed to *create* the
-entity and so cannot go through a reader that needs an entity to read into.
+entity and so cannot go through a reader that needs an entity to read into. That is now the **only**
+hand-written component read left — `PrefabSerializer::ReadRootTransform`, which peeked at the root
+entity's three transform keys directly, goes through `ReadReflectedComponent` and gained its
+tolerance for a missing key along the way.
 
 Four things the generic writer had to learn to cover the rest:
 
@@ -728,6 +731,15 @@ content (it decides scene save order too), so that is a real change, not noise.
 Only `IDComponent` and `RelationshipComponent` are renumbered. `AssetHandle` *is* `UUID`, so a
 blanket remap would corrupt `StaticMesh.Mesh` and its `MaterialOverrides`, `SkyLight.Environment`,
 `Script.Script` and `AudioSource.Clip` into handles no `.meta` sidecar knows.
+
+**Prefab bookkeeping is stripped from the file.** `PrefabInstanceComponent` would make the result a
+nested prefab, which v1 does not do. `PrefabMemberComponent` would bake *another* prefab's canonical
+ids into this one — and that is not cosmetic: `Instantiate` gives every entity it creates a fresh
+`PrefabMemberComponent` from the file's own 1..N numbering, and `Entity::AddComponent` asserts on an
+entity that already has one. So "make a prefab out of part of a prefab instance" used to write a
+file that asserted the next time anything instantiated it (and was undefined behaviour with asserts
+compiled out). Instantiation also *assigns* rather than adds that component, so a file written
+before this was fixed loads and has its stale id corrected instead of taking the editor down.
 
 The renumbering happens in a **scratch `Scene`**, not in place. Renumbering the live scene and
 putting it back would be faster; a throw or an early return in between would leave the real scene

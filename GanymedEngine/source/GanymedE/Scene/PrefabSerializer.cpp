@@ -78,12 +78,23 @@ namespace GanymedE {
 				relationship.Parent = parentIt != remap.end() ? parentIt->second : UUID{ 0 };
 			}
 
-			// An instance root inside a prefab file would be a nested prefab, which v1 does not
-			// do - the file describes plain entities.
+			// Prefab bookkeeping belongs to the INSTANCE the subtree was copied from, never to
+			// the file being written. Both components have to go, for the same reason:
+			//
+			//  - PrefabInstanceComponent would make this a nested prefab, which v1 does not do.
+			//  - PrefabMemberComponent would bake another prefab's canonical ids into this file.
+			//    That one is not cosmetic - Instantiate gives every created entity a fresh
+			//    PrefabMemberComponent from the file's own 1..N numbering, and AddComponent
+			//    asserts on an entity that already has one (UB in a build with asserts off). So
+			//    "make a prefab out of part of a prefab instance" produced a file that crashed
+			//    the next time it was instantiated.
 			for (Entity entity : orderedOut)
 			{
 				if (entity.HasComponent<PrefabInstanceComponent>())
 					entity.RemoveComponent<PrefabInstanceComponent>();
+
+				if (entity.HasComponent<PrefabMemberComponent>())
+					entity.RemoveComponent<PrefabMemberComponent>();
 			}
 
 			return canonical;
@@ -186,9 +197,11 @@ namespace GanymedE {
 				if (!transform)
 					return false;
 
-				out.Translation = transform["Translation"].as<glm::vec3>();
-				out.Rotation = transform["Rotation"].as<glm::vec3>();
-				out.Scale = transform["Scale"].as<glm::vec3>();
+				// The last hand-written component read in the engine, now the generic one. It
+				// also gains the generic reader's tolerance: these three keys used to throw out
+				// of as<glm::vec3>() if any were missing, where an absent key now leaves the
+				// constructed value. See scene.md.
+				ReadReflectedComponent(transform, out);
 			}
 			catch (const YAML::Exception& e)
 			{
@@ -263,8 +276,17 @@ namespace GanymedE {
 			// built from `fileUUIDs[i]`, and after this function returns there is no way to
 			// recover which prefab object an instance entity came from - fresh UUIDs everywhere
 			// and structural edits allowed. This is what per-property overrides key on.
+			// Assigned rather than added: a `.gprefab` written before BuildCanonicalCopy stripped
+			// PrefabMemberComponent carries one already, and AddComponent asserts on that. Such a
+			// file is wrong but it exists on disk, and reading it should correct the value rather
+			// than take the editor down.
 			for (std::size_t i = 0; i < created.size(); i++)
-				created[i].AddComponent<PrefabMemberComponent>(fileUUIDs[i]);
+			{
+				if (created[i].HasComponent<PrefabMemberComponent>())
+					created[i].GetComponent<PrefabMemberComponent>().CanonicalID = fileUUIDs[i];
+				else
+					created[i].AddComponent<PrefabMemberComponent>(fileUUIDs[i]);
+			}
 
 			for (Entity entity : created)
 			{

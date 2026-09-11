@@ -7,33 +7,13 @@ run off that registration, and prefab per-property overrides work. See
 
 What is left is a short tail, roughly in descending order of value.
 
+Two entries are gone: `PrefabSerializer::ReadRootTransform` now uses `ReadReflectedComponent` (the
+last hand-written component read in the engine), and `PrefabSerializer::Save` no longer bakes a
+stale `PrefabMemberComponent` into the file it writes — that one turned out to assert on the next
+instantiate, so it was a crash rather than diff noise. Both are described in
+[scene.md](../engine/scene.md).
+
 ---
-
-## `PrefabSerializer::ReadRootTransform` still reads the transform by hand
-
-The last hand-written component read in the codebase.
-[`PrefabSerializer.cpp:189`](../../GanymedEngine/source/GanymedE/Scene/PrefabSerializer.cpp#L189):
-
-```cpp
-out.Translation = transform["Translation"].as<glm::vec3>();
-out.Rotation    = transform["Rotation"].as<glm::vec3>();
-out.Scale       = transform["Scale"].as<glm::vec3>();
-```
-
-`ReadReflectedComponent(transform, out)` replaces all three, and gains the generic reader's
-tolerance for a missing key — this version throws on one. Everything else in the prefab path
-already goes through reflection, because `PrefabSerializer` delegates its component blocks to
-`SceneSerializer::SerializeEntity`/`DeserializeEntity`.
-
-## `PrefabSerializer::Save` bakes a stale `PrefabMemberComponent` into the file
-
-`BuildCanonicalCopy` strips `PrefabInstanceComponent` from the subtree before writing, with the
-reasoning that an instance root inside a prefab file would be a nested prefab, which v1 does not do.
-`PrefabMemberComponent` needs the same treatment and does not get it: creating a prefab from a
-subtree that is *itself* part of an instance writes that subtree's old canonical IDs into the new
-file.
-
-Found by the R5 round-trip probe, which instantiates and re-saves; pre-existing.
 
 ## Per-property apply-to-prefab
 
