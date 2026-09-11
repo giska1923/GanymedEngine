@@ -1,69 +1,73 @@
 # ToDo — Rendering backends
 
-Everything here is the unfinished tail of `BGFX_MIGRATION.md` Phase 7, the only milestone in
+The unfinished tail of `BGFX_MIGRATION.md` Phase 7, the last milestone in
 [`docs/history/`](../history/BGFX_MIGRATION.md) still flagged in progress (`🚧 STEP 1 DONE`). Step 1
 — removing OpenGL from the build — is done; what follows is multi-backend hardening.
 
-See [rendering.md](../engine/rendering.md) and [platform.md](../engine/platform.md) for how the
-backend is brought up today.
+**§9.3 (caps-driven projection) and §9.2 (backend selection) are both done** — see
+[Projection matrices](../engine/rendering.md#projection-matrices) and
+[Backend selection](../engine/rendering.md#backend-selection). What is left is making the other
+backends actually work, which §9.2 turned from a hypothetical into a list of specific failures.
 
 ---
 
-## Caps-driven projection for `[-1,1]` depth backends (§9.3)
-
-**This is a latent correctness bug, not a feature gap**, and it is the first thing to do here.
-
-The whole project compiles with `GLM_FORCE_DEPTH_ZERO_TO_ONE` (a workspace define in
-`premake5.lua`). That is a *compile-time* choice, so a backend that wants OpenGL's `[-1,1]` clip
-depth does not fail loudly — it renders with wrong near-plane clipping and half the depth precision.
-[`BgfxContext.cpp`](../../GanymedEngine/source/Platform/Bgfx/BgfxContext.cpp) currently detects the
-situation and logs an error rather than handling it:
-
-```cpp
-if (caps->homogeneousDepth)
-{
-    GE_CORE_ERROR("Backend '{0}' expects [-1,1] clip depth, but glm is built for [0,1]. ...");
-}
-```
-
-**What it needs:** a projection helper that takes `bgfx::getCaps()->homogeneousDepth` and builds the
-matrix accordingly, replacing direct `glm::perspective`/`glm::ortho` calls on the render path. Two
-call sites already do this by hand and are the model to generalise —
-`ImGuiRendererBgfx.cpp` and `RmlUiRendererBgfx.cpp` both read `homogeneousDepth` from caps and pick
-their near/far accordingly.
-
-Related, from the same section: `SampleCascade`'s render-target origin flip should become
-caps-driven at the same time rather than assuming a top-down origin.
-
-## Backend selection (§9.2)
-
-[`BgfxContext.cpp`](../../GanymedEngine/source/Platform/Bgfx/BgfxContext.cpp) still hardcodes the
-auto-pick:
-
-```cpp
-init.type = bgfx::RendererType::Count; // auto-pick; configurable in Phase 7
-```
-
-**What it needs:** `--renderer=vulkan|d3d12|d3d11|gl` on the command line (or a `runtime.yaml` key —
-[runtime.md](../runtime/runtime.md) already has a config file) feeding `init.type`, and a log line
-with `bgfx::getRendererName()`. `Application::SetCommandLineArgs` already captures argv.
-
-Worth doing *after* §9.3, not before: being able to select a broken backend is not an improvement.
-
 ## Multi-backend validation
 
-Once the two above are in, run the matrix on Windows — D3D11, D3D12, Vulkan, OpenGL. The migration
-doc lists the per-backend gotchas worth checking first:
+`--renderer=` made the other backends reachable, and they were run. On Windows, **D3D11 is the only
+one that renders correctly today.** Each of the three below is a separate, reproducible failure.
 
-- Depth range / clip space (fixed by §9.3, verify per backend).
+### D3D12 renders an empty viewport
+
+Selects cleanly, runs without a single bgfx error or warning in the log, and draws **nothing** into
+the viewport — the scene panel is uniformly background-coloured where D3D11 shows the scene. The
+editor chrome (ImGui) draws fine, so the failure is specific to the offscreen scene target rather
+than to submission as a whole.
+
+Reproduce: `GanymedEditor.exe --renderer=d3d12`.
+
+Worth checking first, precisely because ImGui works and the scene does not: the HDR offscreen target
+and its blit into the viewport image, and the R32I picking attachment
+([rendering.md](../engine/rendering.md)) — an unsupported attachment format is the kind of thing that
+invalidates a framebuffer quietly.
+
+### OpenGL hangs at the IBL bake
+
+Selects, and **correctly reports `homogeneousDepth=true` and `originBottomLeft=true`** — so §9.3's
+`[-1,1]` path and the shaders' per-profile branches are live and answering correctly. That is the one
+thing that could not be tested before backend selection existed. The glsl shader profile loads.
+
+Then it hangs: the last log line is the FXAA shader, and it never reaches the `Equirect` shader that
+D3D11 loads next, so it stops inside the environment bake. No error, no assert — it just stops.
+
+**The likely cause is the GL context version.** bgfx reports `OpenGL 2.1`, because
+`BGFX_CONFIG_RENDERER_OPENGL` is not set in
+[`extern/bgfx.lua`](../../GanymedEngine/extern/bgfx.lua) and bgfx then defaults low. GL 2.1 has no
+float cubemap render targets, which is exactly what the bake needs. Setting it to `43` and rebuilding
+bgfx is the first thing to try — deliberately *not* done as part of §9.2, because it changes how the
+vendored bgfx is built for **every** backend and would invalidate the D3D11 verification alongside it.
+
+Reproduce: `GanymedEditor.exe --renderer=gl`, then kill it.
+
+### Vulkan is untested here, not broken
+
+`--renderer=vulkan` reports that bgfx substituted D3D11 because Vulkan could not be started — this
+machine has no Vulkan driver. Nothing is known about whether the engine renders correctly on it.
+Needs a machine with a Vulkan-capable driver.
+
+## The rest of the test matrix
+
+Once a backend renders at all, the per-backend gotchas the migration doc lists are still worth
+walking:
+
+- Depth range / clip space — handled by §9.3, and GL confirms the caps are read correctly, but no
+  `[-1,1]` backend has yet rendered a frame.
 - Render-target origin flip in every fullscreen pass.
 - sRGB: the pipeline tonemaps manually, so the backbuffer stays linear
   (`BGFX_RESET_SRGB_BACKBUFFER` off) — verify the look matches per backend.
-- R32I attachment support, which async picking depends on
-  ([rendering.md](../engine/rendering.md)).
+- R32I attachment support, which async picking depends on.
 
 ## Optional, and explicitly not scheduled
 
-From the same section, listed so they are not rediscovered as if they were new: multithreaded
-render (dropping the `renderFrame()` trick), compute-shader IBL bakes, `texturec`-preprocessed KTX
-textures with mips, and occlusion queries. None of these is blocking anything.
+From the same section, listed so they are not rediscovered as if they were new: multithreaded render
+(dropping the `renderFrame()` trick), compute-shader IBL bakes, `texturec`-preprocessed KTX textures
+with mips, and occlusion queries. None of these is blocking anything.

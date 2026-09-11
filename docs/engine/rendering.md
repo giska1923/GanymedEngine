@@ -31,9 +31,9 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
    `u_view/u_proj/u_viewProj/u_modelViewProj`.
 3. **Render-target origin and clip depth are backend-dependent.** D3D/Vulkan/Metal address RTs
    top-down, GL bottom-up (`caps->originBottomLeft` — consulted for the viewport image UVs, the
-   pick coordinate flip, and the fullscreen-pass V flip). The workspace defines
-   `GLM_FORCE_DEPTH_ZERO_TO_ONE` (see the comment in `premake5.lua`); `BgfxContext` logs an error
-   if the live backend disagrees (`homogeneousDepth`).
+   pick coordinate flip, and the fullscreen-pass V flip), and clip depth is `[0,1]` on the former
+   and `[-1,1]` on GL (`caps->homogeneousDepth`). Both are answered from caps rather than assumed —
+   see [Projection matrices](#projection-matrices).
 4. **Readback is asynchronous.** There is no `glReadPixels`; entity picking is a blit +
    `readTexture` returning the frame number at which the result is valid (measured latency ≈3
    frames). See [Picking](#entity-picking-async).
@@ -129,6 +129,72 @@ automatically.
 - [`EditorCamera`](../../GanymedEngine/source/GanymedE/Renderer/EditorCamera.h) — the viewport
   camera: orbit (Alt+LMB rotate, MMB pan, scroll zoom) around a focal point; perspective.
 - `OrthographicCamera(+Controller)` — legacy 2D-era pair, still used by Sandbox.
+
+### Backend selection
+
+`--renderer=<backend>` on the command line picks the bgfx backend; without it bgfx chooses, which
+is the right default for shipping. Accepted: `auto`, `d3d11`, `d3d12`, `vulkan`, `metal`, `gl`,
+`gles`, plus bgfx's own longer spellings (`direct3d11`) and the obvious short ones (`dx11`, `vk`).
+Case-insensitive, last one wins. Parsed in
+[`BgfxContext.cpp`](../../GanymedEngine/source/Platform/Bgfx/BgfxContext.cpp).
+
+It is a launch-time switch rather than a config key on purpose: which backend to debug on belongs to
+the run, not to the build — which is also why it is absent from `runtime.yaml`, a file whose own
+header reserves it for what "belongs to the build rather than to the launch".
+
+Every failure path falls back to letting bgfx choose, because an unusable `--renderer` should cost a
+warning and a working window rather than a black screen: an unknown name warns and lists the valid
+ones; a name this build of bgfx does not support warns and lists what it does support
+(`getSupportedRenderers`); and a backend that is supported but cannot start — no driver, no device —
+is retried on auto.
+
+**The boot log reports what bgfx actually selected, not what was asked.** bgfx substitutes a working
+backend silently when the requested one fails to start, so asking for Vulkan on a machine with no
+Vulkan driver returns success and a D3D11 context. Labelling that line from the request would print
+`Vulkan (requested)` over a D3D11 frame, so the line compares `getRendererType()` against the request
+and says plainly when they differ.
+
+Note for anything reading positional arguments: use `ApplicationCommandLineArgs::FirstPositional()`,
+not `Args[1]`. Both apps take a path positionally and both used to index slot 1 directly, which broke
+the moment the engine grew its first flag.
+
+### Projection matrices
+
+**Every projection on the render path is built through `Projection::` in
+[`Renderer.h`](../../GanymedEngine/source/GanymedE/Renderer/Renderer.h), never `glm::perspective`
+directly.** `Projection::Perspective` and `Projection::Orthographic` read
+`caps->homogeneousDepth` and pick glm's convention-explicit form — `perspectiveRH_ZO` for `[0,1]`
+clip depth, `perspectiveRH_NO` for `[-1,1]`.
+
+The problem this solves (BGFX_MIGRATION.md §9.3): the workspace compiles with
+`GLM_FORCE_DEPTH_ZERO_TO_ONE`, which is what makes `glm::perspective` emit a `[0,1]` matrix. Being
+a compile-time define it could not adapt, so an OpenGL backend would have rendered with incorrect
+near-plane clipping and half its depth precision — and silently, since a define cannot fail at
+runtime. `BgfxContext` used to log an error on the mismatch; that error is gone because the
+mismatch is now handled.
+
+Call sites: `SceneCamera`, `EditorCamera`, the shadow cascades and light projection in
+`Renderer3D`, and the IBL capture projection in `Environment` (a bake that clipped wrongly would
+poison every scene lit by the result).
+
+Two details worth knowing:
+
+- **`HomogeneousDepth()` is `false` before the GPU is up**, which is exactly what
+  `GLM_FORCE_DEPTH_ZERO_TO_ONE` meant, so a camera constructed before `Renderer::Init` gets the
+  matrix it always got. Every camera recomputes on resize and on any setter, so no pre-init matrix
+  survives into a rendered frame.
+- **Shaders answer the same question per profile, not per frame.** Bytecode is compiled once per
+  backend, so the shading language *is* the backend: `fs_Phong.sc`'s cascade lookup remaps `proj.z`
+  only under `BGFX_SHADER_LANGUAGE_GLSL` (where clip depth is `[-1,1]`) and flips `proj.y` only
+  where it is not (where render targets are top-down). That is the same idiom the fullscreen passes
+  use — see `vs_Blit.sc`.
+
+Verified on D3D11 by asserting the new matrices are **bit-identical** to the `glm` calls they
+replaced — which they are by construction, since `glm::perspective` under the define *is*
+`perspectiveRH_ZO` — and by capturing the 3D scene before and after: pixel-identical. The `[-1,1]`
+branch differs from `[0,1]` in exactly the two depth-row elements, so the caps check is not a
+no-op. **No `[-1,1]` backend has actually been run**; that needs backend selection (§9.2) and is
+tracked in [ToDo/rendering.md](../ToDo/rendering.md).
 
 ## Renderer2D
 

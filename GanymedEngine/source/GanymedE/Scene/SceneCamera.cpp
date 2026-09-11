@@ -1,5 +1,6 @@
 #include "gepch.h"
 #include "SceneCamera.h"
+#include "GanymedE/Renderer/Renderer.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -38,7 +39,8 @@ namespace GanymedE {
 	{
 		if (m_ProjectionType == ProjectionType::Perspective)
 		{
-			m_Projection = glm::perspective(m_PerspectiveFOV, m_AspectRatio, m_PerspectiveNear, m_PerspectiveFar);
+			m_Projection = Projection::Perspective(m_PerspectiveFOV, m_AspectRatio,
+				m_PerspectiveNear, m_PerspectiveFar);
 		}
 		else
 		{
@@ -47,7 +49,7 @@ namespace GanymedE {
 			float orthoBottom = -m_OrthographicSize * 0.5f;
 			float orthoTop = m_OrthographicSize * 0.5f;
 
-			m_Projection = glm::ortho(orthoLeft, orthoRight,
+			m_Projection = Projection::Orthographic(orthoLeft, orthoRight,
 				orthoBottom, orthoTop, m_OrthographicNear, m_OrthographicFar);
 		}
 	}

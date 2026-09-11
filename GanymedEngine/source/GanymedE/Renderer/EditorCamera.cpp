@@ -1,5 +1,6 @@
 #include "gepch.h"
 #include "EditorCamera.h"
+#include "GanymedE/Renderer/Renderer.h"
 
 #include "GanymedE/Core/Input.h"
 #include "GanymedE/Core/KeyCodes.h"
@@ -12,7 +13,7 @@ namespace GanymedE {
 
 	EditorCamera::EditorCamera(float fov, float aspectRatio, float nearClip, float farClip)
 		: m_FOV(fov), m_AspectRatio(aspectRatio), m_NearClip(nearClip), m_FarClip(farClip),
-		Camera(glm::perspective(glm::radians(fov), aspectRatio, nearClip, farClip))
+		Camera(Projection::Perspective(glm::radians(fov), aspectRatio, nearClip, farClip))
 	{
 		UpdateView();
 	}
@@ -20,7 +21,7 @@ namespace GanymedE {
 	void EditorCamera::UpdateProjection()
 	{
 		m_AspectRatio = m_ViewportWidth / m_ViewportHeight;
-		m_Projection = glm::perspective(glm::radians(m_FOV), m_AspectRatio, m_NearClip, m_FarClip);
+		m_Projection = Projection::Perspective(glm::radians(m_FOV), m_AspectRatio, m_NearClip, m_FarClip);
 	}
 
 	void EditorCamera::UpdateView()

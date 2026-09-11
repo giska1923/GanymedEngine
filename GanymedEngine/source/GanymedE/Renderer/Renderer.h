@@ -7,6 +7,41 @@
 
 namespace GanymedE {
 
+	// Projection matrices that match the running backend's clip space.
+	//
+	// BGFX_MIGRATION.md §9.3. The workspace compiles with `GLM_FORCE_DEPTH_ZERO_TO_ONE`, so every
+	// `glm::perspective` in the engine produced a matrix for `[0,1]` clip depth - correct on
+	// D3D, Vulkan and Metal, and wrong on OpenGL, which wants `[-1,1]`. Being a compile-time
+	// define, it could not be wrong *loudly*: a GL build would have rendered with incorrect
+	// near-plane clipping and half its depth precision, which reads as a subtle artifact rather
+	// than a failure. `BgfxContext` logs an error when it detects the mismatch; these functions
+	// are what make the error unnecessary.
+	//
+	// Built with glm's convention-explicit forms (`perspectiveRH_ZO` / `perspectiveRH_NO`), which
+	// are what `glm::perspective` already resolves to depending on the define. That makes the
+	// `[0,1]` branch identical to the call it replaces *by construction*, and adds the `[-1,1]`
+	// branch the define could never express.
+	namespace Projection {
+
+		// True when the backend wants `[-1,1]` clip depth (OpenGL) rather than `[0,1]`.
+		//
+		// **False before the GPU is up**, which is deliberate: that is what
+		// `GLM_FORCE_DEPTH_ZERO_TO_ONE` meant, so a camera constructed before `Renderer::Init`
+		// gets exactly the matrix it got before this existed. Every camera recomputes on resize
+		// and on any setter, so nothing keeps a pre-init matrix into a rendered frame.
+		bool HomogeneousDepth();
+
+		// True when render-target texel (0,0) is bottom-left (OpenGL) rather than top-left.
+		// Shaders answer this per profile with `BGFX_SHADER_LANGUAGE_GLSL` instead - the shading
+		// language *is* the backend there - so this is for C++ that needs the same fact.
+		bool OriginBottomLeft();
+
+		glm::mat4 Perspective(float fovYRadians, float aspect, float nearZ, float farZ);
+		glm::mat4 Orthographic(float left, float right, float bottom, float top,
+			float nearZ, float farZ);
+
+	}
+
 	class Renderer
 	{
 	public:

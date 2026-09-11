@@ -91,6 +91,11 @@ exe that starts and tells you what is wrong beats one that refuses to start.
 | Key | Default | Notes |
 |---|---|---|
 | `StartScene` | `assets/scenes/Demo.ganymede` | The only field the command line can override |
+
+The runtime also accepts `--renderer=<backend>`, which is engine-wide rather than runtime config —
+see [rendering.md](../engine/rendering.md#backend-selection). It is not a `runtime.yaml` key because
+the backend to run on belongs to the launch, not to the build. Options and the scene override may
+appear in either order.
 | `UIDocument` | `assets/ui/hud.rml` | Empty string = no HUD |
 | `Title` | `GanymedEngine Runtime` | Window title |
 | `Width` / `Height` | 1600 / 900 | Ignored when `Fullscreen`; a zero is rejected with a warning |

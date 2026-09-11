@@ -1,5 +1,6 @@
 #include "gepch.h"
 #include "Renderer3D.h"
+#include "GanymedE/Renderer/Renderer.h"
 
 #include "FrameUniforms.h"
 #include "Shader.h"
@@ -477,7 +478,7 @@ namespace GanymedE {
 	// Fits one orthographic light frustum to a slice of the camera frustum (stable, texel-snapped).
 	static glm::mat4 FitCascade(const glm::mat4& view, float fov, float aspect, float nearSplit, float farSplit, const glm::vec3& lightDir)
 	{
-		glm::mat4 cascadeProj = glm::perspective(fov, aspect, nearSplit, farSplit);
+		glm::mat4 cascadeProj = Projection::Perspective(fov, aspect, nearSplit, farSplit);
 		glm::mat4 invViewProj = glm::inverse(cascadeProj * view);
 
 		glm::vec3 corners[8];
@@ -503,7 +504,8 @@ namespace GanymedE {
 		glm::mat4 lightView = glm::lookAt(center - lightDir * radius, center, up);
 
 		const float zMult = 6.0f;
-		glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, -radius * zMult, radius * zMult);
+		glm::mat4 lightProj = Projection::Orthographic(-radius, radius, -radius, radius,
+			-radius * zMult, radius * zMult);
 
 		// Snap the frustum to shadow-map texels to eliminate edge shimmering when the camera moves
 		glm::mat4 shadowMatrix = lightProj * lightView;

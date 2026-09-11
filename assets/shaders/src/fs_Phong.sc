@@ -135,18 +135,25 @@ float SampleCascade(BgfxSampler2D shadowMap, vec4 lightSpacePos, vec3 N, vec3 L)
 {
 	vec3 proj = lightSpacePos.xyz / lightSpacePos.w;
 
-	// Only XY are remapped. NDC xy is [-1,1] on every backend, but the depth
-	// range is not: this project builds projections with
-	// GLM_FORCE_DEPTH_ZERO_TO_ONE, so proj.z already arrives in [0,1]. The
-	// original GL shader remapped all three, which under [0,1] depth pushes z
-	// into [0.5,1] and makes every depth comparison wrong.
+	// NDC xy is [-1,1] on every backend, so it always remaps. Depth does not:
+	// Projection:: (Renderer.h) builds the light-space matrix for whichever clip
+	// convention the backend wants, so z arrives in [0,1] on D3D/Vulkan/Metal and
+	// in [-1,1] on OpenGL. Remapping unconditionally - which the original GL
+	// shader did - pushes z into [0.5,1] under [0,1] depth and makes every depth
+	// comparison wrong, so the remap is guarded to the language that needs it.
 	proj.xy = proj.xy * 0.5 + 0.5;
+#if BGFX_SHADER_LANGUAGE_GLSL
+	proj.z = proj.z * 0.5 + 0.5;
+#endif
 
 	// The shadow map is a render target, and bgfx addresses those top-down on
-	// D3D/Vulkan/Metal while NDC +Y points up. Flip to match.
-	// TODO(§9.3): drive this from getCaps()->originBottomLeft rather than
-	// assuming, once the caps-driven projection helper exists.
+	// D3D/Vulkan/Metal while OpenGL addresses them bottom-up, matching NDC +Y.
+	// This is getCaps()->originBottomLeft, answered at compile time: shaders are
+	// built per profile, so the shading language IS the backend here - the same
+	// idiom the fullscreen passes use (see vs_Blit.sc).
+#if !BGFX_SHADER_LANGUAGE_GLSL
 	proj.y = 1.0 - proj.y;
+#endif
 
 	if (proj.z > 1.0)
 		return 0.0;

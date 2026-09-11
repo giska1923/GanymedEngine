@@ -4,7 +4,9 @@ The editor application (`GanymedEditor/source/`). It is a thin client of the eng
 `Application` subclass ([`GanymedEditorApp.cpp`](../../GanymedEditor/source/GanymedEditorApp.cpp))
 pushing a single [`EditorLayer`](../../GanymedEditor/source/EditorLayer.h), plus two panels.
 Run it with `GanymedEditor/` as the working directory (assets resolve relative to CWD); a scene
-path may be passed as `argv[1]`.
+path may be passed positionally, and `--renderer=<backend>` selects the graphics backend (see
+[rendering.md](../engine/rendering.md#backend-selection)). Options and the scene path may appear in
+either order.
 
 ## Layout
 

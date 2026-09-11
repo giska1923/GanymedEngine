@@ -1,6 +1,8 @@
 #include "gepch.h"
 #include "Renderer.h"
 
+#include <glm/ext/matrix_clip_space.hpp>
+
 #include "Renderer2D.h"
 #include "Renderer3D.h"
 #include "PostProcess.h"
@@ -10,6 +12,50 @@
 #include <bgfx/bgfx.h>
 
 namespace GanymedE {
+
+	namespace Projection {
+
+		bool HomogeneousDepth()
+		{
+			// getCaps() is only meaningful once bgfx::init has run. IsGpuAlive is the flag the
+			// renderer already keeps for exactly this "is the backend up" question.
+			if (!Renderer::IsGpuAlive())
+				return false;
+
+			return bgfx::getCaps()->homogeneousDepth;
+		}
+
+		bool OriginBottomLeft()
+		{
+			if (!Renderer::IsGpuAlive())
+				return false;
+
+			return bgfx::getCaps()->originBottomLeft;
+		}
+
+		// glm's convention-explicit forms rather than bx's mtxProj: bx/platform.h requires
+		// /Zc:__cplusplus, which only the vendored bgfx projects set, and adding it to the engine
+		// to obtain a matrix glm already builds is the wrong trade. It is also the stronger
+		// result - `glm::perspective` under GLM_FORCE_DEPTH_ZERO_TO_ONE *is* perspectiveRH_ZO,
+		// so the [0,1] branch is identical to the call it replaces by construction rather than
+		// by measurement. Handedness is right, glm's default, which the workspace never overrides.
+		glm::mat4 Perspective(float fovYRadians, float aspect, float nearZ, float farZ)
+		{
+			return HomogeneousDepth()
+				? glm::perspectiveRH_NO(fovYRadians, aspect, nearZ, farZ)
+				: glm::perspectiveRH_ZO(fovYRadians, aspect, nearZ, farZ);
+		}
+
+		glm::mat4 Orthographic(float left, float right, float bottom, float top,
+			float nearZ, float farZ)
+		{
+			return HomogeneousDepth()
+				? glm::orthoRH_NO(left, right, bottom, top, nearZ, farZ)
+				: glm::orthoRH_ZO(left, right, bottom, top, nearZ, farZ);
+		}
+
+	}
+
 
 	static bool s_DebugStats = false;
 	static uint32_t s_FrameNumber = 0;

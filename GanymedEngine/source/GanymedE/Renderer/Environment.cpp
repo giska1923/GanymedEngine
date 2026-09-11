@@ -267,7 +267,10 @@ namespace GanymedE {
 
 		glm::mat4 captureViews[6];
 		BuildCaptureViews(captureViews);
-		const glm::mat4 captureProj = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+		// The cubemap bake renders through real projections like any other pass, so it needs
+		// the backend's clip convention too - a bake that clipped wrongly would poison every
+		// scene lit by the resulting IBL.
+		const glm::mat4 captureProj = Projection::Perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
 
 		Geometry cube = CreateUnitCube();
 		Geometry quad = CreateFullscreenQuad();

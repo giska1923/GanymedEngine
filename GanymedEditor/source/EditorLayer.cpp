@@ -65,11 +65,11 @@ namespace GanymedE {
 
 		RetargetPanels();
 
-		// Optional scene on the command line: GanymedEditor <path/to/scene.ganymede>
-		const auto& args = Application::GetCommandLineArgs();
-		if (args.Count > 1)
+		// Optional scene on the command line: GanymedEditor [--renderer=<backend>] [path/to/scene.ganymede]
+		// FirstPositional, not Args[1]: an option may come first.
+		if (const char* positional = Application::GetCommandLineArgs().FirstPositional())
 		{
-			std::filesystem::path scenePath = args[1];
+			std::filesystem::path scenePath = positional;
 			if (std::filesystem::exists(scenePath))
 				OpenScene(scenePath);
 			else

@@ -69,7 +69,22 @@ namespace GanymedE {
 		if (argc <= 1)
 			return;
 
-		std::filesystem::path scene = argv[1];
+		// Skip options - the engine reads its own (--renderer=, see BgfxContext) and they can
+		// appear before the scene.
+		const char* positional = nullptr;
+		for (int i = 1; i < argc; i++)
+		{
+			if (argv[i] && argv[i][0] != '-')
+			{
+				positional = argv[i];
+				break;
+			}
+		}
+
+		if (!positional)
+			return;
+
+		std::filesystem::path scene = positional;
 		if (scene.extension() != ".ganymede")
 		{
 			GE_WARN("Ignoring command-line argument '{0}': not a .ganymede scene", scene.string());

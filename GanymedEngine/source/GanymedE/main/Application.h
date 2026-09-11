@@ -24,6 +24,24 @@ namespace GanymedE {
 			GE_CORE_ASSERT(index < Count, "Command line argument index out of range!");
 			return Args[index];
 		}
+
+		// The first argument that is not an option, or nullptr.
+		//
+		// Both apps take a path positionally - a scene for the editor, a scene override for the
+		// runtime - and both used to read `Args[1]` directly. That broke the moment the engine
+		// grew its first flag (`--renderer=`, see BgfxContext): the flag landed in slot 1 and was
+		// reported as a missing scene file. Options are read by whoever owns them, wherever they
+		// appear, so positional handling has to skip them rather than assume slot 1.
+		const char* FirstPositional() const
+		{
+			for (int i = 1; i < Count; i++)
+			{
+				if (Args[i] && Args[i][0] != '-')
+					return Args[i];
+			}
+
+			return nullptr;
+		}
 	};
 
 	// Host configuration, chosen by the app before any layer exists.
