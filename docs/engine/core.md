@@ -242,6 +242,40 @@ rather than during a scene swap: a `ParallelFor` sum matches the serial result, 
 mid-flight really did wait, and a running body observes `IsCurrentJobCancelled()`. It sleeps ~20ms
 deliberately — without that the second check would be a race it wins by luck.
 
+### Thread naming and profiler callbacks
+
+Every scheduler thread carries an OS-level name: `GE Main` for thread 0 and `GE Worker N` for the
+rest. **The numbering is enkiTS's own**, so the thread a debugger calls `GE Worker 3` is the one a
+`ParallelFor` body sees as `threadIndex == 3` — a separate numbering would make the thread list and a
+per-thread output bucket disagree about which thread is which, exactly when that costs most.
+
+Naming is installed through enkiTS's `threadStart` profiler callback rather than by a loop after
+`Initialize`, because a thread name is something a thread sets **on itself**: macOS's
+`pthread_setname_np` takes no thread argument at all. Thread 0 is named directly from `Init`, since
+enkiTS never calls `threadStart` for the thread it did not create. Per platform: `SetThreadDescription`
+on Windows (resolved dynamically, so a binary built against a current SDK still starts on a pre-1607
+Windows), `pthread_setname_np` elsewhere — truncated to 15 characters on Linux, which rejects longer
+names outright rather than truncating for you.
+
+**Naming is unconditional; the profiler bridge is not.** `threadStart`/`threadStop` are always
+installed, so an unnamed pool never happens — fifteen identical `Worker Thread` rows in a debugger is
+precisely the wrong thing to be looking at during a hang, and a crash dump keeps the names too. The
+six wait/suspend callbacks are compiled in only under `GE_PROFILE`; with profiling off enkiTS holds
+null pointers for them and skips them.
+
+With `GE_PROFILE` on, those six emit spans into the Instrumentor
+([build-and-tooling.md](build-and-tooling.md#profiling--debug-tooling)) — idle-suspended, waiting on
+a task, and waiting-suspended — plus one `worker lifetime` span per thread that gives the trace a
+lane to hang the rest off. Because `GE_PROFILE_SCOPE` is an RAII scope and cannot span two separate
+callback functions, the bridge keeps a start timestamp per thread per category and writes the span on
+the matching stop. Three categories rather than one slot, because they nest.
+
+That cost is real and worth knowing before you turn it on: these fire on **every** spin-to-suspend
+transition on every worker, and `Instrumentor::WriteProfile` takes a process-wide mutex and flushes
+per record. An idle pool produces a trace dominated by its own idleness, and contention the scheduler
+would not otherwise have. It is wired anyway rather than left as a retrofit; "is a real frame profiler
+worth adopting" is a separate question, kept separate on purpose.
+
 ## Logging
 
 [`Log`](../../GanymedEngine/source/GanymedE/Core/Log.h) wraps two spdlog loggers, both writing

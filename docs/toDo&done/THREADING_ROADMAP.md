@@ -225,7 +225,8 @@ Verification is a test, not a feature: a `ParallelFor` summing a large array mat
 result; a `Future` dropped mid-flight does not use freed state under a debug allocator; shutdown with
 work queued exits cleanly.
 
-**T2 — Thread naming and profiler wiring, up front rather than retrofitted.** enkiTS's
+**T2 — Thread naming and profiler wiring, up front rather than retrofitted. Done** — see
+[T2 — done](#t2--done-2026-09-11) at the bottom. enkiTS's
 `ProfilerCallbacks` hook worker start/stop/wait. Ganymed's profiler is `Debug/Instrumentor.h`, a
 Chrome-trace writer currently **compiled off** (`GE_PROFILE 0` at
 [`Instrumentor.h:204`](../../GanymedEngine/source/GanymedE/Debug/Instrumentor.h#L204)) whose global
@@ -457,3 +458,69 @@ until the last step.
 **Still open from this milestone:** decision 4's Jolt consolidation. Two pools of
 `hardware_concurrency() - 1` threads is still the state, and now there is a third source of load on
 the scheduler. Worth measuring before assuming it is harmless.
+
+
+---
+
+## T2 — done (2026-09-11)
+
+Thread naming and the profiler bridge, both through enkiTS's `ProfilerCallbacks`, in
+[`JobSystem.cpp`](../../GanymedEngine/source/GanymedE/Core/JobSystem.cpp). One file touched, no new
+source files, so no premake regeneration.
+
+**Naming is unconditional, the profiler bridge is not.** `threadStart`/`threadStop` are always
+installed; the six wait/suspend callbacks compile in only under `GE_PROFILE`, and with it off enkiTS
+holds null pointers for them. That split is the point of doing this now rather than later: the
+useful half of T2 does not depend on a profiling decision nobody has taken, and fifteen identical
+`Worker Thread` rows in a debugger is exactly the wrong thing to be staring at during a hang.
+
+Threads are `GE Main` (thread 0) and `GE Worker N`, **using enkiTS's own numbering** so that the
+thread a debugger names `GE Worker 3` is the one a `ParallelFor` body sees as `threadIndex == 3`.
+Naming happens inside the `threadStart` callback because a thread name is set on the thread itself —
+macOS's `pthread_setname_np` takes no thread argument. Thread 0 is named directly from `Init`, since
+enkiTS never calls `threadStart` for a thread it did not create. Windows uses `SetThreadDescription`
+resolved dynamically (a diagnostic nicety must not stop the binary loading on an older Windows), and
+it is the modern API rather than the legacy `RaiseException(0x406D1388)` trick, so the name also
+reaches ETW, WPA, Task Manager and post-mortem dumps rather than only an attached debugger.
+
+**The bridge, and its stated cost.** `GE_PROFILE_SCOPE` is RAII and cannot span two separate callback
+functions, so the span is assembled by hand: a start timestamp per thread per category, written out
+on the matching stop. Three categories, not one slot, because they nest — a thread inside
+`waitForTaskComplete` can go on to suspend, and one slot would have the inner stop consume the outer
+start. Recorded plainly in the code and in [core.md](../engine/core.md#thread-naming-and-profiler-callbacks):
+these fire on every spin-to-suspend transition on every worker, and `Instrumentor::WriteProfile` takes
+a process-wide mutex and flushes per record, so an idle pool yields a trace dominated by its own
+idleness plus contention the scheduler would not otherwise have. Wired anyway rather than retrofitted;
+the Tracy question stays separate, as this roadmap asked.
+
+**A wrong turn worth recording.** A grep for `GE_PROFILE_BEGIN_SESSION` restricted to `*.cpp` found
+nothing, so a session lifecycle was added to `Application`'s constructor and destructor on the
+conclusion that the Instrumentor had never been wired up at all. It had been, in
+[`EntryPoint.h`](../../GanymedEngine/source/GanymedE/main/EntryPoint.h), which already splits a run
+into Startup / Runtime / Shutdown sessions writing three separate files — a better structure than the
+single session that was added. The redundant session *hijacked* the Startup one (`BeginSession` closes
+an open session before opening the new one), and the worker-lifetime records that then appeared to be
+missing were in fact landing in `GanymedEProfile-Shutdown.json` the whole time. Reverted; the lesson
+is that the header is where lifecycle lives in this codebase, and a `*.cpp`-only grep is not evidence
+of absence.
+
+**Verification.**
+
+- **Names read back from the OS, not from the string that was passed in.** A probe enumerated the
+  process's own threads via `CreateToolhelp32Snapshot` and asked `GetThreadDescription` for each:
+  16 of 49 process threads named, exactly `GE Main` plus `GE Worker 1`..`GE Worker 15`, matching
+  `JobSystem::ThreadCount() == 16` on a 16-thread machine.
+- Confirmed with `GE_PROFILE` **0** as well as 1, since unconditional naming is the claim that
+  matters — and no trace files are produced in that configuration.
+- **Both preprocessor paths compile**, checked by building the whole solution with `GE_PROFILE` set
+  to 1 and then back to 0. An `#if`-guarded block that is never compiled is the standard way to ship
+  a broken one.
+- With `GE_PROFILE` 1, all three phase traces parse as valid Chrome-trace JSON and show **16 thread
+  lanes** apiece: Startup 56 records, Runtime 274, Shutdown 44 — the last including all 15
+  `worker lifetime` spans, one per worker.
+- Debug, Release and Dist clean.
+
+**Incidental finding, not fixed.** The 49-vs-16 thread count above is Decision 4 made visible: Jolt's
+own pool is most of the rest. Also worth knowing before anyone reaches for a trace — the frame loop
+carries almost no `GE_PROFILE_FUNCTION` scopes, so `-Runtime.json` is currently asset and job activity
+rather than a frame breakdown. Neither is T2's business; both are now written down.

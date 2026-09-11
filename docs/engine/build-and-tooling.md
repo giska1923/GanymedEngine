@@ -321,7 +321,17 @@ everything. Packaging that tree is the distribution milestone's job.
 ## Profiling & debug tooling
 
 - **Instrumentor** (`GE_PROFILE_*` macros) → chrome://tracing JSON, three sessions per run
-  (Startup/Runtime/Shutdown). Enable with `GE_PROFILE`.
+  (Startup/Runtime/Shutdown), written to `GanymedEProfile-<phase>.json` beside the executable and
+  gitignored by the blanket `*.json` rule. Enable by setting `GE_PROFILE` to 1 in
+  [`Instrumentor.h`](../../GanymedEngine/source/GanymedE/Debug/Instrumentor.h); it is **0** by
+  default, so the ~90 `GE_PROFILE_FUNCTION` scopes in the engine compile to nothing.
+  - The job system's threads appear as named lanes (`GE Main`, `GE Worker N`) whether or not
+    profiling is on, and contribute idle/wait/worker-lifetime spans when it is — see
+    [core.md](core.md#thread-naming-and-profiler-callbacks), including why those wait spans are
+    expensive enough to distort what they measure.
+  - Note what the phase split means in practice: the frame loop itself carries almost no
+    `GE_PROFILE_FUNCTION` scopes today, so `-Runtime.json` is mostly asset and job activity rather
+    than a frame breakdown. A trace that looks empty is usually that, not a broken session.
 - **F1** in any app toggles bgfx's stats/debug-text overlay (draw counts, GPU/CPU timings).
 - The editor Stats panel shows Renderer2D/3D counters (draws, quads, meshes, frustum-culled,
   instanced, transparent) plus live post-processing and physics-debug toggles.

@@ -4,10 +4,16 @@
 #include <TaskScheduler.h>
 
 #include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <numeric>
 #include <thread>
 #include <vector>
+
+#if defined(GE_PLATFORM_LINUX) || defined(GE_PLATFORM_MACOS)
+	#include <pthread.h>
+#endif
 
 namespace GanymedE {
 
@@ -63,6 +69,190 @@ namespace GanymedE {
 			return static_cast<enki::TaskPriority>(priority);
 		}
 
+		// ---- Thread naming --------------------------------------------------------------
+		//
+		// Names the CALLING thread. That restriction is why this is invoked from enkiTS's
+		// threadStart callback rather than from a loop after Initialize: macOS's
+		// pthread_setname_np only accepts the current thread, and Windows' debugger-facing
+		// name has always been a property a thread sets on itself by convention.
+		//
+		// Worth having even with the profiler compiled out, which is the usual reason this
+		// gets skipped: an unnamed pool is fifteen identical "Worker Thread" rows in the
+		// debugger, and a hang or a crash dump is exactly when you need to know which of them
+		// is the one blocked in a bgfx call it should never have made.
+		void SetCurrentThreadName(const char* name)
+		{
+#if defined(GE_PLATFORM_WINDOWS)
+			// SetThreadDescription is Windows 10 1607+. Resolved dynamically rather than
+			// linked, so a binary built against a current SDK still starts on an older
+			// Windows instead of failing to load over a diagnostic nicety.
+			//
+			// This is the modern API, not the legacy RaiseException(0x406D1388) trick: that
+			// one is only observed by a debugger that happens to be attached at the moment
+			// the thread starts, where a description is stored by the OS and so also reaches
+			// ETW, WPA, Task Manager and post-mortem dumps.
+			using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+
+			static const SetThreadDescriptionFn setThreadDescription = []() -> SetThreadDescriptionFn
+			{
+				if (HMODULE kernel = GetModuleHandleW(L"kernel32.dll"))
+				{
+					return reinterpret_cast<SetThreadDescriptionFn>(
+						reinterpret_cast<void*>(GetProcAddress(kernel, "SetThreadDescription")));
+				}
+
+				return nullptr;
+			}();
+
+			if (!setThreadDescription)
+				return;
+
+			// Names here are ASCII literals built below, so a widening copy is exact.
+			const std::string narrow(name);
+			const std::wstring wide(narrow.begin(), narrow.end());
+			setThreadDescription(GetCurrentThread(), wide.c_str());
+#elif defined(GE_PLATFORM_LINUX)
+			// Linux caps this at 16 bytes INCLUDING the terminator and fails the call
+			// outright if the name is longer, so truncate rather than lose the name.
+			char truncated[16];
+			std::snprintf(truncated, sizeof(truncated), "%s", name);
+			pthread_setname_np(pthread_self(), truncated);
+#elif defined(GE_PLATFORM_MACOS)
+			pthread_setname_np(name);   // current thread only, hence the shape of this function
+#else
+			(void)name;
+#endif
+		}
+
+		// enkiTS's numbering, deliberately: "GE Worker 3" is the thread that a ParallelFor
+		// body sees as threadIndex 3, and the main thread is 0 in both. A separate numbering
+		// would make a debugger's thread list and a per-thread output bucket disagree about
+		// which thread is which, which is precisely when that costs the most.
+		void NameSchedulerThread(uint32_t threadNum)
+		{
+			if (threadNum == 0)
+			{
+				SetCurrentThreadName("GE Main");
+				return;
+			}
+
+			char name[24];
+			std::snprintf(name, sizeof(name), "GE Worker %u", threadNum);
+			SetCurrentThreadName(name);
+		}
+
+		// ---- Profiler callbacks ---------------------------------------------------------
+		//
+		// enkiTS hands these out as plain C function pointers with no user data, so the
+		// bridge below is free functions over thread_local state rather than anything
+		// captured.
+		//
+		// Only threadStart is wired unconditionally, because that is where naming happens.
+		// The six wait/suspend callbacks are compiled in only with GE_PROFILE on, so with
+		// profiling off enkiTS gets null pointers for them and its SafeCallback skips them
+		// entirely - a null check per wait, which is free next to the wait itself.
+
+#if GE_PROFILE
+		// GE_PROFILE_SCOPE is an RAII scope and cannot span two separate callback functions,
+		// so the span is assembled by hand: a start timestamp per thread per category, and
+		// Instrumentor::WriteProfile on the matching stop.
+		//
+		// Three categories rather than one slot, because they nest - a thread inside
+		// waitForTaskComplete can go on to suspend, and a single slot would have the inner
+		// stop consume the outer start and report a span that never happened.
+		enum class WaitKind : size_t
+		{
+			NewTaskSuspend = 0,
+			TaskComplete,
+			TaskCompleteSuspend,
+			Count
+		};
+
+		using ProfileClock = std::chrono::steady_clock;
+
+		thread_local ProfileClock::time_point t_WaitStart[static_cast<size_t>(WaitKind::Count)];
+		thread_local ProfileClock::time_point t_ThreadStart;
+
+		void BeginSpan(ProfileClock::time_point& slot)
+		{
+			slot = ProfileClock::now();
+		}
+
+		void EndSpan(ProfileClock::time_point& slot, const char* name)
+		{
+			// An unpaired stop is not hypothetical: a thread can be inside a wait when the
+			// scheduler is told to shut down, and the profiler session can be closed between
+			// a start and its stop. Either way a zero start would be written as a span
+			// beginning at the epoch, which is worse than no record at all.
+			if (slot == ProfileClock::time_point{})
+				return;
+
+			const auto end = ProfileClock::now();
+			const FloatingPointMicroseconds start{ slot.time_since_epoch() };
+			const auto elapsed =
+				std::chrono::time_point_cast<std::chrono::microseconds>(end).time_since_epoch()
+				- std::chrono::time_point_cast<std::chrono::microseconds>(slot).time_since_epoch();
+
+			Instrumentor::Get().WriteProfile({ name, start, elapsed, std::this_thread::get_id() });
+			slot = ProfileClock::time_point{};
+		}
+
+		void OnWaitForNewTaskSuspendStart(uint32_t) { BeginSpan(t_WaitStart[(size_t)WaitKind::NewTaskSuspend]); }
+		void OnWaitForNewTaskSuspendStop(uint32_t) { EndSpan(t_WaitStart[(size_t)WaitKind::NewTaskSuspend], "JobSystem: idle (suspended)"); }
+
+		void OnWaitForTaskCompleteStart(uint32_t) { BeginSpan(t_WaitStart[(size_t)WaitKind::TaskComplete]); }
+		void OnWaitForTaskCompleteStop(uint32_t) { EndSpan(t_WaitStart[(size_t)WaitKind::TaskComplete], "JobSystem: waiting on task"); }
+
+		void OnWaitForTaskCompleteSuspendStart(uint32_t) { BeginSpan(t_WaitStart[(size_t)WaitKind::TaskCompleteSuspend]); }
+		void OnWaitForTaskCompleteSuspendStop(uint32_t) { EndSpan(t_WaitStart[(size_t)WaitKind::TaskCompleteSuspend], "JobSystem: waiting on task (suspended)"); }
+#endif
+
+		void OnSchedulerThreadStart(uint32_t threadNum)
+		{
+			// Called ON the starting worker, which is what makes naming from here correct.
+			NameSchedulerThread(threadNum);
+
+#if GE_PROFILE
+			BeginSpan(t_ThreadStart);
+#endif
+		}
+
+		void OnSchedulerThreadStop(uint32_t threadNum)
+		{
+			(void)threadNum;
+
+#if GE_PROFILE
+			// One low-frequency record bracketing the whole worker lifetime, which is what
+			// gives the trace a lane per worker to hang the wait spans off.
+			EndSpan(t_ThreadStart, "JobSystem: worker lifetime");
+#endif
+		}
+
+		enki::ProfilerCallbacks MakeProfilerCallbacks()
+		{
+			enki::ProfilerCallbacks callbacks{};
+			callbacks.threadStart = &OnSchedulerThreadStart;
+			callbacks.threadStop = &OnSchedulerThreadStop;
+
+#if GE_PROFILE
+			// Stated plainly, because turning GE_PROFILE on and being surprised by this would
+			// waste an afternoon: these fire on every spin-to-suspend transition on every
+			// worker, and Instrumentor::WriteProfile takes a process-wide mutex and flushes
+			// to disk per record. With an idle pool that is a trace dominated by idleness,
+			// and contention the scheduler would not otherwise have. It is wired anyway
+			// rather than left as a retrofit, and "is a real frame profiler worth adopting"
+			// is the separate question THREADING_ROADMAP.md keeps it separate from.
+			callbacks.waitForNewTaskSuspendStart = &OnWaitForNewTaskSuspendStart;
+			callbacks.waitForNewTaskSuspendStop = &OnWaitForNewTaskSuspendStop;
+			callbacks.waitForTaskCompleteStart = &OnWaitForTaskCompleteStart;
+			callbacks.waitForTaskCompleteStop = &OnWaitForTaskCompleteStop;
+			callbacks.waitForTaskCompleteSuspendStart = &OnWaitForTaskCompleteSuspendStart;
+			callbacks.waitForTaskCompleteSuspendStop = &OnWaitForTaskCompleteSuspendStop;
+#endif
+
+			return callbacks;
+		}
+
 		// enkiTS's API is valid on the thread that initialised it, on its own workers, and
 		// on explicitly registered external threads - nothing else. Anything else reports
 		// NO_THREAD_NUM and must not touch the scheduler; it runs its work inline instead.
@@ -105,9 +295,15 @@ namespace GanymedE {
 		// the initialising thread as thread 0, so workers + main == hardware threads.
 		config.numTaskThreadsToCreate = enki::GetNumHardwareThreads() - 1;
 
-		// profilerCallbacks and thread naming are deliberately left alone here - that is T2
-		// in docs/toDo&done/THREADING_ROADMAP.md, and it has an open question about whether
-		// the Instrumentor is the right sink for per-task events at all.
+		// Thread naming and the profiler bridge. threadStart fires on each worker as it
+		// starts and names it there; see MakeProfilerCallbacks for what the other six do and
+		// what they cost.
+		config.profilerCallbacks = MakeProfilerCallbacks();
+
+		// Thread 0 is this thread, and enkiTS never calls threadStart for it - it did not
+		// create it. Named here so the pool is complete in a debugger rather than fifteen
+		// named workers around one anonymous main thread.
+		NameSchedulerThread(0);
 
 		s_Scheduler = std::make_unique<enki::TaskScheduler>();
 		s_Scheduler->Initialize(config);
