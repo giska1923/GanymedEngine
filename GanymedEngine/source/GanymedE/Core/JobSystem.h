@@ -158,7 +158,7 @@ namespace GanymedE {
 	//
 	// ParallelFor for data-parallel work (blocking, splits a range across workers) and
 	// Submit for independent background work (returns a Future). There is no task graph
-	// and no per-frame system scheduling here; see docs/toDo&done/THREADING_ROADMAP.md for
+	// and no per-frame system scheduling here; see docs/history/THREADING_ROADMAP.md for
 	// why that was ruled out rather than deferred.
 	//
 	// ---- Degrading when uninitialised ----

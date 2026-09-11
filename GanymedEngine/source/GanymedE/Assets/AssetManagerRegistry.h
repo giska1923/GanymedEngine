@@ -27,7 +27,7 @@ namespace GanymedE {
 	// `RegisterManagers`.
 	//
 	// The shape is BlankEngine's `IResourceManager` / `ResourceManager<T, Cache>` with its RTTR
-	// registration DSL removed - see docs/toDo&done/ASSET_PIPELINE_ROADMAP.md decision 4 for
+	// registration DSL removed - see docs/history/ASSET_PIPELINE_ROADMAP.md decision 4 for
 	// why a reflected registry is not worth a reflection dependency at this scale.
 
 	class Environment;

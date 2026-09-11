@@ -27,7 +27,7 @@ namespace GanymedE {
 	// component, create/delete/duplicate entity, reparenting and gizmo drags are undoable.
 	// Asset-level edits - material fields, registry writes - are deliberately NOT, because a
 	// scene-local stack would lie about their scope: undoing an asset edit would silently
-	// change every scene using it. See docs/toDo&done/CONTENT_AUTHORING_ROADMAP.md.
+	// change every scene using it. See docs/history/CONTENT_AUTHORING_ROADMAP.md.
 	//
 	// Every command keys entities by UUID and resolves through Scene::FindEntityByUUID.
 	// entt::entity handles are not validity-checked by Entity::operator bool and do not

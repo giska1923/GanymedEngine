@@ -69,7 +69,7 @@ namespace GanymedE {
 		// many times, destroyed when its owner goes away. It is a live resource, not a
 		// value - exactly one owner should hold a given id, and that owner is
 		// responsible for destroying it. (The ECS layer that will own one per audio
-		// source is Phase 4 of docs/toDo&done/RUNTIME_AUDIO_ROADMAP.md.)
+		// source is Phase 4 of docs/history/RUNTIME_AUDIO_ROADMAP.md.)
 		//
 		// stream = decode on the fly from disk (music, long ambience) instead of
 		// decoding the whole file into memory once (everything else). It is an authored

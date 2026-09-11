@@ -30,7 +30,7 @@
 // copy/paste-a-component and prefab property diffing all need to get from a reflected type back to
 // real storage. What RTTR would buy (reflection across a DLL boundary, enumerating types it was
 // not compiled against) matters for plugin architectures; Ganymed is one static library in one
-// build. See docs/toDo&done/REFLECTION_ROADMAP.md decision 1.
+// build. See docs/history/REFLECTION_ROADMAP.md decision 1.
 namespace GanymedE::Reflection {
 
 	// Valueless attributes, packed into the meta node itself: free to read, no allocation, no
@@ -202,7 +202,7 @@ namespace GanymedE::Reflection {
 	// Explicit, and named as such, rather than file-scope static registration objects: in a
 	// static library the linker drops a TU nothing references, which loses reflection for that
 	// type in Release or in the runtime while the Debug editor keeps working. See the Risks
-	// section of docs/toDo&done/REFLECTION_ROADMAP.md.
+	// section of docs/history/REFLECTION_ROADMAP.md.
 	void Init();
 
 	// Checks what the registration file cannot: that every ComponentList entry is actually
