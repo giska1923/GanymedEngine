@@ -18,10 +18,10 @@ choices:
 - **The shader profile set.** `ProfileDirectory()` in `Shader.cpp` asks for `compiled/metal/` on
   macOS; if the profile folder ↔ backend mapping and the compile script disagree, every shader
   silently fails to load. See [build-and-tooling.md](../engine/build-and-tooling.md).
-- **Clip-space depth.** Handled: §9.3 made projections caps-driven and **OpenGL 3.3 now renders
-  correctly on Windows**, which is the same backend a Linux build defaults to. That removes the
-  largest known obstacle, though it says nothing about the platform layer itself (GLFW native
-  handles, `pthread_setname_np`, file paths).
+- **Clip-space depth.** Handled: §9.3 made projections caps-driven, and **every backend a Linux
+  build might use now renders correctly on Windows** — OpenGL 3.3 (the default there) and Vulkan,
+  the latter pixel-identical to D3D11. That removes the largest known obstacle, though it says
+  nothing about the platform layer itself (GLFW native handles, `pthread_setname_np`, file paths).
 
 Not scheduled, because a platform you do not build is a platform you do not support, and deciding to
 support one is a bigger call than a ToDo entry. Recorded so the claim "cross-platform" is read with

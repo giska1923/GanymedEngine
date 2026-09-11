@@ -138,6 +138,22 @@ is the right default for shipping. Accepted: `auto`, `d3d11`, `d3d12`, `vulkan`,
 Case-insensitive, last one wins. Parsed in
 [`BgfxContext.cpp`](../../GanymedEngine/source/Platform/Bgfx/BgfxContext.cpp).
 
+**Vulkan needs ≤ 4 Vulkan physical devices to start, which is an upstream bgfx limitation rather
+than anything in this engine.** `renderer_vk.cpp` enumerates into a fixed `VkPhysicalDevice[4]`,
+clamps the requested count to that size, and then treats the resulting `VK_INCOMPLETE` as a fatal
+init error — so a machine reporting more than four devices fails with
+`Init error: vkEnumeratePhysicalDevices failed 5: VK_INCOMPLETE`, and bgfx silently substitutes
+another backend. `VK_INCOMPLETE` is the *expected* return when you deliberately ask for fewer
+devices than exist, so the clamp and the check contradict each other.
+
+Most machines have one or two devices and never see this. A dev laptop can easily exceed four once
+Mesa's Dozen (Vulkan-on-D3D12) layer is installed: a discrete GPU, an integrated GPU and a Dozen
+entry for each, plus the Basic Render Driver, is six.
+
+To run Vulkan on such a machine, restrict the loader rather than the engine — for example
+`VK_LOADER_DRIVERS_SELECT=*nv*` to expose only the NVIDIA ICD. The engine deliberately does **not**
+set that itself: choosing which GPU to expose is the user's call, not the renderer's.
+
 The engine requests a **GL 3.3 core context** (`BGFX_CONFIG_RENDERER_OPENGL_MIN_VERSION=33` in
 `extern/bgfx.lua`); bgfx otherwise asks for its minimum and gets a GL 2.1 compatibility context.
 Set the *MIN_VERSION*, never `BGFX_CONFIG_RENDERER_OPENGL` itself — bgfx applies its per-platform
@@ -455,6 +471,31 @@ the *compiler*, then deliberately differently when the sRGB flag lands.
 Block compression does not interact with this. BCn stores bits; colour space is a property of how
 the texture is created and sampled, not of the encoded payload.
 
+**The current look is backend-independent**, which is the one thing worth having verified before any
+of that changes. A textured, lit scene with a sky gradient (`Phase5Test`, 40 meshes) captured on
+D3D11, D3D12, Vulkan and OpenGL gives a **mean channel value identical to two decimal places** on
+all four, with a mean per-pixel difference of 0.000 and a maximum of 4/255 — rounding, not gamma. A
+colour-space disagreement between backends would move the mean substantially, so the manual
+`pow(1/2.2)` and the linear backbuffer behave the same everywhere. That makes those captures a usable
+before/after baseline for whenever the sRGB pipeline does land.
+
+### MSAA does not work
+
+`FramebufferSpecification::Samples` and `MsaaFlag` look like a working knob. **They are not — the
+field has never been set by anything, and raising it aborts the engine.** With `Samples = 4` on the
+scene target, the process dies inside bgfx while the framebuffer is being built, before a frame is
+drawn, with exit code 3 and nothing in the log (a `BX_ASSERT`, which does not travel through the
+bgfx callback that catches `Fatal::` codes).
+
+Narrowed down so it need not be repeated: it is **not** the entity-ID attachment (colour + depth
+alone aborts), **not** the sampler flags (dropping them aborts), and **not** a format capability gap
+— RGBA16F, R32F and D24S8 all advertise MSAA framebuffer support in bgfx's caps table on D3D11.
+
+Enabling it is a feature rather than a fix, and it carries a second problem behind the first: the
+entity-ID attachment cannot be resolved by averaging samples, since the average of two entity ids is
+not an entity id. Picking would need a separate non-multisampled pass or a custom resolve. See
+[ToDo/rendering.md](../ToDo/rendering.md).
+
 ## Environment / IBL
 
 [`Environment`](../../GanymedEngine/source/GanymedE/Renderer/Environment.h) bakes an
@@ -589,6 +630,26 @@ image on GL, this is why — the fix is a caps-driven flip in those two vertex s
 measured latency is 3 frames; requests are *dropped*, not queued, when all slots are busy, since
 the next frame issues another). The editor requests on hover every frame, so the latency is
 invisible. Pick storage is a fixed array because bgfx writes the result memory asynchronously.
+
+**Coordinates are render-target, not screen.** `RequestEntityID` blits straight from the attachment,
+so the caller applies the origin convention: `EditorLayer` flips Y when `caps->originBottomLeft`, or
+picking is vertically mirrored on OpenGL.
+
+**The ID must not go in the alpha channel.** A draw's blend state applies to *every* colour
+attachment, so with alpha blending on — every sprite, every particle, any transparent mesh — the
+entity-ID target is blended too:
+
+```
+result = src * src.a + dst * (1 - src.a)
+```
+
+Writing `vec4_splat(id)` therefore blends the id against the `-1` clear using the id itself as
+alpha. Only id `1` survives that (alpha 1 takes the source); id `0` reads back as the clear, and
+everything else lands on `id² + (1-id)·-1`. Picking consequently worked for exactly one entity
+handle and silently reported "nothing" or a wrong id for every other — measured as `7 → 55` and
+`101 → 10301` before the fix. Every shader that writes the attachment now emits
+`vec4(id, 0, 0, 1)`, including the ones writing the `-1` sentinel. The attachment is R32F, so only
+`.r` is stored; the alpha exists purely to make the blend a copy.
 
 ## Renderer (the umbrella)
 

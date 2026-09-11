@@ -47,6 +47,18 @@ namespace GanymedE {
 		uint32_t Width = 0, Height = 0;
 
 		FramebufferAttachmentSpecification Attachments;
+
+		// **Do not raise this. MSAA does not work and nothing sets it.** The flag translation
+		// exists (Framebuffer.cpp's MsaaFlag), but any value above 1 aborts inside bgfx while
+		// the framebuffer is being built - before a frame is drawn, and through BX_ASSERT rather
+		// than the bgfx callback, so the process dies with nothing in the log.
+		//
+		// Measured, so the next person need not repeat it: it is not the attachment set (colour
+		// + depth alone aborts too), not the sampler flags (dropping them aborts too), and not a
+		// format capability gap (RGBA16F, R32F and D24S8 all advertise MSAA framebuffer support).
+		// Making it work is a feature, not a fix, and it carries a second problem: the entity-ID
+		// attachment cannot be resolved by averaging samples, so picking needs its own answer.
+		// See docs/ToDo/rendering.md.
 		uint32_t Samples = 1;
 
 		bool SwapChainTarget = false;

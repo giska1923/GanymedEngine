@@ -29,15 +29,18 @@ documented.** A file here is a promise, not a description.
 
 | Document | Covers | Items |
 |---|---|---|
-| [rendering.md](rendering.md) | bgfx Phase 7: Vulkan untested, per-backend checks | 1 + matrix |
+| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA is broken | 1 |
 | [reflection.md](reflection.md) | Apply-to-prefab, template cache, multi-entity editing gaps | 4 |
 | [assets.md](assets.md) | Dependency hashing, parse backpressure, naming and cleanup chores | 6 |
 | [cross-cutting.md](cross-cutting.md) | Platform coverage, verification gaps | 2 |
 
 **Priority, as a recommendation rather than a schedule:** [cross-cutting.md](cross-cutting.md)'s
-platform coverage is now the interesting one — D3D11, D3D12 and **OpenGL 3.3** all render correctly
-on Windows, and a Linux build defaults to the GL backend, so the thing that used to block it is
-gone. Otherwise the [assets.md](assets.md) entries are one-liners worth batching.
+platform coverage — **all four backends now render correctly on Windows**, D3D12 and Vulkan
+pixel-identically to D3D11 and OpenGL within 5/255, so nothing in the renderer blocks a Linux build
+any more. Otherwise the [assets.md](assets.md) entries are one-liners worth batching, and async
+[rendering.md](rendering.md) has one item left and it is a feature rather than a check: **MSAA is
+dead plumbing that aborts if enabled**, and fixing it needs an answer for resolving the entity-ID
+attachment. Picking and sRGB are both done.
 
 Threading is **done**: T1–T4 and decision 4 have all landed, so there is no threading file here any
 more. Jolt now runs on `Core/JobSystem` — see [physics.md](../engine/physics.md#the-job-system).
