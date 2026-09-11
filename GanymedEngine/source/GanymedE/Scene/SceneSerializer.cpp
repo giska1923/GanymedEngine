@@ -25,29 +25,26 @@ namespace GanymedE {
 		out << YAML::BeginMap; // Entity
 		out << YAML::Key << "Entity" << YAML::Value << static_cast<uint64_t>(entity.GetUUID());
 
+		// ---- Reflected components ---------------------------------------------------------
+		//
+		// A component whose keys and order are exactly its registration is written and read
+		// generically. The registered field name IS the YAML key (roadmap decision 3), and
+		// `meta_type::data()` iterates in registration order, so the emitted bytes are the ones
+		// the hand-written block produced - verified by diffing both writers' output over every
+		// committed scene and prefab, not merely by round-tripping.
+		//
+		// What is left hand-written below, and why, in each case:
+		//   RelationshipComponent - the two sides of a link must agree, so writing either half
+		//                           generically would corrupt the hierarchy.
+		//   MaterialOverrides     - a flow sequence whose INDEX is the meaning.
+		//   ScriptComponent Fields - a sequence of {Name, Type, Value} over a closed variant.
+		// Each of those is `Trait::Custom` on the field, so the generic writer skips exactly them
+		// and the component's other fields still go through it.
 		if (entity.HasComponent<TagComponent>())
-		{
-			out << YAML::Key << "TagComponent";
-			out << YAML::BeginMap; // TagComponent
-
-			auto& tag = entity.GetComponent<TagComponent>().Tag;
-			out << YAML::Key << "Tag" << YAML::Value << tag;
-
-			out << YAML::EndMap; // TagComponent
-		}
+			WriteReflectedComponent(out, "TagComponent", entity.GetComponent<TagComponent>());
 
 		if (entity.HasComponent<TransformComponent>())
-		{
-			out << YAML::Key << "TransformComponent";
-			out << YAML::BeginMap; // TransformComponent
-
-			auto& tc = entity.GetComponent<TransformComponent>();
-			out << YAML::Key << "Translation" << YAML::Value << tc.Translation;
-			out << YAML::Key << "Rotation" << YAML::Value << tc.Rotation;
-			out << YAML::Key << "Scale" << YAML::Value << tc.Scale;
-
-			out << YAML::EndMap; // TransformComponent
-		}
+			WriteReflectedComponent(out, "TransformComponent", entity.GetComponent<TransformComponent>());
 
 		if (entity.HasComponent<RelationshipComponent>())
 		{
@@ -64,52 +61,33 @@ namespace GanymedE {
 			out << YAML::EndMap;
 		}
 
+		// `Source` carries OmitIfDefault, which writes the key only for a valid handle - the
+		// same condition the hand-written `if (IsAssetHandleValid(...))` spelled out.
 		if (entity.HasComponent<PrefabInstanceComponent>())
 		{
-			out << YAML::Key << "PrefabInstanceComponent";
-			out << YAML::BeginMap;
-
-			auto& prefab = entity.GetComponent<PrefabInstanceComponent>();
-			if (IsAssetHandleValid(prefab.Source))
-				out << YAML::Key << "Source" << YAML::Value << static_cast<uint64_t>(prefab.Source);
-
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "PrefabInstanceComponent",
+				entity.GetComponent<PrefabInstanceComponent>());
 		}
 
-		if (entity.HasComponent<CameraComponent>())
+		if (entity.HasComponent<PrefabMemberComponent>())
 		{
-			out << YAML::Key << "CameraComponent";
-			out << YAML::BeginMap; // CameraComponent
-
-			auto& cameraComponent = entity.GetComponent<CameraComponent>();
-			auto& camera = cameraComponent.Camera;
-
-			out << YAML::Key << "Camera" << YAML::Value;
-			out << YAML::BeginMap; // Camera
-			out << YAML::Key << "ProjectionType" << YAML::Value << (int)camera.GetProjectionType();
-			out << YAML::Key << "PerspectiveFOV" << YAML::Value << camera.GetPerspectiveVerticalFOV();
-			out << YAML::Key << "PerspectiveNear" << YAML::Value << camera.GetPerspectiveNearClip();
-			out << YAML::Key << "PerspectiveFar" << YAML::Value << camera.GetPerspectiveFarClip();
-			out << YAML::Key << "OrthographicSize" << YAML::Value << camera.GetOrthographicSize();
-			out << YAML::Key << "OrthographicNear" << YAML::Value << camera.GetOrthographicNearClip();
-			out << YAML::Key << "OrthographicFar" << YAML::Value << camera.GetOrthographicFarClip();
-			out << YAML::EndMap; // Camera
-
-			out << YAML::Key << "Primary" << YAML::Value << cameraComponent.Primary;
-			out << YAML::Key << "FixedAspectRatio" << YAML::Value << cameraComponent.FixedAspectRatio;
-
-			out << YAML::EndMap; // CameraComponent
+			WriteReflectedComponent(out, "PrefabMemberComponent",
+				entity.GetComponent<PrefabMemberComponent>());
 		}
 
+		// SceneCamera is a reflected struct with no codec, so it writes as a nested MAP under
+		// "Camera" - the shape every scene already has. Its seven fields are registered against
+		// accessors, which is why a private projection matrix never reaches the file.
+		if (entity.HasComponent<CameraComponent>())
+			WriteReflectedComponent(out, "CameraComponent", entity.GetComponent<CameraComponent>());
+
+		// SpotLightComponent's *inspector* section is still hand-written: the cross-field clamp
+		// that stops it drawing generically has nothing to do with how it is stored. The two
+		// consumers of this registration convert independently.
 		if (entity.HasComponent<SpriteRendererComponent>())
 		{
-			out << YAML::Key << "SpriteRendererComponent";
-			out << YAML::BeginMap; // SpriteRendererComponent
-
-			auto& spriteRendererComponent = entity.GetComponent<SpriteRendererComponent>();
-			out << YAML::Key << "Color" << YAML::Value << spriteRendererComponent.Color;
-
-			out << YAML::EndMap; // SpriteRendererComponent
+			WriteReflectedComponent(out, "SpriteRendererComponent",
+				entity.GetComponent<SpriteRendererComponent>());
 		}
 
 		if (entity.HasComponent<StaticMeshComponent>())
@@ -118,47 +96,39 @@ namespace GanymedE {
 			out << YAML::BeginMap;
 
 			auto& smc = entity.GetComponent<StaticMeshComponent>();
-			if (IsAssetHandleValid(smc.Mesh))
-				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(smc.Mesh);
+
+			// Mesh goes through the generic writer - AssetRef serializes as its handle, and
+			// OmitIfDefault reproduces the old `if (smc.Mesh.HasHandle())` exactly. Only
+			// MaterialOverrides is left by hand, which is what its `Trait::Custom` says.
+			WriteReflected(out, entt::forward_as_meta(smc),
+				entt::forward_as_meta(ReflectedDefault<StaticMeshComponent>()));
 
 			// Written only when at least one slot is actually overridden. Emitting an empty
 			// sequence for every mesh entity would rewrite every committed scene file for no
 			// content change, which is exactly what Phase 1's canonical saves exist to prevent.
 			bool hasOverride = false;
-			for (AssetHandle handle : smc.MaterialOverrides)
-				hasOverride = hasOverride || IsAssetHandleValid(handle);
+			for (const AssetRef<Material>& slot : smc.MaterialOverrides)
+				hasOverride = hasOverride || slot.HasHandle();
 
 			if (hasOverride)
 			{
 				// Handles, not paths: the scene-to-registry currency. Trailing unset slots are
 				// kept rather than trimmed, because the index *is* the slot.
 				out << YAML::Key << "MaterialOverrides" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-				for (AssetHandle handle : smc.MaterialOverrides)
-					out << static_cast<uint64_t>(handle);
+				for (const AssetRef<Material>& slot : smc.MaterialOverrides)
+					out << static_cast<uint64_t>(slot.Handle());
 				out << YAML::EndSeq;
 			}
 
 			out << YAML::EndMap;
 		}
 
+		// Time and Palette are absent because they are Runtime/NotSerialized: a scene loads at
+		// the head of its clip, and the palette is rebuilt every frame. Clip is omitted rather
+		// than written empty - an empty scalar reads back as a null node and as<std::string>()
+		// throws on those - which is what OmitIfDefault on a std::string does.
 		if (entity.HasComponent<AnimatorComponent>())
-		{
-			out << YAML::Key << "AnimatorComponent";
-			out << YAML::BeginMap;
-
-			// Time and Palette are deliberately absent: a scene loads at the head of its clip,
-			// and the palette is rebuilt every frame.
-			auto& animator = entity.GetComponent<AnimatorComponent>();
-			// Omitted rather than written empty: an empty scalar reads back as a null node, and
-			// as<std::string>() throws on those.
-			if (!animator.Clip.empty())
-				out << YAML::Key << "Clip" << YAML::Value << animator.Clip;
-			out << YAML::Key << "Speed" << YAML::Value << animator.Speed;
-			out << YAML::Key << "Playing" << YAML::Value << animator.Playing;
-			out << YAML::Key << "Loop" << YAML::Value << animator.Loop;
-
-			out << YAML::EndMap;
-		}
+			WriteReflectedComponent(out, "AnimatorComponent", entity.GetComponent<AnimatorComponent>());
 
 		if (entity.HasComponent<ScriptComponent>())
 		{
@@ -166,8 +136,11 @@ namespace GanymedE {
 			out << YAML::BeginMap;
 
 			auto& sc = entity.GetComponent<ScriptComponent>();
-			if (IsAssetHandleValid(sc.Script))
-				out << YAML::Key << "Script" << YAML::Value << static_cast<uint64_t>(sc.Script);
+
+			// Script is a bare AssetHandle with OmitIfDefault - the generic writer emits the key
+			// only for a valid handle. Fields is Custom and stays below.
+			WriteReflected(out, entt::forward_as_meta(sc),
+				entt::forward_as_meta(ReflectedDefault<ScriptComponent>()));
 
 			// Per-entity property overrides. Each carries its type, because the script that
 			// declares it may not be loadable when this is read back (missing file, or a scene
@@ -211,214 +184,76 @@ namespace GanymedE {
 
 		if (entity.HasComponent<DirectionalLightComponent>())
 		{
-			out << YAML::Key << "DirectionalLightComponent";
-			out << YAML::BeginMap;
-
-			auto& dlc = entity.GetComponent<DirectionalLightComponent>();
-			out << YAML::Key << "Color" << YAML::Value << dlc.Color;
-			out << YAML::Key << "Intensity" << YAML::Value << dlc.Intensity;
-			out << YAML::Key << "CastShadows" << YAML::Value << dlc.CastShadows;
-
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "DirectionalLightComponent",
+				entity.GetComponent<DirectionalLightComponent>());
 		}
 
 		if (entity.HasComponent<PointLightComponent>())
 		{
-			out << YAML::Key << "PointLightComponent";
-			out << YAML::BeginMap;
-
-			auto& plc = entity.GetComponent<PointLightComponent>();
-			out << YAML::Key << "Color" << YAML::Value << plc.Color;
-			out << YAML::Key << "Intensity" << YAML::Value << plc.Intensity;
-			out << YAML::Key << "Radius" << YAML::Value << plc.Radius;
-			out << YAML::Key << "Falloff" << YAML::Value << plc.Falloff;
-
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "PointLightComponent",
+				entity.GetComponent<PointLightComponent>());
 		}
 
 		if (entity.HasComponent<SpotLightComponent>())
 		{
-			out << YAML::Key << "SpotLightComponent";
-			out << YAML::BeginMap;
-
-			auto& slc = entity.GetComponent<SpotLightComponent>();
-			out << YAML::Key << "Color" << YAML::Value << slc.Color;
-			out << YAML::Key << "Intensity" << YAML::Value << slc.Intensity;
-			out << YAML::Key << "Range" << YAML::Value << slc.Range;
-			out << YAML::Key << "InnerConeAngle" << YAML::Value << slc.InnerConeAngle;
-			out << YAML::Key << "OuterConeAngle" << YAML::Value << slc.OuterConeAngle;
-			out << YAML::Key << "Falloff" << YAML::Value << slc.Falloff;
-
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "SpotLightComponent",
+				entity.GetComponent<SpotLightComponent>());
 		}
 
 		if (entity.HasComponent<SkyLightComponent>())
-		{
-			out << YAML::Key << "SkyLightComponent";
-			out << YAML::BeginMap;
+			WriteReflectedComponent(out, "SkyLightComponent", entity.GetComponent<SkyLightComponent>());
 
-			auto& skc = entity.GetComponent<SkyLightComponent>();
-			if (IsAssetHandleValid(skc.Environment))
-				out << YAML::Key << "Environment" << YAML::Value << static_cast<uint64_t>(skc.Environment);
-			out << YAML::Key << "SkyColor" << YAML::Value << skc.SkyColor;
-			out << YAML::Key << "GroundColor" << YAML::Value << skc.GroundColor;
-			out << YAML::Key << "Intensity" << YAML::Value << skc.Intensity;
-			out << YAML::Key << "DrawSkybox" << YAML::Value << skc.DrawSkybox;
-
-			out << YAML::EndMap;
-		}
-
+		// Group writes by name, not by ordinal: AudioGroup carries Trait::SerializeByName, which
+		// is what lets it stay reorderable. Nothing forces stable numbering on it (it is not
+		// registry-persisted) and a hand-edited scene reading "Music" beats reading 1.
 		if (entity.HasComponent<AudioSourceComponent>())
-		{
-			out << YAML::Key << "AudioSourceComponent";
-			out << YAML::BeginMap;
-
-			auto& source = entity.GetComponent<AudioSourceComponent>();
-			if (IsAssetHandleValid(source.Clip))
-				out << YAML::Key << "Clip" << YAML::Value << static_cast<uint64_t>(source.Clip);
-
-			// By name, not by ordinal. AudioGroup is not registry-persisted, so nothing forces
-			// stable numbering on it, and a hand-edited scene reading "Music" beats reading 1.
-			out << YAML::Key << "Group" << YAML::Value << AudioGroupToString(source.Group);
-			out << YAML::Key << "Volume" << YAML::Value << source.Volume;
-			out << YAML::Key << "Pitch" << YAML::Value << source.Pitch;
-			out << YAML::Key << "Loop" << YAML::Value << source.Loop;
-			out << YAML::Key << "PlayOnStart" << YAML::Value << source.PlayOnStart;
-			out << YAML::Key << "Spatialize" << YAML::Value << source.Spatialize;
-			out << YAML::Key << "Stream" << YAML::Value << source.Stream;
-
-			out << YAML::EndMap;
-		}
+			WriteReflectedComponent(out, "AudioSourceComponent", entity.GetComponent<AudioSourceComponent>());
 
 		if (entity.HasComponent<AudioListenerComponent>())
 		{
-			out << YAML::Key << "AudioListenerComponent";
-			out << YAML::BeginMap;
-			out << YAML::Key << "Primary" << YAML::Value
-				<< entity.GetComponent<AudioListenerComponent>().Primary;
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "AudioListenerComponent",
+				entity.GetComponent<AudioListenerComponent>());
 		}
 
+		// Every authored field carries OmitIfDefault, so this writes exactly the keys that differ
+		// from a default-constructed emitter - the twenty hand-written `if (p.X != d.X)` lines
+		// this replaces. The five Min/Max pairs are one RangeF each, flattened back out to
+		// LifetimeMin/LifetimeMax by the key prefix on their registration.
+		//
+		// Playing, Time, EmitAccumulator, BurstPending, Rng, Pool and WorldBounds are Runtime and
+		// never reach the file.
 		if (entity.HasComponent<ParticleEmitterComponent>())
 		{
-			out << YAML::Key << "ParticleEmitterComponent";
-			out << YAML::BeginMap;
-
-			const auto& p = entity.GetComponent<ParticleEmitterComponent>();
-			const ParticleEmitterComponent d{};
-
-			if (p.RateOverTime != d.RateOverTime)
-				out << YAML::Key << "RateOverTime" << YAML::Value << p.RateOverTime;
-			if (p.MaxParticles != d.MaxParticles)
-				out << YAML::Key << "MaxParticles" << YAML::Value << p.MaxParticles;
-			if (p.Looping != d.Looping)
-				out << YAML::Key << "Looping" << YAML::Value << p.Looping;
-			if (p.Duration != d.Duration)
-				out << YAML::Key << "Duration" << YAML::Value << p.Duration;
-			if (p.PlayOnStart != d.PlayOnStart)
-				out << YAML::Key << "PlayOnStart" << YAML::Value << p.PlayOnStart;
-
-			if (p.LifetimeMin != d.LifetimeMin)
-				out << YAML::Key << "LifetimeMin" << YAML::Value << p.LifetimeMin;
-			if (p.LifetimeMax != d.LifetimeMax)
-				out << YAML::Key << "LifetimeMax" << YAML::Value << p.LifetimeMax;
-			if (p.SpeedMin != d.SpeedMin)
-				out << YAML::Key << "SpeedMin" << YAML::Value << p.SpeedMin;
-			if (p.SpeedMax != d.SpeedMax)
-				out << YAML::Key << "SpeedMax" << YAML::Value << p.SpeedMax;
-			if (p.ConeAngle != d.ConeAngle)
-				out << YAML::Key << "ConeAngle" << YAML::Value << p.ConeAngle;
-			if (p.StartSizeMin != d.StartSizeMin)
-				out << YAML::Key << "StartSizeMin" << YAML::Value << p.StartSizeMin;
-			if (p.StartSizeMax != d.StartSizeMax)
-				out << YAML::Key << "StartSizeMax" << YAML::Value << p.StartSizeMax;
-			if (p.StartRotationMin != d.StartRotationMin)
-				out << YAML::Key << "StartRotationMin" << YAML::Value << p.StartRotationMin;
-			if (p.StartRotationMax != d.StartRotationMax)
-				out << YAML::Key << "StartRotationMax" << YAML::Value << p.StartRotationMax;
-			if (p.RotationSpeedMin != d.RotationSpeedMin)
-				out << YAML::Key << "RotationSpeedMin" << YAML::Value << p.RotationSpeedMin;
-			if (p.RotationSpeedMax != d.RotationSpeedMax)
-				out << YAML::Key << "RotationSpeedMax" << YAML::Value << p.RotationSpeedMax;
-			if (p.GravityModifier != d.GravityModifier)
-				out << YAML::Key << "GravityModifier" << YAML::Value << p.GravityModifier;
-			if (p.WorldSpace != d.WorldSpace)
-				out << YAML::Key << "WorldSpace" << YAML::Value << p.WorldSpace;
-			if (p.Seed != d.Seed)
-				out << YAML::Key << "Seed" << YAML::Value << p.Seed;
-
-			if (!p.SizeCurve.IsDefault())
-				out << YAML::Key << "SizeCurve" << YAML::Value << p.SizeCurve;
-			if (!p.ColorOverLifetime.IsDefault())
-				out << YAML::Key << "ColorOverLifetime" << YAML::Value << p.ColorOverLifetime;
-
-			if (p.RenderMode != d.RenderMode)
-				out << YAML::Key << "RenderMode" << YAML::Value << (int)p.RenderMode;
-			if (IsAssetHandleValid(p.Texture))
-				out << YAML::Key << "Texture" << YAML::Value << static_cast<uint64_t>(p.Texture);
-			if (p.Blend != d.Blend)
-				out << YAML::Key << "Blend" << YAML::Value << (int)p.Blend;
-			if (IsAssetHandleValid(p.Mesh))
-				out << YAML::Key << "Mesh" << YAML::Value << static_cast<uint64_t>(p.Mesh);
-			if (IsAssetHandleValid(p.Material))
-				out << YAML::Key << "Material" << YAML::Value << static_cast<uint64_t>(p.Material);
-
-			// Playing, Time, EmitAccumulator, BurstPending, Rng, Pool, WorldBounds: runtime-only.
-
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "ParticleEmitterComponent",
+				entity.GetComponent<ParticleEmitterComponent>());
 		}
 
+		// RigidBodyType persists as its ordinal, which is why that enum is append-only.
 		if (entity.HasComponent<RigidBodyComponent>())
 		{
-			out << YAML::Key << "RigidBodyComponent";
-			out << YAML::BeginMap;
-			auto& rb = entity.GetComponent<RigidBodyComponent>();
-			out << YAML::Key << "Type" << YAML::Value << (int)rb.Type;
-			out << YAML::Key << "Mass" << YAML::Value << rb.Mass;
-			out << YAML::Key << "LinearDamping" << YAML::Value << rb.LinearDamping;
-			out << YAML::Key << "AngularDamping" << YAML::Value << rb.AngularDamping;
-			out << YAML::Key << "UseGravity" << YAML::Value << rb.UseGravity;
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "RigidBodyComponent",
+				entity.GetComponent<RigidBodyComponent>());
 		}
 
-		auto serializePhysicsMaterial = [](YAML::Emitter& emitter, const PhysicsMaterial& mat)
-		{
-			emitter << YAML::Key << "Friction" << YAML::Value << mat.Friction;
-			emitter << YAML::Key << "Restitution" << YAML::Value << mat.Restitution;
-		};
-
+		// PhysicsMaterial rides on Trait::Flatten, so Friction and Restitution stay SIBLINGS of
+		// HalfExtents rather than moving under a "Material" sub-map - the shape every collider in
+		// every saved scene already has.
 		if (entity.HasComponent<BoxColliderComponent>())
 		{
-			out << YAML::Key << "BoxColliderComponent";
-			out << YAML::BeginMap;
-			auto& col = entity.GetComponent<BoxColliderComponent>();
-			out << YAML::Key << "HalfExtents" << YAML::Value << col.HalfExtents;
-			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
-			serializePhysicsMaterial(out, col.Material);
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "BoxColliderComponent",
+				entity.GetComponent<BoxColliderComponent>());
 		}
 
 		if (entity.HasComponent<SphereColliderComponent>())
 		{
-			out << YAML::Key << "SphereColliderComponent";
-			out << YAML::BeginMap;
-			auto& col = entity.GetComponent<SphereColliderComponent>();
-			out << YAML::Key << "Radius" << YAML::Value << col.Radius;
-			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
-			serializePhysicsMaterial(out, col.Material);
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "SphereColliderComponent",
+				entity.GetComponent<SphereColliderComponent>());
 		}
 
 		if (entity.HasComponent<CapsuleColliderComponent>())
 		{
-			out << YAML::Key << "CapsuleColliderComponent";
-			out << YAML::BeginMap;
-			auto& col = entity.GetComponent<CapsuleColliderComponent>();
-			out << YAML::Key << "Radius" << YAML::Value << col.Radius;
-			out << YAML::Key << "HalfHeight" << YAML::Value << col.HalfHeight;
-			out << YAML::Key << "Offset" << YAML::Value << col.Offset;
-			serializePhysicsMaterial(out, col.Material);
-			out << YAML::EndMap;
+			WriteReflectedComponent(out, "CapsuleColliderComponent",
+				entity.GetComponent<CapsuleColliderComponent>());
 		}
 
 		out << YAML::EndMap; // Entity
@@ -595,10 +430,6 @@ namespace GanymedE {
 			ResolveHierarchy(*m_Scene, created, fileUUIDs);
 		}
 
-		// Path-based components in the file mint handles as they load; this is the flush
-		// point for the batch (AssetManager::FlushRegistry).
-		AssetManager::FlushRegistry();
-
 		return true;
 	}
 
@@ -613,14 +444,15 @@ namespace GanymedE {
 
 		Entity deserializedEntity = scene.CreateEntityWithUUID(uuid, name);
 
+		// TagComponent is read above, not here: the tag is needed to CREATE the entity, so it
+		// cannot go through the generic reader that needs an entity to read into.
 		auto transformComponent = entityNode["TransformComponent"];
 		if (transformComponent)
 		{
-			// Entities always have transforms
-			auto& tc = deserializedEntity.GetComponent<TransformComponent>();
-			tc.Translation = transformComponent["Translation"].as<glm::vec3>();
-			tc.Rotation = transformComponent["Rotation"].as<glm::vec3>();
-			tc.Scale = transformComponent["Scale"].as<glm::vec3>();
+			// Entities always have transforms, so this reads into the existing one rather than
+			// adding it. A missing key now leaves the constructed value instead of throwing,
+			// which is the generic reader being more tolerant than the code it replaced.
+			ReadReflectedComponent(transformComponent, deserializedEntity.GetComponent<TransformComponent>());
 		}
 
 		auto relationshipComponent = entityNode["RelationshipComponent"];
@@ -640,36 +472,29 @@ namespace GanymedE {
 		auto prefabInstanceComponent = entityNode["PrefabInstanceComponent"];
 		if (prefabInstanceComponent)
 		{
-			auto& prefab = deserializedEntity.AddComponent<PrefabInstanceComponent>();
-			if (auto source = prefabInstanceComponent["Source"])
-				prefab.Source = AssetHandle{ source.as<uint64_t>() };
+			ReadReflectedComponent(prefabInstanceComponent,
+				deserializedEntity.AddComponent<PrefabInstanceComponent>());
 		}
 
+		auto prefabMemberComponent = entityNode["PrefabMemberComponent"];
+		if (prefabMemberComponent)
+		{
+			ReadReflectedComponent(prefabMemberComponent,
+				deserializedEntity.AddComponent<PrefabMemberComponent>());
+		}
+
+		// The nested "Camera" map reads through SceneCamera's registered SETTERS, so
+		// RecalculateProjection runs per field exactly as the hand-written calls made it. Order
+		// still matters and is still registration order: ProjectionType lands first, so the six
+		// values that follow recalculate against the projection the file asked for.
 		auto cameraComponent = entityNode["CameraComponent"];
 		if (cameraComponent)
-		{
-			auto& cc = deserializedEntity.AddComponent<CameraComponent>();
-
-			auto cameraProps = cameraComponent["Camera"];
-			cc.Camera.SetProjectionType((SceneCamera::ProjectionType)cameraProps["ProjectionType"].as<int>());
-
-			cc.Camera.SetPerspectiveVerticalFOV(cameraProps["PerspectiveFOV"].as<float>());
-			cc.Camera.SetPerspectiveNearClip(cameraProps["PerspectiveNear"].as<float>());
-			cc.Camera.SetPerspectiveFarClip(cameraProps["PerspectiveFar"].as<float>());
-
-			cc.Camera.SetOrthographicSize(cameraProps["OrthographicSize"].as<float>());
-			cc.Camera.SetOrthographicNearClip(cameraProps["OrthographicNear"].as<float>());
-			cc.Camera.SetOrthographicFarClip(cameraProps["OrthographicFar"].as<float>());
-
-			cc.Primary = cameraComponent["Primary"].as<bool>();
-			cc.FixedAspectRatio = cameraComponent["FixedAspectRatio"].as<bool>();
-		}
+			ReadReflectedComponent(cameraComponent, deserializedEntity.AddComponent<CameraComponent>());
 
 		auto spriteRendererComponent = entityNode["SpriteRendererComponent"];
 		if (spriteRendererComponent)
 		{
-			auto& src = deserializedEntity.AddComponent<SpriteRendererComponent>();
-			src.Color = spriteRendererComponent["Color"].as<glm::vec4>();
+			ReadReflectedComponent(spriteRendererComponent, deserializedEntity.AddComponent<SpriteRendererComponent>());
 		}
 
 		auto staticMeshComponent = entityNode["StaticMeshComponent"];
@@ -677,18 +502,24 @@ namespace GanymedE {
 		{
 			auto& smc = deserializedEntity.AddComponent<StaticMeshComponent>();
 
+			ReadReflectedComponent(staticMeshComponent, smc);
+
 			auto meshHandle = staticMeshComponent["Mesh"];
 			if (meshHandle)
 			{
-				smc.Mesh = meshHandle.as<uint64_t>();
-				AssetManager::GetAsset<Mesh>(smc.Mesh);
+				// Resolved here rather than left to the first frame, as it always was, and
+				// deliberately NOT inside the AssetRef codec - see the comment there. The
+				// difference is that the resolved object now lives in the component: with the
+				// weak cache of Phase 2 a warm load whose result was dropped would be collected
+				// before anything used it.
+				smc.Mesh.Get();
 			}
 			else
 			{
 				// Backward compatibility with path-based scenes
 				auto meshPath = staticMeshComponent["MeshPath"];
 				if (meshPath)
-					smc.Mesh = AssetManager::ImportAsset(meshPath.as<std::string>());
+					smc.Mesh = AssetRef<Mesh>(AssetManager::ImportAsset(meshPath.as<std::string>()));
 			}
 
 			auto overrides = staticMeshComponent["MaterialOverrides"];
@@ -697,7 +528,7 @@ namespace GanymedE {
 				smc.MaterialOverrides.clear();
 				smc.MaterialOverrides.reserve(overrides.size());
 				for (auto slot : overrides)
-					smc.MaterialOverrides.push_back(AssetHandle{ slot.as<uint64_t>() });
+					smc.MaterialOverrides.emplace_back(AssetHandle{ slot.as<uint64_t>() });
 			}
 		}
 
@@ -720,14 +551,12 @@ namespace GanymedE {
 		{
 			auto& sc = deserializedEntity.AddComponent<ScriptComponent>();
 
+			// No GetAsset<> call to match the mesh path above: a script has no runtime object to
+			// warm, and ScriptEngine loads the chunk itself on instantiation.
+			ReadReflectedComponent(scriptComponent, sc);
+
 			auto scriptHandle = scriptComponent["Script"];
-			if (scriptHandle)
-			{
-				// No GetAsset<> call to match the mesh path above: a script has no runtime
-				// object to warm, and ScriptEngine loads the chunk itself on instantiation.
-				sc.Script = scriptHandle.as<uint64_t>();
-			}
-			else
+			if (!scriptHandle)
 			{
 				// Backward compatibility with path-based scenes
 				auto scriptPath = scriptComponent["ScriptPath"];
@@ -765,32 +594,19 @@ namespace GanymedE {
 		auto directionalLightComponent = entityNode["DirectionalLightComponent"];
 		if (directionalLightComponent)
 		{
-			auto& dlc = deserializedEntity.AddComponent<DirectionalLightComponent>();
-			dlc.Color = directionalLightComponent["Color"].as<glm::vec3>();
-			dlc.Intensity = directionalLightComponent["Intensity"].as<float>();
-			dlc.CastShadows = directionalLightComponent["CastShadows"].as<bool>();
+			ReadReflectedComponent(directionalLightComponent, deserializedEntity.AddComponent<DirectionalLightComponent>());
 		}
 
 		auto pointLightComponent = entityNode["PointLightComponent"];
 		if (pointLightComponent)
 		{
-			auto& plc = deserializedEntity.AddComponent<PointLightComponent>();
-			plc.Color = pointLightComponent["Color"].as<glm::vec3>();
-			plc.Intensity = pointLightComponent["Intensity"].as<float>();
-			plc.Radius = pointLightComponent["Radius"].as<float>();
-			plc.Falloff = pointLightComponent["Falloff"].as<float>();
+			ReadReflectedComponent(pointLightComponent, deserializedEntity.AddComponent<PointLightComponent>());
 		}
 
 		auto spotLightComponent = entityNode["SpotLightComponent"];
 		if (spotLightComponent)
 		{
-			auto& slc = deserializedEntity.AddComponent<SpotLightComponent>();
-			slc.Color = spotLightComponent["Color"].as<glm::vec3>();
-			slc.Intensity = spotLightComponent["Intensity"].as<float>();
-			slc.Range = spotLightComponent["Range"].as<float>();
-			slc.InnerConeAngle = spotLightComponent["InnerConeAngle"].as<float>();
-			slc.OuterConeAngle = spotLightComponent["OuterConeAngle"].as<float>();
-			slc.Falloff = spotLightComponent["Falloff"].as<float>();
+			ReadReflectedComponent(spotLightComponent, deserializedEntity.AddComponent<SpotLightComponent>());
 		}
 
 		auto skyLightComponent = entityNode["SkyLightComponent"];
@@ -798,164 +614,63 @@ namespace GanymedE {
 		{
 			auto& skc = deserializedEntity.AddComponent<SkyLightComponent>();
 
-			auto envHandle = skyLightComponent["Environment"];
-			if (envHandle)
-				skc.Environment = envHandle.as<uint64_t>();
-			else
+			ReadReflectedComponent(skyLightComponent, skc);
+
+			if (!skyLightComponent["Environment"])
 			{
 				// Backward compatibility with path-based scenes
 				auto envPath = skyLightComponent["EnvironmentPath"];
 				if (envPath)
-					skc.Environment = AssetManager::ImportAsset(envPath.as<std::string>());
+					skc.Environment = AssetRef<Environment>(AssetManager::ImportAsset(envPath.as<std::string>()));
 			}
-			skc.SkyColor = skyLightComponent["SkyColor"].as<glm::vec3>();
-			skc.GroundColor = skyLightComponent["GroundColor"].as<glm::vec3>();
-			skc.Intensity = skyLightComponent["Intensity"].as<float>();
-			skc.DrawSkybox = skyLightComponent["DrawSkybox"].as<bool>();
 		}
 
 		auto audioSourceComponent = entityNode["AudioSourceComponent"];
 		if (audioSourceComponent)
 		{
-			auto& source = deserializedEntity.AddComponent<AudioSourceComponent>();
-
-			// Every field guarded, unlike RigidBodyComponent above. These components are
-			// young enough that hand-authored scenes are still a normal way to make one
-			// (the runtime demo is), and an absent key would otherwise throw out of
-			// as<T>() and take the whole scene load with it.
-			if (auto clip = audioSourceComponent["Clip"])
-				source.Clip = clip.as<uint64_t>();
-			if (auto group = audioSourceComponent["Group"])
-				source.Group = AudioGroupFromString(group.as<std::string>(), source.Group);
-			if (auto volume = audioSourceComponent["Volume"])
-				source.Volume = volume.as<float>();
-			if (auto pitch = audioSourceComponent["Pitch"])
-				source.Pitch = pitch.as<float>();
-			if (auto loop = audioSourceComponent["Loop"])
-				source.Loop = loop.as<bool>();
-			if (auto playOnStart = audioSourceComponent["PlayOnStart"])
-				source.PlayOnStart = playOnStart.as<bool>();
-			if (auto spatialize = audioSourceComponent["Spatialize"])
-				source.Spatialize = spatialize.as<bool>();
-			if (auto stream = audioSourceComponent["Stream"])
-				source.Stream = stream.as<bool>();
+			// Every field guarded, which the generic reader does for every component: an absent
+			// key leaves the constructed value instead of throwing out of as<T>(). That
+			// tolerance used to be spelled out here because these components are young enough
+			// that hand-authoring a scene is still normal (the runtime demo is one).
+			ReadReflectedComponent(audioSourceComponent,
+				deserializedEntity.AddComponent<AudioSourceComponent>());
 		}
 
 		auto audioListenerComponent = entityNode["AudioListenerComponent"];
 		if (audioListenerComponent)
 		{
-			auto& listener = deserializedEntity.AddComponent<AudioListenerComponent>();
-			if (auto primary = audioListenerComponent["Primary"])
-				listener.Primary = primary.as<bool>();
+			ReadReflectedComponent(audioListenerComponent, deserializedEntity.AddComponent<AudioListenerComponent>());
 		}
 
 		auto particleEmitterComponent = entityNode["ParticleEmitterComponent"];
 		if (particleEmitterComponent)
 		{
-			auto& p = deserializedEntity.AddComponent<ParticleEmitterComponent>();
-
-			if (auto n = particleEmitterComponent["RateOverTime"])
-				p.RateOverTime = n.as<float>();
-			if (auto n = particleEmitterComponent["MaxParticles"])
-				p.MaxParticles = n.as<uint32_t>();
-			if (auto n = particleEmitterComponent["Looping"])
-				p.Looping = n.as<bool>();
-			if (auto n = particleEmitterComponent["Duration"])
-				p.Duration = n.as<float>();
-			if (auto n = particleEmitterComponent["PlayOnStart"])
-				p.PlayOnStart = n.as<bool>();
-
-			if (auto n = particleEmitterComponent["LifetimeMin"])
-				p.LifetimeMin = n.as<float>();
-			if (auto n = particleEmitterComponent["LifetimeMax"])
-				p.LifetimeMax = n.as<float>();
-			if (auto n = particleEmitterComponent["SpeedMin"])
-				p.SpeedMin = n.as<float>();
-			if (auto n = particleEmitterComponent["SpeedMax"])
-				p.SpeedMax = n.as<float>();
-			if (auto n = particleEmitterComponent["ConeAngle"])
-				p.ConeAngle = n.as<float>();
-			if (auto n = particleEmitterComponent["StartSizeMin"])
-				p.StartSizeMin = n.as<float>();
-			if (auto n = particleEmitterComponent["StartSizeMax"])
-				p.StartSizeMax = n.as<float>();
-			if (auto n = particleEmitterComponent["StartRotationMin"])
-				p.StartRotationMin = n.as<float>();
-			if (auto n = particleEmitterComponent["StartRotationMax"])
-				p.StartRotationMax = n.as<float>();
-			if (auto n = particleEmitterComponent["RotationSpeedMin"])
-				p.RotationSpeedMin = n.as<float>();
-			if (auto n = particleEmitterComponent["RotationSpeedMax"])
-				p.RotationSpeedMax = n.as<float>();
-			if (auto n = particleEmitterComponent["GravityModifier"])
-				p.GravityModifier = n.as<float>();
-			if (auto n = particleEmitterComponent["WorldSpace"])
-				p.WorldSpace = n.as<bool>();
-			if (auto n = particleEmitterComponent["Seed"])
-				p.Seed = n.as<uint32_t>();
-
-			if (auto n = particleEmitterComponent["SizeCurve"])
-				p.SizeCurve = n.as<FloatCurve>();
-			if (auto n = particleEmitterComponent["ColorOverLifetime"])
-				p.ColorOverLifetime = n.as<ColorGradient>();
-
-			if (auto n = particleEmitterComponent["RenderMode"])
-				p.RenderMode = (ParticleEmitterComponent::Mode)n.as<int>();
-			if (auto n = particleEmitterComponent["Texture"])
-				p.Texture = n.as<uint64_t>();
-			if (auto n = particleEmitterComponent["Blend"])
-				p.Blend = (ParticleBlend)n.as<int>();
-			if (auto n = particleEmitterComponent["Mesh"])
-				p.Mesh = n.as<uint64_t>();
-			if (auto n = particleEmitterComponent["Material"])
-				p.Material = n.as<uint64_t>();
+			ReadReflectedComponent(particleEmitterComponent,
+				deserializedEntity.AddComponent<ParticleEmitterComponent>());
 		}
 
 		auto rigidBodyComponent = entityNode["RigidBodyComponent"];
 		if (rigidBodyComponent)
 		{
-			auto& rb = deserializedEntity.AddComponent<RigidBodyComponent>();
-			rb.Type = (RigidBodyType)rigidBodyComponent["Type"].as<int>();
-			rb.Mass = rigidBodyComponent["Mass"].as<float>();
-			rb.LinearDamping = rigidBodyComponent["LinearDamping"].as<float>();
-			rb.AngularDamping = rigidBodyComponent["AngularDamping"].as<float>();
-			rb.UseGravity = rigidBodyComponent["UseGravity"].as<bool>();
+			ReadReflectedComponent(rigidBodyComponent, deserializedEntity.AddComponent<RigidBodyComponent>());
 		}
-
-		auto readPhysicsMaterial = [](const YAML::Node& node, PhysicsMaterial& mat)
-		{
-			if (node["Friction"])
-				mat.Friction = node["Friction"].as<float>();
-			if (node["Restitution"])
-				mat.Restitution = node["Restitution"].as<float>();
-		};
 
 		auto boxColliderComponent = entityNode["BoxColliderComponent"];
 		if (boxColliderComponent)
 		{
-			auto& col = deserializedEntity.AddComponent<BoxColliderComponent>();
-			col.HalfExtents = boxColliderComponent["HalfExtents"].as<glm::vec3>();
-			col.Offset = boxColliderComponent["Offset"].as<glm::vec3>();
-			readPhysicsMaterial(boxColliderComponent, col.Material);
+			ReadReflectedComponent(boxColliderComponent, deserializedEntity.AddComponent<BoxColliderComponent>());
 		}
 
 		auto sphereColliderComponent = entityNode["SphereColliderComponent"];
 		if (sphereColliderComponent)
 		{
-			auto& col = deserializedEntity.AddComponent<SphereColliderComponent>();
-			col.Radius = sphereColliderComponent["Radius"].as<float>();
-			col.Offset = sphereColliderComponent["Offset"].as<glm::vec3>();
-			readPhysicsMaterial(sphereColliderComponent, col.Material);
+			ReadReflectedComponent(sphereColliderComponent, deserializedEntity.AddComponent<SphereColliderComponent>());
 		}
 
 		auto capsuleColliderComponent = entityNode["CapsuleColliderComponent"];
 		if (capsuleColliderComponent)
 		{
-			auto& col = deserializedEntity.AddComponent<CapsuleColliderComponent>();
-			col.Radius = capsuleColliderComponent["Radius"].as<float>();
-			col.HalfHeight = capsuleColliderComponent["HalfHeight"].as<float>();
-			col.Offset = capsuleColliderComponent["Offset"].as<glm::vec3>();
-			readPhysicsMaterial(capsuleColliderComponent, col.Material);
+			ReadReflectedComponent(capsuleColliderComponent, deserializedEntity.AddComponent<CapsuleColliderComponent>());
 		}
 
 		return deserializedEntity;

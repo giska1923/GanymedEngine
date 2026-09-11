@@ -1,6 +1,8 @@
 #include "ContentBrowserPanel.h"
 
 #include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Assets/CompiledCache.h"
+#include "GanymedE/Assets/AssetMeta.h"
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Core/Log.h"
@@ -83,10 +85,19 @@ namespace GanymedE {
 		for (auto& directoryEntry : std::filesystem::directory_iterator(m_CurrentDirectory))
 		{
 			const auto& path = directoryEntry.path();
-			if (path.filename() == ".assets")
+			std::string filenameString = path.filename().string();
+
+			// Dotted entries are engine bookkeeping, not content: `.assets` (the mesh cache)
+			// today, `.compiled` when the asset compiler lands.
+			if (!filenameString.empty() && filenameString.front() == '.')
 				continue;
 
-			std::string filenameString = path.filename().string();
+			// `.meta` sidecars carry asset identity and are committed, but showing them would
+			// double every row in the grid and offer Import on a file that is not an asset.
+			// They are managed by the AssetManager, never by hand - see docs/engine/assets.md.
+			if (AssetMetaSerializer::IsSidecarPath(path))
+				continue;
+
 			bool isDirectory = directoryEntry.is_directory();
 
 			ImGui::PushID(filenameString.c_str());
@@ -119,8 +130,6 @@ namespace GanymedE {
 						AssetHandle handle = AssetManager::ImportAsset(relativePath);
 						if (IsAssetHandleValid(handle))
 							GE_CORE_INFO("Imported '{0}'", relativePath.string());
-
-						AssetManager::FlushRegistry();
 					}
 				}
 
@@ -131,6 +140,28 @@ namespace GanymedE {
 				{
 					if (ImGui::MenuItem("Reload"))
 						AssetManager::Reload(handle);
+
+					// Reimport is Reload plus throwing away the compiled artifact, for the case
+					// the epoch record cannot see: an importer setting edited by hand, or simple
+					// doubt about what is in the cache. Blocking, and a BC7 encode of a large
+					// texture takes seconds - the tooltip says so rather than letting the editor
+					// look hung.
+					const bool compiled = CompiledCache::CompilerFor(
+						AssetManager::GetAssetType(handle)) != nullptr;
+
+					if (compiled && ImGui::MenuItem("Reimport"))
+					{
+						if (const AssetMetadata* metadata = AssetManager::GetMetadata(handle))
+							CompiledCache::Invalidate(*metadata);
+
+						AssetManager::Reload(handle);
+					}
+
+					if (compiled && ImGui::IsItemHovered())
+					{
+						ImGui::SetTooltip("Recompiles from source. This blocks - a large texture "
+							"is seconds.");
+					}
 				}
 
 				ImGui::EndPopup();

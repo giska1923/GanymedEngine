@@ -27,6 +27,13 @@ project "GanymedEngine"
 		"extern/glm/glm/**.inl"
 	}
 
+	-- The texture block-compressor is its own C++20 project, because bx does not compile
+	-- below C++20 and this one is C++17. See TextureEncode.lua.
+	removefiles
+	{
+		"source/Platform/Bimg/**"
+	}
+
 	defines
 	{
 		"_CRT_SECURE_NO_WARNINGS",
@@ -86,7 +93,8 @@ project "GanymedEngine"
 		"Lua",
 		"RmlUi",
 		"FreeType",
-		"enkiTS"
+		"enkiTS",
+		"TextureEncode"
 	}
 
 	filter "system:windows"

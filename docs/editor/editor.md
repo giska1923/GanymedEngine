@@ -149,7 +149,8 @@ re-applied or reverted. The format and its ownership rules are in
 
 **Create** links the source entity to the file it just wrote, so the thing you made a prefab *from*
 becomes an instance of it. That is the Unity behaviour authors expect. The path must be inside
-`assets/`; a prefab outside the asset root has no registry identity, so nothing could reference it.
+`assets/`; a prefab outside the asset root gets no handle and no sidecar, so nothing could reference
+it.
 
 **Apply** is the milestone's one silently destructive click — it overwrites an asset, and undo
 covers scene edits only — so it is the one operation behind a confirmation modal. The modal names
@@ -164,8 +165,41 @@ pre-revert state rather than halfway. If instantiation fails, the captured subtr
 rather than leaving a hole.
 
 Structural freedom inside an instance is **allowed and unmarked**: add, remove and re-parent
-children at will. Selection is single-entity, so "create from selection" means the selected entity's
-subtree — no multi-select semantics were invented.
+children at will. "Create from selection" means the *primary* selection's subtree — prefab actions
+are single-entity even though the selection no longer is.
+
+### Per-property overrides
+
+A field of a prefab instance that differs from the prefab is **tinted blue in the inspector**, and
+right-clicking it offers **Revert to Prefab**. A component with any differing field gets a `*` on its
+section header.
+
+**Overrides are computed, not stored.** Unity records an override list on the instance; Ganymed diffs
+the instance against the prefab instead. A recorded list is a second source of truth that goes stale
+when the prefab changes, needs migrating when a field is renamed, and has to be maintained by every
+edit path. A diff cannot be stale — it is recomputed from the two things it compares — and it needs
+no format change beyond the canonical link.
+
+The comparison is the serializer's own: **a field that would serialize identically is not an
+override** (`EmitReflectedValue`). That keeps "overridden" and "would be written differently" the
+same statement. A type with no YAML codec reports *not* overridden — "cannot tell" must not become a
+claim.
+
+| | |
+|---|---|
+| What makes it possible | `PrefabMemberComponent::CanonicalID` on every instantiated entity — see [scene.md](../engine/scene.md#prefab-member-links) |
+| Per-field affordance | Reflected sections only; the per-field hook lives in the property drawer |
+| Hand-written sections | Section-level `*` marker only — "something in here differs", not which field |
+| Cost | **0.14 ms/frame** worst case (a selected prefab instance with a particle emitter: 46 fields, section marker plus every per-field query, Release). Zero when nothing selected is a prefab member |
+
+Two limitations worth knowing:
+
+- **Prefab instances already in committed scenes have no canonical link**, because they were
+  instantiated before it existed. They report no overrides until they are re-instantiated — which
+  *Revert Instance* does, since it rebuilds the subtree from the file.
+- The template cache is keyed on the prefab handle and dropped when the scene changes. Editing a
+  `.gprefab` on disk while a scene is open will not refresh it until the scene is reopened; the
+  cache has no way to notice a file edit on its own.
 
 ### Play / Stop (toolbar)
 
@@ -196,9 +230,42 @@ present, procedural fallback otherwise), so imported meshes are lit immediately.
 ### Stats panel
 
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
-transparent, particle emitters/billboards/draws/culled), live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
+transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
+live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
 FXAA), and Jolt debug-draw toggles (visible during Play; draws Jolt's body state instead of the
 authored collider gizmos).
+
+A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
+many came out of `assets/.compiled/` instead. A second run over an unchanged project must read
+0 built ([assets.md](../engine/assets.md#compiled-outputs)).
+
+The Asset Cache rows come from `AssetManager::GetCacheStats()`, one per registered manager, printed
+as `resident / tracked / loading` — live objects, cache entries including ones whose object has
+already been collected, and parses in flight. The gap between the first two *is* eviction: close a
+scene and resident falls while tracked does not, until those handles are loaded again. The third
+column is a cold open in progress (see
+[assets.md](../engine/assets.md#asynchronous-loading)).
+
+`Apply: N done, M deferred, x / 4.0 ms` is the main-thread half of asynchronous loading against its
+per-frame budget. A non-zero **deferred** during a burst is the budget working, not a backlog — those
+parses are finished and land on the next frames (see
+[assets.md](../engine/assets.md#the-apply-budget)).
+
+Below it, **Hot reload assets/** is the watcher's switch, with `watched / ms-per-poll / reloaded /
+settling` under it and the last reloaded path. Editing an asset in an external tool updates the
+viewport within about half a second with no restart. Two of those numbers are worth reading rather
+than ignoring:
+
+- **ms/poll** is what decides whether this stays a poll. It is 0.5-1.5 ms for this project's assets;
+  the roadmap's alternative is a Win32 `ReadDirectoryChangesW` watcher, worth writing the day this
+  column shows up in a frame and not before.
+- **settling** is changes seen but not yet acted on - a debounce in progress, or a batch deferred
+  because more than 16 files changed at once.
+
+Turn the switch **off before a large `git` operation** and back on afterwards: a branch switch
+touching hundreds of assets is a change event for every one of them. Re-enabling adopts what is on
+disk rather than reloading it, so the switch does not defeat itself. Full details in
+[assets.md](../engine/assets.md#hot-reload).
 
 ## Scene Hierarchy panel
 
@@ -248,8 +315,114 @@ report their edit and commit in the same frame. A pending edit no frame of which
 is dropped, which is what makes a click-without-drag and an opened-then-closed combo free. If the
 section stops being drawn mid-gesture, an end-of-frame flush commits what was recorded.
 
+### The generic (reflected) inspector
+
+Most sections no longer have a hand-written body. `EditorUI::DrawReflectedComponent(component)` in
+[`EditorInspector.h`](../../GanymedEditor/source/EditorInspector.h) draws a component from what
+`entt::meta` knows about it — field order, labels, ranges, drag speeds, the colour-vs-position widget
+choice, enum entries and notes all come from
+[`ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp).
+Adding a field to a converted component is one `.data<>` line in the registration, not an edit here.
+
+**It does not touch the undo protocol, and that is the point.** REFLECTION_ROADMAP R2 expected the
+generic drawer to "own `ActiveId` across a drag exactly as the hand-written path does". It does not
+have to: the commit boundary lives in `DrawComponent<T>`, which wraps the *section*, so a generic
+body only has to keep the section contract above — mutate on a reported edit, return true when it
+does. Every drawer does, so a converted section keeps one-command-per-gesture with **zero** change
+to `EditorUndo`.
+
+Dispatch is a `meta_type`-keyed map of `PropertyDrawer` function pointers, editor-side. It has to be
+editor-side: `.custom<>` holds exactly one payload per meta object, so a second registration pass
+from the editor would *overwrite* the engine's attributes rather than add to them. Defaults cover
+`float`, `bool`, `int32`/`uint32`, `std::string`, `glm::vec2/3/4`, every registered enum, and
+`AssetRef<T>`; `RegisterPropertyDrawer` overrides one for a type. A field whose type has no drawer is
+skipped and named once in the log — a missing drawer should be loud, not invisible.
+
+Trait handling: `Hidden` and **`CustomDrawer`** are skipped, `ReadOnly` draws disabled (and never
+reports an edit), `Color` selects `ColorEdit` over the X/Y/Z row, and `Radians` converts to degrees
+for display.
+
+The inspector reads `CustomDrawer`, never `CustomWriter` — the two halves of the old single `Custom`
+flag, split when the serializer conversion finished. That split is what lets `AnimatorComponent::Clip`
+and the two particle curves keep bespoke widgets while serializing generically; see
+[scene.md](../engine/scene.md).
+
+**A registered drawer wins over `Trait::Flatten`.** That ordering is load-bearing rather than
+incidental: `Flatten` is a statement about the *file* — "this struct's fields are siblings on disk" —
+and the two types that make it want opposite things from the inspector. `PhysicsMaterial` has no
+drawer and falls through to the nested-struct fallback below, so a collider still shows `Friction`
+and `Restitution` as its own rows. `RangeF` has one, and drawing its `Min` and `Max` as two loose
+rows is precisely the widget that type was introduced to replace.
+
+**Converted (15 of 20):** Sprite Renderer, Directional / Point / Spot Light, Transform, **Camera**,
+**Sky Light**, Audio Listener, Audio Source, Prefab Instance, Particle Emitter, Rigid Body, and the
+three colliders.
+
+Two of those needed something the generic path alone cannot do, and both are handled *around* it
+rather than inside it:
+
+- **Transform** does `MarkChanged<TransformComponent>` after an edit. Editing a component directly
+  is invisible to change tracking, so the cached world transform would never refresh. A side effect
+  is not something reflection can express — but nothing stops the section from running one after
+  `DrawReflectedComponent` returns true. Its degrees round-trip and reset values *are* expressed, as
+  `Trait::Radians` and `Attr::Reset`.
+- **Spot Light** clamps outer ≥ inner afterwards. A generic drawer sees one field at a time and
+  cannot express a cross-field invariant, but the section can fix up the component the drawer just
+  wrote. The clamp is the section's job; the widgets are not.
+
+**Still hand-written, and none of it for want of effort** — each is blocked by something the
+vocabulary deliberately cannot say:
+
+| Section | Why |
+|---|---|
+| Static Mesh | The material-override list is sized by the **mesh asset**, not by component members |
+| Animator | Clip names come from the mesh asset |
+| Script | The field schema comes from Lua, not from C++ |
+
+**Camera and Sky Light converted via a field filter.** Their blocker was field *visibility*
+depending on another field's value — and unlike a clamp, that cannot be applied after the generic
+drawer has run, because you cannot un-draw a field. `EditorUI::FieldFilter` is a predicate asked per
+field *before* anything is submitted, so the section keeps its one cross-field rule and stops
+hand-drawing every widget around it:
+
+- **Camera** shows the perspective fields or the orthographic ones. `SceneCamera`'s own fields appear
+  as rows of the section via the nested-struct fallback — a reflected struct with no drawer of its
+  own is drawn inline. That is an *inspector* decision and says nothing about serialization, where
+  the camera really is a nested map on disk; using `Trait::Flatten` to get that layout would have
+  been a lie, and the generic writer now depends on it not being told one.
+- **Sky Light** hides the two procedural colours when an environment is assigned, because they are
+  unreachable fallbacks then. Showing an author a control that cannot affect anything is worse than
+  not showing it.
+
+The filter is deliberately a predicate in editor C++ rather than an attribute: "show this when that
+other field equals X" is a small expression language, and the vocabulary is not the place for one.
+
+**The Particle Emitter converted once ranges became a type.** Its five min/max pairs are now
+`RangeF` fields (see [scene.md](../engine/scene.md#ranges)), so one drawer owns both halves and can
+clamp in the direction the edit implies — which two independent float drawers never could. Its four
+`CollapsingHeader` groups are `Attr::Section`, its curve and gradient editors are drawers keyed on
+`FloatCurve` and `ColorGradient`, and its three asset slots are `AssetRef<T>`. What stayed
+hand-written is the Play / Stop / Restart transport, which are **actions, not fields**.
+
+Converting it also corrected two registrations that only a generic consumer could expose:
+`Playing` and `Time` were `ReadOnly | NotSerialized`, which was right while the section drew its own
+status line and nothing else — as generic fields they became two disabled rows repeating that line,
+so they are `Runtime` (hidden) now.
+
+**Audio Source and Prefab Instance were converted with a deliberate layout change.** Audio Source's
+checkboxes no longer share lines and `Group` moved to the end, because the field order is now the
+registration order and the vocabulary has no way to say "put these two together" — adding layout
+knobs to it was rejected in R1. Prefab Instance's `Source` is `ReadOnly`, so the drawer renders it
+disabled and reports no edit, which is what the hand-written section did by returning false.
+
+`ReadOnly` on an asset slot also suppresses the drop target, which `BeginDisabled` alone would not:
+a payload drop is not an item click, so without the explicit guard a read-only field would silently
+accept one.
+
 **Custom canvas widgets** live in [`EditorWidgets.cpp`](../../GanymedEditor/source/EditorWidgets.cpp)
-(`CurveEditor`, `GradientEditor`) and are the first house-drawn controls. They participate in that
+(`CurveEditor`, `GradientEditor`, and `DrawVec3Control`, which moved there from the panel in R2 so
+the reflected vec3 drawer produces the same widget the hand-written sections do) and are the first
+house-drawn controls. They participate in that
 protocol only if they own `ActiveId` for the whole gesture. The rule, and the pattern for any
 future custom widget: **one `InvisibleButton` spans the canvas**. A held InvisibleButton owns
 `ActiveId` until release (verified in the vendored ImGui 1.91.9b). Hit-testing against keys
@@ -267,7 +440,7 @@ Notable behaviors:
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons, which returns
   `bool`) and call `MarkChanged<TransformComponent>` only when a row reported an edit. Rotation is
   written back **only** on an actual edit, for the round-trip reason above.
-- Static mesh: shows the mesh asset (assign with `AcceptAssetDropHandle(StaticMesh)`), then **one
+- Static mesh: shows the mesh asset (assign with `AcceptAssetDropRef<Mesh>()`), then **one
   row per renderer slot**. Each row shows either the assigned `.gmat` or `(default: <imported
   name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes the override.
   Both are ordinary component edits, so undo covers them with no new code. Assigning a different
@@ -284,7 +457,7 @@ Notable behaviors:
   and Clear contribute to the section's `edited` return.
 - Camera: projection type combo, per-type parameters, Primary / FixedAspectRatio.
 - Static mesh: shows the mesh asset (handle + path) — assign with
-  `AcceptAssetDropHandle(StaticMesh)`.
+  `AcceptAssetDropRef<Mesh>()`.
 - Animator: a **combo over the clip names the entity's own mesh carries**, rather than a free text
   field. The clip reference is a name, so a text field would let you type one that resolves to
   nothing and get a silent bind pose. Plus Speed, Playing, Loop, and a **Time** slider bounded by
@@ -303,7 +476,7 @@ Notable behaviors:
   they are keyed by name against the old script's declarations. Removing the component in edit mode
   is safe: `LuaScriptSystem` drains its `FiniView` there and tears down any instance left from a
   previous play session. See [scripting.md](../engine/scripting.md).
-- Sky light: environment asset (`AcceptAssetDropHandle(Environment)`), sky/ground colors, intensity,
+- Sky light: environment asset (`AcceptAssetDropRef<Environment>()`), sky/ground colors, intensity,
   DrawSkybox.
 - Audio source: the clip asset (handle + path) with a Clear button — assign with
   `AcceptAssetDropHandle(Audio)`, the helper's first client outside the three it was written for.
@@ -329,25 +502,67 @@ Adding a component type means extending this panel's Add-Component popup and `Dr
 one of the two remaining hand-maintained per-component lists (the other is the serializer). Undo
 needs nothing: it is driven by `ComponentList`, so a new component type joins it automatically.
 
+## Multi-entity editing
+
+**Ctrl+click** adds an entity to the selection or removes it; a plain click replaces the selection.
+Every selected entity is highlighted in the hierarchy.
+
+The design keeps a **primary** selection — the entity clicked last, `GetSelectedEntity()` — and adds
+the full set beside it as `GetSelection()`, primary first. That is why multi-select cost six call
+sites outside the panel instead of thirty: gizmos, the tag field and every prefab action still read
+the primary and did not change at all.
+
+| Behaviour | Rule |
+|---|---|
+| Which sections appear | Only components **every** selected entity has. Showing one that only some have would make an edit either silently skip entities or silently add the component to them |
+| Fields that disagree | Tinted **amber**. Mixed wins over the prefab-override blue when both apply — "these entities disagree" is the more urgent fact, because the widget is showing one of several values rather than the value |
+| Editing | The widgets drive the **primary**; the new value is copied to the rest *after* a widget reports an edit. Merely selecting several entities never flattens their differing values |
+| Undo | **One entry per gesture, spanning the whole selection.** Verified: a 3-entity drag produces `UndoDepth == 1`, and one Ctrl+Z restores all three to their *individual* prior values |
+| Delete | Deletes every selected entity |
+
+Propagating after the fact, rather than driving N widgets, is what keeps every property drawer
+single-entity and unaware that multi-edit exists — the same trick the prefab-override hook uses.
+
+Two gaps, deliberate in v1:
+
+- **Shift-range selection is not implemented.** It needs a flattened view of the tree that this panel
+  draws recursively and does not keep; Ctrl covers the case multi-edit exists for.
+- **The gizmo still moves the primary only.** Moving N entities is transform composition across a
+  selection, which is a viewport feature rather than an inspector one.
+- **A drop or popup edit with no active phase records undo for the primary only.** That path has no
+  gesture to wait for, so the other entities' before-values are already gone by the time it runs;
+  making it multi-entity means moving the pre-copy up into `DrawComponent`. Stated rather than
+  hidden.
+
 ## Content Browser panel
 
 [`ContentBrowserPanel`](../../GanymedEditor/source/Panels/ContentBrowserPanel.h) — a grid view of
-`assets/` (the `.assets/` mesh-cache directory is hidden):
+`assets/`. Two classes of entry are hidden: anything whose name starts with `.` (the `.compiled/`
+mesh cache today, `.compiled/` when the asset compiler lands) and `.meta`/`.meta.bad` sidecars.
+Hiding the sidecars is not cosmetic — one per asset would double every row in the grid and offer
+**Import** on a file that is not an asset. They are the `AssetManager`'s to write, never a human's
+(see [assets.md](../engine/assets.md#the-meta-sidecar)):
 
 - Directory/file icons, tinted by asset type (mesh blue, environment orange, scene green, texture
   pink, material purple, script yellow, audio cyan). Double-click enters directories; the `<-` button goes up but can never
   escape the asset root (path-normalized check).
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
-- Right-click on an importable file (mesh/environment/texture/material/script/audio) → **Import**, registering
-  it with the `AssetManager` (idempotent), then `FlushRegistry()` — registry writes are batched per
-  user action rather than per import, see
-  [assets.md](../engine/assets.md#registry-writes).
+- Right-click on an importable file (mesh/environment/texture/material/script/audio/prefab) →
+  **Import**, registering it with the `AssetManager` (idempotent). In practice the scan at `Init`
+  has already done this for every file under `assets/`; the menu item is for a file that appeared
+  since. `ImportAsset` writes the `.meta` sidecar itself, so there is nothing to flush — see
+  [assets.md](../engine/assets.md#the-meta-sidecar).
 - Right-click on an already-registered file → **Reload**, evicting it from the manager's cache so the
-  next fetch re-reads it from disk. For a mesh this also drops its textures and deletes the
-  `.meshcache`, i.e. a full reimport. Edits land in the viewport on the next frame because
-  `RenderSystem` re-fetches by handle every frame — see
-  [assets.md](../engine/assets.md#reload) for the invariant that makes eviction safe mid-frame.
+  next fetch re-reads it from disk. For a mesh and a texture this also drops the compiled artifact,
+  i.e. a full reimport. Edits land in the viewport on the next frame because every `AssetRef`
+  re-resolves after an eviction — see [assets.md](../engine/assets.md#reload) for the invariant that
+  makes eviction safe mid-frame.
+- On a file whose type has a compiler (meshes, textures) there is also **Reimport**: `Reload` plus
+  deleting the compiled artifact outright, for the case the epoch record cannot see — an import
+  setting edited by hand, or simple doubt about what is in the cache. It **blocks**, and a large
+  texture is seconds; the menu item's tooltip says so rather than letting the editor look hung.
+  Making it non-blocking is asset Phase 5's job.
 
 ## Typed drag-drop
 
@@ -361,11 +576,26 @@ too (it previously wasn't used here at all: each site hand-rolled
 |---|---|
 | `AcceptAssetDrop(type)` | `optional<path>` — the dropped path relative to `assets/`, iff its type matches |
 | `AcceptAssetDrop({types...})` | `AssetDrop { Type, Path }`, falsy when nothing matched — for targets accepting several types. The viewport uses it for Scene / StaticMesh / Prefab, where the list form is **mandatory**: ImGui clears the payload as soon as one target delivers it, so three single-type calls would let only the first ever fire |
-| `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent) + `FlushRegistry` on match, else `InvalidAssetHandle` |
+| `AcceptAssetDropHandle(type)` | `ImportAsset` (idempotent, and persists identity itself) on match, else `InvalidAssetHandle` |
+| `AcceptAssetDropRef<T>()` | The same, typed: an `AssetRef<T>`, unset when nothing matching was dropped |
 
 Call it immediately after the widget that should accept the drop; it wraps
 `BeginDragDropTarget` / `AcceptDragDropPayload("CONTENT_BROWSER_ITEM")` / `EndDragDropTarget`.
 A mismatched drop is silently ignored.
+
+**Prefer `AcceptAssetDropRef<T>()` for a component slot.** The accepted `AssetType` comes from
+`AssetTypeOf<T>`, so the filter is derived from the field rather than passed beside it — a slot can
+no longer declare `AssetRef<Environment>` and filter on `AssetType::Texture`, which was one typo
+away while every call site wrote both by hand. Assigning the result to the wrong field is a compile
+error rather than a drop that silently never fires:
+
+```
+error C2440: cannot convert from 'AssetRef<Material>' to 'AssetRef<Mesh>'
+```
+
+The particle emitter's three slots are drawn by one `assetSlot(label, slot, hint)` lambda generic
+over `decltype(slot)::AssetT`, which is what removed the `AssetType` argument that used to sit next
+to an untyped `AssetHandle&`.
 
 **A multi-type target must use the `initializer_list` overload, not two calls in a row.**
 `ImGui::EndDragDropTarget` calls `ClearDragDrop` as soon as a payload is delivered, and

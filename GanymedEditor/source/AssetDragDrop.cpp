@@ -58,12 +58,9 @@ namespace GanymedE::EditorUI {
 		if (!dropped)
 			return InvalidAssetHandle;
 
-		AssetHandle handle = AssetManager::ImportAsset(*dropped);
-
-		// End of a user-visible action: the registry write happens here rather than inside
-		// ImportAsset, which is now batched (AssetManager::FlushRegistry).
-		AssetManager::FlushRegistry();
-		return handle;
+		// ImportAsset persists identity itself now - one `.meta` sidecar beside the dropped
+		// file, not a rewrite of a shared registry - so there is nothing to flush.
+		return AssetManager::ImportAsset(*dropped);
 	}
 
 }

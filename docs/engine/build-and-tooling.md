@@ -24,12 +24,26 @@ glm types across the static-library boundary. `BgfxContext` asserts the live bac
 Other build facts that have bitten before (details in
 [`BGFX_MIGRATION.md`](../toDo&done/BGFX_MIGRATION.md) Phase 0):
 
-- bx requires **C++20**; the three bgfx projects build at C++20 while the engine stays C++17 —
-  safe because `<bgfx/bgfx.h>` includes no bx headers.
+- bx requires **C++20**; the bgfx projects build at C++20 while the engine stays C++17 — safe
+  because `<bgfx/bgfx.h>` includes no bx headers. The asset pipeline's block compressor does need
+  them, so it is a **fourth** C++20 static lib, `TextureEncode`
+  ([`GanymedEngine/TextureEncode.lua`](../../GanymedEngine/TextureEncode.lua)), built from
+  `source/Platform/Bimg/` which the engine project `removefiles` from its own glob. Its public
+  header mentions neither bimg nor bx, and it takes the engine's `ParallelFor` as a
+  `std::function` rather than including `JobSystem.h` — the engine links it, so an engine include
+  here would be a cycle. Raising the whole engine to C++20 for one file is the alternative; it is
+  one line and a project-wide language change, so it waits for a reason of its own.
 - MSVC needs `/Zc:preprocessor` for bx, and bgfx builds with exceptions off (`__try` in
   `thread.cpp`); `_HAS_EXCEPTIONS=0` is deliberately **not** defined (it would change STL layout
   across the lib boundary).
-- `bimg_decode` is not built (it now drags in dav1d/libavif); images load through stb_image.
+- `bimg_decode` is not built (it drags in dav1d/libavif for AV1); images decode through stb_image,
+  including the texture compiler's front end. `image_encode.cpp` and the block compressors under
+  `bimg/3rdparty` (libsquish, nvtt, etc1, etcpak, pvrtc, edtaa3, iqa) **are** built, folded into
+  the existing `bimg` project rather than upstream's separate `bimg_encode`.
+- **`bimg` is optimised even in Debug** (`optimize "Speed"` plus `NoRuntimeChecks`, since MSVC
+  rejects `/O2` with `/RTC1`). Not a nicety: unoptimised, the BC7 encoder did not finish a
+  2560×1664 texture in four minutes, which makes the asset compiler unusable in the configuration
+  everyone develops in. Nobody steps through a vendored block compressor; symbols stay on.
 - macOS executables must link **`CoreMedia` and `VideoToolbox`** on top of the Metal/MetalKit set.
   bgfx's Metal backend compiles in a hardware video decoder (`bgfx::mtl::VideoDecoderMtl`)
   unconditionally — there is no config switch — so the frameworks are needed even though nothing
@@ -105,7 +119,7 @@ Other build facts that have bitten before (details in
 
 | Library | Used for |
 |---|---|
-| bgfx / bimg / bx | Rendering backend |
+| bgfx / bimg / bx | Rendering backend, and bimg's block compressors for the texture compiler |
 | GLFW | Windowing + input (no graphics API — `GLFW_NO_API`) |
 | entt 3.16 | ECS registry the view layer wraps |
 | glm | Math (with `GLM_FORCE_DEPTH_ZERO_TO_ONE`) |
@@ -114,7 +128,7 @@ Other build facts that have bitten before (details in
 | yaml-cpp | Scene + asset-registry serialization |
 | cgltf | glTF import (header-only) |
 | miniaudio 0.11.25 | Audio playback (header-only — see below) |
-| stb_image | Image loading (header-only) |
+| stb_image | Image decode, including the texture compiler's front end (header-only) |
 | spdlog | Logging (header-only) |
 | Lua 5.4.8 | Gameplay scripting VM (built as a C static lib) |
 | sol2 3.5.0 | C++ binding layer over Lua (header-only) |
@@ -284,21 +298,25 @@ Take the pair the lockfile records rather than upgrading TypeScript on its own. 
 Each app resolves `assets/` **relative to its working directory** — run the editor from
 `GanymedEditor/`, the runtime from `GanymedRuntime/` (`debugdir "%{prj.location}"` sets this for the
 debugger). `GanymedEditor/assets/` holds shaders (`src/` + gitignored `compiled/`), environments,
-models, scenes, textures, fonts, and the asset registry (`AssetRegistry.gr`). `assets/.assets/` is
-the binary mesh cache (safe to delete; also gitignored from the browser's perspective — the content
-browser hides it).
+models, scenes, textures, fonts, and one `.meta` sidecar per asset carrying its handle — those are
+**tracked**, for both apps, and that is the point of them ([assets.md](assets.md#the-meta-sidecar)).
+The legacy `AssetRegistry.gr` is still present and still read as a migration seed.
+`assets/.compiled/` holds compiled artifacts — block-compressed textures and binary mesh blobs,
+keyed by a hash of the source path, with a `.dep` epoch record beside each. Safe to delete at any
+time; the next load rebuilds it. The content browser hides it, along with the sidecars.
+`assets/.assets/` is the abandoned pre-Phase-4 mesh cache and can be deleted outright.
 
 `GanymedRuntime/assets/` is a copied snapshot of that content, trimmed to what the game uses, plus
-`audio/` — authored for the demo rather than copied (see [runtime.md](../runtime/runtime.md)). Sharing or packing a single tree is a non-goal for now. Two
-`.gitignore` differences matter and are per-path, not globs: the runtime's `AssetRegistry.gr` **is
-tracked** — for a shipped game it is authored content, not a scanned cache
-([assets.md](assets.md#registry-portability)) — while its `.assets/` mesh cache is not.
+`audio/` — authored for the demo rather than copied (see [runtime.md](../runtime/runtime.md)).
+Sharing or packing a single tree is a non-goal for now. The `.gitignore` asymmetry that remains is
+the compiled tree: `**/assets/.compiled/` is untracked in both apps, while identity now travels with
+the asset in both.
 
-One inconsistency worth knowing rather than tripping over: `MeshCache::Write` is *not* covered by
-`AssetManager::Init(false)`, so a read-only-registry app still writes `.assets/` on a cold mesh
-import. It is a derived cache rather than an authored database, and gating it would mean re-parsing
-every `.glb` on every boot; the real answer is cooking meshes ahead of ship, which is its own
-milestone.
+**Compilation is not covered by `AssetManager::Init(false)`**, so a read-only-assets app compiles
+on a cold tree, and writing the result is best effort — it warns once and keeps going if the
+directory is not writable. That is a fallback, not the plan: a shipped build should ship its
+`.compiled/` tree the way UE ships cooked content, because without it every boot recompiles
+everything. Packaging that tree is the distribution milestone's job.
 
 ## Profiling & debug tooling
 

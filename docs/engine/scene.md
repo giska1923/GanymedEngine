@@ -34,8 +34,10 @@ Key entry points:
 
 **The `DuplicateEntity` whitelist is the point, not an optimization.** `AssetHandle` *is* `UUID` —
 the same C++ type — so a "rewrite every UUID-typed field" pass would happily renumber
-`StaticMesh.Mesh`, `SkyLight.Environment`, `Script.Script` and `AudioSource.Clip` into handles no
-registry knows, and the entity would render nothing with no diagnostic. Here the whitelist is
+`Script.Script`, `AudioSource.Clip` and `PrefabInstance.Source` into handles no registry knows, and
+the entity would render nothing with no diagnostic. The mesh, material and environment fields are
+`AssetRef<T>` now and are no longer even the same type, which narrows the hazard without removing
+it — the three path-resolved references above are still bare handles by design. Here the whitelist is
 structural rather than a list to maintain: `IDComponent` comes from `CreateEntityWithUUID`,
 `RelationshipComponent` is rewritten explicitly afterwards, and every other component is copied
 verbatim by the `ForEachType(ComponentList)` loop. The copy is made in two passes because a
@@ -82,7 +84,9 @@ copyable, no behavior beyond small helpers.
 ### Rendering
 
 - **`SpriteRendererComponent`** — 2D quad color (drawn by Renderer2D).
-- **`StaticMeshComponent`** — `AssetHandle` of a mesh (see [assets.md](assets.md)). Also carries
+- **`StaticMeshComponent`** — `AssetRef<Mesh>` plus `MaterialOverrides`, a
+  `std::vector<AssetRef<Material>>` parallel to the mesh's own material list (see
+  [assets.md](assets.md#assetreft)). Also carries
   skinned meshes: there is no separate `SkinnedMeshComponent`, because the asset already knows
   whether it has a skeleton and a second component would duplicate the drag-drop, serialization,
   inspector and `RenderSystem` plumbing to say nothing new.
@@ -99,7 +103,7 @@ copyable, no behavior beyond small helpers.
 - **`PointLightComponent`** — color, intensity, radius, falloff.
 - **`SpotLightComponent`** — color, intensity, range, inner/outer cone half-angles (radians),
   falloff.
-- **`SkyLightComponent`** — environment `AssetHandle` (HDR IBL when valid) or procedural
+- **`SkyLightComponent`** — `AssetRef<Environment>` (HDR IBL when it resolves) or procedural
   hemispheric sky/ground colors; intensity; `DrawSkybox`. First one wins.
 
 ### Scripting
@@ -323,7 +327,291 @@ Anything a host needs true on the play-mode scene must be (re)written after the 
 `EditorLayer` pushes `DebugDraw` *and* `ShowColliderGizmos` onto the active scene every play frame
 rather than once on play.
 
+## Member reflection
+
+Ganymed reflects component **types** well — `ComponentList` and `ComponentTraits<T>` drive
+`Scene::Copy`, signal hookup and undo snapshots ([ecs.md](ecs.md#component-registration)). What it did
+not reflect is component **members**: the serializer, the inspector and the Lua bindings each
+hand-listed every field, so a new `float` had to be added in four places and silently did nothing if
+one was missed. [`Reflection/`](../../GanymedEngine/source/GanymedE/Reflection/Reflection.h) is the
+member half, built on **entt's own `entt::meta`** rather than a second reflection library — see
+[REFLECTION_ROADMAP.md](../toDo&done/REFLECTION_ROADMAP.md) for why (short version: "add component by
+type name", copy/paste-a-component and prefab diffing all have to get from a reflected type *back* to
+entt storage, and only entt's own meta can).
+
+Two files:
+
+| File | Contents |
+|---|---|
+| [`Reflection.h`](../../GanymedEngine/source/GanymedE/Reflection/Reflection.h) | The `Trait` flag enum, the `Attr` payload struct, the query helpers, `GE_REFLECT_COMPONENT` / `GE_REFLECT_TYPE` |
+| [`ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp) | Every registration block, `Reflection::Init()`, `Reflection::Validate()`, the size sentinels |
+
+### The one discipline line
+
+**No engine system may read a component through `entt::meta`.** `meta_data::get` returns `meta_any`
+*by value*; entt's small-buffer optimization covers a `float` or a `bool`, but a `std::string`, a
+`glm::mat4` or a `std::vector` allocates. For an inspector (a few dozen reads per frame on one
+selected entity) that is irrelevant; for a save (thousands per file, not a frame-budget operation) it
+is fine; for a system touching every entity every frame it is disqualifying. Systems use
+`ComponentList`/`ForEachType` and direct member access, exactly as they do today. This is a rule about
+*where* reflection is allowed, not a performance caveat to weigh case by case.
+
+### The two-tier attribute vocabulary
+
+Attributes split by cost, because entt stores them differently:
+
+- **`Trait`** — a 16-bit flag word packed into the meta node itself. Free to read, no allocation, no
+  lookup. entt reserves the low 16 bits of a node's traits word for its own flags (`is_class`,
+  `is_enum`, …) and shifts user traits into the upper half, so a user enum gets exactly 16 bits and no
+  more — a hard ceiling, and it also asserts that not all sixteen are set at once. Eleven are spent:
+  `Hidden`, `ReadOnly`, `Color`, `Radians`, `NotSerialized`, `OmitIfDefault`, `Flatten`,
+  `SerializeByName`, `Component`, `CustomDrawer`, `CustomWriter`, plus the composites
+  `Runtime = Hidden | NotSerialized` and `Custom = CustomDrawer | CustomWriter`.
+- **`Attr`** — one payload struct behind `.custom<>`: display label, section, note, min/max, drag
+  speed, the key prefix a `Flatten`ed field gives its children, and the `AssetType` an `AssetHandle`
+  field accepts. One struct rather than one per attribute
+  kind because **entt holds a single `.custom<>` payload per meta object — a second call replaces the
+  first, it does not append.** That single fact is also why registration is engine-side only: an
+  editor-side second pass would silently overwrite everything the engine registered. Editor-only
+  knowledge (drawer function pointers) belongs in the editor's own `meta_type`-keyed map.
+
+Every flag exists because the current serializer or inspector measurably needs it, not because it
+seemed generally useful:
+
+- `Color` — 11 `ColorEdit3/4` call sites the type system cannot distinguish from a `DragFloat3`.
+- `Radians` — `TransformComponent::Rotation`, the spot cone half-angles and the camera FOV are stored
+  in radians and authored in degrees. When it is set, `Attr`'s min/max are in **display** units.
+- `OmitIfDefault` — the key is written only when the field differs from the same field of a
+  default-constructed instance. `ParticleEmitterComponent` puts it on all ~20 of its authored fields,
+  and every asset handle carries it so an unset slot writes nothing. The comparison needs equality
+  on the field type, which entt cannot synthesize — `meta_any::operator==` compares *addresses*
+  unless a comparison function was registered — so each YAML codec carries an `Equal` alongside its
+  read/write pair, and a type with no codec is never omitted (writing a redundant key costs a diff
+  line; omitting a differing one is data loss).
+- `Flatten` — the nested struct's fields are emitted as **siblings**, not as a sub-map. A collider's
+  `PhysicsMaterial` writes `Friction` and `Restitution` beside `HalfExtents`; a particle's `RangeF`
+  writes `LifetimeMin` and `LifetimeMax`, using `Attr::KeyPrefix` to prefix each child key. Without
+  the flag a generic writer would nest them and invalidate every saved collider and emitter.
+- `SerializeByName` — type-level, on `AudioGroup`, the one enum persisted by name rather than ordinal.
+  The names come from the enumerators registered on the enum type, so the file and the inspector's
+  combo read the same list.
+- `CustomDrawer` / `CustomWriter` — "a bespoke implementation owns this field", asked **separately of
+  each consumer**. These were one flag until the serializer conversion finished, and the conflation
+  ran the wrong way: `AnimatorComponent::Clip` and the two particle curves need a bespoke *widget*
+  (a combo over the mesh's clip names, a curve editor, a gradient editor) and nothing bespoke at all
+  on disk — a string and two sequences — yet a fact about the inspector locked them out of the
+  generic writer. `Custom` remains as the composite for the genuinely-both cases:
+  `RelationshipComponent`'s two ends, `ScriptComponent::Fields`, and `StaticMeshComponent`'s
+  per-slot override list.
+
+There is deliberately no `AdvancedOnly` and no `EnumNames`: nothing in the panel has an advanced
+section, and enum value names are registered on the **enum type**, so they live once beside the enum
+instead of once per field that uses it (`meta_type::is_enum()` plus its `data()` range answers "what
+are the options").
+
+### Registered names are the on-disk contract
+
+Every `YAML::Key` in `SceneSerializer.cpp` is currently character-identical to its C++ member
+identifier, and the roadmap's R3 drives save/load from these registered names. A name here that does
+not match today's key breaks every committed `.gscene` and `.gprefab`. Field names are therefore
+**written out by hand**, never stringified from the token — a field rename would otherwise silently
+drop one value from every scene. The human-facing label lives in `Attr::Display`, which is how
+`SceneCamera` carries the key `PerspectiveFOV`, the accessor `GetPerspectiveVerticalFOV` and the label
+"Vertical FOV" at once.
+
+Type names *are* stringified by the macros. The asymmetry is deliberate: a component-type rename is
+loud (the component vanishes from every entity in the editor immediately) where a field rename is
+silent, and the type token already has a second binding in `ComponentList` that a rename must satisfy
+anyway.
+
+### What is registered
+
+32 types, 119 members (the boot log prints both — a count far below that is the cheapest signal that a
+registration block was dropped):
+
+- The **23 components** — all 21 `ComponentList` entries plus `IDComponent` and `TagComponent`, which
+  `ComponentList` excludes as entity identity but which prefab diffing has to know exist in order to
+  skip.
+- **4 supporting types** — `PhysicsMaterial`; `SceneCamera`, whose seven private fields are registered
+  through entt's setter/getter `.data` overload; and `FloatCurve` / `ColorGradient` with **zero
+  members**. A reflected type with no members is the deliberate signal "opaque — a bespoke drawer and
+  writer own this": both curve types keep a sorted-by-time invariant and never expose their key vector
+  mutably, so a generic setter could not preserve the invariant even if one existed.
+- **5 enums** with their value names.
+
+glm's vector types are **not** registered. Reflecting `vec3::x/y/z` would invite a generic serializer
+to emit a map where yaml-cpp's converter currently writes a flow sequence, silently changing the file
+format; consumers identify them by `type_info` comparison instead, which needs no registration.
+
+### Verification
+
+`Reflection::Validate()` runs from `Init()` in Debug and logs every problem rather than stopping at the
+first (a registration mistake is usually a repeated copy-paste). It checks that every `ComponentList`
+entry is registered *and* went through `GE_REFLECT_COMPONENT`, that no field was left nameless, that
+`SerializeByName` is only on an enum, that a `Flatten` field's type is itself reflected, and that
+valued/flag attributes match the type they were put on — `Color` on a vec3/vec4, `Radians` on a
+float/vec3, an asset slot on an `AssetHandle` or an `AssetRef<T>`. That last one is the load-bearing
+check, and it is stronger on an `AssetRef<T>` than on a handle: a bare `AssetHandle` is a plain
+`UUID` alias, the *same type* as `RelationshipComponent::Parent`, so it can only be checked for
+being a handle at all, while an `AssetRef<T>` carries its asset type in the C++ type and the
+declared slot has to **agree** with it. A copy-pasted `.Asset(AssetType::Texture)` on an
+`AssetRef<Environment>` is caught; the same mistake on a bare handle still is not.
+
+The "registered" test is `resolve<T>().name() != nullptr`, **not** `if (entt::resolve<T>())`. entt
+synthesizes a node from a function-local static for any type it is asked about, so the truthiness test
+passes for a type nobody registered and would report an entirely empty registration file as healthy.
+`name` is only ever assigned by `.type(id, name)`, which makes it the honest signal.
+
+What no test can check is whether a type's member list is **complete** — the true member set is
+exactly the thing that is not reflected. The `static_assert(sizeof(T) == N)` sentinels at the bottom of
+`ComponentReflection.cpp` are the only forcing function, and they have two honest limits. Padding: a
+`bool` dropped into existing padding does not move `sizeof` (`AudioSourceComponent` has three spare
+bytes right now). And they cover 16 of the 21 `ComponentList` entries — every one with no
+standard-library container member. `sizeof(std::string)` is 40 with MSVC's STL and 32 with libstdc++,
+and vector and unordered_map differ likewise, so a sentinel on `TagComponent`,
+`RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `ScriptComponent` or
+`ParticleEmitterComponent` would have to be a table of per-platform numbers — more cost than it
+catches, on a codebase that builds for Windows, Linux and macOS. The rule is mechanical rather than a
+judgement call per component: library container member ⇒ no sentinel.
+
+### Current state
+
+**Two consumers: the inspector and the serializer.** Fifteen of the editor's twenty component
+sections are drawn from this registration rather than from a hand-written lambda
+([editor.md](../editor/editor.md#the-generic-reflected-inspector)), and **every** component is
+written and read generically by `SceneSerializer` (below). The Lua bindings still hand-list every
+field and are deliberately out of scope.
+
+The two consumers convert **independently**, which is worth seeing once: Static Mesh, Animator and
+Script are serialized generically while their inspector sections stay hand-written. What blocks them
+from the panel is that their UI is driven by asset or Lua data — a mesh's material slots, its clip
+names, a Lua class's declared fields — which has nothing to do with how the component is stored.
+"Reflected" is per-consumer, not a property of the component.
+
+That independence is what the `CustomDrawer` / `CustomWriter` split makes expressible per *field*
+rather than only per component. `AnimatorComponent::Clip` is the smallest case: a combo over the
+mesh's clip names in the panel, an ordinary omitted-when-empty string on disk.
+
+Two facts that consumer established, both worth knowing before writing another one:
+
+- **`meta_type::data()` iterates in registration order.** Verified rather than assumed — the
+  inspector's field order is user-visible, and a `dense_map` that happened to iterate by hash would
+  have scrambled every converted section. Registration order is therefore a real contract of
+  `ComponentReflection.cpp`, not just tidiness.
+- **`meta_data::get` may hand back a copy or a reference depending on entt's policy**, so every
+  drawer reads into a concrete local, edits that, and writes back with `set`. Poking through the
+  `meta_any` would work by accident and break on a policy change.
+
+R2 also added `Attr::Reset` to the vocabulary: the value the X/Y/Z widget's coloured buttons restore.
+It is not derivable and no other attribute can carry it, and without it the collider sections could
+not go through the generic drawer without changing what their reset buttons do. One registered field
+uses it today (`BoxColliderComponent::HalfExtents`), which is the same "forced by a specific measured
+fact" bar every other attribute had to clear.
+
+### Ranges
+
+`RangeF` is a min/max pair authored as one thing, used by the particle emitter's five ranges
+(lifetime, speed, start size, start rotation, rotation speed).
+
+It exists for one reason, and it is not tidiness: **the clamp direction**. The panel pushes Max up
+when Min passes it and pulls Min down when Max drops below, and a drawer seeing two unrelated floats
+cannot know which half the author just moved. One drawer owning both halves does.
+
+It is **layout-identical** to the two floats it replaced (`float Min, Max;` in that order), and two
+things were deliberately kept byte-for-byte:
+
+- **The YAML keys.** `SceneSerializer` still writes `LifetimeMin` / `LifetimeMax`, reading them from
+  `Lifetime.Min` / `Lifetime.Max`. No scene or prefab on disk changed, and no migration was needed.
+- **The Lua API.** `GetParticleLifetimeMin` still exists and still reads the same value; the
+  bindings gained an overload taking a `RangeF` member pointer plus a `float RangeF::*` half. A C++
+  refactor must not silently rewrite a scripting API that shipped.
+
+### Prefab member links
+
+Every entity `PrefabSerializer::Instantiate` creates carries a **`PrefabMemberComponent`** holding
+its `CanonicalID` — the id it has *inside the prefab file*, which the writer assigns as 1..N in DFS
+order. `PrefabInstanceComponent` still marks only the instance root, so "is this an instance root"
+is the same question it always was.
+
+This is the link per-property overrides key on, and nothing else could serve: an instance's entities
+get fresh UUIDs every time, so without it there is no way to say which prefab object a given instance
+entity corresponds to. Recording it is only possible inside `Instantiate`, which is the one place
+that still holds the pairing.
+
+Entities added by hand inside an instance carry no `PrefabMemberComponent` and take part in no diff,
+which preserves the "structural freedom inside an instance is allowed and unmarked" rule.
+
+It is written generically like everything else. It used to be hand-written because "a `UUID`
+persists as a plain integer and the generic path has no codec for one" — there is a `UUID` codec now,
+so the exception went with the reason for it.
+
 ## Serialization
+
+### The reflected path
+
+**Every component** is written and read by `WriteReflected` / `ReadReflected` in
+[`SceneYaml.h`](../../GanymedEngine/source/GanymedE/Scene/SceneYaml.h) rather than by a hand-written
+block. Three *fields* remain hand-written, and each is marked `Trait::Custom` so the generic path
+skips exactly them while the rest of their component still goes through it:
+
+| Field | Why |
+|---|---|
+| `RelationshipComponent::Parent` / `::Children` | The two ends of a link must agree; writing either half generically would corrupt the hierarchy. Reparenting goes through `Scene`'s API. |
+| `StaticMeshComponent::MaterialOverrides` | A flow sequence whose **index is the meaning** — the slot count comes from the mesh asset, not from the vector. |
+| `ScriptComponent::Fields` | A sequence of `{Name, Type, Value}` maps over a closed variant, because the declaring script may not be loadable when the scene is read. |
+
+`TagComponent` is written generically but read by hand, because the tag is needed to *create* the
+entity and so cannot go through a reader that needs an entity to read into.
+
+Four things the generic writer had to learn to cover the rest:
+
+- **`OmitIfDefault`**, against a default-constructed instance of the owning type. That instance is a
+  parameter of `WriteReflected` rather than something it builds: getting a default-constructed `T`
+  out of an `entt::meta_type` would need `.ctor<>()` registered on every component, where passing one
+  down from `WriteReflectedComponent<T>` — which already knows `T` — needs nothing and cannot be
+  forgotten for one type.
+- **Codecs for `UUID`, `AssetRef<T>`, the curve types and the enums.** An `AssetRef<T>` writes the
+  bare `uint64` handle a plain `AssetHandle` field writes, which is what kept every scene valid
+  across the asset milestone. Its reader deliberately does **not** resolve: warming every reference
+  at load would run a full IBL bake for an `AssetRef<Environment>`. The one field that wants warming,
+  `StaticMeshComponent::Mesh`, asks for it at its own call site.
+- **Prefixed `Flatten`**, so a `RangeF` keeps writing `LifetimeMin` / `LifetimeMax` while a
+  `PhysicsMaterial` keeps writing `Friction` / `Restitution` bare. The prefix is an `Attr` value per
+  field, not a rule derived from the field name — that would make an on-disk key a function of a C++
+  member name, which decision 3 forbids.
+- **Nested sub-maps** for a reflected struct with no codec, which is how `CameraComponent::Camera`
+  keeps its `Camera:` block. `SceneCamera`'s seven fields are registered against accessors, so
+  `RecalculateProjection` runs per field on load exactly as the hand-written setter calls made it,
+  and the private projection matrix never reaches the file.
+
+**The gate was byte-identical output, not a working round-trip.** Every committed `.ganymede` is a
+file people diff; a serializer that reorders one key or reformats one float invalidates all of them
+at once. Three properties make that achievable rather than hopeful:
+
+1. `meta_type::data()` iterates in **registration order**, and `ComponentReflection.cpp` registers
+   fields in the order the hand-written writer emitted them.
+2. The registered field name **is** the YAML key — decision 3, which is why names are written out by
+   hand rather than stringified from the C++ token.
+3. Values go through the very same `operator<<` overloads, so a `float` written from a `meta_any`
+   reaches yaml-cpp identically to one written from the member.
+
+Verified by running all seven committed scenes and prefabs through both writers and diffing the
+outputs: five are byte-identical, and the other two match block-for-block once the *pre-existing*
+per-run UUID churn in `3DExample` and `Example` is accounted for — a control run of the unmodified
+binary produces the same churn against itself. Note that the committed fixture files are themselves
+stale: **both** writers reformat them, because the curve emitters changed style after they were last
+saved. That is why the diff is taken between two runs rather than against what is in git.
+
+The four components no fixture exercises (Animator, Point Light, Spot Light, and the sphere and
+capsule colliders) are covered by a save → load → save fixed-point check over one entity carrying
+every component at non-default values.
+
+One deliberate difference from the code it replaced: **reading is more tolerant.** The hand-written
+loader did `c.Field = node["Field"].as<T>()` unguarded, so a missing key threw. The generic reader
+leaves the constructed value alone. That is required, not a nicety — a field omitted because it
+equalled its default has to read back as that default.
+
+
 
 [`SceneSerializer`](../../GanymedEngine/source/GanymedE/Scene/SceneSerializer.h) writes/reads YAML
 `.ganymede` files: a `Scene` name plus an `Entities` sequence, each entity a map of component
@@ -365,7 +653,7 @@ blocks keyed by component name. Notes:
   every committed scene for no content change, which is what canonical saves exist to prevent.
   Trailing unset slots are kept rather than trimmed: the index *is* the slot.
 - Asset references serialize as **handles** (`uint64_t`); `MeshPath`/`EnvironmentPath`/`ScriptPath`
-  string fallbacks are still read for backward compatibility and imported into the registry on load.
+  string fallbacks are still read for backward compatibility and imported into the asset index on load.
   Unlike meshes, a deserialized `ScriptComponent` handle is *not* warmed through `GetAsset<>` —
   scripts have no runtime object to cache, and `ScriptEngine` loads the chunk on instantiation.
   Its property overrides serialize as a `Fields` sequence of `{Name, Type, Value}`, sorted by name
@@ -374,8 +662,8 @@ blocks keyed by component name. Notes:
 - `PrefabInstanceComponent` serializes its `Source` handle, omitted when unset. A scene whose
   prefab file has since been deleted still loads: the instances become plain entities carrying a
   handle that resolves to nothing, and the editor reports it when you try to Apply or Revert.
-- **`AudioGroup` serializes as a name, not an ordinal** (`Group: Music`). It is not persisted in the
-  asset registry the way `AssetType` is, so nothing forces stable numbering on it, and an unknown
+- **`AudioGroup` serializes as a name, not an ordinal** (`Group: Music`). It is not persisted by
+  ordinal the way `AssetType` was, so nothing forces stable numbering on it, and an unknown
   name warns and falls back rather than throwing. Both audio components read every field guarded
   (`if (node["Volume"])`) rather than bare `as<T>()` — hand-authored scenes are a normal way to
   make one, and an absent key in a bare read throws out through `Deserialize` and loses the whole
@@ -439,7 +727,7 @@ content (it decides scene save order too), so that is a real change, not noise.
 
 Only `IDComponent` and `RelationshipComponent` are renumbered. `AssetHandle` *is* `UUID`, so a
 blanket remap would corrupt `StaticMesh.Mesh` and its `MaterialOverrides`, `SkyLight.Environment`,
-`Script.Script` and `AudioSource.Clip` into handles no registry knows.
+`Script.Script` and `AudioSource.Clip` into handles no `.meta` sidecar knows.
 
 The renumbering happens in a **scratch `Scene`**, not in place. Renumbering the live scene and
 putting it back would be faster; a throw or an early return in between would leave the real scene

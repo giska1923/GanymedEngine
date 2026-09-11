@@ -77,8 +77,8 @@ correct, and why `AnimatorComponent::Palette` went the other way.
 
 **Clip resolution is the Script precedent.** `AssetManager::GetMetadata(handle)` gives a path;
 `GetAssetRoot() / path` gives the file; `AudioEngine::CreateVoice` loads it. A handle with no
-registry entry warns once per entity naming the handle and the likely cause (a missing or stale
-`AssetRegistry.gr`) — this is where a fresh clone's registry problem surfaces first. A handle that
+index entry warns once per entity naming the handle and the likely cause (a `.meta` sidecar that did
+not travel with its asset) — this is where a fresh clone's identity problem surfaces first. A handle that
 resolves but fails to load is already logged by `CreateVoice`, with the full path, so the system
 stays quiet rather than saying less twice.
 
@@ -196,11 +196,12 @@ it hard-disables spatialization and pitch and takes no volume, so it cannot serv
 `.wav`, `.mp3` and `.flac` map to `AssetType::Audio` in
 [`AssetTypes.cpp`](../../GanymedEngine/source/GanymedE/Assets/AssetTypes.cpp). `.ogg` is absent
 because miniaudio's built-in decoders are wav/flac/mp3 — Vorbis needs stb_vorbis vendored and wired
-into the decoding backend. The enum is appended to, never reordered: it is persisted by ordinal in
-`AssetRegistry.gr` (see [assets.md](assets.md)).
+into the decoding backend. The enum is appended to, never reordered: the legacy `AssetRegistry.gr`
+persisted it by ordinal, and that reader still exists (see [assets.md](assets.md)). `.meta` sidecars
+store the name, so they are not affected.
 
 **There is deliberately no `GetAsset<AudioClip>`, no `Ref<AudioClip>` and no cache map.** Audio
-follows the Script precedent, not the Texture one: the registry answers handle → path, and the
+follows the Script precedent, not the Texture one: the asset index answers handle → path, and the
 consumer loads itself. `ma_engine` already ref-counts decoded data by file path and shares it across
 voices — a cache in `AssetManager` would be a second ref-counting owner of the same resource, and
 two caches disagreeing about lifetime is a class of bug worth not having. The measured dedup above

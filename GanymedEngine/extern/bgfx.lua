@@ -126,20 +126,49 @@ project "bimg"
 	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("%{wks.location}/temp/" .. outputdir .. "/%{prj.name}")
 
+	-- image.cpp alone is what bgfx needs; image_encode.cpp and the block compressors under it
+	-- are here for the asset pipeline's TextureCompiler (docs/engine/assets.md). Upstream keeps
+	-- them in a separate `bimg_encode` project, and they are folded in here instead because a
+	-- fourth vendored project buys nothing when both halves are already C++20 with the same
+	-- include paths.
+	--
+	-- What is deliberately NOT built is upstream's `bimg_decode`: it drags in dav1d and libavif
+	-- for AV1 support. Ganymed decodes PNG and JPEG with the stb_image it already vendors and
+	-- hands bimg raw RGBA8, so `bimg::imageParse` is never called.
 	files
 	{
 		BIMG_DIR .. "/include/**.h",
 		BIMG_DIR .. "/src/image.cpp",
+		BIMG_DIR .. "/src/image_encode.cpp",
+		BIMG_DIR .. "/src/image_cubemap_filter.cpp",
 		BIMG_DIR .. "/src/bimg_p.h",
 		BIMG_DIR .. "/src/config.h",
 		BIMG_DIR .. "/3rdparty/astc-encoder/source/**.cpp",
-		BIMG_DIR .. "/3rdparty/astc-encoder/source/**.h"
+		BIMG_DIR .. "/3rdparty/astc-encoder/source/**.h",
+		BIMG_DIR .. "/3rdparty/libsquish/**.cpp",
+		BIMG_DIR .. "/3rdparty/libsquish/**.h",
+		BIMG_DIR .. "/3rdparty/edtaa3/**.cpp",
+		BIMG_DIR .. "/3rdparty/edtaa3/**.h",
+		BIMG_DIR .. "/3rdparty/etc1/**.cpp",
+		BIMG_DIR .. "/3rdparty/etc1/**.h",
+		BIMG_DIR .. "/3rdparty/etcpak/**.cpp",
+		BIMG_DIR .. "/3rdparty/etcpak/**.hpp",
+		BIMG_DIR .. "/3rdparty/nvtt/**.cpp",
+		BIMG_DIR .. "/3rdparty/nvtt/**.h",
+		BIMG_DIR .. "/3rdparty/pvrtc/**.cpp",
+		BIMG_DIR .. "/3rdparty/pvrtc/**.h",
+		BIMG_DIR .. "/3rdparty/iqa/include/**.h",
+		BIMG_DIR .. "/3rdparty/iqa/source/**.c"
 	}
 
 	angledIncludeDirs
 	{
 		BIMG_DIR .. "/include",
+		BIMG_DIR .. "/3rdparty",
 		BIMG_DIR .. "/3rdparty/astc-encoder/include",
+		BIMG_DIR .. "/3rdparty/iqa/include",
+		BIMG_DIR .. "/3rdparty/nvtt",
+		BIMG_DIR .. "/3rdparty/tinyexr/deps/miniz",
 		BX_DIR .. "/include"
 	}
 
@@ -150,6 +179,18 @@ project "bimg"
 	}
 
 	bxDefines()
+
+	-- Optimised even in Debug, and this one is not a nicety. The BC7 encoder under
+	-- image_encode.cpp is nvtt's, and unoptimised it is roughly two orders of magnitude
+	-- slower - a 2560x1664 texture did not finish compiling in four minutes, which makes the
+	-- asset compiler unusable in the configuration everyone develops in. Nobody steps through
+	-- a vendored block compressor, so the symbols that stay on are enough. Placed after
+	-- bxDefines() so it overrides the shared Debug filter for this project only.
+	filter "configurations:Debug"
+		optimize "Speed"
+		-- MSVC rejects /O2 alongside /RTC1, which premake's Debug default turns on.
+		runtime "Debug"
+		flags { "NoRuntimeChecks" }
 
 	filter "system:windows"
 		systemversion "latest"

@@ -11,9 +11,10 @@ GanymedE/
 ├── Core/        Window, Layer(Stack), Input, Log, UUID, Random, Timestep, Core.h macros
 ├── events/      Event base + dispatcher, window/key/mouse events
 ├── ECS/         The view/access-wrapper layer over entt (see ecs.md)
+├── Reflection/  Component MEMBER reflection over entt::meta (see scene.md)
 ├── Scene/       Scene, Entity, Components, SceneSerializer, built-in Systems/
 ├── Renderer/    bgfx-backed renderer: resources, Renderer2D/3D, SceneRenderer, IBL, cameras
-├── Assets/      AssetManager (handle registry), MeshCache
+├── Assets/      AssetManager (scan-derived index + manager registry), AssetMeta, CompiledCache + compilers
 ├── Physics/     PhysicsScene (Jolt, pimpl'd)
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
@@ -25,6 +26,8 @@ GanymedE/
 
 Platform/
 ├── Bgfx/        BgfxContext (bgfx lifetime + swapchain), ImGuiRendererBgfx
+├── Bimg/        TextureEncode - block compression. Its OWN static lib, built as C++20
+│                because bx does not compile below it (see GanymedEngine/TextureEncode.lua)
 ├── Windows/     WindowsWindow, WindowsInput, file dialogs
 ├── Linux/       LinuxWindow, LinuxInput, file dialogs
 └── macOS/       macOSWindow, macOSInput, file dialogs
@@ -53,6 +56,9 @@ Application::Run loop
 ├─ compute Timestep from glfwGetTime()
 │
 ├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized)
+├─ AssetManager::Update                    poll assets/ for edits, then apply parses that
+│                                          finished on workers, within a 4 ms budget (the only
+│                                          place the async asset path creates GPU resources)
 │
 ├─ Layer::OnUpdate for each layer          (EditorLayer in the editor)
 │   │
@@ -111,6 +117,12 @@ Two ordering facts worth internalizing:
   again (see [audio.md](audio.md)).
 - Renderer subsystems (`Renderer2D`, `Renderer3D`, `ParticleRenderer`, `PostProcess`, `MeshShader`) are static-lifetime
   but explicitly `Init()`/`Shutdown()` by `Renderer`, releasing GPU handles while bgfx is alive.
+- **Loaded assets are owned by whatever holds an `AssetRef<T>`, which in practice is a scene.**
+  `TypedAssetManager<T>` tracks them in a `weak_ptr` cache, one manager per managed type in a flat
+  slot array indexed by a dense type id ([assets.md](assets.md#managers-and-caching)), but the cache
+  keeps nothing alive: a component field is the owner, so closing a scene collects its meshes,
+  materials, textures and environments. `AssetManager::Shutdown` destroys the managers while
+  `Renderer::IsGpuAlive()` is still true, the same discipline as the renderer subsystems above.
 
 ## Design principles the code actually follows
 
@@ -126,7 +138,9 @@ Two ordering facts worth internalizing:
 3. **One list per concept.** `ComponentList` in
    [`ComponentTraits.h`](../../GanymedEngine/source/GanymedE/ECS/ComponentTraits.h) is the single
    registry of components; `Scene::Copy`, signal hookup, and the ViewDesc bitmask index all iterate
-   it instead of hand-maintained parallel lists.
+   it instead of hand-maintained parallel lists. `Reflection` is the member-level counterpart, and
+   `Reflection::Validate()` asserts the two lists agree at boot
+   ([scene.md](scene.md#member-reflection)).
 4. **Derived data is cached and invalidated, not recomputed.** `WorldTransformComponent` is the
    flagship: an idle scene recomputes zero world matrices; moving one entity recomputes exactly its
    subtree (TransformSystem's ChangeView).
@@ -143,12 +157,27 @@ Two ordering facts worth internalizing:
 
 - **The frame is still single-threaded**, and a scheduler existing does not change that. One scene
   update per frame on the main thread; bgfx runs in single-threaded mode (`renderFrame()` before
-  `init`). What exists is [`Core/JobSystem`](core.md#job-system) — a parallel-for and cancellable
-  background jobs — with **no system running on it yet**; its first consumers are the asset
-  compiler's BCn encode and async loading
-  ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3/T4). Jolt still runs its own pool,
+  `init`). [`Core/JobSystem`](core.md#job-system) has two consumers and neither is in the frame: the
+  texture compiler's block encode
+  ([`THREADING_ROADMAP.md`](../toDo&done/THREADING_ROADMAP.md) T3, 1.8× on a 2560×1664 texture)
+  and asset parsing (T4). No ECS system runs on it. Jolt still runs its own pool,
   so there are currently two pools of `hardware_concurrency() - 1` threads. The ViewDesc machinery
   exists so ECS parallelism can be added without redesign.
+- **Asset loading is asynchronous.** Identity is per-asset `.meta` sidecars, loading goes through a
+  manager registry with a Parse/Apply split, `AssetRef<T>` is the reference type components hold,
+  sources are compiled into `assets/.compiled/` with content-hash invalidation, and the parse half
+  runs on `JobSystem` workers while `AssetManager::Update` applies the results on the main thread.
+  Measured: 845 ms of cold-import work that used to block the frame loop now costs it nothing
+  (see [assets.md](assets.md#asynchronous-loading)).
+  Editing an asset on disk reloads it in the viewport within about half a second, through an mtime
+  poll that evicts what changed and whatever captured it.
+  [`ASSET_PIPELINE_ROADMAP.md`](../toDo&done/ASSET_PIPELINE_ROADMAP.md) is **complete** — all six
+  phases have landed.
+- **Component members are reflected, but nothing consumes it yet.**
+  [`Reflection/`](scene.md#member-reflection) registers all 23 components over `entt::meta` and
+  validates itself at boot; the serializer, the inspector and the Lua bindings still hand-list every
+  field, and behaviour is unchanged. Collapsing them is R2–R4 of
+  [`REFLECTION_ROADMAP.md`](../toDo&done/REFLECTION_ROADMAP.md).
 - Scripting is Lua 5.4 + sol2 (`ScriptComponent`, hot-reloadable, TypeScript-authored via
   TypeScriptToLua) *and* C++ `NativeScriptComponent`. See [scripting.md](scripting.md).
   `Scripting-And-UI-Integration.md` is the plan that delivered it, not a plan for the future.

@@ -25,9 +25,11 @@ namespace GanymedE {
 		m_Config.Log();
 
 		// Before any deserialize: the scene format stores bare asset handles, and every
-		// handle -> path lookup goes through this registry. Writing is off because a
-		// shipped game must not touch its own install directory - see assets.md.
-		AssetManager::Init(/*writableRegistry=*/false);
+		// handle -> path lookup goes through the index this builds. Writing is off because a
+		// shipped game must not touch its own install directory, which is why every shipped
+		// asset needs its `.meta` sidecar committed - a read-only scan can only adopt the
+		// identity it finds, never persist one. See assets.md.
+		AssetManager::Init(/*writableAssets=*/false);
 
 		m_SceneRenderer = CreateRef<SceneRenderer>(width, height);
 

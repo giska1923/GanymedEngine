@@ -47,12 +47,12 @@ namespace GanymedE {
 			// Draw order is the determinism contract. Reordering these silently changes
 			// every effect that uses this seed.
 			Particle p;
-			p.Lifetime = emitter.Rng.Range(emitter.LifetimeMin, emitter.LifetimeMax);
-			const float speed = emitter.Rng.Range(emitter.SpeedMin, emitter.SpeedMax);
+			p.Lifetime = emitter.Rng.Range(emitter.Lifetime.Min, emitter.Lifetime.Max);
+			const float speed = emitter.Rng.Range(emitter.Speed.Min, emitter.Speed.Max);
 			const glm::vec3 localDir = DirectionInCone(emitter.Rng, emitter.ConeAngle);
-			p.StartSize = emitter.Rng.Range(emitter.StartSizeMin, emitter.StartSizeMax);
-			p.Rotation = emitter.Rng.Range(emitter.StartRotationMin, emitter.StartRotationMax);
-			p.RotationSpeed = emitter.Rng.Range(emitter.RotationSpeedMin, emitter.RotationSpeedMax);
+			p.StartSize = emitter.Rng.Range(emitter.StartSize.Min, emitter.StartSize.Max);
+			p.Rotation = emitter.Rng.Range(emitter.StartRotation.Min, emitter.StartRotation.Max);
+			p.RotationSpeed = emitter.Rng.Range(emitter.RotationSpeed.Min, emitter.RotationSpeed.Max);
 			p.Age = 0.0f;
 
 			if (emitter.WorldSpace)
@@ -74,7 +74,7 @@ namespace GanymedE {
 			float maxMul = 0.0f;
 			for (const FloatKey& key : emitter.SizeCurve.Keys())
 				maxMul = glm::max(maxMul, key.Value);
-			const float maxStart = glm::max(emitter.StartSizeMin, emitter.StartSizeMax);
+			const float maxStart = glm::max(emitter.StartSize.Min, emitter.StartSize.Max);
 			const float maxSize = maxStart * maxMul;
 
 			const float maxScale = glm::max(glm::length(glm::vec3(world[0])),

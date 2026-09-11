@@ -50,4 +50,21 @@ namespace GanymedE {
 		}
 	}
 
+	// Spelled out rather than derived from AssetTypeToString, so appending an enum value
+	// without a name here is a missing case in one obvious place instead of a name that
+	// round-trips one way only.
+	AssetType AssetTypeFromString(const std::string& name)
+	{
+		if (name == "StaticMesh")   return AssetType::StaticMesh;
+		if (name == "Environment")  return AssetType::Environment;
+		if (name == "Texture")      return AssetType::Texture;
+		if (name == "Material")     return AssetType::Material;
+		if (name == "Scene")        return AssetType::Scene;
+		if (name == "Script")       return AssetType::Script;
+		if (name == "Audio")        return AssetType::Audio;
+		if (name == "Prefab")       return AssetType::Prefab;
+
+		return AssetType::None;
+	}
+
 }

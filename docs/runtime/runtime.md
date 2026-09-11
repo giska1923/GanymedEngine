@@ -11,7 +11,7 @@ game must *not* do had to become opt-in for this app to be possible — see
 | | |
 |---|---|
 | Sources | `GanymedRuntime/source/` — three files: `RuntimeApp.cpp`, `RuntimeLayer`, `RuntimeConfig` |
-| Content | `GanymedRuntime/assets/` — a copied snapshot of editor-authored assets (see [Assets](#assets)) |
+| Content | `GanymedRuntime/assets/` — a copied snapshot of editor-authored assets, each with its `.meta` sidecar (see [Assets](#assets)) |
 | Working directory | the project folder (`debugdir "%{prj.location}"`); all asset paths are relative to it |
 | Windows subsystem | `ConsoleApp`, except Dist which is `WindowedApp` + `mainCRTStartup` so a shipped game has no console behind it |
 
@@ -31,7 +31,7 @@ one logs, because the failure mode for getting this order wrong is a black windo
 
 | Step | Why here |
 |---|---|
-| `AssetManager::Init(/*writableRegistry=*/false)` | Must precede any deserialize: scenes store bare asset handles and the serializer resolves them through the registry. Read-only because a shipped game must not write into its install directory ([assets.md](../engine/assets.md)) |
+| `AssetManager::Init(/*writableAssets=*/false)` | Must precede any deserialize: scenes store bare asset handles and the serializer resolves them through the index this scan builds. Read-only because a shipped game must not write into its install directory — which is why every shipped asset needs its `.meta` sidecar shipped too ([assets.md](../engine/assets.md)) |
 | `SceneRenderer(windowW, windowH)` | Owns the HDR target and the post stack |
 | `SetOutputToBackbuffer(true)` | Retargets the post stack's final pass (FXAA, or tonemap when FXAA is off) at the backbuffer ([rendering.md](../engine/rendering.md)) |
 | `UIEngine::SetTarget(nullptr)` + `SetViewport(w, h)` | Sends the UI view to the backbuffer too. `SetViewportOrigin` stays at its (0,0) default — the game owns the whole window, so window-relative mouse positions are already UI-relative |
@@ -60,7 +60,7 @@ an error every five seconds ([scene.md](../engine/scene.md)) — loud, throttled
 crash.
 
 View order stays monotonic, which is what makes the whole thing work without a present pass:
-0 (BgfxContext touch) < 5/6 (scene) < 7–22 (bloom) < 24/25 (final post) < 28 (UI).
+0 (BgfxContext touch) < 73/74 (scene) < 75–90 (bloom) < 92/93 (final post) < 96 (UI).
 
 ## Events
 
@@ -110,20 +110,31 @@ working directory, and cooking is its own milestone.
 
 Two consequences worth knowing before adding content:
 
-- **`AssetRegistry.gr` is committed for this app**, unlike the editor's. Scenes store bare handles,
-  so a runtime with no registry silently loses every mesh and environment — verified, and the
-  reason `assets.md` now calls the registry *authored content* for a runtime rather than a cache.
-  Add an asset by adding both the file and its registry entry, with the handle the scene uses.
+- **The snapshot must include the `.meta` sidecars.** Scenes store bare handles, and
+  `AssetManager::Init(false)` can only *adopt* the identity it finds on disk — a read-only scan
+  mints handles in memory but persists nothing, so an asset shipped without its sidecar gets a
+  different handle on every boot and the scene silently loses it. This was verified the hard way
+  before sidecars existed: a runtime with no identity file loads its scene, reports the right entity
+  count, and renders nothing but the procedural sky. Add an asset by copying **both** the file and
+  its `foo.ext.meta`. The old `assets/AssetRegistry.gr` is still committed and still read as a
+  migration seed, but it no longer carries identity for anything new; see
+  [assets.md](../engine/assets.md#migration-from-assetregistrygr).
 - Only the three font faces `UIEngine` actually loads are shipped (`Montserrat-Regular`, `-Bold`,
   `-Italic`, plus the OFL licence). RmlUi hard-requires them: missing fonts render as a silently
   empty UI, not an error.
 - **Audio splits both ways.** `audio/music.mp3` and `audio/hum.wav` are referenced by handle from
-  `AudioSourceComponent`s, so they need registry entries like any other asset. `audio/impact.wav`
-  and `audio/chime.wav` are played by `Audio.PlayOneShot` from Lua, which takes a **path**, so they
-  are deliberately absent from the registry — that asymmetry is the visible consequence of Audio
-  being path-resolved by design ([audio.md](../engine/audio.md)).
+  `AudioSourceComponent`s. `audio/impact.wav` and `audio/chime.wav` are played by
+  `Audio.PlayOneShot` from Lua, which takes a **path** — that asymmetry is the visible consequence
+  of Audio being path-resolved by design ([audio.md](../engine/audio.md)). All four now carry a
+  sidecar regardless: the scan gives identity to every recognized file it finds, and the two
+  one-shots simply never resolve theirs. That is strictly better than the old registry, which listed
+  the first two and omitted the last two — a distinction nothing enforced and a new asset was
+  guaranteed to get wrong.
 
-`assets/.assets/` (the mesh cache) and `assets/shaders/compiled/` are derived and gitignored.
+`assets/.compiled/` (compiled textures and mesh blobs) and `assets/shaders/compiled/` are derived
+and gitignored. **A shipped build should ship `.compiled/` anyway**: the runtime treats `assets/` as
+read-only, and without the tree it recompiles every asset on every boot. It warns once when that
+happens rather than failing, so a missing tree is slow rather than fatal.
 `scripts/compile_shaders.bat` writes this app's copy alongside the editor's and Sandbox's.
 
 ## The demo scene

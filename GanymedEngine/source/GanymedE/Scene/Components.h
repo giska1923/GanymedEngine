@@ -8,6 +8,7 @@
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Random.h"
+#include "GanymedE/Assets/AssetRef.h"
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Audio/AudioTypes.h"
 #include "GanymedE/Math/BoundingVolumes.h"
@@ -100,7 +101,9 @@ namespace GanymedE {
 
 	struct StaticMeshComponent
 	{
-		AssetHandle Mesh = InvalidAssetHandle;
+		// Qualified because the member name shadows the class name for the rest of this scope -
+		// same for Material and Environment below.
+		AssetRef<GanymedE::Mesh> Mesh;
 
 		// Per renderer slot, parallel to the mesh's own material list (the index is
 		// Submesh::MaterialIndex). InvalidAssetHandle - or an index past the end - means "use
@@ -111,7 +114,7 @@ namespace GanymedE {
 		// materials untouched inside its own cache, and .gmat is a layer on top. See
 		// docs/engine/assets.md for why that shape was chosen over meshes referencing .gmat
 		// directly the way Unreal does.
-		std::vector<AssetHandle> MaterialOverrides;
+		std::vector<AssetRef<GanymedE::Material>> MaterialOverrides;
 
 		StaticMeshComponent() = default;
 		StaticMeshComponent(const StaticMeshComponent&) = default;
@@ -128,6 +131,28 @@ namespace GanymedE {
 	// engine, which is a milestone of its own rather than a feature.
 	//
 	// Inert at runtime: it exists so the editor can find the source file again.
+	// "Which object of the prefab did this entity come from."
+	//
+	// Present on **every** entity instantiated from a `.gprefab`, root included, where
+	// PrefabInstanceComponent marks only the root - keeping "is this an instance root" the same
+	// question it has always been.
+	//
+	// `CanonicalID` is the entity's id *inside the prefab file*, which PrefabSerializer assigns as
+	// 1..N in DFS order when the prefab is written. That is what makes a stable per-property
+	// override possible at all: an instance's entities get fresh UUIDs, so without this link
+	// nothing can say which prefab object a given instance entity corresponds to, and an override
+	// would have nothing to key on. Structural edits inside an instance stay free - an entity
+	// added by hand simply has no PrefabMemberComponent and is not part of any diff.
+	struct PrefabMemberComponent
+	{
+		UUID CanonicalID{ 0 };
+
+		PrefabMemberComponent() = default;
+		PrefabMemberComponent(const PrefabMemberComponent&) = default;
+		PrefabMemberComponent(UUID canonicalID)
+			: CanonicalID(canonicalID) {}
+	};
+
 	struct PrefabInstanceComponent
 	{
 		AssetHandle Source = InvalidAssetHandle;
@@ -215,7 +240,7 @@ namespace GanymedE {
 	// cubemap drives the skybox and IBL; otherwise the procedural hemispheric colors are used.
 	struct SkyLightComponent
 	{
-		AssetHandle Environment = InvalidAssetHandle;
+		AssetRef<GanymedE::Environment> Environment;
 		glm::vec3 SkyColor{ 0.45f, 0.62f, 0.9f };
 		glm::vec3 GroundColor{ 0.28f, 0.26f, 0.22f };
 		float Intensity = 1.0f;
@@ -318,6 +343,27 @@ namespace GanymedE {
 		AudioListenerComponent(const AudioListenerComponent&) = default;
 	};
 
+	// A min/max pair authored as one thing.
+	//
+	// Introduced so the particle emitter's five ranges could go through the generic inspector.
+	// The blocker was never the drawing - it was the **clamp direction**: the hand-written panel
+	// pushes Max up when Min passes it and pulls Min down when Max drops below, and a generic
+	// drawer that sees one field at a time cannot know which half the author just moved. One
+	// drawer owning both halves does know, which is the whole reason this is a type rather than a
+	// naming convention over two floats.
+	//
+	// **Layout-identical to the two floats it replaced** (`float Min, Max;` in that order), and
+	// both the YAML keys and the Lua binding names were deliberately kept as they were - see
+	// SceneSerializer and ScriptBindings. Nothing on disk or in a script had to change.
+	struct RangeF
+	{
+		float Min = 0.0f;
+		float Max = 0.0f;
+
+		RangeF() = default;
+		RangeF(float min, float max) : Min(min), Max(max) {}
+	};
+
 	struct PhysicsMaterial
 	{
 		float Friction = 0.5f;
@@ -407,12 +453,12 @@ namespace GanymedE {
 		bool     PlayOnStart = true;
 
 		// Initial state (cone axis = entity local +Y; rotate the entity to aim)
-		float    LifetimeMin = 1.0f, LifetimeMax = 1.0f;
-		float    SpeedMin = 1.0f, SpeedMax = 1.0f;
+		RangeF   Lifetime{ 1.0f, 1.0f };
+		RangeF   Speed{ 1.0f, 1.0f };
 		float    ConeAngle = 25.0f;
-		float    StartSizeMin = 0.1f, StartSizeMax = 0.1f;
-		float    StartRotationMin = 0.0f, StartRotationMax = 0.0f;
-		float    RotationSpeedMin = 0.0f, RotationSpeedMax = 0.0f;
+		RangeF   StartSize{ 0.1f, 0.1f };
+		RangeF   StartRotation{ 0.0f, 0.0f };
+		RangeF   RotationSpeed{ 0.0f, 0.0f };
 		float    GravityModifier = 0.0f;
 		bool     WorldSpace = false;
 		uint32_t Seed = 0; // 0 = derive from entity UUID when playback starts
@@ -422,10 +468,10 @@ namespace GanymedE {
 
 		enum class Mode : uint8_t { Billboard = 0, Mesh = 1 };
 		Mode          RenderMode = Mode::Billboard;
-		AssetHandle   Texture  = InvalidAssetHandle;
+		AssetRef<Texture2D>            Texture;
 		ParticleBlend Blend    = ParticleBlend::Alpha;
-		AssetHandle   Mesh     = InvalidAssetHandle;
-		AssetHandle   Material = InvalidAssetHandle;
+		AssetRef<GanymedE::Mesh>       Mesh;
+		AssetRef<GanymedE::Material>   Material;
 
 		// Runtime-only. Serializer skips; Scene::Copy resets via ResetRuntime().
 		bool Playing = false;

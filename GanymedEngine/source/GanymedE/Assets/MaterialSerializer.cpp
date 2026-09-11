@@ -118,12 +118,12 @@ namespace GanymedE {
 
 	namespace MaterialSerializer {
 
-		Ref<Material> Load(const std::filesystem::path& fullPath)
+		bool ReadDesc(const std::filesystem::path& fullPath, MaterialDesc& out)
 		{
 			if (!std::filesystem::exists(fullPath))
 			{
 				GE_CORE_WARN("Material '{0}' does not exist", fullPath.string());
-				return nullptr;
+				return false;
 			}
 
 			YAML::Node root;
@@ -138,67 +138,46 @@ namespace GanymedE {
 			{
 				// The SceneSerializer posture: malformed content is reported, not fatal.
 				GE_CORE_ERROR("Material '{0}' failed to parse: {1}", fullPath.string(), e.what());
-				return nullptr;
+				return false;
 			}
 
 			YAML::Node node = root["Material"];
 			if (!node)
 			{
 				GE_CORE_ERROR("Material '{0}' has no Material node", fullPath.string());
-				return nullptr;
+				return false;
 			}
-
-			// MeshShader::Get() is injected rather than named in the file: Material::Bind asserts
-			// on a null shader, and there is nothing else to choose until shader variants exist.
-			// This is the MeshCache::ReadMaterials precedent.
-			Ref<Material> material = Material::Create(MeshShader::Get());
 
 			try
 			{
 				if (node["Name"])
-					material->SetName(node["Name"].as<std::string>());
+					out.Name = node["Name"].as<std::string>();
 
-				material->SetAlbedoColor(ReadVec4(node["Albedo"], glm::vec4(1.0f)));
+				out.Albedo = ReadVec4(node["Albedo"], out.Albedo);
 
 				if (node["Metallic"])
-					material->SetMetallic(node["Metallic"].as<float>());
+					out.Metallic = node["Metallic"].as<float>();
 				if (node["Roughness"])
-					material->SetRoughness(node["Roughness"].as<float>());
+					out.Roughness = node["Roughness"].as<float>();
 				if (node["TwoSided"])
-					material->SetTwoSided(node["TwoSided"].as<bool>());
+					out.TwoSided = node["TwoSided"].as<bool>();
 				if (node["Transparent"])
-					material->SetTransparent(node["Transparent"].as<bool>());
+					out.Transparent = node["Transparent"].as<bool>();
 
 				// Maps are stored as asset-root-relative *paths*, not handles. A `.gmat` has to
 				// be self-describing and hand-mergeable: a bare handle means nothing without the
 				// registry that minted it, while a path survives a fresh clone. Handles stay the
 				// scene-to-registry currency; paths are the asset-to-asset one.
-				struct MapField
-				{
-					const char* Key;
-					void (Material::*SetPath)(const std::string&);
-					void (Material::*SetTexture)(const Ref<Texture2D>&);
+				const std::pair<const char*, std::string MaterialDesc::*> maps[] = {
+					{ "AlbedoMap",            &MaterialDesc::AlbedoMapPath },
+					{ "NormalMap",            &MaterialDesc::NormalMapPath },
+					{ "MetallicRoughnessMap", &MaterialDesc::MetallicRoughnessMapPath },
 				};
 
-				const MapField maps[] = {
-					{ "AlbedoMap",            &Material::SetAlbedoMapPath,            &Material::SetAlbedoMap },
-					{ "NormalMap",            &Material::SetNormalMapPath,            &Material::SetNormalMap },
-					{ "MetallicRoughnessMap", &Material::SetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMap },
-				};
-
-				for (const MapField& map : maps)
+				for (const auto& [key, field] : maps)
 				{
-					if (!node[map.Key])
-						continue;
-
-					const std::string path = node[map.Key].as<std::string>();
-					if (path.empty())
-						continue;
-
-					(material.get()->*map.SetPath)(path);
-					// De-duplicated through the registry, so two materials naming one image
-					// share a single bgfx texture.
-					(material.get()->*map.SetTexture)(TextureImporter::LoadMaterialMap(path));
+					if (node[key])
+						out.*field = node[key].as<std::string>();
 				}
 			}
 			catch (const YAML::Exception& e)
@@ -207,7 +186,62 @@ namespace GanymedE {
 					fullPath.string(), e.what());
 			}
 
+			return true;
+		}
+
+		Ref<Material> Build(const MaterialDesc& desc)
+		{
+			// MeshShader::Get() is injected rather than named in the file: Material::Bind asserts
+			// on a null shader, and there is nothing else to choose until shader variants exist.
+			// This is the MeshCache::ReadMaterials precedent.
+			Ref<Material> material = Material::Create(MeshShader::Get());
+
+			material->SetName(desc.Name);
+			material->SetAlbedoColor(desc.Albedo);
+			material->SetMetallic(desc.Metallic);
+			material->SetRoughness(desc.Roughness);
+			material->SetTwoSided(desc.TwoSided);
+			material->SetTransparent(desc.Transparent);
+
+			struct MapField
+			{
+				const std::string& Path;
+				void (Material::*SetPath)(const std::string&);
+				void (Material::*SetTexture)(const Ref<Texture2D>&);
+				void (Material::*SetHandle)(AssetHandle);
+			};
+
+			const MapField maps[] = {
+				{ desc.AlbedoMapPath,            &Material::SetAlbedoMapPath,            &Material::SetAlbedoMap,            &Material::SetAlbedoMapHandle },
+				{ desc.NormalMapPath,            &Material::SetNormalMapPath,            &Material::SetNormalMap,            &Material::SetNormalMapHandle },
+				{ desc.MetallicRoughnessMapPath, &Material::SetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMap, &Material::SetMetallicRoughnessMapHandle },
+			};
+
+			for (const MapField& map : maps)
+			{
+				if (map.Path.empty())
+					continue;
+
+				(material.get()->*map.SetPath)(map.Path);
+
+				// De-duplicated through the registry, so two materials naming one image share a
+				// single bgfx texture. Null here means "not loaded yet", which the handle lets
+				// Material::Bind pick up on a later frame.
+				AssetHandle mapHandle = InvalidAssetHandle;
+				(material.get()->*map.SetTexture)(TextureImporter::LoadMaterialMap(map.Path, &mapHandle));
+				(material.get()->*map.SetHandle)(mapHandle);
+			}
+
 			return material;
+		}
+
+		Ref<Material> Load(const std::filesystem::path& fullPath)
+		{
+			MaterialDesc desc;
+			if (!ReadDesc(fullPath, desc))
+				return nullptr;
+
+			return Build(desc);
 		}
 
 		bool Save(const Ref<Material>& material, const std::filesystem::path& fullPath)

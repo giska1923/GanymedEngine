@@ -259,6 +259,13 @@ namespace GanymedE {
 
 			instanceRoot.AddComponent<PrefabInstanceComponent>().Source = source;
 
+			// The canonical link, recorded while the pairing is still in hand. `created[i]` was
+			// built from `fileUUIDs[i]`, and after this function returns there is no way to
+			// recover which prefab object an instance entity came from - fresh UUIDs everywhere
+			// and structural edits allowed. This is what per-property overrides key on.
+			for (std::size_t i = 0; i < created.size(); i++)
+				created[i].AddComponent<PrefabMemberComponent>(fileUUIDs[i]);
+
 			for (Entity entity : created)
 			{
 				scene.MarkChanged<TransformComponent>(entity);

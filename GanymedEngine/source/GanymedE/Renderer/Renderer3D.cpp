@@ -225,6 +225,18 @@ namespace GanymedE {
 		s_Data.LineGeometry = {};
 		s_Data.LineVertexBuffer = nullptr;
 		s_Data.LineVertices.clear();
+
+		// The environment the last frame drew with, and the one member of s_Data that used to be
+		// missed here. `s_Data` is a static, so anything it still holds is destroyed *after*
+		// main() returns - after ~BgfxContext has lowered Renderer::IsGpuAlive and called
+		// bgfx::shutdown. `~Environment` then takes its is-alive early-out and its three cubemaps
+		// are never released: bgfx reported exactly that at shutdown, `LEAK: TextureHandle 3`.
+		//
+		// Clearing it here does not destroy the Environment - the scene still owns it through an
+		// AssetRef, and the scene dies during the LayerStack unwind, which is still inside the
+		// window's lifetime. It just stops a static from being the last owner. Same trap
+		// MeshShader.h describes, one field along.
+		s_Data.ActiveEnvironment = nullptr;
 	}
 
 	static void ResetFrameState()

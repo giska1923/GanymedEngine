@@ -58,9 +58,15 @@ using ComponentList = TypeList<TransformComponent, WorldTransformComponent, Rela
      `NativeScriptComponent`, `ScriptComponent`.
    - `EnableFini` — removed instances are buried in a graveyard for one frame; enables `FiniView`.
      Currently: `NativeScriptComponent`, `ScriptComponent`.
-4. Add serialization in `SceneSerializer.cpp` and editor UI in `SceneHierarchyPanel.cpp` (these two
-   are still per-component by hand).
-5. If a `Scene` needs post-add fixup, declare a `Scene::OnComponentAdded<T>` specialization in
+4. Register its members in
+   [`ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp)
+   with `GE_REFLECT_COMPONENT`, and add a `sizeof` sentinel there if the struct has no
+   standard-library container member. `Reflection::Validate()` asserts at boot that every
+   `ComponentList` entry is registered — see [scene.md](scene.md#member-reflection).
+5. Add serialization in `SceneSerializer.cpp` and editor UI in `SceneHierarchyPanel.cpp` (these two
+   are still per-component by hand — collapsing them onto the reflection data is R2–R4 of
+   [REFLECTION_ROADMAP.md](../toDo&done/REFLECTION_ROADMAP.md)).
+6. If a `Scene` needs post-add fixup, declare a `Scene::OnComponentAdded<T>` specialization in
    `Scene.h` (see the `CameraComponent` one — it sizes the camera viewport).
 
 ## The wrapper grammar
@@ -322,3 +328,7 @@ From the implementation guide, each guarding a class of silent bugs:
 7. Structural changes during system update go through `CommandQueue` only; code outside the update
    loop may use the immediate `Entity` API.
 8. Writes that bypass views call `Scene::MarkChanged<T>()`.
+9. **No system reads a component through `entt::meta`.** `meta_data::get` returns `meta_any` by value
+   and allocates for anything past entt's small-buffer size. Reflection is for tooling and
+   serialization; systems use `ComponentList`/`ForEachType` and direct member access. See
+   [scene.md](scene.md#the-one-discipline-line).

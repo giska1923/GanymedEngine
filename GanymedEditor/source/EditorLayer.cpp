@@ -1,5 +1,6 @@
 #include "EditorLayer.h"
 #include "AssetDragDrop.h"
+#include "EditorInspector.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -11,6 +12,8 @@
 #include "GanymedE/Scene/PrefabSerializer.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Assets/AssetWatcher.h"
+#include "GanymedE/Assets/CompiledCache.h"
 #include "GanymedE/Assets/MaterialSerializer.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/MeshShader.h"
@@ -39,6 +42,10 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		AssetManager::Init();
+
+		// After Reflection::Init (Application's constructor), because a drawer is keyed on a
+		// meta_type that has to exist first.
+		EditorUI::InitPropertyDrawers();
 
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 		m_IconPlay = Texture2D::Create("resources/icons/PlayButton.png");
@@ -356,6 +363,50 @@ namespace GanymedE {
 			stats3D.ParticleDrawCalls, stats3D.ParticleCulledEmitters);
 
 		ImGui::Separator();
+		// Resident is live objects; tracked is cache entries, which includes ones whose object
+		// has been collected. The gap between the two is eviction actually happening - close a
+		// scene and resident falls while tracked does not until those handles are loaded again.
+		// Loading is parses in flight, which is what a cold open looks like from here.
+		ImGui::Text("Asset Cache (resident / tracked / loading):");
+		for (const AssetCacheStats& cache : AssetManager::GetCacheStats())
+		{
+			ImGui::Text("%s: %zu / %zu / %zu", cache.TypeName,
+				cache.Resident, cache.Tracked, cache.Pending);
+		}
+
+		// Apply is the one half of an asynchronous load that cannot leave the main thread, so it
+		// is the one that needs a ceiling. Deferred is finished parses waiting for a later frame:
+		// a non-zero value during a burst is the budget working, not a backlog.
+		const AssetApplyStats apply = AssetManager::GetApplyStats();
+		ImGui::Text("Apply: %u done, %u deferred, %.2f / %.1f ms",
+			apply.Applied, apply.Deferred, apply.Milliseconds, apply.BudgetMs);
+
+		// Compiles vs cache hits is the number that says whether the compiled tree is doing its
+		// job: a second run over an unchanged project must read 0 compiled. The in-flight count
+		// is what a cold open looks like while it is happening.
+		const CompiledCache::Stats compiled = CompiledCache::GetStats();
+		ImGui::Text("Compiled: %u built (%.0f ms), %u from cache, %u running",
+			compiled.Compiles, compiled.TotalCompileMs, compiled.CacheHits,
+			CompiledCache::CompilesInFlight());
+
+		// The switch exists for one situation and it is worth naming: a `git checkout` across a
+		// branch that touches many assets generates a change event for every one of them.
+		// Turning watching back on adopts the new state without reloading it.
+		bool watching = AssetWatcher::IsEnabled();
+		if (ImGui::Checkbox("Hot reload assets/", &watching))
+			AssetWatcher::SetEnabled(watching);
+
+		// ms/poll is the number that decides whether this stays a poll. The roadmap's
+		// alternative is a Win32 ReadDirectoryChangesW watcher, worth writing the day this
+		// column shows up in a frame - and not before.
+		const AssetWatcher::Stats watch = AssetWatcher::GetStats();
+		ImGui::TextDisabled("%zu watched, %.2f ms/poll, %u reloaded, %u settling",
+			watch.Watched, watch.LastPollMs, watch.Reloads, watch.Settling);
+
+		if (!watch.LastReloaded.empty())
+			ImGui::TextDisabled("Last: %s", watch.LastReloaded.c_str());
+
+		ImGui::Separator();
 		ImGui::Text("Post Processing:");
 		auto& rendererSettings = m_SceneRenderer->GetSettings();
 		ImGui::DragFloat("Exposure", &rendererSettings.Exposure, 0.01f, 0.0f, 16.0f);
@@ -432,9 +483,6 @@ namespace GanymedE {
 				Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
 				if (entity)
 					m_SceneHierarchyPanel.SetSelectedEntity(entity);
-
-				// One write for the mesh handle and every texture handle its import minted.
-				AssetManager::FlushRegistry();
 			}
 		}
 
@@ -730,9 +778,9 @@ namespace GanymedE {
 		// Environment / ambient (HDR IBL when the asset is present, procedural fallback otherwise)
 		Entity sky = scene->CreateEntity("Sky Light");
 		auto& skyLight = sky.AddComponent<SkyLightComponent>();
-		skyLight.Environment = AssetManager::ImportAsset("environments/studio_small_08_1k.hdr");
+		skyLight.Environment = AssetRef<Environment>(
+			AssetManager::ImportAsset("environments/studio_small_08_1k.hdr"));
 		skyLight.Intensity = 1.0f;
-		AssetManager::FlushRegistry();
 	}
 
 	void EditorLayer::OpenScene()

@@ -429,6 +429,73 @@ maintenance action is cheap insurance but not required for the phase.
 | Runtime boots from snapshot | Build `GanymedRuntime`, run the packaged snapshot, scene loads |
 | Docs | [`assets.md`](../engine/assets.md) identity/registry sections rewritten in place; the "production answer is per-asset metadata" note becomes a description of what now exists |
 
+### Phase 1 — execution notes (done)
+
+Delivered as written except where noted. New files: `Assets/AssetMeta.h/.cpp` (premake regeneration
+required and run). `LoadRegistry`, `SaveRegistry` and `FlushRegistry` are **deleted**, not stubbed.
+
+**Four corrections to the plan above, each verified before being acted on.**
+
+1. **Step 6's premise was false.** `ContentBrowserPanel.cpp` performs *no* filesystem mutation —
+   no `rename`, `remove`, `copy` or `create_directory` anywhere in `GanymedEditor/source/`. There
+   was nothing to pair a `.meta` with. The real editor work was the opposite: **hide** sidecars
+   from the grid, since one per asset would double every row and offer Import on a non-asset. Also
+   generalized the `.assets`-only skip to any dotted entry, so `.compiled/` needs no second edit in
+   Phase 4.
+2. **`FlushRegistry` had to go, not become a no-op.** The dirty-flag batching existed *only* because
+   one import rewrote the whole shared file. Per-asset sidecars remove the shared file, so
+   `ImportAsset` writes directly. A no-op `FlushRegistry()` left at seven call sites is exactly the
+   vestigial API a reader trips over. Removed from `SceneSerializer.cpp`, `AssetDragDrop.cpp`,
+   `EditorLayer.cpp` (×2), `SceneHierarchyPanel.cpp` (×2), `ContentBrowserPanel.cpp`.
+3. **Scan order must be sorted.** Step 5 says "first-scanned wins", but
+   `recursive_directory_iterator` order is unspecified. Left to the filesystem, two developers with
+   the same copy-pasted `.meta` would see *different* assets break and the warning would be
+   unactionable. Paths are collected, `std::sort`ed, then registered.
+4. **The legacy seed must outlive the scan** — step 4 implies it can be dropped afterwards. It
+   cannot: both apps' registries name paths that do not exist at scan time and are regenerated
+   later by `MaterialSerializer::GenerateSidecars` (`models/Fox_mat0_fox_material.gmat`,
+   `models/Fox_textures/albedo_0.png` in the editor). Those reach identity through `ImportAsset`,
+   not the scan, and must adopt their recorded handle. `LegacyHandles` therefore lives in
+   `AssetManagerData` for the session.
+
+**Two decisions taken beyond the plan.**
+
+- **A corrupt `AssetRegistry.gr` makes the session read-only** rather than quarantining the file.
+  Nothing overwrites it any more, so leaving it in place is what allows a hand-repair; what matters
+  is that a broken seed must not bake a lossy migration into the tree. Every asset would otherwise
+  mint a fresh handle *and persist it*, permanently breaking every scene that referenced the old
+  one. Consequence for the verification table: the corrupt-`.meta` check only shows a fresh handle
+  for an asset the legacy registry does not name — one it does name correctly re-adopts. Ran that
+  check on `textures/Checkerboard.png`, which is absent from the registry.
+- **No sidecar is written for a file that does not exist.** `SceneSerializer` calls `ImportAsset`
+  on paths from the scene file that may be stale; those still get an in-memory handle (unchanged
+  behaviour, and the load path already warns) but no `foo.glb.meta` beside a missing `foo.glb`.
+- The sidecar is newline-terminated, unlike the scene and prefab writers. `.meta` is the one file
+  whose reason to exist is being committed and merged per asset, and no-newline-at-EOF turns every
+  appended key into a two-line diff. That the other YAML writers do not do this is a pre-existing
+  `.editorconfig` deviation, left alone as out of scope.
+
+**Verification results** (MSBuild x64 Debug; engine, editor and runtime all built).
+
+| Check | Result |
+| --- | --- |
+| Migration is lossless | Editor: 3/3 on-disk registry paths adopted their exact handles (`7862165199193339401`, `938641464213506982`, `9336764027479083327`), 16 minted, 19 written. Runtime: **7/7** adopted (`1000000000000000001`–`…007`). `ScanStats` counts legacy adoption separately from a fresh mint precisely so this number is visible |
+| Existing project opens unchanged | `Phase5Test.ganymede` loads with zero "not in the index" warnings. Note the committed scenes all predate handle serialization and reference meshes by `Path:`, so no committed `.ganymede` had a handle at risk; the format *does* persist handles (`Mesh:`, `Environment:`, `Script:`, `MaterialOverrides:`, prefab `Source:`) and legacy adoption is what protects anything saved since |
+| Sidecars appear and are stable | Second run: `19 files, 19 adopted from sidecars, 0 adopted from the legacy registry, 0 handles minted, 0 sidecars written`. Handle values byte-identical across runs |
+| Corrupt sidecar is contained | Truncated `textures/Checkerboard.png.meta` to 12 bytes → project opens, 18 others unaffected, one error logged, `.meta.bad` written, fresh handle minted and persisted |
+| Collision handled | Copied `Player.lua.meta` onto `Impact.lua.meta` → one warning naming both paths, `Impact.lua` (first in sort order) kept the handle, `Player.lua` re-minted, both load |
+| Runtime boots from snapshot | `Init(false)`: `12 files, 10 adopted from sidecars, 2 handles minted, 0 sidecars written` — the two mints are the `.gmat`/texture regenerated from `BoxTextured.glb` *after* the scan, which a read-only session correctly keeps in memory only. Scene loads, 10 entities, primary camera found |
+| `.gitignore` | No glob excludes `.meta`; step 8 needed no change |
+
+The 10 runtime sidecars were generated by temporarily flipping `RuntimeLayer`'s `Init` to writable
+for one boot, then reverting — a read-only app cannot mint its own shipped identity, which is the
+whole point of committing them.
+
+**Left as adjacent work, deliberately not folded in.** `IsRegistryWritable()` now has a misleading
+name (it gates all writes into `assets/`, not a registry); renaming it touches this historical doc
+and Phase 2 moves the flag anyway. A "clean orphaned `.meta`" maintenance action remains cheap
+insurance, unbuilt.
+
 ---
 
 ## Phase 2 — The manager registry: `IAssetManager`, dense type ids, weak caches
@@ -493,6 +560,93 @@ writing the interface, not during.
 | Unsupported type still a clean compile error | `AssetManager::GetAsset<int>(h)` in a scratch TU produces the trait `static_assert`, not a link error |
 | Build | MSBuild x64 Debug, `GanymedEngine.vcxproj` then editor + runtime; premake regen noted if files added |
 | Docs | [`assets.md`](../engine/assets.md) API table + a new "Managers and caching" section; [`architecture.md`](../engine/architecture.md) module-boundary note |
+
+### Phase 2 — execution notes (done)
+
+Delivered as written except where noted. New files: `Assets/AssetManagerRegistry.h/.cpp` (premake
+regeneration required and run). `AssetManagerData` lost its four cache maps; `AssetManager.h` lost
+its four `LoadX` declarations and its four `GetAsset<T>` specialization declarations.
+
+**Step 2's open question, resolved by looking rather than by writing.** There is no acceptable
+common base. `Mesh`, `Texture2D`, `Material` and `Environment` share nothing: `Texture2D` and
+`Environment` own raw `bgfx::TextureHandle`s and are non-copyable, `Material` owns no GPU resource
+at all, and `Mesh` owns geometry plus a skeleton plus clips. An `AssetBase` with a virtual
+destructor would put a vptr into four renderer types to serve the asset layer's convenience. So the
+type erasure lives inside `TypedAssetManager<T>` and `IAssetManager` exposes only
+`TypeName`/`Type`/`Evict`/`EvictAll`/`ResidentCount`/`RetainedCount`, as the step's fallback
+allowed.
+
+**Two decisions taken against the plan, both worth reading before Phase 3.**
+
+1. **The weak cache is real, but it does not evict yet — the managers pin what they load.** Step 3
+   and decision 5 say the cache is `weak_ptr` and `AssetRef<T>` supplies the strong reference. Doing
+   only the first half is not a partial improvement, it is a catastrophic regression: components
+   store bare `AssetHandle`s and every consumer (`RenderSystem`, the inspector, the serializer)
+   drops its `Ref` at the end of the frame, so nothing outside the cache holds an asset alive at
+   all. A purely weak cache would re-run `MeshCache::TryLoad` — or a cold cgltf import — **per
+   entity per frame**. So each cache entry carries a `weak_ptr Cached` *and* a `Ref Retained`, and
+   Phase 3 deletes the second member. The honest consequence: the `.lock()`-failed branch in
+   `Load` is unreachable today, so the verification table's "eviction actually happens" row is
+   **not** satisfied by this phase, and cannot be until Phase 3. It is Phase 3's row.
+
+   The alternative — fold Phase 3 into this phase — was rejected for scope, but it is the reason
+   the two phases should land close together. Phases 1–2 leave the leak exactly where it was.
+
+2. **No `GE_REGISTER_ASSET_MANAGER` macro.** Step 4 asks for one. It would have stringified the
+   type name and nothing else, since the `IsAssetType<T>` specialization has to live in the header
+   next to the forward declarations and the registration lives in the `.cpp`. Four
+   `AssetManagerRegistry::Register<T>("T", AssetType::X, &Parse, &Apply)` calls in one function
+   read better than a macro that hides the same information. Explicit over clever, per house style.
+
+**The Parse/Apply split is honest for two of the four types, and the other two are recorded rather
+than papered over.** Decision 13 calls it "the cheapest thing in this plan"; that is true for
+`Texture2D` (a `Decode` → `DecodedImage` → `Upload` split of `TextureImporter`, ~40 lines, and the
+PNG decode is the whole CPU cost) and for `Material` (a `ReadDesc` → `MaterialDesc` → `Build` split
+of `MaterialSerializer::Load`). It is not true for the other two:
+
+- **Environment registers no Parse, and that is the correct answer, not a punt.** The only
+  separable CPU work is one `stbi_loadf`; everything after it is the IBL bake, six cube faces plus
+  prefilter mips through bgfx views, which can never leave the submit thread.
+- **Mesh registers no Parse, and that *is* deferred work — the load-bearing kind.** Both load paths
+  construct a `Mesh` whose constructor calls `Build()` and creates bgfx buffers, and both build the
+  mesh's materials inline, which pulls textures. Splitting means threading a CPU-side mesh
+  description through `MeshImporter.cpp` (814 lines) and `MeshCache.cpp` (435) and deferring
+  `Mesh::Create` to Apply. That is a phase-sized change and it is the one Phase 5 cannot skip, since
+  the cgltf parse is the expensive thing that has to leave the main thread. **Budget it inside
+  Phase 5 rather than assuming decision 13 already paid for it.**
+
+**Three smaller corrections.**
+
+- **The `Reload` ordering survives unchanged.** Step 6 predicted that "with weak caches most of that
+  ordering becomes unnecessary". It does not: the rule is about the *texture* cache, not about who
+  owns the material. A reloaded material or mesh re-resolves its map paths through
+  `LoadMaterialMap`, which is a `GetAsset<Texture2D>`, so a still-cached texture is handed straight
+  back. Both branches keep evicting maps first. What did change is that the per-type `switch` over
+  four cache maps became `AssetManagerRegistry::Find(type)` plus one shared `evictMaps` lambda.
+- **`GenerateSidecars` moved from after the cache insert to inside `ApplyMesh`**, because Apply
+  returns the object before the manager caches it. Safe, and verified by reading rather than
+  assumed: it only ever reaches `ImportAsset`, never `GetAsset<Mesh>`, so it cannot re-enter the
+  load.
+- **`AssetManager::Init` calls `RegisterManagers()` first.** The dense ids are assigned on first use
+  of `AssetTypeIdOf<T>`, so registering first is what makes them fall out of registration order
+  rather than out of whichever call site ran first. They are never persisted — `AssetType` by name
+  in a `.meta` is the durable form.
+
+**Verification results** (MSBuild x64 Debug, VS 2022 *Professional* on this machine — note
+`AGENTS.md` names Community; the MSBuild path differs. Full solution: engine, editor, runtime,
+Sandbox, all clean, no new warnings).
+
+| Check | Result |
+| --- | --- |
+| Unsupported type still a clean compile error | `GetAsset<int>` in a scratch TU: `error C2338: static_assert failed: 'AssetManager::GetAsset<T> is only available for Mesh, Environment, Texture2D and Material...'`. The probe was reverted afterwards |
+| Behaviour unchanged | `Phase5Test.ganymede` (40 instanced boxes) opens with zero warnings and zero errors, mesh replayed from `.meshcache`, renders identically. `Renderer3D`: 40 meshes, 32 frustum-culled, 5 instanced draws, 7 draw calls |
+| Cache identity holds | Two `GetAsset<Material>` calls on one handle return the same pointer — the invariant instancing batches on. Measured, not assumed: a probe logged `material same-ref=true` |
+| Reload still works | Probe on `BoxTextured_mat0_Texture.gmat`: after `Reload`, both the material **and** its albedo texture are different objects — i.e. the texture-first eviction ordering works. On `BoxTextured.glb`: `.meshcache` invalidated, cold cgltf re-import, new `Mesh` object |
+| `CachedCount` readout | Stats panel shows `Mesh 1/1, Environment 0/0, Texture2D 0/0, Material 0/0` on that scene. The two zeros are correct and pre-existing: the scene's entities carry no `MaterialOverrides`, and the mesh's own material uses the `.glb`'s *embedded* image, which has no path and so never reaches the registry |
+| No premature collection | Cannot regress: nothing is collected. See decision 1 above |
+| Eviction actually happens | **Not satisfied, by construction.** Phase 3's row |
+| Runtime boots | `10 files, 10 adopted from sidecars, 0 minted, 0 written`, scene loads, 10 entities, physics and audio run, zero warnings |
+| Nothing rewritten on disk | `git status` over both `assets/` trees is clean after four editor runs and a runtime run |
 
 ---
 
@@ -568,6 +722,92 @@ tempting; keep it to making existing slots type-safe, not redesigning them.
 | Build | MSBuild x64 Debug: engine, editor, runtime |
 | Docs | [`assets.md`](../engine/assets.md) gets an `AssetRef` section (this is the new primary API); [`scene.md`](../engine/scene.md) component catalog field types updated; [`editor.md`](../editor/editor.md) asset-slot behaviour |
 
+### Phase 3 — execution notes (done)
+
+New file: `Assets/AssetRef.h` (premake regeneration required and run). Phase 2's `Entry::Retained`
+pin is **deleted**, so the weak cache now actually evicts — the row Phase 2 owed.
+
+**Decision 6 was overturned: composition, not inheritance from `Ref<T>`.** The decision rests on one
+sentence — "the slicing risk is real but bounded — `AssetRef` adds no data members, so a slice loses
+only the `ready()`/`handle()` API, not state" — and that sentence is false about the very sketch it
+appears next to. BlankEngine's `ResPtr` genuinely has no members, which is what makes deriving safe
+*there*; it can afford that because `makeResPtr` resolves eagerly at construction. Decision 7 chose
+lazy resolution, and lazy resolution requires the handle to be a member. So a slice to `Ref<T>` here
+loses **state**: identity is gone, the reference can never be re-resolved or reloaded, and `reset`,
+`operator=` and `swap` are each a public way to desync it silently. The benefit being bought was
+"mechanical migration across ~24 call sites", which is small; the ones that want a plain `Ref<T>`
+now write `.Get()`.
+
+Related: the sketch's `operator->` "requires a prior `Resolve()`", which is a null-deref landmine at
+every call site. `Get()`, `operator->` and `operator*` all resolve. There is deliberately no
+`operator bool` — `HasHandle()` ("is a reference authored here", never loads) and `Ready()` ("is
+there an object", resolves) are different questions and one implicit answer would hide which a call
+site meant.
+
+**Two mechanisms the plan did not anticipate, both forced by removing the pin.**
+
+1. **An eviction epoch, because `AssetRef` breaks the invariant `Reload` was built on.** The
+   documented rule was "re-fetch by handle each frame, or accept staleness across a Reload" — and
+   caching the object is exactly what stops the re-fetch. Without something, `Reload` would never
+   reach a component again. So `Detail::g_AssetEvictionEpoch` is bumped by every `Evict`/`EvictAll`
+   and compared in `Get()`. One counter for all types rather than one per manager: eviction is a
+   rare editor action, and over-invalidating costs one manager cache hit per live reference, once.
+   Phase 6's reload-in-place is what eventually removes the need.
+
+2. **`Get()` must resolve into a temporary before assigning, and this was a real bug first.** The
+   obvious shape — drop the cached `Ref`, then reload — releases the last reference to an asset the
+   `AssetRef` happens to solely own, the weak entry expires, and **one `Reload` of any handle
+   re-imports the whole scene**. The first probe caught it: reloading a `.gmat` returned a different
+   `Mesh` pointer. Holding the old object across the `Load` call makes an unaffected handle a cache
+   hit that returns the identical pointer.
+
+**Three smaller deviations.**
+
+- **Step 5 became a compile-time guarantee rather than a runtime one.** `AcceptAssetDropRef<T>()`
+  takes the accepted `AssetType` from a new `AssetTypeOf<T>` trait, so a slot cannot declare
+  `AssetRef<Environment>` and filter on `AssetType::Texture` — which was one typo away while every
+  call site wrote both by hand. `Register<T>` reads the same trait instead of taking `AssetType` as
+  an argument, closing the same gap in Phase 2's registration list. The particle inspector's three
+  slots collapsed into one lambda generic over `decltype(slot)::AssetT`.
+- **The reflection layer's asset-slot validation got stronger for free.** An `AssetRef<T>` field
+  carries its asset type in the C++ type, so `Validate()` now checks that the declared slot
+  *agrees* with `AssetTypeOf<T>` rather than only that the field is handle-shaped. `SkyLightComponent`'s
+  `sizeof` sentinel moved 40 → 64, which is the sentinel doing exactly the job decision 5 of the
+  reflection roadmap justified it with.
+- **The slicing grep the plan asks for is unnecessary**, because the failure it looks for no longer
+  compiles. What replaced it as the real hazard is the opposite: a transient `Ref` is not ownership.
+  `MeshImporter::Instantiate` loaded a mesh into a local and stored the handle, which under a weak
+  cache collects the object before the first frame; it now resolves through the `AssetRef` it is
+  about to store.
+
+**`Ready()` audit (step 6), stated honestly:** almost nothing needed it. `RenderSystem`'s
+`IsAssetHandleValid(...)` guards became unnecessary rather than becoming `Ready()`, because `Get()`
+returns null for an unset handle and for one that failed to load, and every one of those call sites
+already null-checked its `GetAsset` result. The one place `HasHandle()` is genuinely the right
+question is the inspector, which wants "is a reference authored here" without triggering a load.
+
+**Verification results** (MSBuild x64 Debug, full solution: engine, editor, runtime, Sandbox, all
+clean, no new warnings).
+
+| Check | Result |
+| --- | --- |
+| Scene round-trip is byte-identical | Load → save twice over three fixtures (a committed scene with an `Environment` handle, a hand-authored scene with `Mesh` + `Script` + `PrefabInstance` handles, and one written for this check carrying `MaterialOverrides` and all three particle slots). Pass 2 is byte-for-byte identical to pass 1 in all three, with every handle preserved — including the unset interior slot in `MaterialOverrides: [777…771, 0, 777…773]`. Against the *committed* bytes the content is identical modulo entity block **order**, which is pre-existing: the writer iterates the registry and a deserialized scene's order is not the file's, it affects entities with no asset component at all, and pass 1 is a fixpoint |
+| Eviction actually happens | `[scene live] Mesh 1/1, Environment 1/1, Texture2D 1/1, Material 1/1` → `[scene destroyed] 0/1` for all four. This is the Phase 2 row |
+| Reload still works, and does not over-reach | Reloading one `.gmat`: `material-replaced=true mesh-object-preserved=true`. The second flag is what the temporary-then-assign fix bought — it read `false` before |
+| Missing asset degrades | A valid handle with no asset: `HasHandle=true Ready=false ptr=0x0`, one warning, no crash |
+| Drag-drop type safety | Now a compile error, not a silent no-op: `AssetRef<Mesh> m = AcceptAssetDropRef<Material>()` gives `C2440: cannot convert from 'AssetRef<Material>' to 'AssetRef<Mesh>'`. Negative-tested and reverted |
+| Behaviour unchanged | `Phase5Test.ganymede` renders identically to the Phase 2 capture — 40 meshes, 32 frustum-culled, 5 instanced draws, 7 draw calls, zero warnings |
+| Runtime boots | `10 files, 10 adopted from sidecars, 0 minted`, scene loads with meshes and environment resolving, 10 entities, physics and audio running, zero warnings |
+| Lua bindings | **Vacuous as written.** `ScriptBindings.cpp` exposes no mesh, material, environment or texture field on any component — the particle bindings cover rate, looping, duration and burst only. Nothing in the Lua surface touches a converted field |
+| Nothing rewritten on disk | `git status` over both `assets/` trees clean after the probe runs and fixture cleanup |
+
+**Left as adjacent work, deliberately not folded in.** The entity-order churn named in the
+round-trip row above is a real diff-noise problem for committed scenes and has nothing to do with
+this phase; a canonical entity order in `SceneSerializer` would fix it. `IsRegistryWritable()` still
+has the misleading name Phase 1 flagged.
+
+---
+
 ---
 
 ## Phase 4 — Compiled outputs: `AssetCompiler`, epoch invalidation, BCn textures
@@ -641,6 +881,105 @@ image rather than by eye.
 | Build | MSBuild x64 Debug; bimg link added to `premake5.lua` → **premake regeneration required**, state it |
 | Docs | [`assets.md`](../engine/assets.md) compiled-output + compiler sections replacing the `MeshCache`-specific text; [`build-and-tooling.md`](../engine/build-and-tooling.md) for the `.compiled/` tree and gitignore; [`rendering.md`](../engine/rendering.md) for the colour-space convention |
 
+### Phase 4 — execution notes (done)
+
+New files: `Assets/AssetCompiler.h`, `Assets/CompiledCache.h/.cpp`, `Assets/TextureCompiler.h/.cpp`,
+`Platform/Bimg/TextureEncode.h/.cpp`, `GanymedEngine/TextureEncode.lua`. `MeshCache.h/.cpp` renamed
+to `MeshCompiler.h/.cpp`. Premake regeneration required and run.
+
+**The measured corrections come first, because two of them changed the design.**
+
+1. **`auto` is BC1/BC3, not BC7 — bimg's BC7 encoder is NVIDIA's AVPCL reference implementation.**
+   The plan's risk section estimated "BC7 at high quality is seconds per 2K texture". Measured on
+   an *optimised* build: 6.4 s for a 256×256 with mips, and **58.6 s for a 1024×1024**. That is
+   ~10k pixels/second — an exhaustive mode and partition search written to be correct, not fast. A
+   2048² albedo would be minutes, which is not a pipeline. BC1/BC3 go through libsquish instead and
+   compile the same 1024² in **188 ms, a 311× difference**, with a real quality knob. `auto` now
+   picks BC1, or BC3 when a linear scan finds the alpha channel actually used. `Format: BC7`
+   remains for the texture worth waiting for.
+
+2. **bimg had to be built optimised in Debug before any of this was measurable.** Unoptimised, the
+   BC7 path did not finish a 2560×1664 texture in four minutes. `optimize "Speed"` plus
+   `NoRuntimeChecks` on the `bimg` project only (MSVC rejects `/O2` with `/RTC1`). Without this the
+   asset compiler is unusable in the configuration everyone develops in, which is not a footnote.
+
+3. **Only libsquish's formats are parallelised.** AVPCL keeps four file-scope `bool`s that
+   `compressBC7` writes per block. They are set to the same constant every call, so the race is
+   benign in practice — and that is not a basis for threading. BC7 encodes serially; BC1/BC3/BC4/BC5
+   band-split.
+
+**Two build-shape findings the plan did not anticipate.**
+
+- **"bimg is already vendored and already builds, so there is no new dependency" was half true.**
+  The `bimg` project built only `image.cpp`; `image_encode.cpp` and every block compressor under
+  `3rdparty` were not in the build. They are now (libsquish, nvtt, etc1, etcpak, pvrtc, edtaa3,
+  iqa — ~1.4 MB of vendored source, all already in the submodule), folded into the existing project
+  rather than adding upstream's separate `bimg_encode`. **`bimg_decode` is still not built**: it
+  drags in dav1d and libavif for AV1, so the compiler decodes with the stb_image the engine already
+  vendors and hands bimg raw RGBA8. Source-format support is therefore exactly what it was.
+- **bx does not compile below C++20, and the engine is C++17.** bimg's headers only forward-declare
+  the bx types but its API takes them by pointer, so the encoder needs the real definitions. The
+  encode lives in `source/Platform/Bimg/`, built as its own C++20 static lib that the engine project
+  `removefiles` from its glob — the same boundary `bgfx.lua` already documents. Its header mentions
+  neither bimg nor bx, and it takes `ParallelFor` as a `std::function` because the engine links it.
+  The alternative, raising the whole engine to C++20, is one line and a project-wide language change
+  that should happen for its own reasons rather than as a side effect of this phase.
+  **Consequently the verification table's "bimg link added to `premake5.lua`" was already done** —
+  bimg was linked and its include path set before this phase.
+
+**Steps that turned out differently.**
+
+- **Step 3's `MeshCompiler` does not honour the compiler contract, and says so in its own header.**
+  `Compile` runs `MeshImporter::Load`, which builds a live `Mesh` with bgfx buffers and then
+  serializes it, because nothing in the importer can emit CPU-side mesh data. So a cold mesh import
+  creates its GPU buffers twice and the compiler must run on the submit thread. The warm path pays
+  neither. This is the same debt Phase 2's notes named; Phase 5 is where it comes due.
+- **Step 4's role-based `Format: auto` is not implementable as described, and BC5 would break
+  rendering.** The compiler runs on the texture; the role lives in the `.gmat` referencing it, and
+  resolving that needs the reverse index decision 11 declined to build. Worse, `Phong.glsl` reads
+  `.xyz` straight out of the normal map, so defaulting normal maps to BC5 — which stores two
+  channels and needs a shader-side Z reconstruct — would quietly break every normal-mapped surface.
+  A `MaterialSerializer` stamp was written and then **reverted**: the honest version is that
+  `Format:` is hand-editable in the `.meta` and role inference waits for the rendering change.
+- **The `sRGB` config key was dropped rather than reserved.** The engine has *no* sRGB pipeline —
+  textures are sampled as raw RGBA8 and gamma is applied once at tonemap — so the key would either
+  do nothing or change the look of every scene. A knob that does nothing is what decision 15's
+  "reserve a config block" should not become. Written up in
+  [`rendering.md` § Colour space](../engine/rendering.md#colour-space) instead, which is where the
+  fix belongs.
+- **Step 6's dependency edges are recorded but have almost nothing to record.** `MeshImporter` now
+  reports a `.gltf`'s external `.bin` buffers and image files, which is a real edge. A `.glb`
+  reports none, and every mesh here is a `.glb`. The verification row "edit a texture referenced by
+  a `.gmat`, confirm the dependent recompiles" **describes a case that does not exist**: `.gmat` has
+  no compiler, and a mesh blob stores texture paths rather than pixels, so an edited texture
+  correctly invalidates only itself. The reverse map is left unbuilt for Phase 6, which is what
+  needs it.
+- **Persisting a compiled artifact is best effort**, added after seeing the runtime — which treats
+  `assets/` as read-only — compile at boot and write into its own install directory. The bytes are
+  returned whether or not the write succeeds, and a read-only session that has to compile warns once
+  that its `.compiled/` tree did not ship.
+
+**Verification results** (MSBuild x64 Debug, full solution clean; measurements on 15 worker threads).
+
+| Check | Result |
+| --- | --- |
+| Meshes still load, cache still works | Cold: `Compiled 'models/BoxTextured.glb' with MeshCompiler in 3 ms [no cached output]`. Re-run: nothing compiled at all |
+| Epoch diff is correct | `touch` the `.glb` → **no recompile**, and `'models/BoxTextured.glb': mtime moved but content is unchanged - kept the compiled output`. Add a Config key to its `.meta` → `[stale: config]`. Bump `MeshCompiler::Version` 7→8 → `[stale: compiler-version\|config]`. Both edits reverted afterwards |
+| Dependency invalidation | **Not satisfiable as written** — see above. The machinery is exercised (the `.dep` carries `{path, hash}` pairs and the diff checks them); no compiler in this content set has a dependency to declare |
+| Texture output is right | BC1 with full mip chains, measured VRAM: 256² albedo 256 KB → 42 KB (9 mips); 1024² albedo 4 096 KB → 682 KB (11 mips); 64² checkerboard 16 KB → 2 KB (7 mips). ~6× on the two real textures, *with* mips added |
+| Non-block-aligned source | `blockPack.png` at 1181×1181 falls back to RGBA8 with a warning naming the reason. Worth knowing: with mips on that costs **more** than before (5 448 KB → 7 259 KB) — the fix is resizing the source |
+| sRGB not double-applied | Trivially true and for a disappointing reason: there is no sRGB handling to double-apply. The scene renders identically to the Phase 3 capture — 40 meshes, 32 culled, 5 instanced draws, 7 draw calls |
+| Parallel encode (T3) | 2560×1664 → BC3, 12 mips: **597 ms serial → 324–331 ms parallel, 1.8×**. The same split on BC7 measured **4.7×** (30 306 → 6 402 ms). The honest reading: the faster encoder made threading matter *less*, because mip generation, the alpha scan and the DDS write are the serial remainder |
+| Build | Full solution clean. bimg gained the encode sources; `TextureEncode` is a new project; premake regenerated |
+| Runtime boots | Compiles its mesh on a cold tree, scene loads, 10 entities, zero errors |
+| Nothing rewritten on disk | `git status` over both `assets/` trees clean; `**/assets/.compiled/` added to `.gitignore` |
+
+**Left as adjacent work.** The abandoned `assets/.assets/` trees can be deleted by hand. Packaging
+`.compiled/` with a shipped runtime belongs to the distribution milestone. The sRGB pipeline is
+scoped in `rendering.md` and is a rendering change, not an asset one.
+
+---
+
 ---
 
 ## Phase 5 — Async: non-blocking loads on `Core/JobSystem`
@@ -704,6 +1043,97 @@ tuning a scheduler, stop.
 | Thread sanity | Assert on bgfx-from-worker never fires; run the editor under the VS thread-safety analyzer or add a deliberate violation in a scratch build to confirm the assert works |
 | Docs | [`core.md`](../engine/core.md) job system section; [`assets.md`](../engine/assets.md) async loading, `Status`, placeholders, `WaitFor`; [`architecture.md`](../engine/architecture.md) frame-flow update for the drain point |
 
+### Phase 5 — execution notes (done)
+
+New files: `Renderer/MeshSource.h/.cpp`. Premake regeneration required and run. No new dependency,
+no new project.
+
+**The debt Phases 2 and 4 both deferred came due first, and it was the enabler.** `MeshCompiler`
+ran `MeshImporter::Load`, which built a live `Mesh` — bgfx buffers, materials, textures — purely so
+it could serialize it. That is a GPU call inside a Parse stage, so mesh compilation could not leave
+the main thread, and "asynchronous except the expensive part" is not asynchronous.
+`MeshSource` is the split: `MeshImporter::Import` emits CPU data, `MeshCompiler` serializes it,
+`BuildMesh` is the one main-thread step. The blob format did not change — it always stored material
+*descriptions* rather than material objects, which is why v7 stayed v7.
+
+**Three things the plan did not anticipate, in order of how much they mattered.**
+
+1. **A weak cache and asynchronous loading do not compose, and the failure is total.** `Load` returns
+   null while a parse is in flight, so the caller walks away with nothing; when `Update` applies the
+   asset, the only reference is a local in the manager. Insert it into a `weak_ptr` cache and it is
+   collected before the function returns, the next frame's `Load` sees an expired entry, and the
+   parse runs again — forever. Measured on the first run: one mesh stuck "pending", nothing
+   rendered, and the compiled-cache hit counter past 3800 in half a minute. The fix is a **handoff
+   window**: the manager holds a strong reference to anything it has just applied for four `Update`
+   calls, which is long enough for a polling `AssetRef` to take ownership and short enough that
+   nothing unwanted survives. This is the single most important thing in the phase and it is not in
+   the roadmap at all.
+
+2. **A `Material` captures its textures once, so async loading would leave it holding null forever.**
+   Materials are not `AssetRef` holders — they are built with `Ref<Texture2D>` in hand. Each map now
+   carries its `AssetHandle` and `Material::Bind` re-asks once for a map that is null and has an
+   identity. Embedded textures have no handle, are decoded during `BuildMesh`, and are never pending.
+   Without this, every material built during a cold open would render untextured permanently.
+
+3. **`Evict` on a pending load blocked the main thread for 186 ms.** enkiTS cannot dequeue a started
+   task, so cancel-and-wait means waiting for the running body — and a Reload issued while a
+   2560×1664 texture was mid-encode paid for the rest of that encode. Cancelled `Future`s now move to
+   a draining list that `Update` reaps once `IsReady()`; the stall is gone. Coarse cancellation
+   polling was added too (`CompiledCache::Open` before invoking a compiler, the texture encoder
+   between mips), which is what the threading milestone's contract asks of any long body.
+
+**Decision 8 is overturned: there are no placeholders.** The decision rests on "returning null forces
+every call site to branch, and 24 call sites in a render loop is exactly where you don't want that."
+Every one of those call sites has branched on a null asset since long before this phase — a missing
+asset has always been possible — so no new branching is introduced. What placeholders would change is
+what a *pending* asset looks like, and this engine's existing fallbacks are better than the proposed
+placeholders: a material with no map renders its albedo colour, a sky light with no environment
+renders the procedural sky, an override slot falls back to the mesh's own material, and an entity
+with no mesh draws nothing. A unit cube at the wrong scale is more confusing than nothing, and one
+shared error-material `Ref` would collapse every pending material into a single instancing batch.
+
+**Smaller deviations.**
+
+- **`Load` is main-thread-only and asserts it**, which is stronger than step 6's "assert that Apply
+  is". It is what makes the cache, pending and failed maps lock-free, and it makes step 2's "two
+  `Load` calls for the same handle racing to insert" impossible rather than handled.
+- **A failed load is remembered.** Not in the plan, and not optional: an `AssetRef` whose `Get()`
+  returns null re-asks every frame by design, so without a failed set a broken asset would queue a
+  job, fail, and queue another at frame rate with a log line each time.
+- **`Environment` stays synchronous** — no Parse stage, because the work is a GPU bake.
+- **Step 7 came for free.** Compilation runs inside Parse, so it moved to workers with no extra code.
+- **The metadata is copied into the job, not pointed at.** The registry's nodes are stable so a
+  pointer would in fact survive, but "in fact survives" is a property of today's container choice.
+
+**A `JobSystem` finding worth carrying:** `Future::Wait()` pumps the queue on the *calling* thread
+and will often run the very job being waited on. That is what makes `WaitFor` synchronous for free —
+and it is why the first attempt to negative-test the main-thread assert proved nothing. A test that
+wants work to run on a worker has to poll `IsReady()`. Written up in
+[`core.md`](../engine/core.md#job-system).
+
+**Verification results** (MSBuild x64 Debug, full solution clean).
+
+| Check | Result |
+| --- | --- |
+| Cold open does not hitch | Five textures + a mesh, cold `.compiled/`: **845 ms** of work when forced synchronous (`Get` + `WaitFor` each), versus a worst steady frame of **~10 ms** asynchronously while ~970 ms of compiles ran. The frame during a 566 ms BC3 encode measured 6.9 ms |
+| No call-site changes | `git diff` touches `Assets/`, `Core/`-adjacent `Renderer/` files that had to split, and exactly two lines elsewhere: the `AssetManager::Update` tick in `Application::Run` and the `WaitFor` in `MeshImporter::Instantiate`. No `Scene/Systems/` file changed |
+| Placeholders appear and resolve | **Not applicable** — see above. Textures resolve into materials over the following frames, which the probe observed going 0/5 → 2/5 → 4/5 → 5/5 across ~55 frames |
+| Cancellation is safe | Scene swapped on frame 1 with a load pending and a compile running: clean exit, no crash, pending drained to 0. Reload issued against a mid-flight load: cancelled, drained off the main thread, no stall |
+| Shutdown with work in flight | Closed with **3 loads pending and 4 compiles running**: exit code 0 |
+| Thread sanity | The main-thread assert was negative-tested by loading from a worker (polled, not waited — see above): `Assertion failed: AssetManager::Load must run on the main thread` and the process terminated on the breakpoint. Reverted |
+| Renders identically | `Phase5Test.ganymede` warm: 40 meshes, 32 frustum-culled, 5 instanced draws, 7 draw calls — the same numbers as Phases 2, 3 and 4 |
+| Warm open | Nothing compiled, no warnings |
+| Runtime boots | Compiles its mesh on a cold tree, scene loads, 10 entities, primary camera found, zero errors |
+
+**Left as adjacent work.** `Environment`'s bake is the remaining synchronous hitch and wants an
+async-friendly IBL path, not an asset-layer change. *(Done later - see
+[the IBL follow-up](#follow-up--the-environment-ibl-bake-done). The guess in this sentence was half
+wrong: half the cost was the decode, which is an asset-layer change after all.)* The handoff
+window's four frames is a constant that would want revisiting if anything ever loads assets outside
+a frame loop.
+
+---
+
 ---
 
 ## Phase 6 — Hot reload: file watching and dependency-driven invalidation
@@ -751,6 +1181,357 @@ during a branch switch — hence the disable switch and the debounce.
 | Branch switch | `git checkout` a branch touching many assets; no crash, no storm-induced hang |
 | Mid-frame safety | Reload under a heavy scene repeatedly; no flicker of half-applied state |
 | Docs | [`assets.md`](../engine/assets.md) hot reload section; [`platform.md`](../engine/platform.md) if a Win32 watcher is written; [`editor.md`](../editor/editor.md) for the toast + toggle |
+
+### Phase 6 — execution notes (done)
+
+New files: `Assets/AssetWatcher.h/.cpp`. Premake regeneration required and run. No new dependency,
+no platform code.
+
+**Step 1 went with the plan's own recommendation: a poll, not `ReadDirectoryChangesW`.** 0.25 s
+interval, `last_write_time` + `file_size` per indexed asset, keyed by handle. Measured at
+**0.5–1.5 ms for 23 assets**, and the number is on screen in the Stats panel rather than in a
+comment — the day it shows up in a frame is the day the Win32 watcher gets written behind the same
+interface. Not before, and not both.
+
+**Two parts of step 3 were not built, and both refusals are load-bearing.**
+
+1. **No reload-in-place.** The step asks for parse/apply re-run into the *existing* object "so every
+   `AssetRef` holder sees the new contents without knowing anything happened." They already do —
+   that is what `Detail::g_AssetEvictionEpoch` is for, and the epoch's own doc comment predicted this
+   phase would retire it. The reverse is true: evict-and-rebuild is *safer*. The old object stays
+   alive and unchanged for whoever holds it and the new one appears at the next `Get()`, so the
+   "Risks" paragraph's own scenario — a mesh whose vertex buffer is swapped under an already-submitted
+   pass — cannot happen. Mutation would introduce that risk in order to remove a mechanism that works.
+2. **No `CompiledCache::Invalidate`.** `Reload` calls it because it means *reimport now*; a file
+   event does not. Invalidate deletes the `.gres` unconditionally, and a watcher fires on mtime — so
+   every save-to-temp-and-rename would become a BC7 encode. Letting the epoch record decide is the
+   entire point of Phase 4, and hot reload is where it pays: verified at 48 reloads with **zero**
+   recompiles when the bytes were unchanged.
+
+**Step 4's reverse-edge map became a scan, deliberately.** Decision 11 asks for an
+`unordered_map<AssetHandle, vector<AssetHandle>>` populated as assets load. The cache is *weak*, so
+"which materials reference this texture" is only ever a question about **resident** objects — a
+maintained map accumulates edges to collected ones, the weak cache gives no hook to prune them, and
+it is wrong between sweeps. The scan cannot go stale, needs no bookkeeping on the load path, and
+costs three handle compares per resident material. The plan also under-scoped the propagation: it
+names texture → materials, but a **`Mesh` owns its `Ref<Material>`s outright**, built from the
+compiled blob's material *descriptions* rather than from `.gmat` handles, so a mesh referencing a
+changed texture has to be evicted too. Verified separately, and it needed a hand-written `.gltf`
+fixture because every model in the project has its textures embedded.
+
+**Step 6's toast was not built; the switch was.** There is no notification system in the editor, and
+building one for a single consumer is the kind of thing this roadmap's scope assessment argues
+against. What landed is a Stats-panel section — the on/off switch (which a branch switch genuinely
+needs), `watched / ms-per-poll / reloaded / settling`, and the last reloaded path — plus the existing
+log line. The viewport visibly changing is itself the notification. A toast remains a reasonable
+thing to want; it is a notifications feature, not a hot-reload one.
+
+**Two smaller additions the plan did not have.**
+
+- **A per-poll budget of 16.** Step 2's debounce coalesces a burst on *one* file; it does nothing
+  about hundreds of files changing at once, which is the "Risks" paragraph's second risk. Every
+  accepted change queues a parse that holds its compiled bytes until Apply, so an unbounded branch
+  switch would put the whole set in flight — gigabytes for 2K BC7. Over-budget entries keep their
+  settled state and land on the next poll.
+- **The stamp is accepted before the reload is attempted.** A source that is broken right now must
+  not be retried every poll forever; the next real edit moves the stamp again, so a mid-write read
+  recovers on the following save.
+
+**Verification results** (MSBuild x64 Debug, full solution clean, 0 errors).
+
+| Check | Result |
+| --- | --- |
+| Texture hot reload | Rewritten with **identical** bytes: reloaded, `mtime moved but content is unchanged - kept the compiled output`, **0 recompiles**. Rewritten with **different** bytes: reloaded and recompiled, `[stale: source-size\|source-mtime\|source-hash]`. Latency ~0.45 s (poll + settle) |
+| Dependency propagation | `Hot reload: 2 material(s) and 0 mesh(es) rebuild for it` — both `.gmat`s sharing the texture were rebuilt and both re-pointed at the new texture object. Separately, changing a mesh's *own* external texture: `0 material(s) and 1 mesh(es)`, and the mesh object identity changed. Phase 4's `.dep` dependency edge fired alongside it: `Compiled 'HotReloadFixture.gltf' [stale: dependencies]` |
+| Deletion is survivable | Deleted: reload fired, `Cannot compile ... the source file is not there`, texture null, both materials null-mapped, **no crash**, index entry kept. Restored: reloaded, recompiled, texture back |
+| Branch switch | All 23 indexed assets rewritten at once: first poll accepted **16** and deferred **7** (`settling=7`), the next took the rest. No hang, no crash, exit 0. Worst frame **110 ms** — that is 16 assets creating GPU resources in one Apply, in a Debug build, not the watcher, whose poll stayed under 1.5 ms throughout |
+| Mid-frame safety | `Phase5Test.ganymede` live, four consecutive rounds of touching every asset: **40 meshes, 32 culled, 5 instanced draws, 7 draw calls** after every round — identical to Phases 2–5 — with 48 reloads, 0 recompiles, 0 errors and 0 warnings. Worst frame per round 22–30 ms |
+| The switch works | Watcher off, file changed: `reloads` unchanged. Back on: `adopted the current state of assets/ without reloading`, still unchanged. On the next real edit it fired again |
+| Runtime is unaffected | `assets/ read-only`, no watcher line in the log at all, 0 errors, 0 warnings, scene loads |
+| Nothing rewritten on disk | `git status` over both `assets/` trees clean after the storm test (23 identical-byte rewrites) and fixture cleanup |
+
+**One finding worth carrying:** `Material::Bind()` is a **once-per-draw** call. Calling it outside
+the render path to force a map re-resolve takes bgfx down with
+`FATAL: Uniform 38 (u_AlbedoColor) was already set for this draw call`. The probe used the same
+lookup its `resolve` lambda performs instead.
+
+**Left as adjacent work.** `HashDependency` is size+mtime rather than content (a deliberate Phase 4
+asymmetry — it is checked on every load of every dependent), so *touching* a texture recompiles the
+mesh that references it even when the bytes are identical; the tradeoff still holds, but hot reload
+is what makes it reachable in normal editing.
+
+### Follow-up — the Apply budget (done)
+
+`TypedAssetManager::Update` applied everything that was ready in one frame. It now runs on a **4 ms
+budget shared across every manager**, held by an `ApplyBudget` passed through `IAssetManager::Update`;
+anything ready that does not fit stays pending and lands on a later frame. Time rather than a count,
+because a Material is a few uniforms and a Mesh is buffers plus every texture it pulls; and the first
+apply of a frame always runs, because an apply cannot be interrupted half way and a budget that can
+refuse everything stalls loading permanently the moment one asset exceeds the whole allowance.
+Written up in [`assets.md`](../engine/assets.md#the-apply-budget); the editor shows
+`Apply: N done, M deferred, x / 4.0 ms`.
+
+**A real bug found in the function being changed.** `AgeHandoff()` sat *after* an early `return`
+taken when nothing was pending, so the handoff window never closed once the last load completed: the
+manager kept a **strong** reference to every asset it had ever applied asynchronously, and the weak
+cache could not collect anything until some later load happened to make `Update` run to the end
+again. Phase 5 introduced this and its verification did not catch it, because the handoff was only
+ever exercised while loads were in flight. Confirmed by measurement rather than by reading: open a
+scene, then `NewScene`, and watch the mesh manager — `Mesh=1/1` before the fix, `Mesh=0/1` after,
+which is Phase 2's eviction signature.
+
+**The measurement, and a correction to the note above.** That note attributed the storm's 110 ms to
+batched Apply and implied a budget would smooth it away. The first half was right; the second was
+optimistic. Same build, same burst of 22 assets:
+
+| | Applies in the worst frame | Worst Apply | Worst frame |
+| --- | --- | --- | --- |
+| Unbounded | 12 | 108.7 ms | 130.6 ms |
+| 4 ms budget | 2 | 70.1 ms | 82.6 ms |
+
+**The residual is one apply, and it is not GPU work.** Timed inside `BuildMesh`:
+
+| Stage | CesiumMan.glb | Fox.glb | RiggedFigure.glb |
+| --- | --- | --- | --- |
+| Resolving materials (decoding embedded textures) | 62.8 ms | 52.3 ms | 0.04 ms |
+| `Mesh::Create` (the bgfx buffers) | 1.6 ms | 0.5 ms | 0.4 ms |
+
+So the dominant main-thread Apply cost is `stb_image` decoding of textures embedded in a `.glb` —
+CPU work of exactly the kind the Parse/Apply split exists to move off the main thread, left behind
+because an embedded image has no `AssetHandle` and so cannot go through the texture manager. An
+earlier guess that the cost was the by-value copy of animation clips into `Mesh::Create` was tested
+by moving them instead of copying: no change, 60 ms either way. **Decoding embedded images during
+Parse, into the `MeshSource`, is the actual fix** — the same move `MeshSource` itself was for Phase
+5, applied to the case Phase 5 missed. Done in the follow-up below.
+
+A cost-predicting budget (refuse an apply whose estimated cost will not fit the remaining time) was
+considered and rejected: it would recover roughly 10 ms of the 70 while the floor stays exactly where
+it is.
+
+**Verification.** Full solution clean. Scene render identical across four rounds of touching every
+asset — 40 meshes, 32 culled, 5 instanced draws, 7 draw calls, 60 reloads, 0 recompiles, 0 errors.
+Deferred applies drain rather than strand (`maxDeferred` 12 → 6 → 0, `pending` back to 0). Runtime
+boots with 0 errors and 0 warnings.
+
+### Follow-up — decoding embedded images during Parse (done)
+
+`MeshSource` gained `*Decoded` slots holding a `DecodedImage` per map, `DecodeEmbeddedMaps` fills
+them on a worker from the mesh Parse stage, and `BuildMesh` is left with `TextureImporter::Upload`.
+No new file, no format change - the compiled blob still stores compressed bytes, so nothing on disk
+moved and the blob version stayed put.
+
+**The image is identical by construction, not by inspection.**
+`TextureImporter::LoadFromMemory(bytes, size, flip)` is *defined* as
+`Upload(DecodeFromMemory(bytes, size, flip))`. This change is that exact composition split across a
+thread boundary with `flip = true` preserved, which is a stronger guarantee than any visual check -
+and the flip is the one thing that could silently have gone wrong.
+
+| `BuildMesh`, main thread | CesiumMan.glb | Fox.glb | RiggedFigure.glb |
+| --- | --- | --- | --- |
+| Resolving materials, decode in Apply (before) | 62.8 ms | 52.3 ms | 0.04 ms |
+| Resolving materials, upload only (now) | 1.7 ms | 1.5 ms | 0.03 ms |
+| `Mesh::Create`, the bgfx buffers | 1.5 ms | 0.5 ms | 0.4 ms |
+
+The decode did not get cheaper, it moved: it now shows up on a worker at 58 ms (CesiumMan) and 61 ms
+(Fox). End to end, on the same 22-asset burst:
+
+| | Applies in the worst frame | Worst Apply |
+| --- | --- | --- |
+| Unbounded, decode in Apply | 12 | 108.7 ms |
+| 4 ms budget, decode in Apply | 2 | 70.1 ms |
+| 4 ms budget, decode in Parse | 4 | **7.7 ms** |
+
+The two changes are worth roughly 14x together and far less apart: the budget could not subdivide a
+single 60 ms apply, and moving the decode without a budget would still have let a dozen uploads
+stack in one frame.
+
+**Costs accepted.** A `MeshSource` in flight now holds both the compressed bytes (which
+`GenerateSidecars` still extracts to a file on first import) and the decoded RGBA8 - 4 MB for a 1K
+map against a few hundred KB - from the end of Parse until Apply. `MeshSource` is move-only as a
+result, since `DecodedImage` owns stb's buffer; nothing was copying one, so this cost nothing to
+adopt and is the right shape for a type carrying tens of megabytes.
+
+**Verification.** Full solution clean, 0 errors. Scene render identical across four rounds of
+touching every asset - 40 meshes, 32 culled, 5 instanced draws, 7 draw calls, 60 reloads, 0
+recompiles, 0 errors. Eviction still correct after the handoff fix (`Mesh=0/1` after `NewScene`).
+Runtime boots with 0 errors and 0 warnings. Note the editor's own test scene is *not* the case that
+benefits - it loads one mesh with a tiny embedded texture, so its frame times are unchanged; the
+meshes that pay for this are the ones with 1K embedded maps.
+
+### Follow-up — re-measured in Release
+
+Every number in the two follow-ups above is **x64 Debug**, which is the fast build-verify loop this
+project uses and is also where MSVC's checked iterators and unoptimised stb make CPU work look worse
+than it ships. Re-measured on x64 Release, same 22-asset burst, same probe. All three configurations
+(Debug, Release, Dist) build clean.
+
+| | Applies in the worst frame | Worst Apply (Release) | (Debug) |
+| --- | --- | --- | --- |
+| Unbounded, decode in Apply — the original | 12 | **34.9 ms** | 108.7 ms |
+| 4 ms budget, decode in Apply | 6 | 23.2 ms | 70.1 ms |
+| Unbounded, decode in Parse | 12 | 12.1 ms | not measured |
+| 4 ms budget, decode in Parse — shipped | 4 | **5.3 ms** | 7.7 ms |
+
+**The win is 6.6x in Release against 14x in Debug, and it is still worth having.** Debug exaggerates
+it because the decode is the part that optimises, but 34.9 ms is more than two frames at 60 Hz, so
+the original behaviour was a visible hitch in a shipped build too. Neither change is redundant:
+the budget alone gets 34.9 → 23.2, the decode move alone gets 34.9 → 12.1, and only together do they
+reach 5.3.
+
+**The most useful thing Release revealed** is in the per-mesh split (Debug in brackets):
+
+| `BuildMesh`, main thread | CesiumMan.glb | Fox.glb |
+| --- | --- | --- |
+| Resolving materials, decode in Apply | 23.0 ms *(62.8)* | 15.5 ms *(52.3)* |
+| Resolving materials, upload only | 1.4 ms *(1.7)* | 1.8 ms *(1.5)* |
+| `Mesh::Create` | 0.4 ms *(1.5)* | 0.1 ms *(0.1)* |
+
+The **upload cost does not improve in Release** - 1.4-1.8 ms either way - because it is driver and
+GPU work rather than compiled C++, while the decode optimises 3-4x. That is the useful conclusion:
+what remains on the main thread after this change is genuinely GPU-bound, so there is no further
+main-thread win available here without changing what is uploaded (fewer, smaller, or already
+block-compressed textures) rather than where the work runs.
+
+In Release a typical apply is ~1.5 ms, so the 4 ms budget admits two or three; the constant still
+reads sensibly and was left alone.
+
+**Other Release figures.** Watcher poll 0.33-0.68 ms for 22 assets (Debug 0.7-1.5). Four rounds of
+touching every asset under the live scene: worst frame 14-19 ms per round (Debug 27-40), render
+identical at 40 meshes / 32 culled / 5 instanced draws / 7 draw calls, 60 reloads, 0 recompiles,
+0 errors. Release runtime boots with 0 errors, 0 warnings, 10 entities, and no watcher line.
+
+---
+
+### Follow-up — the Environment IBL bake (done)
+
+The last synchronous hitch in the asset layer, and the note that described it was wrong. Phase 5
+recorded that `Environment` could not have a Parse stage because "the only part that could [move] —
+one `stbi_loadf` — is a few percent of it." Measuring it (Release, 1K panorama, three runs) found
+something else entirely:
+
+| Part | Cost | Verdict |
+| --- | --- | --- |
+| `stbi_loadf` of the panorama | 21-29 ms | 45%, and pure CPU |
+| Two forced `bgfx::frame()` calls inside `Bake` | 24-26 ms | 45%, and avoidable |
+| 4x `Shader::Create` | 1.6-1.8 ms | 3% |
+| Bake submission (67 framebuffers + 67 draws) | 1.9-2.1 ms | 4%, and genuinely unmovable |
+| **Total, all on the submit thread** | **54-62 ms** | |
+
+**The forced frames were the find.** `Bake` called `bgfx::frame()` twice inline, because
+`RenderPass::EnvironmentBake` sat at 32 - *after* `SceneHDR` - so an environment applied at the top
+of a frame was not readable by that frame's scene pass. Forcing two presentations blocked the main
+thread for 24-26 ms and pushed two half-built frames to the screen on the way past.
+
+**The fix is ordering, not machinery.** A bake is a prepass, so it now sorts *before* everything
+that samples it: `EnvironmentBake = 1`, with the frame proper starting at `Shadow = 69`. Every other
+pass shifted up by 68; nothing hardcoded a view id, so this was a one-file change. The bake is then
+correct within the frame it is submitted in and the `bgfx::frame()` calls are gone. The 67 transient
+framebuffers are destroyed immediately - bgfx defers handle destruction until the frame that used
+them has been rendered.
+
+**And `Environment` finally gets a Parse stage**: `Environment::Load` decodes the HDR into an
+`EquirectImage` on a worker; the constructor uploads it and submits the bake.
+
+| | Before | Now |
+| --- | --- | --- |
+| Main thread | **54-62 ms** | **3.9-5.1 ms** |
+| Worker | - | 16-25 ms (decode) |
+
+### A data race this uncovered, introduced two follow-ups earlier
+
+Moving `stbi_loadf` to a worker meant looking at stb's threading, and the vendored copy under
+`extern/stb_image` has **no `STBI_THREAD_LOCAL` support** - `stbi__vertically_flip_on_load` is a
+plain process-wide global. `TextureImporter::Decode`/`DecodeFromMemory` wrote it immediately before
+decoding.
+
+That was harmless while decoding was main-thread-only. **The "decode embedded images during Parse"
+follow-up above made it a live race**: `TextureCompiler` decodes with flip off on a worker while
+`DecodeEmbeddedMaps` decodes with flip on, on another. Symptom: an occasionally upside-down texture,
+non-deterministic. Never observed - found by reading, because the Environment change would have
+added a third concurrent stb user.
+
+Fixed by removing the shared mutable state rather than guarding it: nothing in the engine writes
+stb's flip global any more, and `flipVertically` is honoured by flipping the decoded buffer, which
+is thread-local by construction. Upgrading the vendored stb would also have worked and is not
+allowed (`extern/` is off limits); a mutex would have serialised exactly the decodes this milestone
+spent two follow-ups parallelising.
+
+**Verification.** Debug, Release and Dist all build clean. Pixel evidence rather than draw counts,
+because a view-ordering bug leaves the counts identical: backbuffer screenshots before (at `HEAD`)
+and after are **identical across the whole viewport** - the only differing pixels in the frame are
+editor chrome (the Stats panel's own counters and a content-browser icon). Frame-by-frame through
+the new one-frame async window: frame 0 renders the procedural sky fallback, frame 1 renders the
+baked skybox, frames 2-7 are pixel-identical to frame 1 - so the bake is right on the frame it is
+submitted in, with no pop and no settling. Scene render unchanged at 40 meshes / 32 culled / 5
+instanced draws / 7 draw calls across four hot-reload rounds, 48 reloads, 0 recompiles, 0 errors.
+Release runtime boots with 0 errors, 0 warnings, 10 entities, and bakes its environment.
+
+### Follow-up — cached bake shaders and a shared BRDF LUT (done)
+
+The two items the IBL note left open, both taken. The four bake programs and the BRDF LUT are
+created once and released by `Renderer::Shutdown` while bgfx is still alive - the ownership rule
+`MeshShader.h` already spells out, since static destruction runs after `bgfx::shutdown`.
+
+The LUT is the split-sum approximation's second term: a pure function of the BRDF over
+(NdotV, roughness), with no dependence on the HDR. It was being baked byte-identically for every
+environment. `Environment::GetBRDFLut()` now returns the shared handle, no environment owns it, and
+the destructor's handle list dropped from four textures to three.
+
+| Environment load, submit thread (Release) | |
+| --- | --- |
+| Before this follow-up | 3.9-5.1 ms |
+| First load in a process (shaders + LUT still paid for) | 6.3 ms |
+| Every load after that | **2.2-3.3 ms** |
+
+A bake takes 67 views the first time and **66** after, which is the cheapest possible proof that the
+LUT pass is genuinely skipped rather than merely reusing a handle - and it is logged as such during
+verification.
+
+**Verification.** Debug, Release and Dist build clean. Three environments created in one session:
+view counts 67 / 66 / 66, and the rendered viewport is **pixel-identical between the first and the
+second** - so a shared LUT produces the same image as a freshly baked one. Against `HEAD` (i.e. all
+the IBL work plus this follow-up versus none of it) the viewport is **pixel-identical for both the
+first and the second environment load**.
+
+**A pre-existing leak, measured rather than assumed.** bgfx's Debug shutdown reports leaked texture
+handles when an `Environment` outlives `Renderer::Shutdown`: its destructor then sees
+`IsGpuAlive() == false` and returns without freeing. `HEAD` leaks **4** textures in that path; this
+change leaks **3**, because the LUT is no longer among the object's own handles. Fixed in the
+follow-up below.
+
+### Follow-up — the Environment shutdown leak (done)
+
+One line, and the interesting part is where it goes. I had guessed "scene teardown ordering"; it was
+not that.
+
+`Renderer3D::Shutdown()` releases twelve GPU-holding members of its file-scope `static s_Data` and
+missed the thirteenth: **`s_Data.ActiveEnvironment`**, the environment the last frame drew with.
+`ResetFrameState()` and `SubmitSkyLight()` both clear it, so it looked handled; neither runs at
+shutdown. A static is destroyed after `main()` returns - after `~BgfxContext` has lowered
+`IsGpuAlive` and called `bgfx::shutdown` - so `~Environment` took its is-alive early-out and its
+three cubemaps were never released. This is precisely the trap `MeshShader.h` documents, one field
+along.
+
+Clearing it destroys nothing early: the scene still owns the environment through an `AssetRef` and
+dies during the LayerStack unwind, which is inside the window's lifetime. It only stops a static
+from being the last owner.
+
+| Debug editor, two environments created, closed normally | `BGFX LEAK` |
+| --- | --- |
+| `HEAD` | 4 textures |
+| After the shared-LUT follow-up | 3 textures |
+| **After this fix** | **none** |
+
+**Verification.** Debug, Release and Dist build clean. The leak-check run reaches `Shutdown
+complete.` with both environments baked and reports no leaked handles at all - a clean shutdown
+rather than an early exit, which is the thing to confirm when a check passes by producing no
+output. Release scene regression unchanged: 40 meshes / 32 culled / 5 instanced draws / 7 draw
+calls, 48 reloads, 0 recompiles, 0 errors.
+
+Two notes on method, because both cost time. **Release emits no bgfx diagnostics**, so a leak check
+only exists in Debug. And **a process killed by a timeout proves nothing** - shutdown never runs, so
+there is nothing to report. The runtime shares `Renderer3D::Shutdown` and therefore the fix, but it
+has no self-close hook and was not separately leak-tested for that reason.
 
 ---
 

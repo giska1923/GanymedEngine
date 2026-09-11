@@ -4,11 +4,13 @@
 #include "GanymedE/events/KeyEvent.h"
 
 #include "GanymedE/Audio/AudioEngine.h"
+#include "GanymedE/Reflection/Reflection.h"
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 #include "GanymedE/UI/UIEngine.h"
 
 #include "GanymedE/Core/Input.h"
+#include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Core/JobSystem.h"
 #include "GanymedE/Core/KeyCodes.h"
 
@@ -39,6 +41,13 @@ namespace GanymedE {
 		// construction rather than by convention. JobSystem::IsMainThread is only
 		// trustworthy because of that.
 		JobSystem::Init();
+
+		// Before the window, because it needs nothing at all - it only populates entt's meta
+		// context. Anything constructed after this point may assume every component is reflected,
+		// which matters most for a tool or a Sandbox app that builds a Scene before the first
+		// frame. In Debug it self-validates and asserts, so a registration mistake surfaces at
+		// boot rather than the first time a panel draws.
+		Reflection::Init();
 
 		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(
 			WindowProps(m_Specification.Name, m_Specification.Width, m_Specification.Height,
@@ -193,6 +202,12 @@ namespace GanymedE {
 			// this frame instead of a frame later. Outside, because a minimised window has
 			// not stopped background loading, and a queue nobody drains grows without bound.
 			JobSystem::OnUpdate();
+
+			// Immediately after, and for the same reason: a parse that finished on a worker
+			// becomes a usable GPU resource here, in time for the systems that draw with it this
+			// frame. This is the only place the asset layer creates bgfx resources off the
+			// synchronous path.
+			AssetManager::Update();
 
 			// The dormancy gate is a leftover migration kill-switch and is
 			// hard-false now that the scene path runs fully on bgfx; it goes

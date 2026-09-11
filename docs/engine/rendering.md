@@ -257,7 +257,7 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
   [`MeshShader`](../../GanymedEngine/source/GanymedE/Renderer/MeshShader.h), which exists to give
   that cache explicit ownership released before bgfx dies) + albedo color/metallic/roughness
   scalars, albedo/normal/metallic-roughness maps (paths, or embedded compressed bytes for
-  glb-embedded textures so `MeshCache` can persist them), two-sided and transparent flags.
+  glb-embedded textures so the mesh blob can persist them), two-sided and transparent flags.
   `Bind()` uploads the scalars and binds the maps to slots 0–2 (white fallback). A material can
   come from a mesh's own import *or* from a `.gmat` asset — see
   [assets.md](assets.md#materials-gmat); the renderer does not care which.
@@ -274,9 +274,11 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
 
 `SubmitMesh` and `SubmitSkinnedMesh` both take an optional `(const Ref<Material>* overrides,
 uint32_t count)` pair, indexed by `Submesh::MaterialIndex` — a null entry, or an index past the
-end, falls back to the mesh's own material. `RenderSystem` resolves
-`StaticMeshComponent::MaterialOverrides` from handles to `Ref`s once per entity per frame and
-passes the array down.
+end, falls back to the mesh's own material. `RenderSystem` copies
+`StaticMeshComponent::MaterialOverrides` into a reused scratch vector and passes the array down.
+The copy is not a lookup any more — each slot is an `AssetRef<Material>` holding its object — but a
+contiguous `const Ref<Material>*` is still needed, and `AssetRef` is not layout-compatible with
+`Ref`.
 
 Passing the array down rather than looping submeshes at the call site is what lets the **skinned**
 path honour overrides too: its palette staging is internal to `Renderer3D`, so a caller cannot
@@ -298,16 +300,85 @@ Three consequences worth encoding rather than discovering:
   behind it), and the mixed case is verified rather than assumed: a scene of default, overridden and
   skinned draws renders a stable draw count across 100 frames.
 
+## Colour space
+
+**The engine has no sRGB pipeline, and this section exists so that is a recorded decision rather
+than a thing you rediscover.** Textures are sampled as raw `RGBA8` with no `BGFX_TEXTURE_SRGB` flag
+and no shader-side decode; lighting runs in whatever space the texels are already in; and
+`Tonemap.glsl` applies `pow(mapped, 1.0/2.2)` once at the end of the post stack, on the way to an
+8-bit target ImGui shows.
+
+That is not correct, and it is consistent. Albedo authored in sRGB is being lit as though it were
+linear, which makes mid-tones brighter than they should be — and the single gamma at the end hides
+enough of it that everything looks plausible. Fixing it means flagging colour textures sRGB at
+creation, leaving normal/roughness/metallic linear, and re-checking every lighting constant that
+was tuned against the current look. **That is a rendering change with a visible before/after, not a
+side effect of anything else**, which is why the asset compiler deliberately has no `sRGB` config
+key ([assets.md](assets.md#texture-compilation)): a key that changed the look of every scene would
+be smuggling this change in through the back door.
+
+The convention to adopt when it is done is the standard one — albedo and emissive sRGB, everything
+else linear — and the check is a known reference gradient rendering identically before and after
+the *compiler*, then deliberately differently when the sRGB flag lands.
+
+Block compression does not interact with this. BCn stores bits; colour space is a property of how
+the texture is created and sampled, not of the encoded payload.
+
 ## Environment / IBL
 
 [`Environment`](../../GanymedEngine/source/GanymedE/Renderer/Environment.h) bakes an
 equirectangular HDR into: a 512² 5-mip environment cubemap (skybox), a 32² diffuse irradiance map,
-a 128² 5-mip prefiltered specular map, and a 512² BRDF LUT. The bake runs **once, entirely within
-one frame**, across the transient view block starting at `RenderPass::EnvironmentBake` (~67 views:
+a 128² 5-mip prefiltered specular map, and — once per process, not once per environment — a 512²
+BRDF LUT. The bake runs **once, entirely within one frame**, across the transient view block starting at `RenderPass::EnvironmentBake` (67 views:
 faces × mips, twice, + LUT) — valid only because views execute in ID order, so each stage samples
 what a lower-numbered view wrote. bgfx cannot mipmap render targets, so every env mip is rendered
 from the panorama directly. Binding is the caller's job (`Renderer3D` feeds the handles to
 `Shader::SetTexture` per material — samplers belong to shaders, there is no global bind).
+
+Only the upload and the submission are on the submit thread; the panorama is `stbi_loadf`-decoded on
+a worker first (`Environment::Load`, the asset layer's Parse stage — see
+[assets.md](assets.md#what-is-still-synchronous)).
+
+### What every environment shares
+
+Two things are created once and reused, both released by `Renderer::Shutdown` while bgfx is still
+alive — static destruction runs *after* `bgfx::shutdown`, which is how handles left to it leak or
+crash (the reasoning is spelled out in [`MeshShader.h`](../../GanymedEngine/source/GanymedE/Renderer/MeshShader.h)):
+
+- **The four bake programs** (`Equirect`, `Irradiance`, `Prefilter`, `BRDFLut`). They were recreated
+  per environment, at 1.6–1.8 ms of file IO and shader creation for an identical result.
+- **The BRDF LUT.** It is the split-sum approximation's second term — a pure function of the BRDF
+  over (NdotV, roughness), with **no dependence on the HDR**. Baking it per environment produced a
+  byte-identical 512² texture every time and cost a view, a framebuffer and a draw per load.
+  `Environment::GetBRDFLut()` returns the shared handle; no environment owns it, and no
+  environment's destructor frees it.
+
+Together these take a second and subsequent environment load from ~4–5 ms of submit-thread work to
+**2.2–3.3 ms**. The first load in a process still pays for both (~6.3 ms).
+
+### The IBL bake is a prepass
+
+`RenderPass::EnvironmentBake = 1` — **before the shadow and scene passes**, not after them. That
+placement is the whole reason the bake is cheap, and it was not always so.
+
+The block used to sit at 32, after `SceneHDR`. An environment applied at the top of a frame was
+therefore unreadable by that same frame's scene pass, and the bake worked around it by calling
+`bgfx::frame()` **twice, inline**, to force its own frames through. That cost 24–26 ms of blocked
+main thread (measured, Release) — it was the larger half of the load hitch — and on the way past it
+presented two half-built frames.
+
+Ordering the bake first makes it correct within the frame it is submitted in, so the forced frames
+are gone. Verified frame by frame with backbuffer screenshots: the frame an environment applies in
+already renders the baked skybox, and the following frames are pixel-identical to it.
+
+Two consequences worth knowing if you add a pass:
+
+- **Everything that samples the bake must sort above 67.** The pass table leaves views 1–68 to the
+  bake and starts the frame proper at `Shadow = 69`; `ViewAllocator` asserts against `Shadow` rather
+  than counting. A bake takes 67 views the first time and **66 after that** — see the BRDF LUT below.
+- Destroying the bake's 67 transient framebuffers immediately after submission is safe: bgfx defers
+  handle destruction until the frame that used them has been rendered. The cube textures they wrote
+  into are owned by the `Environment`.
 
 ## SceneRenderer & the post stack
 
@@ -320,7 +391,7 @@ scene HDR (RGBA16F + entityID + D24S8)
   → tonemap (ACES-style, exposure; bloom composited additively in HDR before the curve)
   → FXAA (optional)
   → composite (LDR, shown in the editor viewport via GetFinalImageRendererID)
-  → game UI (RmlUi, RenderPass::UI = 28) composited into that same LDR target
+  → game UI (RmlUi, RenderPass::UI = 96) composited into that same LDR target
 ```
 
 (Or, with `SetOutputToBackbuffer(true)`, the final post pass and the UI both land on the backbuffer
@@ -347,11 +418,11 @@ composite target unwritten, i.e. a black image.
 ### Backbuffer output mode
 
 `SetOutputToBackbuffer(true)` sends the **final** pass to the backbuffer instead of the composite
-framebuffer — FXAA at view 25 when active, tonemap at view 24 when not. It replaces
+framebuffer — FXAA at view 93 when active, tonemap at view 92 when not. It replaces
 `Framebuffer::BindToView` with `setViewFrameBuffer(view, BGFX_INVALID_HANDLE)` +
 `setViewRect(view, 0, 0, w, h)`. A host in this mode also passes `nullptr` to `UIEngine::SetTarget`,
-which routes RmlUi's view 28 at the backbuffer too. View order stays monotonic: 0 (context touch) <
-24/25 (final post) < 28 (UI). This is the mode `GanymedRuntime` runs in; the editor never touches it.
+which routes RmlUi's view 96 at the backbuffer too. View order stays monotonic: 0 (context touch) <
+92/93 (final post) < 96 (UI). This is the mode `GanymedRuntime` runs in; the editor never touches it.
 
 Consequences:
 
@@ -368,7 +439,7 @@ Consequences:
 **Retarget rather than a dedicated present pass** — the divergence from the production norm.
 Unity/Unreal both end on a present/upscale pass because it carries resolution scaling, HDR-display
 output, and platform present semantics. None of those exist here yet, and a present pass would cost a
-new view ID *above* `RenderPass::UI = 28` (since it must composite a UI'd image) plus a new shader:
+new view ID *above* `RenderPass::UI = 96` (since it must composite a UI'd image) plus a new shader:
 `vs_Blit.sc` expects `a_texcoord0` while the PostProcess fullscreen quad supplies only
 `a_Position` as Float2, so it would have to derive UV from position like `vs_FXAA`/`vs_Tonemap` — a
 new program and a new flip-parity surface. The escape hatch is named and deferred to whenever
@@ -394,11 +465,24 @@ invisible. Pick storage is a fixed array because bgfx writes the result memory a
 cross-cutting state:
 
 - `Init/Shutdown` — RenderCommand, Renderer2D, Renderer3D, PostProcess, and releasing `MeshShader`
-  while bgfx is alive.
+  and `Environment`'s shared bake resources while bgfx is alive.
 - **`IsGpuAlive()`** — lowered by `BgfxContext` *before* `bgfx::shutdown()`; every resource
   destructor checks it. This is the systemic fix for the "static outlives bgfx" crash class
   (function-local `static Ref<Shader>` etc.) — the guard makes it safe, but resources should still
   be owned and released explicitly (the guard turns a crash into a leak, and bgfx reports leaks).
+
+  **The rule that follows, and it is easy to miss:** every `Ref<>` a renderer's `static` data holds
+  must be cleared in that renderer's `Shutdown()`. `Renderer3D::Shutdown` clears twelve such members
+  and for a long time missed the thirteenth — `s_Data.ActiveEnvironment`, the environment the last
+  frame drew with. A static's destructor runs after `main()`, by which point `IsGpuAlive()` is false,
+  so `~Environment` took its early-out and bgfx reported `LEAK: TextureHandle 3` at shutdown (the env
+  cubemap, the irradiance map and the prefiltered map). Clearing it does not destroy anything early —
+  the scene still owns the environment through an `AssetRef` and dies during the LayerStack unwind,
+  which is inside the window's lifetime. It only stops a static from being the last owner.
+
+  Checking this is cheap: run a **Debug** build (Release emits no bgfx diagnostics at all), close it
+  normally, and look for `BGFX LEAK` on stdout. A killed process proves nothing, because shutdown
+  never runs.
 - `GetFrameNumber()` — fed by `BgfxContext` from `bgfx::frame()`; what async readback polls
   against.
 - `SetDebugStatsEnabled` — the F1 stats overlay.

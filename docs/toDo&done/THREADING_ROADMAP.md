@@ -233,11 +233,11 @@ mutex makes it a poor fit for per-task granularity. So: name the threads and wir
 whatever `GE_PROFILE_*` resolves to, and treat "is a real frame profiler worth adopting" as a separate
 question. Do not fold a Tracy adoption into this milestone.
 
-**T3 — First consumer: parallel BCn encode in the asset compiler.** Lands with asset Phase 4.
-Verification is a measured before/after import time on a real scene, reported as numbers.
+**T3 — First consumer: parallel BCn encode in the asset compiler. Done** — landed with asset
+Phase 4; see [T3 — done](#t3--done-2026-09-08) at the bottom.
 
-**T4 — Second consumer: async load.** Lands with asset Phase 5, which owns the risks. This milestone
-contributes the pinned-task drain, the cancel-and-wait `Future`, and the main-thread assert.
+**T4 — Second consumer: async load. Done** — landed with asset Phase 5; see
+[T4 — done](#t4--done-2026-09-09) at the bottom.
 
 ---
 
@@ -367,3 +367,93 @@ runs inside the thing it tests cannot report a hang — check 3 deadlocks rather
 `IsCurrentJobCancelled` regresses. The "does not use freed state under a debug allocator" half of the
 sketch's second check is **not** covered: nothing here runs under a debug allocator. Proving that
 wants ASan or Application Verifier, which is a tooling decision, not a T1 line item.
+
+---
+
+# T3 — done (2026-09-08)
+
+The first consumer is `TextureCompiler`'s block encode, landed with
+[`ASSET_PIPELINE_ROADMAP.md`](ASSET_PIPELINE_ROADMAP.md) Phase 4. Each mip is split into horizontal
+bands of four block rows and dispatched through `JobSystem::ParallelFor`. Bands are safe because the
+per-mip encode is a pure function of (dst, src, width, height): rows of `blockHeight` pixels are
+independent block rows, a band of full width and a block-multiple height is contiguous on both
+sides, and bimg allocates its own scratch per call.
+
+**The measurement, which is what this was for.** 2560×1664 → BC3 with 12 mips, 15 workers,
+optimised encoder, same process:
+
+| | Time |
+| --- | --- |
+| Serial | 597 ms |
+| Parallel | 324 ms, 331 ms |
+
+**1.8×.** The same band split on BC7 measured **4.7×** (30 306 ms → 6 402 ms) on a 256×256.
+
+**The interesting result is why 1.8× and not more, and it is not a scheduler problem.** BC7 through
+bimg is NVIDIA's AVPCL reference encoder at ~10k pixels/second, so the encode dominated everything
+and the split scaled well. Asset Phase 4 then made `auto` mean BC1/BC3 through libsquish, which is
+311× faster — and once the encode is cheap, the *serial* remainder is what is left: mip generation,
+the alpha scan that picks BC1 vs BC3, container allocation, and the DDS write. Amdahl with a
+parallel fraction around 0.55 caps out near 2.2×, and 1.8× is what that looks like measured.
+
+Two consequences worth carrying forward:
+
+- **Making the serial work faster made the parallelism matter less.** The threading milestone's own
+  justification is smaller than it looked before the encoder choice was measured. That is the
+  honest answer to "does this milestone earn its keep": on this consumer, it saves ~270 ms per large
+  texture on a cold import, and nothing at all on a warm one.
+- **Not every encoder is safe to split.** libsquish has static functions and no mutable state; AVPCL
+  writes four file-scope `bool`s per block. They are set to the same constant every call, which
+  makes the race benign in practice — the code refuses to rely on that and encodes BC7 serially.
+  `IsThreadSafeEncoder` in `Platform/Bimg/TextureEncode.cpp` is the list.
+
+**A build finding that gates the whole thing:** unoptimised, bimg's encoders did not finish a
+2560×1664 texture in four minutes. The `bimg` project now builds with `optimize "Speed"` even in
+Debug (plus `NoRuntimeChecks`, since MSVC rejects `/O2` with `/RTC1`). Without that, no measurement
+here is meaningful and the asset compiler is unusable in the configuration everyone develops in.
+
+**T4 remains open** and is asset Phase 5. Nothing in the frame runs on the scheduler yet.
+
+---
+
+# T4 — done (2026-09-09)
+
+The second consumer is the asset layer's Parse stage, landed with
+[`ASSET_PIPELINE_ROADMAP.md`](ASSET_PIPELINE_ROADMAP.md) Phase 5. Every asset load now submits its
+file IO, decode, deserialization and compilation as a job; `AssetManager::Update` applies the
+results on the main thread, once per frame, from `Application::Run`.
+
+**What this milestone contributed, and what it got wrong.**
+
+- **The cancel-and-wait `Future` is the thing that made this safe**, exactly as T1 argued. A scene
+  swap, a shutdown or an `Evict` drops a `Future`, and the drop cannot leave a worker writing into
+  freed state. Closing the editor with three loads pending and four compiles running exits cleanly.
+- **The main-thread assert paid for itself**, though it ended up on `Load` rather than on Apply —
+  which is stronger, and makes the manager's maps lock-free rather than merely correct.
+- **`SubmitToMainThread` was not used.** T1 built it as the bgfx handoff and it is still the right
+  shape for one, but the asset layer wanted a *drain point it owns*: `AssetManager::Update` iterates
+  its own pending set, applies what is ready, and ages the handoff window. Pushing per-asset
+  closures onto a shared queue would have scattered that bookkeeping. The queue remains unused by
+  anything, which is worth knowing before adding to it.
+
+**A finding that cost real time, now in [`core.md`](../engine/core.md#job-system):** `Future::Wait()`
+pumps the queue on the *calling* thread and will often run the very job it is waiting on. That is
+what makes `AssetManager::WaitFor` synchronous for free — and it is why the first attempt to
+negative-test the main-thread assert proved nothing at all, because the "worker" job ran on main.
+A test that needs work on a worker must poll `IsReady()`.
+
+**The measurement.** Five textures and a mesh, cold compiled tree:
+
+| | Time |
+| --- | --- |
+| Forced synchronous (`Get` then `WaitFor` each) | 845 ms, blocking the frame loop |
+| Asynchronous, worst steady frame | ~10 ms |
+
+~970 ms of compile work ran while the frame loop stayed at 7–11 ms. Unlike T3 — where making the
+encoder faster made the threading matter less — this is the consumer that justifies the milestone:
+the work is inherently serial per asset, there is a lot of it, and none of it needs the main thread
+until the last step.
+
+**Still open from this milestone:** decision 4's Jolt consolidation. Two pools of
+`hardware_concurrency() - 1` threads is still the state, and now there is a third source of load on
+the scheduler. Worth measuring before assuming it is harmless.
