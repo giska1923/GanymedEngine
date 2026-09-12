@@ -3,6 +3,8 @@
 #include "Event.h"
 #include "GanymedE/Core/KeyCodes.h"
 
+#include <sstream>
+
 namespace GanymedE {
 	class GE_API KeyEvent : public Event {
 	public:

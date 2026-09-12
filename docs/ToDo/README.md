@@ -32,7 +32,7 @@ documented.** A file here is a promise, not a description.
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred | 1 (parked) |
 | [reflection.md](reflection.md) | Apply-to-prefab, template cache, multi-entity editing gaps | 4 |
 | [assets.md](assets.md) | Dependency hashing, parse backpressure | 2 |
-| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, frame instrumentation | 3 |
+| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, whether to adopt Tracy | 3 |
 
 **Priority, as a recommendation rather than a schedule:** **Linux is now built and run** — all
 three configurations, editor and runtime, with the status table in
@@ -46,8 +46,9 @@ render, pick and agree on colour. Its one remaining entry, **MSAA, is parked on 
 is diagnosed and the fix is one line, but whether MSAA is wanted at all is the open question, and
 FXAA already ships. Nothing there blocks anything else.
 
-That leaves frame instrumentation — really the question of whether to adopt Tracy — as the largest
-open item, with macOS behind it.
+The frame loop is instrumented and the profiler backend was rewritten to make that affordable, so
+what is left of that item is only the Tracy question — worth having, blocking nothing. macOS is the
+largest genuinely open item.
 
 Threading is **done**: T1–T4 and decision 4 have all landed, so there is no threading file here any
 more. Jolt now runs on `Core/JobSystem` — see [physics.md](../engine/physics.md#the-job-system).

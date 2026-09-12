@@ -3,6 +3,8 @@
 #include "Event.h"
 #include "GanymedE/Core/MouseButtonCodes.h"
 
+#include <sstream>
+
 namespace GanymedE {
 	class GE_API MouseMovedEvent : public Event {
 	public:

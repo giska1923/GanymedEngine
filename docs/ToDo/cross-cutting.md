@@ -47,19 +47,26 @@ gcc 11.4), which leaves three things genuinely untested rather than merely unmen
 A single run on a native Linux box would close all three at once. Nothing here is known to be
 broken; it is simply unmeasured, and recorded so the Linux row is not read as more than it is.
 
-## The frame loop is nearly uninstrumented
+## A frame profiler (Tracy) is still worth considering
 
-There are ~90 `GE_PROFILE_FUNCTION` scopes in the engine, but almost none in the per-frame path — so
-with `GE_PROFILE` on, `GanymedEProfile-Runtime.json` is mostly asset and job activity rather than a
-frame breakdown. A trace that looks empty is usually that, not a broken session.
+The frame loop **is** instrumented now, and the `Instrumentor` behind it was rewritten to afford it
+(per-thread buffers, ~72 ns a scope against ~3–7 us before) — see
+[build-and-tooling.md](../engine/build-and-tooling.md#profiling--debug-tooling). What is closed is
+"there is no frame breakdown". What stays open is the question T2 kept separate, now with the cheap
+option actually taken rather than assumed:
 
-Found during T2. Deliberately not fixed there: scattering scopes through the frame loop is a
-different decision from wiring the scheduler's callbacks, and it runs into the same objection T2
-recorded — `Instrumentor::WriteProfile` takes a process-wide mutex and flushes per record, which is
-a poor fit for per-frame granularity.
+Tracy would add, and the current writer will not grow cheaply:
 
-**The real question behind this one is whether to adopt a frame profiler** (Tracy being the obvious
-candidate) rather than to instrument more of the frame by hand.
-[`THREADING_ROADMAP.md`](../history/THREADING_ROADMAP.md) deliberately kept that question separate
-from T2, and it is still separate — but it is the decision that would resolve this item, so making
-it is the next step rather than adding scopes.
+- **A live view while the app runs**, instead of open-the-app, close-it, load a JSON. This is the
+  big one, and it is most of why people adopt it.
+- **GPU zones.** The engine's GPU time comes from the bgfx stats overlay (F1) and sits in a
+  different window from the CPU trace, so correlating a slow frame to a slow pass is done by eye.
+- **Lock contention and allocation tracking**, neither of which this writer can see at all.
+- **Statistics across frames** — the current workflow answers "what happened in this capture" by
+  loading it into Python, which is how the numbers in the build doc were produced.
+
+Against: it is a new third-party dependency plus premake integration plus a viewer binary to build,
+and the chrome://tracing pipeline now does the thing it was failing to do. Nothing is blocked on it.
+
+The honest trigger for revisiting: the first time a frame problem needs GPU and CPU on one timeline,
+or the first time the capture-then-load loop is the slow part of an investigation.

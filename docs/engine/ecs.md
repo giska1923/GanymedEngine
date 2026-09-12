@@ -227,6 +227,13 @@ Owned by `Scene`; registration order **is** execution order. The built-in regist
 `Scene`'s constructor) is: `PhysicsSystem` → `NativeScriptSystem` → `LuaScriptSystem` →
 `AnimationSystem` → `TransformSystem` → `CameraSystem` → `AudioSystem` → `ParticleSystem` → `RenderSystem`.
 
+- **Profiling scopes live here, not in the systems.** `OnUpdate`/`OnUpdateEditor` wrap each
+  system's call in a `GE_PROFILE_SCOPE_DYNAMIC(system->Name())`, so one span per system per frame
+  falls out of the single dispatch point and a system added later is covered without anyone
+  remembering to. `Name()` already existed for the ordering diagnostics above, and returns a
+  string literal — which is what the dynamic-name macro requires, since the profile record
+  borrows the pointer rather than copying it. See
+  [build-and-tooling.md](build-and-tooling.md#profiling--debug-tooling).
 - **Lifecycle runs opposite to update order**: `OnRuntimeStart` iterates in reverse so scripts are
   instantiated *before* `PhysicsScene::Start` builds bodies (a rigid body added in a script's
   `OnCreate` must be in the initial simulation); `OnRuntimeStop` runs forward, stopping physics

@@ -81,6 +81,8 @@ namespace GanymedE {
 
 	void SceneRenderer::BeginFrame()
 	{
+		GE_PROFILE_FUNCTION();
+
 		// Under bgfx a pass is a view, not a bound framebuffer: point the scene
 		// view at the HDR target and everything submitted to it lands there.
 		m_SceneFramebuffer->BindToView(RenderPass::SceneHDR);
@@ -137,6 +139,8 @@ namespace GanymedE {
 
 	Ref<Framebuffer> SceneRenderer::RenderBloom()
 	{
+		GE_PROFILE_FUNCTION();
+
 		if (m_BloomMips.size() < 2 || !m_BloomDownsampleShader || !m_BloomUpsampleShader)
 			return nullptr;
 
@@ -204,6 +208,8 @@ namespace GanymedE {
 
 	void SceneRenderer::EndFrame()
 	{
+		GE_PROFILE_FUNCTION();
+
 		Ref<Framebuffer> bloom;
 		if (m_Settings.BloomEnabled)
 			bloom = RenderBloom();

@@ -416,14 +416,26 @@ everything. Packaging that tree is the distribution milestone's job.
   (Startup/Runtime/Shutdown), written to `GanymedEProfile-<phase>.json` beside the executable and
   gitignored by the blanket `*.json` rule. Enable by setting `GE_PROFILE` to 1 in
   [`Instrumentor.h`](../../GanymedEngine/source/GanymedE/Debug/Instrumentor.h); it is **0** by
-  default, so the ~90 `GE_PROFILE_FUNCTION` scopes in the engine compile to nothing.
-  - The job system's threads appear as named lanes (`GE Main`, `GE Worker N`) whether or not
-    profiling is on, and contribute idle/wait/worker-lifetime spans when it is — see
-    [core.md](core.md#thread-naming-and-profiler-callbacks), including why those wait spans are
-    expensive enough to distort what they measure.
-  - Note what the phase split means in practice: the frame loop itself carries almost no
-    `GE_PROFILE_FUNCTION` scopes today, so `-Runtime.json` is mostly asset and job activity rather
-    than a frame breakdown. A trace that looks empty is usually that, not a broken session.
+  default, so every scope compiles to nothing.
+  - `-Runtime.json` **is** a frame breakdown: `RunLoop` per frame, one span per ECS system (named
+    from `ISystem::Name()` at the single `SystemManager` dispatch), the scene renderer's passes,
+    ImGui begin/end, and the present. A representative editor capture — 1,567 frames, 68,713
+    spans — read: median frame 6.63 ms, and within it `WindowsWindow::OnUpdate` (the bgfx submit
+    and present, i.e. mostly vsync) 4.16 ms, ImGui 1.17 ms, `Scene::OnUpdateEditor` 0.49 ms, of
+    which `RenderSystem` was 0.28 ms and every other system under 36 us.
+  - Threads appear as **named lanes** (`GE Main`, `GE Worker N`). This needs
+    `GE_PROFILE_THREAD`, which `JobSystem` calls beside `SetCurrentThreadName`: a chrome trace
+    carries no OS thread names, so the OS-level name a debugger shows is invisible here. Workers
+    also contribute idle/wait/lifetime spans — see
+    [core.md](core.md#thread-naming-and-profiler-callbacks).
+  - **The trace is written at `EndSession`, not as it goes.** Close the app normally to get one;
+    a process killed outright (taskkill, a `timeout` wrapper, stopping the debugger) leaves an
+    empty `-Runtime.json`, because its records are still in memory. That is the cost of the
+    buffering below, and it is the usual bargain for a buffered profiler.
+  - Per-thread buffers are capped at `kProfileRecordsPerThread` (1<<18 records, 6 MB). Overflow
+    is **counted and logged by name** at `EndSession` rather than silently truncating; raise the
+    constant if you hit it. At a few hundred scopes a frame the main thread holds roughly fifteen
+    seconds at 60 fps.
 - **F1** in any app toggles bgfx's stats/debug-text overlay (draw counts, GPU/CPU timings).
 - The editor Stats panel shows Renderer2D/3D counters (draws, quads, meshes, frustum-culled,
   instanced, transparent) plus live post-processing and physics-debug toggles.

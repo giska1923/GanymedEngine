@@ -137,12 +137,19 @@ namespace GanymedE {
 			if (threadNum == 0)
 			{
 				SetCurrentThreadName("GE Main");
+				GE_PROFILE_THREAD("GE Main");
 				return;
 			}
 
 			char name[24];
 			std::snprintf(name, sizeof(name), "GE Worker %u", threadNum);
+
+			// Both, because they are read by different things: SetCurrentThreadName is what a
+			// debugger and a crash dump show, and GE_PROFILE_THREAD is what the trace viewer
+			// shows. A chrome://tracing JSON carries no OS thread names, so without the second
+			// call the trace is a wall of numeric thread ids.
 			SetCurrentThreadName(name);
+			GE_PROFILE_THREAD(name);
 		}
 
 		// ---- Profiler callbacks ---------------------------------------------------------
@@ -159,7 +166,7 @@ namespace GanymedE {
 #if GE_PROFILE
 		// GE_PROFILE_SCOPE is an RAII scope and cannot span two separate callback functions,
 		// so the span is assembled by hand: a start timestamp per thread per category, and
-		// Instrumentor::WriteProfile on the matching stop.
+		// Instrumentor::Record on the matching stop.
 		//
 		// Three categories rather than one slot, because they nest - a thread inside
 		// waitForTaskComplete can go on to suspend, and a single slot would have the inner
@@ -192,12 +199,12 @@ namespace GanymedE {
 				return;
 
 			const auto end = ProfileClock::now();
-			const FloatingPointMicroseconds start{ slot.time_since_epoch() };
-			const auto elapsed =
-				std::chrono::time_point_cast<std::chrono::microseconds>(end).time_since_epoch()
-				- std::chrono::time_point_cast<std::chrono::microseconds>(slot).time_since_epoch();
 
-			Instrumentor::Get().WriteProfile({ name, start, elapsed, std::this_thread::get_id() });
+			Instrumentor::Get().Record(name,
+				std::chrono::duration_cast<std::chrono::nanoseconds>(
+					slot.time_since_epoch()).count(),
+				std::chrono::duration_cast<std::chrono::nanoseconds>(end - slot).count());
+
 			slot = ProfileClock::time_point{};
 		}
 
@@ -239,13 +246,15 @@ namespace GanymedE {
 			callbacks.threadStop = &OnSchedulerThreadStop;
 
 #if GE_PROFILE
-			// Stated plainly, because turning GE_PROFILE on and being surprised by this would
-			// waste an afternoon: these fire on every spin-to-suspend transition on every
-			// worker, and Instrumentor::WriteProfile takes a process-wide mutex and flushes
-			// to disk per record. With an idle pool that is a trace dominated by idleness,
-			// and contention the scheduler would not otherwise have. It is wired anyway
-			// rather than left as a retrofit, and "is a real frame profiler worth adopting"
-			// is the separate question THREADING_ROADMAP.md keeps it separate from.
+			// These fire on every spin-to-suspend transition on every worker, so an idle pool
+			// still produces a trace dominated by idleness - that part is inherent to what the
+			// callbacks mean, and is worth knowing before turning GE_PROFILE on.
+			//
+			// What is no longer true is the cost: this used to feed a writer that took a
+			// process-wide mutex and flushed to disk per record, which added contention the
+			// scheduler would not otherwise have had. Records now go to a per-thread buffer
+			// with no lock and no I/O, so a wait span costs about 17 ns on a worker rather
+			// than several microseconds. See Instrumentor.h.
 			callbacks.waitForNewTaskSuspendStart = &OnWaitForNewTaskSuspendStart;
 			callbacks.waitForNewTaskSuspendStop = &OnWaitForNewTaskSuspendStop;
 			callbacks.waitForTaskCompleteStart = &OnWaitForTaskCompleteStart;

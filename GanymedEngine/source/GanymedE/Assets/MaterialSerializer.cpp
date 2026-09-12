@@ -11,6 +11,8 @@
 #include <fstream>
 #include <yaml-cpp/yaml.h>
 
+#include <sstream>
+
 namespace GanymedE {
 
 	namespace {
