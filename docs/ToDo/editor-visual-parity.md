@@ -103,12 +103,12 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | 2 | Icon font in the atlas; most panels still unlabeled | very high | medium | 0 **done** (play/stop uses `ICON_LC_*`; remaining chrome in 4–6) |
 | 3 | Montserrat (geometric display face) instead of a UI grotesque | high | low | 0 **done** (Inter; Montserrat remains for RmlUi HUD) |
 | 4 | Noisy near-identical greys; rounding on | high | low | 1 **done** |
-| 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 helpers **done**; outliner consumes in 4 **done**; 5–6 remain |
+| 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 helpers **done**; outliner consumes in 4 **done**; inspector headers in 5 **done**; 6 remains |
 | 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 **done** |
 | 7 | Toolbar is a docked window with one centred button | high | low | 2 **done** |
-| 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `OverflowMenuButton` in 3, used in 5) |
+| 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `OverflowMenuButton` in 3, used in 5 **done**) |
 | 9 | No status bar | medium | low | 7 |
-| 10 | Inspector component headers are ImGui `CollapsingHeader`s, not full-width `#1A1A1A` rows with icon + eye + `•••` | medium | medium | 5 |
+| 10 | Inspector component headers are ImGui `CollapsingHeader`s, not full-width `#1A1A1A` rows with icon + eye + `•••` | medium | medium | 5 **done** (eye omitted: no component-enable) |
 | 11 | Content Browser: no breadcrumb, no folder sidebar, no search, no item count, no view toggle | medium | high | 6 |
 | 12 | Viewport has no header row (camera/quality/visualizers) and no transform readout | medium | medium | 8 |
 | 13 | Hard-coded colours scattered across 5 files (see below) | low visually, high for maintenance | low | 1 **done** |
@@ -388,7 +388,7 @@ that participates in an edit gesture owns `ActiveId` for the whole gesture via o
 type icons + prefab `Link` names + full-width selection (`TextOnAccent` primary, 40 % `Accent`
 secondary) + editor-side eye/lock UUID sets. Window title stays **Scene Hierarchy** so the dock
 ini does not churn. Did **not** split Properties out: the inspector undo protocol is load-bearing
-and phase 5 edits `DrawComponent` in place. Did **not** stub sort / filter-dropdown / view-options
+and phase 5 edited `DrawComponent` in place. Did **not** stub sort / filter-dropdown / view-options
 — no backing behaviour. Eye hides the subtree from `RenderSystem::OnUpdateEditor` via
 `EditorViewFilter` (play still draws). Lock blocks viewport pick and the gizmo. Live description:
 [editor.md](../editor/editor.md#scene-hierarchy-panel).
@@ -417,7 +417,7 @@ Cold War's outliner is the panel that most defines the look. Five changes, in or
    secondary stays readable — currently they are indistinguishable.
 
 The hierarchy panel also hosts the inspector. Properties was **not** split out: the undo commit
-boundary is load-bearing, and phase 5 will edit `DrawComponent` in place.
+boundary is load-bearing, and phase 5 edited `DrawComponent` in place.
 
 - **Files:** `Panels/SceneHierarchyPanel.cpp/.h`, `EditorLayer.cpp/.h`, `EditorWidgets.h/.cpp`
   (`RowActionIcons` cell width), `SceneSingletons.h`, `RenderSystem.cpp/.h`.
@@ -428,7 +428,18 @@ boundary is load-bearing, and phase 5 will edit `DrawComponent` in place.
 
 ---
 
-### Phase 5 — Inspector component headers
+### Phase 5 — Inspector component headers — **done**
+
+Hand-drawn `ChromeBg` rows in `DrawComponent<T>` (chevron, per-type icon, Inter Medium name,
+override `*`, `OverflowMenuButton` → Remove). `GetActiveID` still runs *after* the header.
+Add Component is a full-width accent-outlined button at the bottom of the stack. Properties is
+`BeginPanel` so headers reach the edges. **Omitted** the per-component eye (no enable flag) and
+Copy/Paste Component (not chrome — type-erased clipboard + paste/undo). Inner `Attr::Section`
+`CollapsingHeader`s in `EditorInspector.cpp` were left alone; they sit inside the commit window
+and already use `Header = ChromeBg`. Live description:
+[editor.md](../editor/editor.md#properties-drawn-by-the-same-panel).
+
+The spec that was executed:
 
 Cold War's inspector is a stack of **full-width `#1A1A1A` rows** on a `#313131` panel: chevron, type
 icon, name, then right-aligned eye + `•••`. Ganymed uses `ImGui::CollapsingHeader`, whose default is
@@ -629,7 +640,7 @@ menu buttons that move the window instead of opening.
 | 2 — toolbar geometry | **done** |
 | 3 — furniture helpers | **done** |
 | 4 — outliner | **done** |
-| 5 — inspector headers | 1 day |
+| 5 — inspector headers | **done** |
 | 6 — asset browser | 1.5 days |
 | 7 — status bar | 0.5 day |
 | 8 — viewport bars | 1 day |
@@ -659,5 +670,5 @@ as phase 1 does.
    light glyphs was rejected: it inverts the selected-row treatment.
 4. **Outliner eye/lock storage** — editor-side `unordered_set<UUID>` (recommended: honest about
    being an editor filter) or real components that serialize?
-5. **Properties split** — move the inspector out of `SceneHierarchyPanel.cpp` (1642 lines) during
-   phase 4, or leave it and accept touching the same file in phases 4 and 5?
+5. **Properties split** — left in `SceneHierarchyPanel` through phase 5. Splitting is still worth
+   doing, but it is a file move, not visual work, and it is not required for the remaining phases.

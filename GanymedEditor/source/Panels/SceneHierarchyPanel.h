@@ -63,12 +63,15 @@ namespace GanymedE {
 
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
+		void DrawAddComponentButton();
 		void DrawCreateMenu();
 		void RebuildFilterVisibility();
 		bool MarkFilterVisible(Entity entity);
 
-		// One inspector section. `uiFunction` returns whether any widget inside it edited the
-		// component this frame - see the commit-boundary protocol in the .cpp.
+		// One inspector section. The chrome header (chevron / icon / name / •••) is drawn
+		// *before* the ActiveId window; `uiFunction` is the only thing inside it.
+		// `uiFunction` returns whether any widget inside the body edited the component
+		// this frame - see the commit-boundary protocol in the .cpp.
 		template<typename T, typename UIFunction>
 		void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction);
 

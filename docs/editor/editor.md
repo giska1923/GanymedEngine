@@ -122,7 +122,7 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-Live panels are not all wrapped yet; the outliner is (phase 4), inspector/browser follow in 5–6 of
+The outliner and Properties are wrapped (`BeginPanel`); Content Browser follows in phase 6 of
 [editor-visual-parity.md](../ToDo/editor-visual-parity.md).
 
 ## EditorLayer
@@ -401,9 +401,8 @@ Entity API — legal because panels run outside the system update.
 
 The panel uses `BeginPanel` (padding 0) so the toolbar and column header reach the edges. The tree
 itself is a zero-padding child under the header, so eye/lock/link cells line up with
-`ColumnHeaderRow`. Properties is still a separate `Begin("Properties")` from this class; it was
-not split out this phase — the inspector undo protocol is load-bearing and phase 5 edits
-`DrawComponent` in place.
+`ColumnHeaderRow`. Properties is a second `BeginPanel("Properties")` from this class — not split
+out, because the inspector undo protocol is load-bearing and lives in `DrawComponent`.
 
 - **Toolbar:** `+` create (Empty Entity / Instantiate Prefab — the same items as the blank-space
   menu) and a `SearchField`. Sort / filter-dropdown / view-options are omitted: they have no
@@ -439,10 +438,27 @@ not split out this phase — the inspector undo protocol is load-bearing and pha
 
 ### Properties (drawn by the same panel)
 
-Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, animator, script, audio source, audio listener, particle emitter, rigid body, colliders, one
-`DrawAddComponentEntry<T>` line each); one collapsible section per component
-(`DrawComponent<T>` helper with a remove-component menu).
+Also `BeginPanel` (padding 0) so component headers reach the window edges. Tag and prefab
+controls are indented 8 px; the header rows are not.
+
+Tag edit (full-width `InputText`, one undo command per typing session). One section per
+component type every selected entity has. **Add Component** is a full-width accent-outlined
+button at the **bottom** of the stack (every type not already present — camera, sprite, lights,
+sky light, animator, script, audio source, audio listener, particle emitter, rigid body,
+colliders; one `DrawAddComponentEntry<T>` line each).
+
+Each section is a 26 px `ChromeBg` row (`Theme().RowHeight`): chevron (`ICON_LC_CHEVRON_RIGHT` /
+`_DOWN`), a per-type Lucide icon (not the entity's dominant-component icon), the name in Inter
+Medium, a blue `*` when `IsComponentOverridden<T>`, and a right-aligned `OverflowMenuButton`
+whose menu is **Remove component**. There is no per-component eye: Ganymed has no
+component-enable flag, and a dead eye is worse than a missing one. Copy/Paste Component is
+also omitted — that is a new editing feature (type-erased clipboard, paste onto an entity that
+may already have the component, multi-select, undo), not chrome.
+
+Open state uses the same `ImGuiStorage` key `TreeNodeEx((void*)typeid(T).hash_code())` used to,
+so `imgui.ini` collapsed/expanded sections survive the restyle. Inner `Attr::Section`
+`CollapsingHeader`s in the reflected drawer are field groups inside the body; they already pick
+up `Header = ChromeBg` from `ApplyTheme` and were not restyled.
 
 **The section contract**: `uiFunction` is `bool(T&)` — "did any widget in this section edit the
 component this frame", the OR of the returns the widgets already produce. The rule it establishes,
@@ -463,6 +479,12 @@ after-value then. Widgets with no active phase — a drag-drop assignment landin
 report their edit and commit in the same frame. A pending edit no frame of which reported an edit
 is dropped, which is what makes a click-without-drag and an opened-then-closed combo free. If the
 section stops being drawn mid-gesture, an end-of-frame flush commits what was recorded.
+
+**Header items sit outside that window.** The chevron, type icon, name, and `OverflowMenuButton`
+are submitted *before* the `GetActiveID()` read. Clicking them cannot mint a `ComponentEditCommand`
+— `activeOnEntry` already equals the header item, so the body sees no ActiveId change. Inner
+`Attr::Section` `CollapsingHeader`s sit *inside* the window; a click that grabs ActiveId with
+`Edited` staying false is dropped at commit, same as any click-without-drag.
 
 ### The generic (reflected) inspector
 
