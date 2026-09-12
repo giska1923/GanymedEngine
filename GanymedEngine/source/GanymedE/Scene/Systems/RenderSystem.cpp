@@ -6,6 +6,7 @@
 #include "GanymedE/Scene/SceneSingletons.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/EditorCamera.h"
+#include "GanymedE/Renderer/Camera.h"
 #include "GanymedE/Renderer/Environment.h"
 #include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Renderer/ParticleRenderer.h"
@@ -325,20 +326,57 @@ namespace GanymedE {
 		RebuildEditorHidden();
 
 		ECS::SingletonAccessView<RenderContext> renderView{ m_Scene };
-		EditorCamera* camera = renderView.Get()->EditorViewCamera;
-		GE_CORE_ASSERT(camera, "Editor update without an active editor camera");
-		if (!camera)
+		const auto ctx = renderView.Get();
+		EditorCamera* editorCam = ctx->EditorViewCamera;
+		GE_CORE_ASSERT(editorCam, "Editor update without an active editor camera");
+		if (!editorCam)
 			return;
 
-		Renderer3D::BeginScene(*camera);
+		// Viewport dropdown: look through a scene CameraComponent when PreviewCamera
+		// resolves. Stale UUIDs (deleted camera) fall back to the editor camera.
+		const Camera* previewCam = nullptr;
+		glm::mat4 previewWorld{ 1.0f };
+		if (ctx->PreviewCamera != UUID{ 0 })
+		{
+			Entity entity = m_Scene.FindEntityByUUID(ctx->PreviewCamera);
+			if (entity && entity.HasComponent<CameraComponent>())
+			{
+				previewCam = &entity.GetComponent<CameraComponent>().Camera;
+				previewWorld = m_Scene.GetWorldSpaceTransform(entity);
+			}
+		}
+
+		glm::vec3 camPos, camRight, camUp;
+		if (previewCam)
+		{
+			Renderer3D::BeginScene(*previewCam, previewWorld);
+			camPos = glm::vec3(previewWorld[3]);
+			camRight = glm::vec3(previewWorld[0]);
+			camUp = glm::vec3(previewWorld[1]);
+			const float rl = glm::length(camRight);
+			const float ul = glm::length(camUp);
+			camRight = rl > 0.0f ? camRight / rl : glm::vec3(1.0f, 0.0f, 0.0f);
+			camUp = ul > 0.0f ? camUp / ul : glm::vec3(0.0f, 1.0f, 0.0f);
+		}
+		else
+		{
+			Renderer3D::BeginScene(*editorCam);
+			camPos = editorCam->GetPosition();
+			camRight = editorCam->GetRightDirection();
+			camUp = editorCam->GetUpDirection();
+		}
+
 		SubmitLightsAndSky();
 		Renderer3D::DrawGrid();
 		SubmitMeshes();
-		SubmitParticles(camera->GetPosition(), camera->GetRightDirection(), camera->GetUpDirection());
+		SubmitParticles(camPos, camRight, camUp);
 		DrawColliderGizmos();
 		Renderer3D::EndScene();
 
-		Renderer2D::BeginScene(*camera);
+		if (previewCam)
+			Renderer2D::BeginScene(*previewCam, previewWorld);
+		else
+			Renderer2D::BeginScene(*editorCam);
 		SubmitSprites();
 		Renderer2D::EndScene();
 	}

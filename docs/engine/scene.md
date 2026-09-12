@@ -283,7 +283,9 @@ begins Renderer3D with the main camera (or the editor fallback), submits lights,
 meshes, **particles** (billboards queued into `ParticleRenderer`, mesh particles as ordinary
 `SubmitMesh` opaques), collider gizmos (or Jolt debug draw when enabled during play), ends the
 scene, then does the 2D pass (sprites) in its own render view. The editor path additionally draws
-the grid. Its ten view declarations are live documentation of exactly what rendering reads.
+the grid, and looks through `RenderContext::PreviewCamera` when the viewport dropdown has selected
+a scene camera (otherwise `EditorViewCamera`). Its ten view declarations are live documentation of
+exactly what rendering reads.
 `SkyView` includes `EntityId` so the editor hide filter can skip a hidden sky light.
 
 The editor outliner eye is honoured only on the editor path: `EditorViewFilter::HiddenEntities`
@@ -319,12 +321,14 @@ Scene-wide state that is genuinely singular lives in `registry.ctx()`
 ([`SceneSingletons.h`](../../GanymedEngine/source/GanymedE/Scene/SceneSingletons.h)), accessed via
 singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (tooling):
 
-- **`RenderContext`** — `MainCamera` + `CameraTransform` (resolved per update by CameraSystem) and
+- **`RenderContext`** — `MainCamera` + `CameraTransform` (resolved per update by CameraSystem),
   `EditorViewCamera` (the editor's camera: the view camera in edit mode, the fallback in play
-  mode). Change-tracked (`SingletonTraits<RenderContext>::TrackChanges`). *Known misnomer:* now that
-  a non-editor host exists, this field is really "fallback view camera" and is simply null there.
-  Flagged as debt rather than renamed — the rename ripples through docs and editor for zero behaviour
-  change.
+  mode), and `PreviewCamera` (UUID{0} = editor camera; any other value is a scene
+  `CameraComponent` the viewport dropdown is looking through, consumed only by
+  `RenderSystem::OnUpdateEditor`). Change-tracked (`SingletonTraits<RenderContext>::TrackChanges`).
+  *Known misnomer:* now that a non-editor host exists, `EditorViewCamera` is really "fallback view
+  camera" and is simply null there. Flagged as debt rather than renamed — the rename ripples
+  through docs and editor for zero behaviour change.
 - **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `FixedTimestep` (1/60),
   `MaxStepsPerFrame` (5).
 - **`EditorViewFilter`** — editor-only. A pointer to the outliner's hidden-UUID set, asserted each

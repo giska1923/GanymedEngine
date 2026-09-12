@@ -28,6 +28,8 @@
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/UI/UIEngine.h"
+#include "GanymedE/Scene/SceneSingletons.h"
+#include "GanymedE/Scene/SceneCamera.h"
 
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
@@ -35,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace GanymedE {
 
@@ -195,10 +198,12 @@ namespace GanymedE {
 		{
 			case SceneState::Edit:
 			{
-				m_EditorCamera.OnUpdate(ts);
+				if (m_ViewportCamera == UUID{ 0 })
+					m_EditorCamera.OnUpdate(ts);
 
 				m_ActiveScene->GetSingleton<EditorViewFilter>().HiddenEntities =
 					&m_SceneHierarchyPanel.HiddenEntities();
+				m_ActiveScene->GetSingleton<RenderContext>().PreviewCamera = m_ViewportCamera;
 				m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 				break;
 			}
@@ -506,159 +511,9 @@ namespace GanymedE {
 		ImGui::EndDisabled();
 		ImGui::Checkbox("FXAA", &rendererSettings.FXAAEnabled);
 
-		ImGui::Separator();
-		ImGui::Text("Physics Debug:");
-		ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
-		ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
-		ImGui::Checkbox("Wireframe Shapes", &m_PhysicsDebugDraw.Wireframe);
-		ImGui::Checkbox("Bounding Boxes", &m_PhysicsDebugDraw.BoundingBoxes);
-		ImGui::Checkbox("Velocities", &m_PhysicsDebugDraw.Velocities);
-		ImGui::Checkbox("Center of Mass", &m_PhysicsDebugDraw.CenterOfMass);
-		ImGui::Checkbox("Constraints", &m_PhysicsDebugDraw.Constraints);
-		ImGui::EndDisabled();
-		ImGui::TextDisabled("Visible during Play (uses Jolt body state)");
-
 		ImGui::End();
 
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-		ImGui::Begin("Viewport");
-
-		m_ViewportFocused = ImGui::IsWindowFocused();
-		m_ViewportHovered = ImGui::IsWindowHovered();
-		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
-
-		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
-		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
-
-		// Screen-space bounds of the rendered image, used for mouse picking and the gizmo rect
-		ImVec2 viewportScreenPos = ImGui::GetCursorScreenPos();
-		m_ViewportBounds[0] = { viewportScreenPos.x, viewportScreenPos.y };
-		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
-
-		// Same origin the picking code subtracts: RmlUi wants viewport-local pixels,
-		// while engine mouse events arrive in window coordinates.
-		UIEngine::SetViewportOrigin(m_ViewportBounds[0].x, m_ViewportBounds[0].y);
-
-		uint32_t textureID = m_SceneRenderer->GetFinalImageRendererID();
-		// Render targets are addressed bottom-up on OpenGL and top-down on
-		// D3D/Vulkan/Metal, so the V axis has to follow the backend. The old
-		// hard-coded {0,1}-{1,0} flip was a GL-only assumption.
-		const bool flipV = bgfx::getCaps()->originBottomLeft;
-		const ImVec2 uv0 = flipV ? ImVec2{ 0, 1 } : ImVec2{ 0, 0 };
-		const ImVec2 uv1 = flipV ? ImVec2{ 1, 0 } : ImVec2{ 1, 1 };
-
-		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
-			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
-
-		// Three types through one target. The initializer_list overload is mandatory here, not a
-		// convenience: ImGui clears the drag payload as soon as one BeginDragDropTarget delivers
-		// it, so calling AcceptAssetDrop once per type would let only the first type ever fire.
-		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh, AssetType::Prefab }))
-		{
-			std::filesystem::path fullPath = g_AssetPath / drop.Path;
-
-			if (drop.Type == AssetType::Scene)
-			{
-				OpenScene(fullPath);
-			}
-			else if (drop.Type == AssetType::Prefab && m_SceneState == SceneState::Edit)
-			{
-				m_SceneHierarchyPanel.InstantiatePrefab(drop.Path);
-			}
-			else if (drop.Type == AssetType::StaticMesh && m_SceneState == SceneState::Edit)
-			{
-				Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
-				if (entity)
-					m_SceneHierarchyPanel.SetSelectedEntity(entity);
-			}
-		}
-
-		// Gizmos
-		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-		if (selectedEntity && m_SceneHierarchyPanel.IsLocked(selectedEntity))
-			selectedEntity = {};
-		if (selectedEntity && m_GizmoType != -1 && m_SceneState == SceneState::Edit)
-		{
-			ImGuizmo::SetOrthographic(false);
-			ImGuizmo::SetDrawlist();
-
-			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
-				m_ViewportBounds[1].x - m_ViewportBounds[0].x, m_ViewportBounds[1].y - m_ViewportBounds[0].y);
-
-			// Editor camera
-			const glm::mat4& cameraProjection = m_EditorCamera.GetProjection();
-			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
-
-			// Entity transform (world space so parented entities gizmo correctly)
-			auto& tc = selectedEntity.GetComponent<TransformComponent>();
-			glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(selectedEntity);
-
-			// Snapping
-			bool snap = Input::IsKeyPressed(Key::LeftControl);
-			float snapValue = 0.5f; // Snap to 0.5m for translation/scale
-			// Snap to 45 degrees for rotation
-			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
-				snapValue = 45.0f;
-
-			float snapValues[3] = { snapValue, snapValue, snapValue };
-
-			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-				(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform),
-				nullptr, snap ? snapValues : nullptr);
-
-			if (ImGuizmo::IsUsing())
-			{
-				// Rising edge. This is the last moment the pre-drag transform still exists:
-				// rotation below is accumulated as a delta against the current value, so one
-				// frame later there is nothing left to reconstruct it from.
-				if (!m_GizmoUsing)
-				{
-					m_GizmoUsing = true;
-					m_GizmoEntity = selectedEntity.GetUUID();
-					m_GizmoBefore = tc;
-				}
-
-				// Convert manipulated world transform back to local
-				UUID parentID = selectedEntity.GetComponent<RelationshipComponent>().Parent;
-				if (parentID != UUID{ 0 })
-				{
-					Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
-					if (parent)
-						transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
-				}
-
-				glm::vec3 translation, rotation, scale;
-				Math::DecomposeTransform(transform, translation, rotation, scale);
-
-				// Apply the rotation as a delta to avoid gimbal-lock jumps from decompose
-				glm::vec3 deltaRotation = rotation - tc.Rotation;
-				tc.Translation = translation;
-				tc.Rotation += deltaRotation;
-				tc.Scale = scale;
-
-				// Gizmo edits write the component directly, so the world-transform cache has to be
-				// told; without this the entity would keep rendering at its pre-drag position.
-				m_ActiveScene->MarkChanged<TransformComponent>(selectedEntity);
-			}
-		}
-
-		// Falling edge, checked outside the gizmo block so a drag that ends with the selection
-		// gone (or the gizmo hidden) still commits its one command.
-		if (m_GizmoUsing && !ImGuizmo::IsUsing())
-		{
-			m_GizmoUsing = false;
-
-			Entity dragged = m_EditorScene ? m_EditorScene->FindEntityByUUID(m_GizmoEntity) : Entity{};
-			if (dragged && m_SceneState == SceneState::Edit && dragged.HasComponent<TransformComponent>())
-			{
-				m_UndoStack.Push(CreateScope<ComponentEditCommand<TransformComponent>>(
-					"Gizmo Transform", m_GizmoEntity, m_GizmoBefore,
-					dragged.GetComponent<TransformComponent>()));
-			}
-		}
-
-		ImGui::End();
-		ImGui::PopStyleVar();
+		UI_Viewport();
 
 		HandleShortcuts();
 
@@ -900,9 +755,282 @@ namespace GanymedE {
 		ImGui::PopStyleColor();
 	}
 
+	void EditorLayer::UI_Viewport()
+	{
+		using EditorUI::BeginPanel;
+		using EditorUI::Color;
+		using EditorUI::EndPanel;
+		using EditorUI::EndPanelToolbarRow;
+		using EditorUI::IconButton;
+		using EditorUI::PanelToolbarRow;
+		using EditorUI::Theme;
+		using EditorUI::ToolbarSeparator;
+
+		if (!BeginPanel("Viewport"))
+		{
+			EndPanel();
+			return;
+		}
+
+		const EditorUI::EditorTheme& theme = Theme();
+		const bool editing = m_SceneState == SceneState::Edit;
+
+		if (PanelToolbarRow("##ViewportTB"))
+		{
+			const ImVec2 row = ImGui::GetCursorPos();
+			const float availX = ImGui::GetContentRegionAvail().x;
+
+			std::string cameraLabel = "Editor Camera";
+			if (editing && m_ViewportCamera != UUID{ 0 })
+			{
+				Entity preview = m_ActiveScene ? m_ActiveScene->FindEntityByUUID(m_ViewportCamera) : Entity{};
+				if (preview && preview.HasComponent<CameraComponent>())
+					cameraLabel = preview.GetComponent<TagComponent>().Tag;
+				else
+					m_ViewportCamera = UUID{ 0 };
+			}
+			else if (!editing && m_ActiveScene)
+			{
+				Entity primary = m_ActiveScene->GetPrimaryCameraEntity();
+				if (primary)
+					cameraLabel = primary.GetComponent<TagComponent>().Tag;
+			}
+
+			ImGui::BeginDisabled(!editing);
+			ImGui::SetNextItemWidth(200.0f);
+			if (ImGui::BeginCombo("##ViewportCam", cameraLabel.c_str()))
+			{
+				if (ImGui::Selectable("Editor Camera", m_ViewportCamera == UUID{ 0 }))
+					m_ViewportCamera = UUID{ 0 };
+
+				if (m_ActiveScene)
+				{
+					auto view = m_ActiveScene->Reg().view<CameraComponent, TagComponent, IDComponent>();
+					for (auto entityID : view)
+					{
+						Entity entity{ entityID, m_ActiveScene.get() };
+						const UUID id = entity.GetUUID();
+						const std::string item = entity.GetComponent<TagComponent>().Tag
+							+ "##" + std::to_string(static_cast<uint64_t>(id));
+						if (ImGui::Selectable(item.c_str(), m_ViewportCamera == id))
+							m_ViewportCamera = id;
+					}
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::EndDisabled();
+			if (!editing)
+				ImGui::SetItemTooltip("Play uses the scene's primary camera");
+
+			ImGui::SameLine();
+			ToolbarSeparator();
+			ImGui::SameLine();
+
+			char aspect[48];
+			std::snprintf(aspect, sizeof(aspect), "Free Aspect: %.0fx%.0f",
+				m_ViewportSize.x, m_ViewportSize.y);
+			ImGui::PushStyleColor(ImGuiCol_Text, Color(theme.TextDim));
+			ImGui::TextUnformatted(aspect);
+			ImGui::PopStyleColor();
+
+			const float gap = ImGui::GetStyle().ItemSpacing.x;
+			const char* spaceLabel = m_GizmoWorldSpace ? "World" : "Local";
+			const float rightWidth = 24.0f + gap + 9.0f + gap + 72.0f;
+			const float rightX = row.x + availX - rightWidth;
+			if (rightX > ImGui::GetCursorPosX() + gap)
+				ImGui::SetCursorPos(ImVec2(rightX, row.y));
+			else
+				ImGui::SameLine();
+
+			if (IconButton(ICON_LC_BOXES, "Visualizers", m_PhysicsDebugDraw.Enabled))
+				ImGui::OpenPopup("##Visualizers");
+			if (ImGui::BeginPopup("##Visualizers"))
+			{
+				ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
+				ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
+				ImGui::Checkbox("Wireframe Shapes", &m_PhysicsDebugDraw.Wireframe);
+				ImGui::Checkbox("Bounding Boxes", &m_PhysicsDebugDraw.BoundingBoxes);
+				ImGui::Checkbox("Velocities", &m_PhysicsDebugDraw.Velocities);
+				ImGui::Checkbox("Center of Mass", &m_PhysicsDebugDraw.CenterOfMass);
+				ImGui::Checkbox("Constraints", &m_PhysicsDebugDraw.Constraints);
+				ImGui::EndDisabled();
+				ImGui::TextDisabled("Visible during Play (Jolt body state)");
+				ImGui::EndPopup();
+			}
+
+			ImGui::SameLine();
+			ToolbarSeparator();
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(72.0f);
+			if (ImGui::BeginCombo("##GizmoSpace", spaceLabel))
+			{
+				if (ImGui::Selectable("Local", !m_GizmoWorldSpace))
+					m_GizmoWorldSpace = false;
+				if (ImGui::Selectable("World", m_GizmoWorldSpace))
+					m_GizmoWorldSpace = true;
+				ImGui::EndCombo();
+			}
+			ImGui::SetItemTooltip("Gizmo space");
+		}
+		EndPanelToolbarRow();
+
+		m_ViewportFocused = ImGui::IsWindowFocused();
+
+		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
+		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
+
+		// Image origin is below the header. Picking, ImGuizmo and RmlUi all
+		// read m_ViewportBounds[0] from this cursor, so they stay correct.
+		ImVec2 viewportScreenPos = ImGui::GetCursorScreenPos();
+		m_ViewportBounds[0] = { viewportScreenPos.x, viewportScreenPos.y };
+		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
+
+		UIEngine::SetViewportOrigin(m_ViewportBounds[0].x, m_ViewportBounds[0].y);
+
+		uint32_t textureID = m_SceneRenderer->GetFinalImageRendererID();
+		const bool flipV = bgfx::getCaps()->originBottomLeft;
+		const ImVec2 uv0 = flipV ? ImVec2{ 0, 1 } : ImVec2{ 0, 0 };
+		const ImVec2 uv1 = flipV ? ImVec2{ 1, 0 } : ImVec2{ 1, 1 };
+
+		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
+			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
+
+		// Hover is the *image*, not the window: a click on the camera combo must
+		// not also click-select whatever the pick buffer last saw.
+		m_ViewportHovered = ImGui::IsItemHovered();
+		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
+
+		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh, AssetType::Prefab }))
+		{
+			std::filesystem::path fullPath = g_AssetPath / drop.Path;
+
+			if (drop.Type == AssetType::Scene)
+			{
+				OpenScene(fullPath);
+			}
+			else if (drop.Type == AssetType::Prefab && editing)
+			{
+				m_SceneHierarchyPanel.InstantiatePrefab(drop.Path);
+			}
+			else if (drop.Type == AssetType::StaticMesh && editing)
+			{
+				Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
+				if (entity)
+					m_SceneHierarchyPanel.SetSelectedEntity(entity);
+			}
+		}
+
+		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		Entity gizmoEntity = selectedEntity;
+		if (gizmoEntity && m_SceneHierarchyPanel.IsLocked(gizmoEntity))
+			gizmoEntity = {};
+		if (gizmoEntity && m_GizmoType != -1 && editing)
+		{
+			glm::mat4 cameraProjection = m_EditorCamera.GetProjection();
+			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
+			bool ortho = false;
+			if (m_ViewportCamera != UUID{ 0 })
+			{
+				Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+				if (preview && preview.HasComponent<CameraComponent>())
+				{
+					const auto& cc = preview.GetComponent<CameraComponent>();
+					cameraProjection = cc.Camera.GetProjection();
+					cameraView = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
+					ortho = cc.Camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic;
+				}
+			}
+
+			ImGuizmo::SetOrthographic(ortho);
+			ImGuizmo::SetDrawlist();
+			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
+				m_ViewportBounds[1].x - m_ViewportBounds[0].x, m_ViewportBounds[1].y - m_ViewportBounds[0].y);
+
+			auto& tc = gizmoEntity.GetComponent<TransformComponent>();
+			glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(gizmoEntity);
+
+			bool snap = Input::IsKeyPressed(Key::LeftControl);
+			float snapValue = 0.5f;
+			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
+				snapValue = 45.0f;
+			float snapValues[3] = { snapValue, snapValue, snapValue };
+
+			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+				(ImGuizmo::OPERATION)m_GizmoType,
+				m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
+				glm::value_ptr(transform),
+				nullptr, snap ? snapValues : nullptr);
+
+			if (ImGuizmo::IsUsing())
+			{
+				if (!m_GizmoUsing)
+				{
+					m_GizmoUsing = true;
+					m_GizmoEntity = gizmoEntity.GetUUID();
+					m_GizmoBefore = tc;
+				}
+
+				UUID parentID = gizmoEntity.GetComponent<RelationshipComponent>().Parent;
+				if (parentID != UUID{ 0 })
+				{
+					Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
+					if (parent)
+						transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
+				}
+
+				glm::vec3 translation, rotation, scale;
+				Math::DecomposeTransform(transform, translation, rotation, scale);
+
+				glm::vec3 deltaRotation = rotation - tc.Rotation;
+				tc.Translation = translation;
+				tc.Rotation += deltaRotation;
+				tc.Scale = scale;
+
+				m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+			}
+		}
+
+		if (m_GizmoUsing && !ImGuizmo::IsUsing())
+		{
+			m_GizmoUsing = false;
+
+			Entity dragged = m_EditorScene ? m_EditorScene->FindEntityByUUID(m_GizmoEntity) : Entity{};
+			if (dragged && editing && dragged.HasComponent<TransformComponent>())
+			{
+				m_UndoStack.Push(CreateScope<ComponentEditCommand<TransformComponent>>(
+					"Gizmo Transform", m_GizmoEntity, m_GizmoBefore,
+					dragged.GetComponent<TransformComponent>()));
+			}
+		}
+
+		if (selectedEntity && selectedEntity.HasComponent<TransformComponent>())
+		{
+			glm::vec3 t = selectedEntity.GetComponent<TransformComponent>().Translation;
+			if (m_GizmoWorldSpace)
+				t = glm::vec3(m_ActiveScene->GetWorldSpaceTransform(selectedEntity)[3]);
+
+			ImDrawList* draw = ImGui::GetWindowDrawList();
+			ImVec2 p{ m_ViewportBounds[0].x + 12.0f, m_ViewportBounds[1].y - 28.0f };
+			auto axis = [&](const char* label, ImU32 colour, float value)
+			{
+				draw->AddText(p, colour, label);
+				p.x += ImGui::CalcTextSize(label).x;
+				char buf[24];
+				std::snprintf(buf, sizeof(buf), " %.3f", value);
+				draw->AddText(p, theme.TextPrimary, buf);
+				p.x += ImGui::CalcTextSize(buf).x + 16.0f;
+			};
+			axis("X", theme.AxisX, t.x);
+			axis("Y", theme.AxisY, t.y);
+			axis("Z", theme.AxisZ, t.z);
+		}
+
+		EndPanel();
+	}
+
 	void EditorLayer::OnEvent(Event& e)
 	{
-		if (m_SceneState == SceneState::Edit)
+		if (m_SceneState == SceneState::Edit && m_ViewportCamera == UUID{ 0 })
 			m_EditorCamera.OnEvent(e);
 
 		// Game UI gets first refusal, but only while playing and only when the
@@ -1004,6 +1132,7 @@ namespace GanymedE {
 		m_UndoStack.Clear();
 		RetargetPanels();
 		m_SceneHierarchyPanel.ClearEditorViewState();
+		m_ViewportCamera = UUID{ 0 };
 	}
 
 	void EditorLayer::SetupDefaultEnvironment(const Ref<Scene>& scene)
@@ -1052,6 +1181,7 @@ namespace GanymedE {
 		m_UndoStack.Clear();
 		RetargetPanels();
 		m_SceneHierarchyPanel.ClearEditorViewState();
+		m_ViewportCamera = UUID{ 0 };
 
 		SceneSerializer serializer(m_ActiveScene);
 		serializer.Deserialize(path.string());

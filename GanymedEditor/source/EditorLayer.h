@@ -47,6 +47,7 @@ namespace GanymedE {
 		// UI
 		void UI_Toolbar();
 		void UI_StatusBar();
+		void UI_Viewport();
 	private:
 		Ref<SceneRenderer> m_SceneRenderer; // owns the HDR target + post stack (bloom, tonemap, FXAA)
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
@@ -71,6 +72,11 @@ namespace GanymedE {
 		glm::vec2 m_ViewportBounds[2];
 
 		int m_GizmoType; // ImGuizmo::OPERATION; -1 = hidden, W/E/R switch, Q hides
+		bool m_GizmoWorldSpace = false; // ImGuizmo::WORLD when true; LOCAL is the previous default
+
+		// Viewport camera dropdown. UUID{0} = EditorCamera. Any other value is a scene
+		// CameraComponent looked through in edit mode (RenderContext::PreviewCamera).
+		UUID m_ViewportCamera{ 0 };
 
 		// A gizmo drag writes the transform every frame and accumulates rotation as a delta, so
 		// the pre-drag value cannot be reconstructed after the fact - it is snapshotted on the

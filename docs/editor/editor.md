@@ -124,8 +124,8 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-The outliner, Properties, and Content Browser are wrapped (`BeginPanel`); remaining chrome is
-the viewport bars (phase 8 of
+The outliner, Properties, Content Browser, and Viewport are wrapped (`BeginPanel`). Remaining
+chrome is the custom window title bar (phase 9 of
 [editor-visual-parity.md](../ToDo/editor-visual-parity.md)).
 
 ## EditorLayer
@@ -137,7 +137,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 1. Resize the scene renderer / editor camera / scene cameras when the viewport panel size changed.
 2. `SceneRenderer::BeginFrame` (bind + clear HDR target, entity IDs to −1).
-3. Update the scene: `OnUpdateEditor(ts, editorCamera)` in Edit,
+3. Update the scene: `OnUpdateEditor(ts, editorCamera)` in Edit (and
+   `RenderContext::PreviewCamera` from the viewport camera combo),
    `OnUpdateRuntime(ts, &editorCamera)` in Play (the editor camera is the fallback when the scene
    has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos = true`**
    are pushed into the scene's `PhysicsSettings` each frame). The gizmo flag is engine-default
@@ -152,11 +153,30 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 ### Viewport
 
+- `BeginPanel("Viewport")` so the header row reaches the window edges. A 44 px
+  `PanelToolbarRow` sits above the image.
+- **Header, left:** camera combo (Editor Camera, plus every `CameraComponent` in the scene).
+  Selecting a scene camera writes `RenderContext::PreviewCamera`; `RenderSystem::OnUpdateEditor`
+  then `BeginScene`s with that camera's projection and world transform. The editor camera is
+  not orbited while looking through a scene camera — switch back to move it. The combo is
+  disabled in Play and shows the primary camera's tag (the runtime path already uses that
+  camera, with the editor camera as fallback).
+- **Header, centre:** `Free Aspect: WxH` from `m_ViewportSize` (the *image* size, not the
+  panel — the 44 px header is excluded so the render target matches what picking and RmlUi
+  see). There is no aspect lock, so this is a readout, not a dropdown.
+- **Header, right:** Visualizers popup (the Jolt debug-draw toggles that used to live in
+  Stats — still Play-only, they read Jolt body state) and a Local / World combo wired to
+  `ImGuizmo::Manipulate`'s mode. Previously LOCAL was hard-coded.
+- **Omitted, no backing feature:** Quality tiers, selection filters, billboard-gizmo Icons
+  toggle. Lit / Unlit / Wireframe: Unlit needs shader variants that do not exist; a global
+  wireframe fill is not "one bgfx flag" — every `SubmitMesh` packs its own state from the
+  material. A dropdown whose only working item is Lit is dead furniture.
 - Shows the composite target via `ImGui::Image`; UVs flip vertically per
   `originBottomLeft` (a render target's orientation follows the backend — hard-coding either way
   is wrong on half of them).
-- **Event blocking**: `ImGuiLayer::BlockEvents(false)` while the viewport is hovered/focused, so
-  camera and shortcut input reaches the layer.
+- **`m_ViewportHovered` is the image**, not the window. A click on the camera combo must not
+  also click-select whatever the pick buffer last saw. `BlockEvents` still uses
+  focused-or-hovered, so Q/W/E/R keep working while the viewport window is focused.
 - **Drag-drop from the Content Browser** via `EditorUI::AcceptAssetDrop` (see
   [below](#typed-drag-drop)): a `Scene` drop opens the scene; a `StaticMesh` drop (edit mode only)
   instantiates it via `MeshImporter::Instantiate` and selects it.
@@ -169,7 +189,13 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   its pre-drag position). Ctrl snaps (0.5 units, 45° for rotation). Mode is `m_GizmoType`
   (select / translate / rotate / scale): Q/W/E/R still go through `OnKeyPressed` (viewport-gated
   so a name containing W does not switch tools), and the toolbar icon cluster writes the same
-  int. The active tool is accent-filled.
+  int. The active tool is accent-filled. View/projection follow the camera dropdown;
+  `SetOrthographic` follows a scene camera's projection type.
+- **Transform readout** (bottom-left of the image, `ImDrawList`, no layout): `X`/`Y`/`Z` of the
+  primary selection in `AxisX/Y/Z`, values in `TextPrimary`. Local translation, or world
+  translation when the gizmo is in World space, so the numbers match the handles. Nothing
+  selected → nothing drawn. Entity/draw/FPS counters live on the status bar rather than being
+  duplicated here.
 
 ### Controls
 
@@ -178,6 +204,7 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 | Alt+LMB drag / MMB drag / scroll | Orbit / pan / zoom the editor camera |
 | LMB in viewport | Select hovered entity (ignored over the gizmo or with Alt held) |
 | Q / W / E / R | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
+| Local / World combo (viewport header) | ImGuizmo LOCAL (default) / WORLD |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z | Undo / redo (Edit state only) |
 | Ctrl+D / Delete | Duplicate / delete the selected entity, subtree included (Edit state only) |
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene |
@@ -382,9 +409,8 @@ are omitted for the same reason.
 
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
 transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
-live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
-FXAA), and Jolt debug-draw toggles (visible during Play; draws Jolt's body state instead of the
-authored collider gizmos).
+and live post-processing settings (exposure, bloom threshold/knee/intensity/radius, FXAA).
+Jolt debug-draw toggles live on the viewport header's Visualizers popup, not here.
 
 A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
 many came out of `assets/.compiled/` instead. A second run over an unchanged project must read

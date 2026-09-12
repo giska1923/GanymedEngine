@@ -110,7 +110,7 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | 9 | No status bar | medium | low | 7 **done** |
 | 10 | Inspector component headers are ImGui `CollapsingHeader`s, not full-width `#1A1A1A` rows with icon + eye + `•••` | medium | medium | 5 **done** (eye omitted: no component-enable) |
 | 11 | Content Browser: no breadcrumb, no folder sidebar, no search, no item count, no view toggle | medium | high | 6 **done** |
-| 12 | Viewport has no header row (camera/quality/visualizers) and no transform readout | medium | medium | 8 |
+| 12 | Viewport has no header row (camera/quality/visualizers) and no transform readout | medium | medium | 8 **done** |
 | 13 | Hard-coded colours scattered across 5 files (see below) | low visually, high for maintenance | low | 1 **done** |
 | 14 | Dock tab label colour cannot differ selected vs unselected | low | — | accepted deviation |
 
@@ -552,7 +552,15 @@ hard-coded string that will silently rot.
 
 ---
 
-### Phase 8 — Viewport overlay bars
+### Phase 8 — Viewport overlay bars — **done**
+
+`BeginPanel` + 44 px header (camera combo with scene-camera preview, Free Aspect readout,
+Visualizers popup, Local/World) and a bottom-left XYZ overlay. Hover/pick/gizmo/RmlUi origin
+is the image, below the header. **Omitted** Quality / Selection / Icons / Lit-Unlit-Wireframe
+(no backing feature; a Lit-only dropdown is dead furniture). Counters stay on the status bar
+rather than duplicating. Live description: [editor.md](../editor/editor.md#viewport).
+
+The spec that was executed:
 
 Two pieces:
 
@@ -663,7 +671,7 @@ menu buttons that move the window instead of opening.
 | 5 — inspector headers | **done** |
 | 6 — asset browser | **done** |
 | 7 — status bar | **done** |
-| 8 — viewport bars | 1 day |
+| 8 — viewport bars | **done** |
 | 9 — custom chrome | 2–3 days |
 | | **~11–13 days** |
 

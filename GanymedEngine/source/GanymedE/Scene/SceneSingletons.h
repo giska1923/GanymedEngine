@@ -30,6 +30,11 @@ namespace GanymedE {
 		// The editor's own camera: the view camera in edit mode, and the fallback in play mode
 		// when the scene has no primary camera. Null outside the editor.
 		EditorCamera* EditorViewCamera = nullptr;
+
+		// Editor viewport "look through this scene camera". UUID{0} means EditorViewCamera.
+		// Not serialized; Scene::Copy default-constructs 0. RenderSystem::OnUpdateEditor
+		// reads it; the runtime path ignores it.
+		UUID PreviewCamera{ 0 };
 	};
 
 	struct PhysicsSettings
