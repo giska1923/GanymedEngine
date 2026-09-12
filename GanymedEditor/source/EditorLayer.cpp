@@ -4,6 +4,7 @@
 #include "EditorIcons.h"
 #include "EditorInspector.h"
 #include "EditorTheme.h"
+#include "EditorWidgets.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -31,9 +32,68 @@
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
 
+#include <cstdlib>
+#include <cstring>
+
 namespace GanymedE {
 
 	extern const std::filesystem::path g_AssetPath;
+
+	namespace {
+
+		// Bump when the DockBuilder default tree changes. Existing imgui.ini otherwise keeps
+		// the old splits — including the phase-1 6% toolbar node — and View → Reset Layout
+		// is easy to miss on the first launch after a chrome change.
+		constexpr int kDockLayoutVersion = 2;
+		int s_IniDockLayoutVersion = 0;
+
+		void* DockLayoutReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
+		{
+			return std::strcmp(name, "Dock") == 0 ? (void*)1 : nullptr;
+		}
+
+		void DockLayoutReadLine(ImGuiContext*, ImGuiSettingsHandler*, void*, const char* line)
+		{
+			if (std::strncmp(line, "Version=", 8) == 0)
+				s_IniDockLayoutVersion = std::atoi(line + 8);
+		}
+
+		void DockLayoutWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf)
+		{
+			buf->appendf("[%s][Dock]\nVersion=%d\n\n", handler->TypeName, kDockLayoutVersion);
+		}
+
+		void RegisterDockLayoutSettingsHandler()
+		{
+			ImGuiSettingsHandler handler;
+			handler.TypeName = "GanymedEditor";
+			handler.TypeHash = ImHashStr("GanymedEditor");
+			handler.ReadOpenFn = DockLayoutReadOpen;
+			handler.ReadLineFn = DockLayoutReadLine;
+			handler.WriteAllFn = DockLayoutWriteAll;
+			ImGui::AddSettingsHandler(&handler);
+		}
+
+		void BuildDefaultDockLayout(ImGuiID dockspaceId)
+		{
+			ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+			ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
+
+			ImGuiID dockMain = dockspaceId;
+			ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.28f, nullptr, &dockMain);
+			ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.24f, nullptr, &dockMain);
+			ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.22f, nullptr, &dockMain);
+			ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
+
+			ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
+			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
+			ImGui::DockBuilderDockWindow("Viewport", dockMain);
+			ImGui::DockBuilderDockWindow("Stats", dockRight);
+			ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
+			ImGui::DockBuilderFinish(dockspaceId);
+		}
+
+	}
 
 	EditorLayer::EditorLayer()
 		: Layer("EditorLayer"), m_GizmoType(ImGuizmo::OPERATION::TRANSLATE)
@@ -51,6 +111,7 @@ namespace GanymedE {
 		// Clear() here makes NewFrame rebuild it with Inter + Lucide.
 		EditorUI::EditorFonts::Load();
 		EditorUI::ApplyTheme(EditorUI::MakeGanymedTheme());
+		RegisterDockLayoutSettingsHandler();
 
 		// After Reflection::Init (Application's constructor), because a drawer is keyed on a
 		// meta_type that has to exist first.
@@ -185,36 +246,6 @@ namespace GanymedE {
 		m_SceneRenderer->EndFrame();
 	}
 
-
-	namespace {
-
-		void BuildDefaultDockLayout(ImGuiID dockspaceId)
-		{
-			ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-			ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
-
-			ImGuiID dockMain = dockspaceId;
-			ImGuiID dockToolbar = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Up, 0.06f, nullptr, &dockMain);
-			ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.28f, nullptr, &dockMain);
-			ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.24f, nullptr, &dockMain);
-			ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.22f, nullptr, &dockMain);
-			ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
-
-			// The toolbar strip should not show a tab bar or be rearranged
-			ImGuiDockNode* toolbarNode = ImGui::DockBuilderGetNode(dockToolbar);
-			toolbarNode->SetLocalFlags(toolbarNode->LocalFlags | ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingOverMe);
-
-			ImGui::DockBuilderDockWindow("##toolbar", dockToolbar);
-			ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
-			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
-			ImGui::DockBuilderDockWindow("Viewport", dockMain);
-			ImGui::DockBuilderDockWindow("Stats", dockRight);
-			ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
-			ImGui::DockBuilderFinish(dockspaceId);
-		}
-
-	}
-
 	void EditorLayer::OnImGuiRender()
 	{
 		GE_PROFILE_FUNCTION();
@@ -258,31 +289,6 @@ namespace GanymedE {
 
 		if (opt_fullscreen)
 			ImGui::PopStyleVar(2);
-
-		// DockSpace
-		ImGuiIO& io = ImGui::GetIO();
-		ImGuiStyle& style = ImGui::GetStyle();
-		float minWinSizeX = style.WindowMinSize.x;
-		style.WindowMinSize.x = 430.0f;
-		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
-		{
-			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-
-			// View → Reset Layout tears the node down so the same builder path as a
-			// missing imgui.ini entry runs again. Do not bump an ini layout version
-			// here — geometry is unchanged until phase 2.
-			if (m_ResetDockLayout)
-			{
-				ImGui::DockBuilderRemoveNode(dockspace_id);
-				m_ResetDockLayout = false;
-			}
-			if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
-				BuildDefaultDockLayout(dockspace_id);
-
-			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
-		}
-
-		style.WindowMinSize.x = minWinSizeX;
 
 		if (ImGui::BeginMenuBar())
 		{
@@ -377,6 +383,36 @@ namespace GanymedE {
 			ImGui::TextUnformatted((sceneName + (m_UndoStack.IsDirtySinceSave() ? "*" : "")).c_str());
 
 			ImGui::EndMenuBar();
+		}
+
+		UI_Toolbar();
+
+		ImGuiIO& io = ImGui::GetIO();
+		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
+		{
+			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+
+			if (s_IniDockLayoutVersion != kDockLayoutVersion)
+			{
+				m_ResetDockLayout = true;
+				s_IniDockLayoutVersion = kDockLayoutVersion;
+				ImGui::MarkIniSettingsDirty();
+			}
+			static bool s_ClearedGhostToolbar = false;
+			if (!s_ClearedGhostToolbar)
+			{
+				ImGui::ClearWindowSettings("##toolbar");
+				s_ClearedGhostToolbar = true;
+			}
+			if (m_ResetDockLayout)
+			{
+				ImGui::DockBuilderRemoveNode(dockspace_id);
+				m_ResetDockLayout = false;
+			}
+			if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
+				BuildDefaultDockLayout(dockspace_id);
+
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 		}
 
 		m_SceneHierarchyPanel.OnImGuiRender();
@@ -616,8 +652,6 @@ namespace GanymedE {
 		ImGui::End();
 		ImGui::PopStyleVar();
 
-		UI_Toolbar();
-
 		HandleShortcuts();
 
 		ImGui::End();
@@ -674,36 +708,76 @@ namespace GanymedE {
 
 	void EditorLayer::UI_Toolbar()
 	{
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 2));
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
-		// Transparent by default; IconButton (phase 3) will own this pattern.
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-			EditorUI::Color(EditorUI::WithAlpha(EditorUI::Theme().AccentHover, 0.35f)));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-			EditorUI::Color(EditorUI::WithAlpha(EditorUI::Theme().Accent, 0.55f)));
+		using EditorUI::Color;
+		using EditorUI::IconButton;
+		using EditorUI::Theme;
+		using EditorUI::WithAlpha;
 
-		ImGui::Begin("##toolbar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+		const EditorUI::EditorTheme& theme = Theme();
+		const float height = theme.ToolbarHeight;
 
-		float size = ImGui::GetWindowHeight() - 8.0f;
-		if (size < 16.0f)
-			size = 16.0f;
-		const char* icon = m_SceneState == SceneState::Edit ? ICON_LC_PLAY : ICON_LC_SQUARE_STOP;
-		ImGui::SetCursorPosX((ImGui::GetWindowSize().x - size) * 0.5f);
-		ImGui::PushID("playstop");
-		if (ImGui::Button(icon, ImVec2(size, size)))
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, Color(theme.SurfaceBg));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
+		ImGui::BeginChild("##MainToolbar", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+
+		constexpr float kBtn = 24.0f;
+		const float rowY = (ImGui::GetContentRegionAvail().y - kBtn) * 0.5f;
+		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + rowY);
+
+		const bool canSwitch = !ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight);
+		auto setGizmo = [&](int op)
 		{
-			if (m_SceneState == SceneState::Edit)
-				OnScenePlay();
-			else if (m_SceneState == SceneState::Play)
+			if (canSwitch)
+				m_GizmoType = op;
+		};
+
+		if (IconButton(ICON_LC_MOUSE_POINTER, "Select (Q)", m_GizmoType == -1))
+			setGizmo(-1);
+		ImGui::SameLine();
+		if (IconButton(ICON_LC_MOVE, "Translate (W)", m_GizmoType == ImGuizmo::OPERATION::TRANSLATE))
+			setGizmo(ImGuizmo::OPERATION::TRANSLATE);
+		ImGui::SameLine();
+		if (IconButton(ICON_LC_ROTATE_3D, "Rotate (E)", m_GizmoType == ImGuizmo::OPERATION::ROTATE))
+			setGizmo(ImGuizmo::OPERATION::ROTATE);
+		ImGui::SameLine();
+		if (IconButton(ICON_LC_SCALING, "Scale (R)", m_GizmoType == ImGuizmo::OPERATION::SCALE))
+			setGizmo(ImGuizmo::OPERATION::SCALE);
+
+		const bool playing = m_SceneState == SceneState::Play;
+		const char* playLabel = playing ? ICON_LC_SQUARE_STOP "  Stop" : ICON_LC_PLAY "  Play";
+		const ImVec2 playSize(
+			ImGui::CalcTextSize(playLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f,
+			kBtn);
+		ImGui::SetCursorPosX((ImGui::GetWindowSize().x - playSize.x) * 0.5f);
+		ImGui::SetCursorPosY(rowY);
+
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Color(WithAlpha(theme.AccentHover, 0.35f)));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, Color(WithAlpha(theme.Accent, 0.55f)));
+		ImGui::PushStyleColor(ImGuiCol_Text, Color(playing ? theme.TextPrimary : theme.Success));
+		ImGui::PushID("playstop");
+		if (ImGui::Button(playLabel, playSize))
+		{
+			if (playing)
 				OnSceneStop();
+			else
+				OnScenePlay();
 		}
 		ImGui::PopID();
+		ImGui::PopStyleColor(4);
 
-		ImGui::End();
+		const ImVec2 wp = ImGui::GetWindowPos();
+		const ImVec2 ws = ImGui::GetWindowSize();
+		ImGui::GetWindowDrawList()->AddLine(
+			ImVec2(wp.x, wp.y + ws.y - 1.0f),
+			ImVec2(wp.x + ws.x, wp.y + ws.y - 1.0f),
+			theme.Border);
 
-		ImGui::PopStyleColor(3);
+		ImGui::EndChild();
 		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor();
 	}
 
 	void EditorLayer::OnEvent(Event& e)

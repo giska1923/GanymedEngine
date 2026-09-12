@@ -105,7 +105,7 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | 4 | Noisy near-identical greys; rounding on | high | low | 1 **done** |
 | 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 |
 | 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 |
-| 7 | Toolbar is a docked window with one centred button | high | low | 2 |
+| 7 | Toolbar is a docked window with one centred button | high | low | 2 **done** |
 | 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `•••` is phase 3) |
 | 9 | No status bar | medium | low | 7 |
 | 10 | Inspector component headers are ImGui `CollapsingHeader`s, not full-width `#1A1A1A` rows with icon + eye + `•••` | medium | medium | 5 |
@@ -295,7 +295,17 @@ after debugging a change that "did not apply".
 
 ---
 
-### Phase 2 — Chrome geometry: the toolbar stops being a dockable window
+### Phase 2 — Chrome geometry: the toolbar stops being a dockable window — **done**
+
+Fixed 41 px host-window child (menu bar → toolbar → `DockSpace()`). Gizmo mode icons wired to
+`m_GizmoType`. `IconButton` + `ToolbarSeparator` live in `EditorWidgets` (phase 3 consumes them).
+Dock layout version 2 in `imgui.ini` auto-rebuilds so the old 6% `##toolbar` split dies without a
+manual Reset Layout. Live description: [editor.md](../editor/editor.md#layout).
+
+Did **not** reserve `ImVec2(0, -StatusBarHeight)` — that would be a 41 px empty hole until phase 7.
+Did **not** draw settings/screenshot icons: no backing feature.
+
+The spec that was executed:
 
 `EditorLayer::UI_Toolbar` currently opens a window docked into a DockBuilder node with
 `NoTabBar | NoDockingOverMe` (`EditorLayer.cpp:242-252, 630-663`). That is why it is ~90 px tall,
@@ -328,10 +338,10 @@ helper set — 24×24, transparent by default, `Accent` fill with `TextOnAccent`
 Wiring the mode buttons to `m_GizmoType` is the one place this phase touches behaviour, and it
 *fixes* something: the gizmo mode is currently invisible unless you remember which key you pressed.
 
-- **Files:** `EditorLayer.cpp/.h`.
+- **Files:** `EditorLayer.cpp/.h`, `EditorWidgets.h/.cpp` (`IconButton`, `ToolbarSeparator`).
 - **Verify:** toolbar is 41 px, cannot be dragged or resized; active tool shows an accent fill;
   Q/W/E/R and the buttons stay in sync.
-- **Docs:** `editor/editor.md` — the Layout section's toolbar description is now wrong.
+- **Docs:** `editor/editor.md` Layout + Play/Stop.
 
 ---
 
@@ -346,8 +356,8 @@ that participates in an edit gesture owns `ActiveId` for the whole gesture via o
 | Helper | Draws |
 |---|---|
 | `PanelToolbarRow(float height)` / `EndPanelToolbarRow()` | `SurfaceBg` child of fixed height, 1 px `Border` rule along the bottom |
-| `IconButton(icon, tooltip, bool active = false)` | 24×24 square, transparent → `AccentHover` on hover → `Accent` fill + `TextOnAccent` glyph when active |
-| `ToolbarSeparator()` | 1 px vertical `Border` line with 4 px margins |
+| `IconButton(icon, tooltip, bool active = false)` | **done (phase 2)** — 24×24, `InvisibleButton` + fill/glyph pair so hover can use `TextOnAccent` |
+| `ToolbarSeparator()` | **done (phase 2)** — 1 px vertical `Border` with 4 px margins |
 | `SearchField(id, char* buf, size_t n, const char* hint)` | `SurfaceSunken` frame, `ICON_LC_SEARCH` prefix in `TextDim`, hint text, `ICON_LC_X` clear button when non-empty. Returns true when the filter changed |
 | `ColumnHeaderRow(std::initializer_list<ColumnSpec>)` | `SurfaceSunken` strip, `TextDim` 16 px labels, right-aligned icon columns |
 | `OverflowMenuButton(id)` | The `•••` button — **only** call it where there is a real menu |
@@ -598,7 +608,7 @@ menu buttons that move the window instead of opening.
 |---|---|
 | 0 — fonts + icons | **done** |
 | 1 — token layer | **done** |
-| 2 — toolbar geometry | 0.5 day |
+| 2 — toolbar geometry | **done** |
 | 3 — furniture helpers | 1 day |
 | 4 — outliner | 1.5 days |
 | 5 — inspector headers | 1 day |

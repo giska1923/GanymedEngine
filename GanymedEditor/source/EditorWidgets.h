@@ -40,4 +40,13 @@ namespace GanymedE::EditorUI {
 	bool DrawVec3Control(const std::string& label, glm::vec3& values, float resetValue = 0.0f,
 		float columnWidth = 100.0f, float speed = 0.1f);
 
+	// Chrome, not a property editor. 24x24. Transparent until hover (AccentHover fill +
+	// TextOnAccent glyph) or active (Accent fill + TextOnAccent). Drawn with InvisibleButton
+	// so the fill/glyph pair can change together — ImGui's ButtonHovered colour cannot retint
+	// ImGuiCol_Text, and AccentHover + TextPrimary fails contrast.
+	bool IconButton(const char* icon, const char* tooltip, bool active = false);
+
+	// 1 px vertical Border with 4 px horizontal margins, 24 px tall. SameLine around it.
+	void ToolbarSeparator();
+
 }

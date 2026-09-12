@@ -10,11 +10,14 @@ either order.
 
 ## Layout
 
-A dockable ImGui workspace. On first run (no `imgui.ini` yet), or after **View → Reset Layout**,
-`EditorLayer` builds a default DockBuilder layout: toolbar strip on top (no tab bar), Scene
-Hierarchy left, Properties below it, Viewport center, Stats right, Content Browser bottom. After
-that, layout changes persist in `GanymedEditor/imgui.ini`. Phases 2–8 of the visual-parity work
-change that geometry; Reset Layout is how an existing ini actually picks them up.
+A dockable ImGui workspace. The main toolbar is a **fixed 41 px child** of the dockspace host
+(menu bar → toolbar → `DockSpace()`), not a docked window: it cannot be resized, undocked, or
+given a tab. On first run, after **View → Reset Layout**, or when the dock-layout version in
+`imgui.ini` mismatches (`[GanymedEditor][Dock] Version`, currently 2), `EditorLayer` builds a
+default DockBuilder tree: Scene Hierarchy left, Properties below it, Viewport center, Stats
+right, Content Browser bottom. After that, panel layout persists in `GanymedEditor/imgui.ini`.
+Later chrome changes that alter the default tree bump that version so an existing ini does not
+keep a stale split.
 
 ## Look and feel
 
@@ -144,7 +147,10 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   rotation as a delta to avoid gimbal jumps — and then calls
   **`Scene::MarkChanged<TransformComponent>`**, because a direct component write is invisible to
   change tracking and the world-transform cache would go stale (the entity would keep rendering at
-  its pre-drag position). Ctrl snaps (0.5 units, 45° for rotation).
+  its pre-drag position). Ctrl snaps (0.5 units, 45° for rotation). Mode is `m_GizmoType`
+  (select / translate / rotate / scale): Q/W/E/R still go through `OnKeyPressed` (viewport-gated
+  so a name containing W does not switch tools), and the toolbar icon cluster writes the same
+  int. The active tool is accent-filled.
 
 ### Controls
 
@@ -152,7 +158,7 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 |---|---|
 | Alt+LMB drag / MMB drag / scroll | Orbit / pan / zoom the editor camera |
 | LMB in viewport | Select hovered entity (ignored over the gizmo or with Alt held) |
-| Q / W / E / R | Gizmo: hide / translate / rotate / scale (ignored while using the gizmo or RMB-flying) |
+| Q / W / E / R | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z | Undo / redo (Edit state only) |
 | Ctrl+D / Delete | Duplicate / delete the selected entity, subtree included (Edit state only) |
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene |
@@ -298,9 +304,12 @@ Two limitations worth knowing:
 
 ### Play / Stop (toolbar)
 
-The centred control is an `ICON_LC_PLAY` / `ICON_LC_SQUARE_STOP` button from the merged Lucide
-font, not a PNG. The toolbar itself is still a docked window; making it a fixed strip is a later
-pass.
+The main toolbar is a 41 px `SurfaceBg` child (`Theme().ToolbarHeight`) between the menu bar and
+the dockspace. Left cluster: select / translate / rotate / scale (`ICON_LC_MOUSE_POINTER`,
+`MOVE`, `ROTATE_3D`, `SCALING`) via `EditorUI::IconButton` — 24×24, accent-filled when that
+mode is `m_GizmoType`. Centre: `ICON_LC_PLAY` + "Play" in `Success` (edit) or
+`ICON_LC_SQUARE_STOP` + "Stop" (play). There is no settings/screenshot cluster: those have no
+backing feature, and a dead icon is worse than an absent one.
 
 ```
 Play: m_ActiveScene = Scene::Copy(m_EditorScene); OnRuntimeStart(); panels retarget the copy
@@ -707,7 +716,9 @@ so the first call always wins the delivery and the second type would never fire.
 
 | Want to… | Touch |
 |---|---|
+| New panel | Create under `Panels/`, own it in `EditorLayer`, call `OnImGuiRender`, dock it in the DockBuilder block |
 | New chrome colour | Add a token on `EditorTheme`, map it in `ApplyTheme` if it is an ImGui style colour, consume `Theme().X` — never a new literal |
+| Toolbar chrome | `EditorUI::IconButton` / `ToolbarSeparator` — do not hand-roll 24×24 accent fills |
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
 | Custom canvas widget | `EditorWidgets.cpp`; one `InvisibleButton` spanning the canvas so `ActiveId` holds for the drag; return true only on a real value change |
 | New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |

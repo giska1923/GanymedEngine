@@ -478,4 +478,56 @@ namespace GanymedE::EditorUI {
 		return edited;
 	}
 
+	bool IconButton(const char* icon, const char* tooltip, bool active)
+	{
+		const ImVec2 size(24.0f, 24.0f);
+		ImGui::PushID(icon);
+		const bool clicked = ImGui::InvisibleButton("##ib", size);
+		const bool hovered = ImGui::IsItemHovered();
+		const bool held = ImGui::IsItemActive();
+
+		const EditorTheme& theme = Theme();
+		ImU32 fill = 0;
+		ImU32 glyph = theme.TextPrimary;
+		if (active || held)
+		{
+			fill = held ? theme.AccentActive : theme.Accent;
+			glyph = theme.TextOnAccent;
+		}
+		else if (hovered)
+		{
+			fill = theme.AccentHover;
+			glyph = theme.TextOnAccent;
+		}
+
+		const ImVec2 p0 = ImGui::GetItemRectMin();
+		const ImVec2 p1 = ImGui::GetItemRectMax();
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		if (fill)
+			draw->AddRectFilled(p0, p1, fill);
+
+		const ImVec2 textSize = ImGui::CalcTextSize(icon);
+		draw->AddText(
+			ImVec2(p0.x + (size.x - textSize.x) * 0.5f, p0.y + (size.y - textSize.y) * 0.5f),
+			glyph, icon);
+
+		if (tooltip)
+			ImGui::SetItemTooltip("%s", tooltip);
+
+		ImGui::PopID();
+		return clicked;
+	}
+
+	void ToolbarSeparator()
+	{
+		constexpr float kHeight = 24.0f;
+		constexpr float kMargin = 4.0f;
+		const ImVec2 p = ImGui::GetCursorScreenPos();
+		ImGui::Dummy(ImVec2(kMargin * 2.0f + 1.0f, kHeight));
+		ImGui::GetWindowDrawList()->AddRectFilled(
+			ImVec2(p.x + kMargin, p.y + kMargin),
+			ImVec2(p.x + kMargin + 1.0f, p.y + kHeight - kMargin),
+			Theme().Border);
+	}
+
 }
