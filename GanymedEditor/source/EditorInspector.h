@@ -3,6 +3,10 @@
 #include "GanymedE/Reflection/Reflection.h"
 
 #include <entt/entt.hpp>
+// DrawReflectedComponent below calls ImGui directly. Every consumer happened to include imgui
+// before this header, which is why the missing include survived until a compiler that does not
+// resolve it for you.
+#include <imgui/imgui.h>
 
 #include <functional>
 

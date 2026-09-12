@@ -9,6 +9,12 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+// PRIu64. uint64_t is `unsigned long` on LP64 (Linux, macOS) and `unsigned long long` on
+// Windows, so no single printf conversion spells it on both - and UUID's conversion operator is
+// explicit, which in direct-initialization only yields uint64_t exactly. The macro is the
+// portable spelling; <cstdint>'s fixed-width types have no other one.
+#include <cinttypes>
+
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
@@ -400,11 +406,15 @@ namespace GanymedE {
 			static bool IsMixed(void* owner, const entt::meta_data& field)
 			{
 				auto* self = static_cast<MultiBinding*>(owner);
-				if (!self->Primary.HasComponent<T>())
+
+				// `self` has dependent type, so every member template reached through it needs
+				// the `template` disambiguator - otherwise `<` is parsed as less-than. `other`
+				// below is declared `Entity` outright and so needs nothing.
+				if (!self->Primary.template HasComponent<T>())
 					return false;
 
 				const std::string primary = EmitReflectedValue(
-					entt::forward_as_meta(self->Primary.GetComponent<T>()), field);
+					entt::forward_as_meta(self->Primary.template GetComponent<T>()), field);
 
 				if (primary.empty())
 					return false;   // no codec: cannot tell, so do not claim a disagreement
@@ -427,11 +437,14 @@ namespace GanymedE {
 			static void Propagate(void* owner, const entt::meta_data& field)
 			{
 				auto* self = static_cast<MultiBinding*>(owner);
-				if (!self->Primary.HasComponent<T>())
+				if (!self->Primary.template HasComponent<T>())
 					return;
 
-				entt::meta_any value = field.get(
-					entt::forward_as_meta(self->Primary.GetComponent<T>()));
+				// Named: meta_data::get builds a meta_handle that binds a non-const lvalue ref,
+				// so the temporary cannot be passed inline. See EditorPrefabOverrides.h.
+				entt::meta_any primary =
+					entt::forward_as_meta(self->Primary.template GetComponent<T>());
+				entt::meta_any value = field.get(primary);
 
 				if (!value)
 					return;
@@ -754,7 +767,11 @@ namespace GanymedE {
 				&& EditorUI::IsComponentOverridden<T>(entity, *m_Context);
 
 			const std::string header = sectionOverridden ? name + "  *" : name;
-			bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags, header.c_str());
+			// "%s", not the string itself: TreeNodeEx's trailing argument is a printf format, and
+			// `header` carries a component display name. The entity node at DrawEntityNode does
+			// the same for the same reason.
+			bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags,
+				"%s", header.c_str());
 			ImGui::PopStyleVar();
 			ImGui::SameLine(contentRegionAvailable.x - lineHeight * 0.5f);
 			ImGui::PushID((int)typeid(T).hash_code());
@@ -1079,7 +1096,7 @@ namespace GanymedE {
 		if (metadata)
 			ImGui::Text("Prefab instance: %s", metadata->FilePath.c_str());
 		else
-			ImGui::TextDisabled("Prefab instance: source %llu is not in the registry",
+			ImGui::TextDisabled("Prefab instance: source %" PRIu64 " is not in the registry",
 				static_cast<uint64_t>(source));
 
 		if (ImGui::Button("Apply to Prefab..."))
@@ -1326,7 +1343,8 @@ namespace GanymedE {
 				if (metadata)
 					ImGui::Text("Mesh: %s", metadata->FilePath.c_str());
 				else
-					ImGui::Text("Mesh handle: %llu", static_cast<uint64_t>(component.Mesh.Handle()));
+					ImGui::Text("Mesh handle: %" PRIu64,
+						static_cast<uint64_t>(component.Mesh.Handle()));
 
 				const Ref<Mesh>& mesh = component.Mesh.Get();
 				if (mesh)
@@ -1355,7 +1373,8 @@ namespace GanymedE {
 						if (slotMetadata)
 							ImGui::Text("Slot %u: %s", i, slotMetadata->FilePath.c_str());
 						else if (IsAssetHandleValid(slot))
-							ImGui::Text("Slot %u: unknown material %llu", i, static_cast<uint64_t>(slot));
+							ImGui::Text("Slot %u: unknown material %" PRIu64, i,
+								static_cast<uint64_t>(slot));
 						else
 							ImGui::Text("Slot %u: (default: %s)", i, imported.c_str());
 
@@ -1493,7 +1512,8 @@ namespace GanymedE {
 				if (metadata)
 					ImGui::Text("Script: %s", metadata->FilePath.c_str());
 				else
-					ImGui::Text("Script handle: %llu", static_cast<uint64_t>(component.Script));
+					ImGui::Text("Script handle: %" PRIu64,
+						static_cast<uint64_t>(component.Script));
 
 				if (ImGui::Button("Clear"))
 				{

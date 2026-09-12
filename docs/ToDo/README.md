@@ -32,18 +32,22 @@ documented.** A file here is a promise, not a description.
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred | 1 (parked) |
 | [reflection.md](reflection.md) | Apply-to-prefab, template cache, multi-entity editing gaps | 4 |
 | [assets.md](assets.md) | Dependency hashing, parse backpressure | 2 |
-| [cross-cutting.md](cross-cutting.md) | Platform coverage, verification gaps | 2 |
+| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, frame instrumentation | 3 |
 
-**Priority, as a recommendation rather than a schedule:** [cross-cutting.md](cross-cutting.md)'s
-platform coverage — **all four backends now render correctly on Windows**, D3D12 and Vulkan
-pixel-identically to D3D11 and OpenGL within 5/255, so nothing in the renderer blocks a Linux build
-any more. [assets.md](assets.md)'s one-liner batch is done — what is left there is two design
-questions, each wanting a measurement first. [rendering.md](rendering.md) is effectively closed — all four backends render, pick and agree on
-colour. Its one remaining entry, **MSAA, is parked on purpose**: the abort is diagnosed and the fix
-is one line, but whether MSAA is wanted at all is the open question, and FXAA already ships. Nothing
-there blocks anything else.
+**Priority, as a recommendation rather than a schedule:** **Linux is now built and run** — all
+three configurations, editor and runtime, with the status table in
+[build-and-tooling.md](../engine/build-and-tooling.md#platform-status). What is left in
+[cross-cutting.md](cross-cutting.md) is macOS (never compiled) and the gap between "runs in WSL2"
+and "runs on Linux" — chiefly Vulkan, which WSL cannot load.
 
-That leaves [cross-cutting.md](cross-cutting.md)'s platform coverage as the live work.
+[assets.md](assets.md)'s one-liner batch is done; what is left there is two design questions, each
+wanting a measurement first. [rendering.md](rendering.md) is effectively closed — all four backends
+render, pick and agree on colour. Its one remaining entry, **MSAA, is parked on purpose**: the abort
+is diagnosed and the fix is one line, but whether MSAA is wanted at all is the open question, and
+FXAA already ships. Nothing there blocks anything else.
+
+That leaves frame instrumentation — really the question of whether to adopt Tracy — as the largest
+open item, with macOS behind it.
 
 Threading is **done**: T1–T4 and decision 4 have all landed, so there is no threading file here any
 more. Jolt now runs on `Core/JobSystem` — see [physics.md](../engine/physics.md#the-job-system).

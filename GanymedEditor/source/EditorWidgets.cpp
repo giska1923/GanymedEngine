@@ -393,7 +393,10 @@ namespace GanymedE::EditorUI {
 
 		ImGui::Columns(2);
 		ImGui::SetColumnWidth(0, columnWidth);
-		ImGui::Text(label.c_str());
+		// TextUnformatted, not Text: `label` reaches here from component field names and from
+		// user-entered strings, and ImGui::Text treats its first argument as a printf format. A
+		// label containing a '%' would read arguments that were never passed.
+		ImGui::TextUnformatted(label.c_str());
 		ImGui::NextColumn();
 
 		ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());

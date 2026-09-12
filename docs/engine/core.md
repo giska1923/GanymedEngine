@@ -264,7 +264,9 @@ Naming is installed through enkiTS's `threadStart` profiler callback rather than
 enkiTS never calls `threadStart` for the thread it did not create. Per platform: `SetThreadDescription`
 on Windows (resolved dynamically, so a binary built against a current SDK still starts on a pre-1607
 Windows), `pthread_setname_np` elsewhere — truncated to 15 characters on Linux, which rejects longer
-names outright rather than truncating for you.
+names outright (`ERANGE`) rather than truncating for you. Verified on Linux: every name the pool
+actually produces fits, since `GE Main` is 7 characters and `GE Worker 31` is 12, so the truncation
+is a guard rather than something the debugger ever sees.
 
 **Naming is unconditional; the profiler bridge is not.** `threadStart`/`threadStop` are always
 installed, so an unnamed pool never happens — fifteen identical `Worker Thread` rows in a debugger is

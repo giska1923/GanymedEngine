@@ -96,7 +96,9 @@ namespace GanymedE::EditorUI {
 		{
 			// The DRAWER half: a field with no per-field revert affordance still counts towards
 			// "this component is overridden", which is the whole point of the section marker.
-			if (Reflection::Has(field.traits<Reflection::Trait>(), Reflection::Trait::CustomDrawer))
+			// `field` comes from `entt::resolve<T>()`, so its type is dependent and `traits` needs
+			// the disambiguator - without it `<` parses as less-than. MSVC accepts it either way.
+			if (Reflection::Has(field.template traits<Reflection::Trait>(), Reflection::Trait::CustomDrawer))
 				continue;
 
 			const std::string a = EmitReflectedValue(live, field);
@@ -117,7 +119,12 @@ namespace GanymedE::EditorUI {
 			return false;
 
 		entt::meta_any live = entt::forward_as_meta(entity.GetComponent<T>());
-		entt::meta_any value = field.get(entt::forward_as_meta(source.GetComponent<T>()));
+
+		// Named rather than passed inline: `meta_data::get` takes `Instance&&` and builds a
+		// `meta_handle` from it, which binds `Type&` - so a temporary cannot bind. MSVC allows it
+		// as an extension (C4239); GCC and Clang reject it.
+		entt::meta_any templ = entt::forward_as_meta(source.GetComponent<T>());
+		entt::meta_any value = field.get(templ);
 		if (!value)
 			return false;
 

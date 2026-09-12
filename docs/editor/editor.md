@@ -437,6 +437,15 @@ vector is never written directly.
 The vendored `ImCurveEdit` / `ImGradient` under `extern/ImGuizmo/src` stay uncompiled: they bring
 an unverified ActiveId story, which is the one property this protocol cannot live without.
 
+**Labels are never passed as format strings.** `ImGui::Text`, `TextDisabled` and `TreeNodeEx`'s
+trailing argument are all printf formats, and the strings this panel feeds them are component
+display names, field labels and entity names — the last of which a user types. `ImGui::Text(name)`
+for an entity called `%s` reads an argument that was never pushed. Every such site uses
+`TextUnformatted`, or `"%s"` with the string as an argument; the entity tree node already did, and
+the component header and `DrawVec3Control` now match it. GCC's `-Wformat-security` is what surfaced
+the two that did not — MSVC has no equivalent diagnostic, so the editor had carried them since the
+widgets were written.
+
 Notable behaviors:
 
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons, which returns

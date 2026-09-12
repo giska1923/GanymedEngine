@@ -113,9 +113,13 @@ namespace GanymedE {
 			setThreadDescription(GetCurrentThread(), wide.c_str());
 #elif defined(GE_PLATFORM_LINUX)
 			// Linux caps this at 16 bytes INCLUDING the terminator and fails the call
-			// outright if the name is longer, so truncate rather than lose the name.
+			// outright (ERANGE) if the name is longer, so truncate rather than lose the name.
+			// The precision is written out rather than left to the buffer size so the bound is
+			// visible to a reader and to -Wformat-truncation, which otherwise reports the
+			// worst case of the "GE Worker %u" below. Every name this is actually called with
+			// fits: "GE Main" is 7 and "GE Worker 31" is 12.
 			char truncated[16];
-			std::snprintf(truncated, sizeof(truncated), "%s", name);
+			std::snprintf(truncated, sizeof(truncated), "%.15s", name);
 			pthread_setname_np(pthread_self(), truncated);
 #elif defined(GE_PLATFORM_MACOS)
 			pthread_setname_np(name);   // current thread only, hence the shape of this function
