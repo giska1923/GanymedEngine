@@ -103,10 +103,10 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | 2 | Icon font in the atlas; most panels still unlabeled | very high | medium | 0 **done** (play/stop uses `ICON_LC_*`; remaining chrome in 4–6) |
 | 3 | Montserrat (geometric display face) instead of a UI grotesque | high | low | 0 **done** (Inter; Montserrat remains for RmlUi HUD) |
 | 4 | Noisy near-identical greys; rounding on | high | low | 1 **done** |
-| 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 |
+| 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 helpers **done**; consumption in 4–6 |
 | 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 |
 | 7 | Toolbar is a docked window with one centred button | high | low | 2 **done** |
-| 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `•••` is phase 3) |
+| 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `OverflowMenuButton` in 3, used in 5) |
 | 9 | No status bar | medium | low | 7 |
 | 10 | Inspector component headers are ImGui `CollapsingHeader`s, not full-width `#1A1A1A` rows with icon + eye + `•••` | medium | medium | 5 |
 | 11 | Content Browser: no breadcrumb, no folder sidebar, no search, no item count, no view toggle | medium | high | 6 |
@@ -123,7 +123,7 @@ worth the file:
 | `EditorWidgets.cpp` vec3 reset buttons | red/green/blue | `Theme.AxisX/Y/Z` |
 | `EditorWidgets.cpp` curve/gradient editors | eight `IM_COL32` literals + `3.0f` rounding | `Theme.*` + rounding 0 |
 | `ContentBrowserPanel.cpp` per-asset tints | eight tints | `Theme.AssetTint[AssetType]` |
-| `EditorLayer.cpp` toolbar transparent-button push | hover/active from `ImGuiCol_Button*` | accent tokens at 35%/55% (`IconButton` is still phase 3) |
+| `EditorLayer.cpp` toolbar transparent-button push | hover/active from `ImGuiCol_Button*` | accent tokens; `IconButton` (phase 2) |
 
 `SceneHierarchyPanel.cpp` had no colour literals; it was listed as a consumer and did not need
 edits.
@@ -345,7 +345,16 @@ Wiring the mode buttons to `m_GizmoType` is the one place this phase touches beh
 
 ---
 
-### Phase 3 — Panel furniture helpers
+### Phase 3 — Panel furniture helpers — **done**
+
+Vocabulary in `EditorWidgets.h/.cpp`. `IconButton` / `ToolbarSeparator` came in with phase 2.
+`BeginPanel` + `BeginPanelBody`, `PanelToolbarRow`, `SearchField`, `ColumnHeaderRow`,
+`OverflowMenuButton`, `RowActionIcons`, `StatusBarItem` are the rest. No throwaway Stats
+preview — stub chrome is the thing this milestone refuses. `SearchField` is
+`InputTextWithHint`, so `HandleShortcuts`'s `WantTextInput` gate already covers it. Live
+description: [editor.md](../editor/editor.md#adding-an-editor-feature--where-things-hook).
+
+The spec that was executed:
 
 The reusable vocabulary every remaining phase consumes. Goes in `EditorWidgets.h/.cpp`, next to
 `CurveEditor` / `DrawVec3Control`, and follows the same rule those already document: a custom widget
@@ -355,23 +364,21 @@ that participates in an edit gesture owns `ActiveId` for the whole gesture via o
 
 | Helper | Draws |
 |---|---|
-| `PanelToolbarRow(float height)` / `EndPanelToolbarRow()` | `SurfaceBg` child of fixed height, 1 px `Border` rule along the bottom |
+| `BeginPanel` / `EndPanel` / `BeginPanelBody` / `EndPanelBody` | `WindowPadding (0,0)` on the window; body child re-applies style padding |
+| `PanelToolbarRow(id, height = 44)` / `EndPanelToolbarRow()` | `SurfaceBg` child of fixed height, 1 px `Border` rule along the bottom. 44 is the sampled per-panel toolbar, not `Theme().ToolbarHeight` (41) |
 | `IconButton(icon, tooltip, bool active = false)` | **done (phase 2)** — 24×24, `InvisibleButton` + fill/glyph pair so hover can use `TextOnAccent` |
 | `ToolbarSeparator()` | **done (phase 2)** — 1 px vertical `Border` with 4 px margins |
-| `SearchField(id, char* buf, size_t n, const char* hint)` | `SurfaceSunken` frame, `ICON_LC_SEARCH` prefix in `TextDim`, hint text, `ICON_LC_X` clear button when non-empty. Returns true when the filter changed |
-| `ColumnHeaderRow(std::initializer_list<ColumnSpec>)` | `SurfaceSunken` strip, `TextDim` 16 px labels, right-aligned icon columns |
-| `OverflowMenuButton(id)` | The `•••` button — **only** call it where there is a real menu |
-| `RowActionIcons(...)` | Right-aligned per-row icon cluster (eye / lock), `TextDim`, brightening on row hover |
-| `StatusBarItem(icon, text, colour = TextPrimary)` | Icon + label pair with consistent spacing |
-
-Also add `BeginPanel(name)` / `EndPanel()` wrapping `Begin`/`End` with `WindowPadding = (0,0)`, so
-toolbar rows and column headers can reach the panel edges the way Cold War's do. The content region
-inside then re-pushes normal padding.
+| `SearchField(id, char* buf, size_t n, const char* hint)` | One `SurfaceSunken` bar, `ICON_LC_SEARCH` prefix in `TextDim`, hint text, in-field `ICON_LC_X` when non-empty. Returns true when the filter changed. Honours `SetNextItemWidth` |
+| `ColumnHeaderRow(std::initializer_list<ColumnSpec>)` | `SurfaceSunken` strip, `TextDim` 16 px labels, right-aligned icon columns (`width > 0`) |
+| `OverflowMenuButton(id)` | The `•••` button — **only** call it where there is a real menu. Does not `OpenPopup` |
+| `RowActionIcons(...)` | Overlay on the previous item rect; right-aligned eye/lock cluster, `TextDim`, brightening on row hover. Not `IconButton` |
+| `StatusBarItem(icon, text, colour = 0)` | Icon + label pair; `colour == 0` means `TextPrimary` |
 
 - **Files:** `EditorWidgets.h/.cpp`.
-- **Verify:** a throwaway call site per helper; `SearchField` focus does not eat Ctrl+Z (it should —
-  `HandleShortcuts` returns early on `WantTextInput`; confirm that still holds).
-- **Docs:** `editor/editor.md` — the "Adding an editor feature" table gains a "Panel furniture" row.
+- **Verify:** editor project compiles. No throwaway Stats preview — stub chrome is the thing this
+  milestone refuses; `SearchField` is `InputTextWithHint`, so `HandleShortcuts`'s `WantTextInput`
+  gate already applies. Consumption is phases 4–6.
+- **Docs:** `editor/editor.md` Look and feel + the "Adding an editor feature" table.
 
 ---
 
@@ -609,7 +616,7 @@ menu buttons that move the window instead of opening.
 | 0 — fonts + icons | **done** |
 | 1 — token layer | **done** |
 | 2 — toolbar geometry | **done** |
-| 3 — furniture helpers | 1 day |
+| 3 — furniture helpers | **done** |
 | 4 — outliner | 1.5 days |
 | 5 — inspector headers | 1 day |
 | 6 — asset browser | 1.5 days |

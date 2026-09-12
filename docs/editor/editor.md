@@ -109,6 +109,22 @@ Two mappings invert ImGui's defaults, and they are not bugs:
 rows keep `ImGuiCol_Text` (light on lilac). Do not "fix" FrameBg or Header back toward ImGui
 defaults.
 
+### Panel furniture
+
+Chrome helpers in `EditorWidgets.h` — not property editors. `BeginPanel` / `EndPanel` wrap
+`Begin` / `End` with `WindowPadding (0,0)` so toolbars and column headers reach the window
+edge; `BeginPanelBody` is a child with `AlwaysUseWindowPadding` so tree/inspector content is
+not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel toolbar; not
+`Theme().ToolbarHeight`, which is the main 41 px host strip). `SearchField` is one recessed
+`SurfaceSunken` bar (`InputTextWithHint` plus search/clear glyphs) — while it is focused,
+`HandleShortcuts` already bails on `WantTextInput`, so Ctrl+Z is ImGui's text undo.
+`ColumnHeaderRow` is a 26 px `SurfaceSunken` strip in the 16 px face. `IconButton` /
+`ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
+Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
+
+Live panels are not wrapped yet; that is phases 4–6 of
+[editor-visual-parity.md](../ToDo/editor-visual-parity.md).
+
 ## EditorLayer
 
 Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pair, the
@@ -718,7 +734,7 @@ so the first call always wins the delivery and the second type would never fire.
 |---|---|
 | New panel | Create under `Panels/`, own it in `EditorLayer`, call `OnImGuiRender`, dock it in the DockBuilder block |
 | New chrome colour | Add a token on `EditorTheme`, map it in `ApplyTheme` if it is an ImGui style colour, consume `Theme().X` — never a new literal |
-| Toolbar chrome | `EditorUI::IconButton` / `ToolbarSeparator` — do not hand-roll 24×24 accent fills |
+| Panel furniture | `EditorUI::BeginPanel`, `PanelToolbarRow`, `SearchField`, `ColumnHeaderRow`, `IconButton`, `ToolbarSeparator`, `OverflowMenuButton`, `RowActionIcons`, `StatusBarItem` — do not hand-roll chrome |
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
 | Custom canvas widget | `EditorWidgets.cpp`; one `InvisibleButton` spanning the canvas so `ActiveId` holds for the drag; return true only on a real value change |
 | New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |

@@ -1,5 +1,6 @@
 #include "EditorWidgets.h"
 #include "EditorFonts.h"
+#include "EditorIcons.h"
 #include "EditorTheme.h"
 
 #include <imgui/imgui_internal.h>
@@ -528,6 +529,240 @@ namespace GanymedE::EditorUI {
 			ImVec2(p.x + kMargin, p.y + kMargin),
 			ImVec2(p.x + kMargin + 1.0f, p.y + kHeight - kMargin),
 			Theme().Border);
+	}
+
+	bool BeginPanel(const char* name, bool* open, ImGuiWindowFlags flags)
+	{
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+		const bool visible = ImGui::Begin(name, open, flags);
+		ImGui::PopStyleVar();
+		return visible;
+	}
+
+	void EndPanel()
+	{
+		ImGui::End();
+	}
+
+	void BeginPanelBody()
+	{
+		// Parent BeginPanel captured WindowPadding 0. The child reads the live style
+		// (ImGui's 8,8 — ApplyTheme does not change it) and AlwaysUseWindowPadding
+		// applies it even without a child border.
+		ImGui::BeginChild("##PanelBody", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+	}
+
+	void EndPanelBody()
+	{
+		ImGui::EndChild();
+	}
+
+	bool PanelToolbarRow(const char* id, float height)
+	{
+		if (height <= 0.0f)
+			height = 44.0f;
+
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, Color(Theme().SurfaceBg));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 0.0f));
+		const bool open = ImGui::BeginChild(id, ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+
+		const float y = (ImGui::GetContentRegionAvail().y - 24.0f) * 0.5f;
+		if (y > 0.0f)
+			ImGui::SetCursorPosY(ImGui::GetCursorPosY() + y);
+		return open;
+	}
+
+	void EndPanelToolbarRow()
+	{
+		const ImVec2 wp = ImGui::GetWindowPos();
+		const ImVec2 ws = ImGui::GetWindowSize();
+		ImGui::GetWindowDrawList()->AddLine(
+			ImVec2(wp.x, wp.y + ws.y - 1.0f),
+			ImVec2(wp.x + ws.x, wp.y + ws.y - 1.0f),
+			Theme().Border);
+		ImGui::EndChild();
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor();
+	}
+
+	bool SearchField(const char* id, char* buf, size_t bufSize, const char* hint)
+	{
+		const EditorTheme& theme = Theme();
+		ImGui::PushID(id);
+
+		const float h = ImGui::GetFrameHeight();
+		ImGuiContext& g = *GImGui;
+		const float width = (g.NextItemData.HasFlags & ImGuiNextItemDataFlags_HasWidth)
+			? ImGui::CalcItemWidth()
+			: ImGui::GetContentRegionAvail().x;
+		const bool hasText = buf && buf[0] != '\0';
+		const ImVec2 p0 = ImGui::GetCursorScreenPos();
+		ImGui::Dummy(ImVec2(width, h));
+		const ImVec2 after = ImGui::GetCursorScreenPos();
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(p0, ImVec2(p0.x + width, p0.y + h), theme.SurfaceSunken);
+
+		const ImVec2 searchSize = ImGui::CalcTextSize(ICON_LC_SEARCH);
+		draw->AddText(
+			ImVec2(p0.x + 6.0f, p0.y + (h - searchSize.y) * 0.5f),
+			theme.TextDim, ICON_LC_SEARCH);
+
+		const float clearSlot = hasText ? h : 0.0f;
+		const float textX = p0.x + 6.0f + searchSize.x + 4.0f;
+		const float textW = ImMax(8.0f, width - (textX - p0.x) - clearSlot - 4.0f);
+
+		ImGui::SetCursorScreenPos(ImVec2(textX, p0.y));
+		ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_TextDisabled, Color(theme.TextDim));
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+		ImGui::SetNextItemWidth(textW);
+		bool changed = ImGui::InputTextWithHint("##s", hint ? hint : "Search...", buf, bufSize);
+		ImGui::PopStyleVar();
+		ImGui::PopStyleColor(4);
+
+		if (hasText)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(p0.x + width - h, p0.y));
+			if (ImGui::InvisibleButton("##clear", ImVec2(h, h)))
+			{
+				buf[0] = '\0';
+				changed = true;
+			}
+			const ImVec2 ts = ImGui::CalcTextSize(ICON_LC_X);
+			const ImVec2 r0 = ImGui::GetItemRectMin();
+			const ImU32 glyph = ImGui::IsItemHovered() ? theme.TextPrimary : theme.TextDim;
+			draw->AddText(
+				ImVec2(r0.x + (h - ts.x) * 0.5f, r0.y + (h - ts.y) * 0.5f),
+				glyph, ICON_LC_X);
+			ImGui::SetItemTooltip("Clear");
+		}
+
+		ImGui::SetCursorScreenPos(after);
+		ImGui::PopID();
+		return changed;
+	}
+
+	void ColumnHeaderRow(std::initializer_list<ColumnSpec> columns)
+	{
+		const EditorTheme& theme = Theme();
+		const float height = theme.ColumnHeaderHeight;
+		const ImVec2 p0 = ImGui::GetCursorScreenPos();
+		const float width = ImGui::GetContentRegionAvail().x;
+		ImGui::GetWindowDrawList()->AddRectFilled(
+			p0, ImVec2(p0.x + width, p0.y + height), theme.SurfaceSunken);
+		ImGui::Dummy(ImVec2(width, height));
+
+		float fixed = 0.0f;
+		int flex = 0;
+		for (const ColumnSpec& col : columns)
+		{
+			if (col.width > 0.0f)
+				fixed += col.width;
+			else
+				flex++;
+		}
+		const float flexW = flex > 0 ? ImMax(0.0f, width - fixed) / (float)flex : 0.0f;
+
+		if (ImFont* small = EditorFonts::Small())
+			ImGui::PushFont(small);
+
+		float x = p0.x;
+		const float textY = p0.y + (height - ImGui::GetFontSize()) * 0.5f;
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		for (const ColumnSpec& col : columns)
+		{
+			const float w = col.width > 0.0f ? col.width : flexW;
+			if (col.label && col.label[0])
+			{
+				const ImVec2 ts = ImGui::CalcTextSize(col.label);
+				const float tx = col.width > 0.0f
+					? x + w - ts.x - 6.0f
+					: x + 8.0f;
+				draw->AddText(ImVec2(tx, textY), theme.TextDim, col.label);
+			}
+			x += w;
+		}
+
+		if (EditorFonts::Small())
+			ImGui::PopFont();
+	}
+
+	bool OverflowMenuButton(const char* id)
+	{
+		ImGui::PushID(id);
+		const bool clicked = IconButton(ICON_LC_ELLIPSIS, "More");
+		ImGui::PopID();
+		return clicked;
+	}
+
+	int RowActionIcons(std::initializer_list<RowActionIcon> icons, bool rowHovered)
+	{
+		const int count = (int)icons.size();
+		if (count <= 0)
+			return -1;
+
+		constexpr float kIcon = 18.0f;
+		const ImVec2 rowMin = ImGui::GetItemRectMin();
+		const ImVec2 rowMax = ImGui::GetItemRectMax();
+		const ImVec2 backup = ImGui::GetCursorScreenPos();
+		const EditorTheme& theme = Theme();
+
+		const float y = rowMin.y + (rowMax.y - rowMin.y - kIcon) * 0.5f;
+		float x = rowMax.x - (float)count * kIcon - 4.0f;
+
+		int clicked = -1;
+		int i = 0;
+		for (const RowActionIcon& action : icons)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(x, y));
+			ImGui::PushID(i);
+			if (ImGui::InvisibleButton("##ra", ImVec2(kIcon, kIcon)))
+				clicked = i;
+
+			const bool hot = ImGui::IsItemHovered();
+			ImU32 glyph = theme.TextDim;
+			if (action.active || rowHovered || hot)
+				glyph = theme.TextPrimary;
+
+			const ImVec2 ts = ImGui::CalcTextSize(action.icon);
+			const ImVec2 p0 = ImGui::GetItemRectMin();
+			ImGui::GetWindowDrawList()->AddText(
+				ImVec2(p0.x + (kIcon - ts.x) * 0.5f, p0.y + (kIcon - ts.y) * 0.5f),
+				glyph, action.icon);
+
+			if (action.tooltip)
+				ImGui::SetItemTooltip("%s", action.tooltip);
+
+			ImGui::PopID();
+			x += kIcon;
+			i++;
+		}
+
+		ImGui::SetCursorScreenPos(backup);
+		return clicked;
+	}
+
+	void StatusBarItem(const char* icon, const char* text, ImU32 colour)
+	{
+		const EditorTheme& theme = Theme();
+		if (colour == 0)
+			colour = theme.TextPrimary;
+
+		ImGui::PushStyleColor(ImGuiCol_Text, Color(colour));
+		if (icon && icon[0])
+		{
+			ImGui::TextUnformatted(icon);
+			if (text && text[0])
+				ImGui::SameLine(0.0f, 6.0f);
+		}
+		if (text && text[0])
+			ImGui::TextUnformatted(text);
+		ImGui::PopStyleColor();
 	}
 
 }
