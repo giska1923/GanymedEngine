@@ -589,6 +589,8 @@ image on GL, this is why — the fix is a caps-driven flip in those two vertex s
 measured latency is 3 frames; requests are *dropped*, not queued, when all slots are busy, since
 the next frame issues another). The editor requests on hover every frame, so the latency is
 invisible. Pick storage is a fixed array because bgfx writes the result memory asynchronously.
+Entities hidden by the outliner eye are not submitted in edit mode, so they never write an ID
+and cannot be picked — see [scene.md](scene.md) RenderSystem.
 
 ## Renderer (the umbrella)
 

@@ -2,9 +2,12 @@
 
 #include <glm/glm.hpp>
 
+#include "GanymedE/Core/UUID.h"
 #include "GanymedE/ECS/SingletonTraits.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Renderer/EditorCamera.h"
+
+#include <unordered_set>
 
 // Scene-wide state that is genuinely singular. These used to be either members of Scene (which
 // made Scene the dumping ground for anything a system needed) or "first one wins" scans over a
@@ -42,6 +45,15 @@ namespace GanymedE {
 
 		float FixedTimestep = 1.0f / 60.0f;
 		int MaxStepsPerFrame = 5;          // spiral-of-death guard
+	};
+
+	// Editor outliner eye-toggle. Pointer into editor-owned state; never serialized,
+	// not copied by Scene::Copy. Null means "draw everything" (runtime, play mode, or
+	// an editor that has not asserted a set this frame). RenderSystem consults this
+	// only from OnUpdateEditor, so Play still draws hidden entities.
+	struct EditorViewFilter
+	{
+		const std::unordered_set<UUID>* HiddenEntities = nullptr;
 	};
 
 	// Change-tracked so a system can react to the camera moving rather than recomputing

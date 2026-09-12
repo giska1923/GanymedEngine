@@ -111,7 +111,8 @@ Two ordering facts worth internalizing:
   post stack) and the active `Scene`. Neither the engine nor `Application` holds a scene.
 - `Scene` owns the entt registry, the `SystemManager` (nine built-in systems), the `CommandQueue`,
   per-component-type change buffers / graveyards / init-fini buffers, and the UUID→entity map.
-  Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`).
+  Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`,
+  `EditorViewFilter`).
 - `PhysicsSystem` owns the `PhysicsScene` (Jolt world) — it exists only between play and stop.
 - `AudioEngine` owns the miniaudio device and every live voice. It is static-lifetime and explicitly
   `Init()`/`Shutdown()` by `Application`; because that shutdown runs in the destructor *body*, before

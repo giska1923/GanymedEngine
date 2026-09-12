@@ -2,6 +2,7 @@
 
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Log.h"
+#include "GanymedE/Core/UUID.h"
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/Entity.h"
 
@@ -9,6 +10,7 @@
 
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace GanymedE {
@@ -47,6 +49,13 @@ namespace GanymedE {
 		// Instantiates a .gprefab into the current scene (viewport drop, or the hierarchy's
 		// blank-space menu) and selects the new instance root.
 		Entity InstantiatePrefab(const std::filesystem::path& relativePath);
+
+		// Editor-only outliner flags. Keyed by UUID so they survive play/stop (same IDs on
+		// the copied scene) and are not cleared by RetargetPanels. New/Open must call
+		// ClearEditorViewState because those UUIDs belong to a different document.
+		bool IsLocked(Entity entity) const;
+		const std::unordered_set<UUID>& HiddenEntities() const { return m_Hidden; }
+		void ClearEditorViewState();
 	private:
 		// The one place the selection changes shape. `SelectSingle({})` clears.
 		void SelectSingle(Entity entity);
@@ -54,6 +63,9 @@ namespace GanymedE {
 
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
+		void DrawCreateMenu();
+		void RebuildFilterVisibility();
+		bool MarkFilterVisible(Entity entity);
 
 		// One inspector section. `uiFunction` returns whether any widget inside it edited the
 		// component this frame - see the commit-boundary protocol in the .cpp.
@@ -123,5 +135,10 @@ namespace GanymedE {
 		// Primary first. m_SelectionContext is always m_Selection.front() when non-empty; the
 		// two are kept in step by SelectSingle/ToggleSelection and by nothing else.
 		std::vector<Entity> m_Selection;
+
+		char m_Search[128] = {};
+		std::unordered_set<UUID> m_Hidden;
+		std::unordered_set<UUID> m_Locked;
+		std::unordered_set<UUID> m_FilterVisible;
 	};
 }

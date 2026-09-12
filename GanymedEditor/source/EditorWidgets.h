@@ -95,12 +95,16 @@ namespace GanymedE::EditorUI {
 		const char* icon = "";
 		const char* tooltip = nullptr;
 		bool active = false;
+		bool interactive = true;
 	};
 
 	// Overlay on the previous item's rect (call right after TreeNodeEx / Selectable).
-	// Right-aligned, TextDim, brightens to TextPrimary on row hover or when active.
+	// Right-aligned cells, TextDim, brightens to TextPrimary on row hover or when active.
+	// `cellWidth` must match the ColumnHeaderRow icon columns (26 px outliner).
+	// Empty / non-interactive entries still occupy a cell so columns stay aligned.
 	// Returns the clicked index, or -1.
-	int RowActionIcons(std::initializer_list<RowActionIcon> icons, bool rowHovered);
+	int RowActionIcons(std::initializer_list<RowActionIcon> icons, bool rowHovered,
+		float cellWidth = 26.0f);
 
 	// Icon + label pair. `colour == 0` means TextPrimary. SameLine-friendly.
 	void StatusBarItem(const char* icon, const char* text, ImU32 colour = 0);

@@ -103,8 +103,8 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | 2 | Icon font in the atlas; most panels still unlabeled | very high | medium | 0 **done** (play/stop uses `ICON_LC_*`; remaining chrome in 4–6) |
 | 3 | Montserrat (geometric display face) instead of a UI grotesque | high | low | 0 **done** (Inter; Montserrat remains for RmlUi HUD) |
 | 4 | Noisy near-identical greys; rounding on | high | low | 1 **done** |
-| 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 helpers **done**; consumption in 4–6 |
-| 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 |
+| 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 helpers **done**; outliner consumes in 4 **done**; 5–6 remain |
+| 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 **done** |
 | 7 | Toolbar is a docked window with one centred button | high | low | 2 **done** |
 | 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `OverflowMenuButton` in 3, used in 5) |
 | 9 | No status bar | medium | low | 7 |
@@ -382,7 +382,18 @@ that participates in an edit gesture owns `ActiveId` for the whole gesture via o
 
 ---
 
-### Phase 4 — Scene Hierarchy → World Outliner
+### Phase 4 — Scene Hierarchy → World Outliner — **done**
+
+`BeginPanel` + toolbar (`+` create with real menu items, `SearchField`) + `ColumnHeaderRow` +
+type icons + prefab `Link` names + full-width selection (`TextOnAccent` primary, 40 % `Accent`
+secondary) + editor-side eye/lock UUID sets. Window title stays **Scene Hierarchy** so the dock
+ini does not churn. Did **not** split Properties out: the inspector undo protocol is load-bearing
+and phase 5 edits `DrawComponent` in place. Did **not** stub sort / filter-dropdown / view-options
+— no backing behaviour. Eye hides the subtree from `RenderSystem::OnUpdateEditor` via
+`EditorViewFilter` (play still draws). Lock blocks viewport pick and the gizmo. Live description:
+[editor.md](../editor/editor.md#scene-hierarchy-panel).
+
+The spec that was executed:
 
 Cold War's outliner is the panel that most defines the look. Five changes, in order of impact:
 
@@ -405,15 +416,15 @@ Cold War's outliner is the panel that most defines the look. Five changes, in or
    `editor.md` should use `Accent` at ~40 % alpha for non-primary selections, so primary vs.
    secondary stays readable — currently they are indistinguishable.
 
-The hierarchy panel is 1642 lines and also hosts the inspector. Consider splitting the Properties
-half into `PropertiesPanel.cpp` **as part of this phase or not at all** — it is a mechanical move,
-but doing it later means doing phase 5's edits twice.
+The hierarchy panel also hosts the inspector. Properties was **not** split out: the undo commit
+boundary is load-bearing, and phase 5 will edit `DrawComponent` in place.
 
-- **Files:** `Panels/SceneHierarchyPanel.cpp/.h` (+ possible split).
-- **Verify:** filter a 100-entity scene; confirm ancestors of matches stay visible; selection fill
-  spans the row; eye/lock toggles survive play/stop (they are editor state, so they must not be
-  cleared by `RetargetPanels`).
-- **Docs:** `editor/editor.md` Scene Hierarchy section.
+- **Files:** `Panels/SceneHierarchyPanel.cpp/.h`, `EditorLayer.cpp/.h`, `EditorWidgets.h/.cpp`
+  (`RowActionIcons` cell width), `SceneSingletons.h`, `RenderSystem.cpp/.h`.
+- **Verify:** editor compiles. Filter keeps ancestors of matches visible; primary vs secondary
+  selection fills differ; eye/lock survive play/stop (`RetargetPanels` does not call
+  `ClearEditorViewState`); New/Open do. Hidden meshes disappear in Edit and still draw in Play.
+- **Docs:** `editor/editor.md` Scene Hierarchy, `engine/scene.md` `EditorViewFilter`.
 
 ---
 
@@ -617,7 +628,7 @@ menu buttons that move the window instead of opening.
 | 1 — token layer | **done** |
 | 2 — toolbar geometry | **done** |
 | 3 — furniture helpers | **done** |
-| 4 — outliner | 1.5 days |
+| 4 — outliner | **done** |
 | 5 — inspector headers | 1 day |
 | 6 — asset browser | 1.5 days |
 | 7 — status bar | 0.5 day |

@@ -25,7 +25,8 @@ namespace GanymedE {
 		// Directional lights (the first shadow-caster claims the shadow map)
 		for (auto [entity, worldTransform, light] : View<DirLightView>())
 		{
-			(void)entity;
+			if (IsEditorHidden(entity))
+				continue;
 			const glm::mat4& world = worldTransform.World;
 			glm::vec3 direction = glm::normalize(glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
 			Renderer3D::SubmitDirectionalLight(direction, light.Color, light.Intensity, light.CastShadows);
@@ -34,7 +35,8 @@ namespace GanymedE {
 		// Point lights
 		for (auto [entity, worldTransform, light] : View<PointLightView>())
 		{
-			(void)entity;
+			if (IsEditorHidden(entity))
+				continue;
 			const glm::mat4& world = worldTransform.World;
 			glm::vec3 position = glm::vec3(world[3]);
 			Renderer3D::SubmitPointLight(position, light.Color, light.Intensity, light.Radius, light.Falloff);
@@ -43,7 +45,8 @@ namespace GanymedE {
 		// Spot lights
 		for (auto [entity, worldTransform, light] : View<SpotLightView>())
 		{
-			(void)entity;
+			if (IsEditorHidden(entity))
+				continue;
 			const glm::mat4& world = worldTransform.World;
 			glm::vec3 position = glm::vec3(world[3]);
 			glm::vec3 direction = glm::normalize(glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
@@ -53,8 +56,10 @@ namespace GanymedE {
 
 		// Sky light / environment (first one wins) — Phase 7 resolves this into a singleton once
 		// instead of re-deciding every frame.
-		for (auto [sky] : View<SkyView>())
+		for (auto [entity, sky] : View<SkyView>())
 		{
+			if (IsEditorHidden(entity))
+				continue;
 			// Resolved through the component's own reference: the first frame loads, every
 			// frame after is a pointer already in the component. This used to be a handle -> Ref
 			// hash lookup per entity per frame, for every asset on this page.
@@ -73,6 +78,8 @@ namespace GanymedE {
 	{
 		for (auto [entity, worldTransform, meshComponent, animator] : View<MeshView>())
 		{
+			if (IsEditorHidden(entity))
+				continue;
 			const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
 			if (!mesh)
 				continue;
@@ -116,6 +123,8 @@ namespace GanymedE {
 
 		for (auto [entity, worldTransform, emitter] : View<ParticleView>())
 		{
+			if (IsEditorHidden(entity))
+				continue;
 			if (emitter.RenderMode == ParticleEmitterComponent::Mode::Mesh)
 			{
 				if (!Renderer3D::FrustumIntersects(emitter.WorldBounds))
@@ -169,7 +178,11 @@ namespace GanymedE {
 	void RenderSystem::SubmitSprites()
 	{
 		for (auto [entity, worldTransform, sprite] : View<SpriteView>())
+		{
+			if (IsEditorHidden(entity))
+				continue;
 			Renderer2D::DrawQuad(worldTransform.World, sprite.Color, (int)entity);
+		}
 	}
 
 	void RenderSystem::DrawColliderGizmos()
@@ -180,7 +193,8 @@ namespace GanymedE {
 
 		for (auto [entity, worldTransform, collider] : View<BoxColliderView>())
 		{
-			(void)entity;
+			if (IsEditorHidden(entity))
+				continue;
 			const glm::mat4& world = worldTransform.World;
 			glm::mat4 colliderTransform = world
 				* glm::translate(glm::mat4(1.0f), collider.Offset)
@@ -190,7 +204,8 @@ namespace GanymedE {
 
 		for (auto [entity, worldTransform, collider] : View<SphereColliderView>())
 		{
-			(void)entity;
+			if (IsEditorHidden(entity))
+				continue;
 			const glm::mat4& world = worldTransform.World;
 			glm::vec3 center = glm::vec3(world * glm::vec4(collider.Offset, 1.0f));
 			glm::vec3 scale = {
@@ -204,7 +219,8 @@ namespace GanymedE {
 
 		for (auto [entity, worldTransform, collider] : View<CapsuleColliderView>())
 		{
-			(void)entity;
+			if (IsEditorHidden(entity))
+				continue;
 			const glm::mat4& world = worldTransform.World;
 			glm::vec3 center = glm::vec3(world * glm::vec4(collider.Offset, 1.0f));
 			glm::vec3 scale = {
@@ -244,6 +260,7 @@ namespace GanymedE {
 
 	void RenderSystem::OnUpdate(Timestep ts)
 	{
+		m_EditorHidden.clear();
 		ECS::SingletonAccessView<RenderContext> renderView{ m_Scene };
 		const RenderContext& context = *renderView.Get();
 
@@ -305,6 +322,8 @@ namespace GanymedE {
 	{
 		(void)ts;
 
+		RebuildEditorHidden();
+
 		ECS::SingletonAccessView<RenderContext> renderView{ m_Scene };
 		EditorCamera* camera = renderView.Get()->EditorViewCamera;
 		GE_CORE_ASSERT(camera, "Editor update without an active editor camera");
@@ -323,4 +342,36 @@ namespace GanymedE {
 		SubmitSprites();
 		Renderer2D::EndScene();
 	}
+
+	void RenderSystem::RebuildEditorHidden()
+	{
+		m_EditorHidden.clear();
+		const EditorViewFilter* filter = m_Scene.FindSingleton<EditorViewFilter>();
+		if (!filter || !filter->HiddenEntities || filter->HiddenEntities->empty())
+			return;
+
+		std::vector<Entity> subtree;
+		std::unordered_set<UUID> visited;
+		for (UUID id : *filter->HiddenEntities)
+		{
+			Entity entity = m_Scene.FindEntityByUUID(id);
+			if (!entity)
+				continue;
+			subtree.clear();
+			visited.clear();
+			m_Scene.CollectSubtree(entity, subtree, visited);
+			for (Entity node : subtree)
+				m_EditorHidden.insert(node.GetUUID());
+		}
+	}
+
+	bool RenderSystem::IsEditorHidden(entt::entity entity) const
+	{
+		if (m_EditorHidden.empty())
+			return false;
+		if (!m_Scene.Reg().all_of<IDComponent>(entity))
+			return false;
+		return m_EditorHidden.count(m_Scene.Reg().get<IDComponent>(entity).ID) != 0;
+	}
+
 }

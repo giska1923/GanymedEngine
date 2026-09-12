@@ -75,7 +75,7 @@ in accent:
 | `Accent` | `#B182ED` (Ganymed) / `#F7A356` (Cold War) | Selection fill, checkmarks, grabs |
 | `AccentHover` / `AccentActive` | `#C39BFF` / `#9152E0` (Ganymed); `#FFB56A` / `#E08A3C` (Cold War, derived not sampled) | Hover / pressed |
 | `AccentText` | `#B07BF4` / `#F7A356` | Accent-coloured text on a panel, no fill |
-| `TextOnAccent` | `#1A1A1A` | Glyphs on an accent fill (phase 4 will paint this on selected rows) |
+| `TextOnAccent` | `#1A1A1A` | Glyphs on an accent fill (outliner primary selection) |
 | `Link` | `#589FFD` | Entity-name links in the outliner (phase 4). **Not** the accent |
 | `FieldMixed` | `#FFC759` | Multi-select fields that disagree |
 | `FieldOverride` | `#73B8FF` | Prefab instance fields that differ from the prototype |
@@ -105,9 +105,9 @@ Two mappings invert ImGui's defaults, and they are not bugs:
 | `FrameBg` | `SurfaceSunken` | Inputs are **recessed** — darker than the window, not lighter |
 | `Header` / `HeaderHovered` | `ChromeBg` / `SurfaceSunken` | Inspector component headers are `#1A1A1A` on `#313131`. ImGui's default is a *lighter* fill |
 
-`HeaderActive` is `Accent`. Until phase 4 paints `TextOnAccent` on selected tree rows, those
-rows keep `ImGuiCol_Text` (light on lilac). Do not "fix" FrameBg or Header back toward ImGui
-defaults.
+`HeaderActive` is `Accent`. The outliner paints `TextOnAccent` on the primary selected row
+(overlay glyphs) and `Accent` at 40 % alpha for other selected rows. Do not "fix" FrameBg or
+Header back toward ImGui defaults.
 
 ### Panel furniture
 
@@ -122,7 +122,7 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-Live panels are not wrapped yet; that is phases 4–6 of
+Live panels are not all wrapped yet; the outliner is (phase 4), inspector/browser follow in 5–6 of
 [editor-visual-parity.md](../ToDo/editor-visual-parity.md).
 
 ## EditorLayer
@@ -393,17 +393,42 @@ disk rather than reloading it, so the switch does not defeat itself. Full detail
 
 ## Scene Hierarchy panel
 
-[`SceneHierarchyPanel`](../../GanymedEditor/source/Panels/SceneHierarchyPanel.h) — tree of root
-entities, children drawn recursively (child lists are copied before iterating: re-parenting during
-drag mutates the vector being walked). It is a `friend` of `Scene` and uses the immediate Entity
-API — legal because panels run outside the system update.
+[`SceneHierarchyPanel`](../../GanymedEditor/source/Panels/SceneHierarchyPanel.h) — World Outliner
+look, still docked as **Scene Hierarchy** (renaming the window would bust `imgui.ini`). Tree of
+root entities, children drawn recursively (child lists are copied before iterating: re-parenting
+during drag mutates the vector being walked). It is a `friend` of `Scene` and uses the immediate
+Entity API — legal because panels run outside the system update.
 
-- Select by click; click empty space to deselect.
+The panel uses `BeginPanel` (padding 0) so the toolbar and column header reach the edges. The tree
+itself is a zero-padding child under the header, so eye/lock/link cells line up with
+`ColumnHeaderRow`. Properties is still a separate `Begin("Properties")` from this class; it was
+not split out this phase — the inspector undo protocol is load-bearing and phase 5 edits
+`DrawComponent` in place.
+
+- **Toolbar:** `+` create (Empty Entity / Instantiate Prefab — the same items as the blank-space
+  menu) and a `SearchField`. Sort / filter-dropdown / view-options are omitted: they have no
+  backing behaviour.
+- **Search** is a case-insensitive tag substring. A parent whose descendant matches stays visible
+  and is forced open while the filter is active; branches that match nothing are omitted (including
+  non-matching children of a matching parent).
+- **Column header:** `Name` | eye | lock | link.
+- **Type icon** by dominant component (prefab instance, camera, light, sky, audio, particle, mesh,
+  sprite, script, else empty), tinted with the Content Browser's `AssetTint` where the type maps.
+- **Prefab instance roots** use `Link` for the name and a non-interactive `ICON_LC_LINK` in the
+  link column. Selected primary overrides that with `TextOnAccent` on the accent fill.
+- **Selection fill** spans the row (`SpanAvailWidth`). Primary: solid `Accent` + `TextOnAccent`.
+  Other selected rows: `Accent` at 40 % alpha + `TextPrimary`.
+- **Eye / lock** are editor-side `std::unordered_set<UUID>` on the panel, not components. They
+  survive play/stop (`RetargetPanels` does not clear them; UUIDs are stable across `Scene::Copy`)
+  and are cleared on New/Open. Eye hides the entity **and its subtree** from `RenderSystem::
+  OnUpdateEditor` via the `EditorViewFilter` singleton (play/runtime still draw them). Lock blocks
+  viewport click-select and the gizmo; the hierarchy can still select so you can unlock.
+- Select by click; click empty space in the tree child to deselect.
 - **Drag-drop re-parenting**: drag an entity onto another → `Scene::SetParent` (cycle-safe); onto
   empty space → unparent. Both record a `ReparentCommand`, but only after confirming the parent
   actually changed: `SetParent` silently no-ops on a cycle, and recording a move that did not
   happen would corrupt sibling order on undo.
-- Right-click empty space → Create Empty Entity; right-click an entity → Delete.
+- Right-click empty space → Create Empty Entity / Instantiate Prefab; right-click an entity → Delete.
 - **Editor delete takes the whole subtree.** `Scene::DestroyEntity` keeps its orphan-the-children
   semantics as engine API, but no production editor deletes that way - Unity, Unreal and Godot all
   take the subtree - and the safety argument for orphaning ("you would lose the children")
@@ -629,7 +654,8 @@ needs nothing: it is driven by `ComponentList`, so a new component type joins it
 ## Multi-entity editing
 
 **Ctrl+click** adds an entity to the selection or removes it; a plain click replaces the selection.
-Every selected entity is highlighted in the hierarchy.
+Every selected entity is highlighted in the hierarchy (primary: solid accent; others: 40 %
+alpha).
 
 The design keeps a **primary** selection — the entity clicked last, `GetSelectedEntity()` — and adds
 the full set beside it as `GetSelection()`, primary first. That is why multi-select cost six call

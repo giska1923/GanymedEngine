@@ -700,20 +700,22 @@ namespace GanymedE::EditorUI {
 		return clicked;
 	}
 
-	int RowActionIcons(std::initializer_list<RowActionIcon> icons, bool rowHovered)
+	int RowActionIcons(std::initializer_list<RowActionIcon> icons, bool rowHovered, float cellWidth)
 	{
 		const int count = (int)icons.size();
 		if (count <= 0)
 			return -1;
 
-		constexpr float kIcon = 18.0f;
+		if (cellWidth <= 0.0f)
+			cellWidth = 26.0f;
+
 		const ImVec2 rowMin = ImGui::GetItemRectMin();
 		const ImVec2 rowMax = ImGui::GetItemRectMax();
 		const ImVec2 backup = ImGui::GetCursorScreenPos();
 		const EditorTheme& theme = Theme();
 
-		const float y = rowMin.y + (rowMax.y - rowMin.y - kIcon) * 0.5f;
-		float x = rowMax.x - (float)count * kIcon - 4.0f;
+		const float y = rowMin.y + (rowMax.y - rowMin.y - cellWidth) * 0.5f;
+		float x = rowMax.x - (float)count * cellWidth;
 
 		int clicked = -1;
 		int i = 0;
@@ -721,25 +723,37 @@ namespace GanymedE::EditorUI {
 		{
 			ImGui::SetCursorScreenPos(ImVec2(x, y));
 			ImGui::PushID(i);
-			if (ImGui::InvisibleButton("##ra", ImVec2(kIcon, kIcon)))
-				clicked = i;
 
-			const bool hot = ImGui::IsItemHovered();
-			ImU32 glyph = theme.TextDim;
-			if (action.active || rowHovered || hot)
-				glyph = theme.TextPrimary;
+			const bool hasIcon = action.icon && action.icon[0];
+			if (hasIcon && action.interactive)
+			{
+				if (ImGui::InvisibleButton("##ra", ImVec2(cellWidth, cellWidth)))
+					clicked = i;
+			}
+			else
+			{
+				ImGui::Dummy(ImVec2(cellWidth, cellWidth));
+			}
 
-			const ImVec2 ts = ImGui::CalcTextSize(action.icon);
-			const ImVec2 p0 = ImGui::GetItemRectMin();
-			ImGui::GetWindowDrawList()->AddText(
-				ImVec2(p0.x + (kIcon - ts.x) * 0.5f, p0.y + (kIcon - ts.y) * 0.5f),
-				glyph, action.icon);
+			if (hasIcon)
+			{
+				const bool hot = action.interactive && ImGui::IsItemHovered();
+				ImU32 glyph = theme.TextDim;
+				if (action.active || rowHovered || hot)
+					glyph = theme.TextPrimary;
 
-			if (action.tooltip)
-				ImGui::SetItemTooltip("%s", action.tooltip);
+				const ImVec2 ts = ImGui::CalcTextSize(action.icon);
+				const ImVec2 p0 = ImGui::GetItemRectMin();
+				ImGui::GetWindowDrawList()->AddText(
+					ImVec2(p0.x + (cellWidth - ts.x) * 0.5f, p0.y + (cellWidth - ts.y) * 0.5f),
+					glyph, action.icon);
+
+				if (action.interactive && action.tooltip)
+					ImGui::SetItemTooltip("%s", action.tooltip);
+			}
 
 			ImGui::PopID();
-			x += kIcon;
+			x += cellWidth;
 			i++;
 		}
 

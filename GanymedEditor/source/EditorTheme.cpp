@@ -155,8 +155,9 @@ namespace GanymedE::EditorUI {
 
 		// Headers are also darker than the window — Cold War's inspector component
 		// headers are #1A1A1A on #313131. ImGui's default is a *lighter* fill.
-		// HeaderActive = Accent means a selected TreeNode row fills lilac; glyphs
-		// stay ImGuiCol_Text (light) until phase 4 paints TextOnAccent on that row.
+		// HeaderActive = Accent means a selected TreeNode row fills lilac. The outliner
+		// paints TextOnAccent on the primary row (overlay glyphs) and Accent at 40% for
+		// secondary multi-select rows.
 		SetCol(style, ImGuiCol_Header, theme.ChromeBg);
 		SetCol(style, ImGuiCol_HeaderHovered, theme.SurfaceSunken);
 		SetCol(style, ImGuiCol_HeaderActive, theme.Accent);

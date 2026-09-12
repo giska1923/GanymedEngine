@@ -46,6 +46,7 @@ namespace GanymedE {
 		// Scene-wide state the systems below expect to exist.
 		SetSingleton<RenderContext>();
 		SetSingleton<PhysicsSettings>();
+		SetSingleton<EditorViewFilter>();
 
 		// Registration order IS execution order, and matches the order the logic previously ran
 		// inline in OnUpdateRuntime: physics, then scripts, then rendering. CameraSystem must

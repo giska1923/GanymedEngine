@@ -183,6 +183,8 @@ namespace GanymedE {
 			{
 				m_EditorCamera.OnUpdate(ts);
 
+				m_ActiveScene->GetSingleton<EditorViewFilter>().HiddenEntities =
+					&m_SceneHierarchyPanel.HiddenEntities();
 				m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 				break;
 			}
@@ -569,6 +571,8 @@ namespace GanymedE {
 
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (selectedEntity && m_SceneHierarchyPanel.IsLocked(selectedEntity))
+			selectedEntity = {};
 		if (selectedEntity && m_GizmoType != -1 && m_SceneState == SceneState::Edit)
 		{
 			ImGuizmo::SetOrthographic(false);
@@ -853,7 +857,11 @@ namespace GanymedE {
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
 			if (m_ViewportHovered && !ImGuizmo::IsOver() && !Input::IsKeyPressed(Key::LeftAlt))
-				m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
+			{
+				Entity hover = m_HoveredEntity;
+				if (!(hover && m_SceneHierarchyPanel.IsLocked(hover)))
+					m_SceneHierarchyPanel.SetSelectedEntity(hover);
+			}
 		}
 		return false;
 	}
@@ -879,6 +887,7 @@ namespace GanymedE {
 		// Every UUID on the stack names an entity in a Scene object that no longer exists.
 		m_UndoStack.Clear();
 		RetargetPanels();
+		m_SceneHierarchyPanel.ClearEditorViewState();
 	}
 
 	void EditorLayer::SetupDefaultEnvironment(const Ref<Scene>& scene)
@@ -926,6 +935,7 @@ namespace GanymedE {
 
 		m_UndoStack.Clear();
 		RetargetPanels();
+		m_SceneHierarchyPanel.ClearEditorViewState();
 
 		SceneSerializer serializer(m_ActiveScene);
 		serializer.Deserialize(path.string());
