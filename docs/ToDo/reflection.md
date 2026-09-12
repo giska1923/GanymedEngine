@@ -7,7 +7,11 @@ run off that registration, and prefab per-property overrides work. See
 
 What is left is a short tail, roughly in descending order of value.
 
-Two entries are gone: `PrefabSerializer::ReadRootTransform` now uses `ReadReflectedComponent` (the
+**Per-property apply-to-prefab is done** — right-clicking an overridden field offers *Apply to
+Prefab* beside *Revert to Prefab*, writing that one field into the asset and nothing else. See
+[editor.md](../editor/editor.md#per-property-overrides).
+
+Two further entries are gone: `PrefabSerializer::ReadRootTransform` now uses `ReadReflectedComponent` (the
 last hand-written component read in the engine), and `PrefabSerializer::Save` no longer bakes a
 stale `PrefabMemberComponent` into the file it writes — that one turned out to assert on the next
 instantiate, so it was a crash rather than diff noise. Both are described in
@@ -15,19 +19,18 @@ instantiate, so it was a crash rather than diff noise. Both are described in
 
 ---
 
-## Per-property apply-to-prefab
-
-Revert-one-field exists. **Push-one-field-to-the-prefab does not** — apply still writes the whole
-instance. The roadmap calls this the natural next step now that the diff exists, and the diff
-(`EditorPrefabOverrides.h`) is what makes it cheap: the same comparison that decides whether to draw
-the revert affordance identifies exactly what a per-property apply would write.
-
 ## The prefab template cache cannot see a `.gprefab` edited on disk
 
-It is dropped on scene change, so an edit is picked up eventually, but not by the file watcher.
 Hooking `AssetWatcher` would fix it — except prefabs are path-resolved and have no asset manager, so
 `AssetManager::OnAssetModified` returns false for them. That is the real blocker and it is an asset
 layer question, not an editor one. See [assets.md](../engine/assets.md).
+
+The *other* half of this entry is now closed, and it was worse than recorded: this used to say the
+cache "is dropped on scene change", but `InvalidatePrefabTemplates()` had **no call sites at all** —
+it was declared, defined and never called. So a template was cached the first time it was asked for
+and never dropped, and a whole-instance apply left every field of that instance marked as overridden
+until the editor restarted. It is now called on scene change and after a whole-instance apply; only
+the on-disk-edit case above is still open.
 
 ## Multi-entity editing gaps
 

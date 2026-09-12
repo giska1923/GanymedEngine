@@ -393,6 +393,22 @@ namespace GanymedE {
 				auto* self = static_cast<OverrideBinding*>(owner);
 				return EditorUI::RevertProperty<T>(self->Target, *self->Context, field);
 			}
+
+			static bool Apply(void* owner, const entt::meta_data& field)
+			{
+				auto* self = static_cast<OverrideBinding*>(owner);
+				const bool ok = EditorUI::ApplyProperty<T>(self->Target, *self->Context, field);
+
+				// Named in the log because it is an asset write with no undo behind it: "which
+				// field went into the prefab" is the only record of it afterwards.
+				const char* name = field.name() ? field.name() : "<field>";
+				if (ok)
+					GE_INFO("Applied '{0}' to the prefab", name);
+				else
+					GE_WARN("Could not apply '{0}' to the prefab", name);
+
+				return ok;
+			}
 		};
 
 		// Multi-edit binding. `Others` excludes the primary, which is the entity the widgets are
@@ -471,6 +487,7 @@ namespace GanymedE {
 			{
 				hook.IsOverridden = &OverrideBinding<T>::IsOverridden;
 				hook.Revert = &OverrideBinding<T>::Revert;
+				hook.Apply = &OverrideBinding<T>::Apply;
 				hook.Owner = &binding;
 			}
 
@@ -988,6 +1005,12 @@ namespace GanymedE {
 		if (PrefabSerializer::Save(*m_Context, instanceRoot, fullPath,
 			hasStored ? &rootTransform : nullptr))
 		{
+			// The file just changed underneath the cached template, and the override diff is
+			// computed against that template - so without this every field stays marked as
+			// overridden until the editor restarts. Per-property apply needs no equivalent: it
+			// edits the template itself, so the two stay in agreement by construction.
+			EditorUI::InvalidatePrefabTemplates();
+
 			GE_INFO("Applied to prefab '{0}'", metadata->FilePath);
 		}
 	}

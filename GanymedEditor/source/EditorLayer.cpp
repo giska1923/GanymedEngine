@@ -1,4 +1,5 @@
 #include "EditorLayer.h"
+#include "EditorPrefabOverrides.h"
 #include "AssetDragDrop.h"
 #include "EditorInspector.h"
 
@@ -742,6 +743,13 @@ namespace GanymedE {
 
 	void EditorLayer::RetargetPanels()
 	{
+		// The prefab-override diff caches a template per source handle, and its own header says
+		// to drop them when the scene changes. Nothing was calling it - the function had no call
+		// sites at all - so a `.gprefab` rewritten between two scene loads went on being diffed
+		// against the version cached at first sight. This is the choke point every scene change
+		// goes through, including play and stop.
+		EditorUI::InvalidatePrefabTemplates();
+
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 
 		// Nothing to record into during play: the active scene is a throwaway copy, and a

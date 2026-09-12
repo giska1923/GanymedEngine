@@ -23,6 +23,9 @@ namespace GanymedE::EditorUI {
 			// The prefab file's own numbering (1..N) -> the entity holding it.
 			std::unordered_map<uint64_t, entt::entity> ByCanonicalID;
 
+			// The subtree root, kept so a per-property apply can write the template back out.
+			entt::entity Root = entt::null;
+
 			bool Valid = false;
 		};
 
@@ -54,6 +57,7 @@ namespace GanymedE::EditorUI {
 				if (root)
 				{
 					built.Valid = true;
+					built.Root = (entt::entity)root;
 					built.Storage->Reg().view<PrefabMemberComponent>().each(
 						[&built](entt::entity handle, const PrefabMemberComponent& member)
 						{
@@ -121,6 +125,42 @@ namespace GanymedE::EditorUI {
 	void InvalidatePrefabTemplates()
 	{
 		Templates().clear();
+	}
+
+	namespace Detail {
+
+		bool WriteTemplateToDisk(Entity instanceEntity, Scene& scene)
+		{
+			const AssetHandle source = FindSourceHandle(instanceEntity, scene);
+			if (!IsAssetHandleValid(source))
+				return false;
+
+			auto it = Templates().find((uint64_t)source);
+			if (it == Templates().end() || !it->second.Valid || it->second.Root == entt::null)
+				return false;
+
+			const AssetMetadata* metadata = AssetManager::GetMetadata(source);
+			if (!metadata)
+			{
+				GE_ERROR("Prefab source {0} is not in the registry - cannot apply",
+					static_cast<uint64_t>(source));
+				return false;
+			}
+
+			Template& templ = it->second;
+			Entity root{ templ.Root, templ.Storage.get() };
+
+			// **No `rootTransform` argument, and that is the difference from whole-instance
+			// apply.** That one passes the file's existing root transform so an instance's
+			// placement is never baked into the asset. Here the thing being saved *is* the
+			// template, whose root transform came from the file in the first place - so writing
+			// it back preserves placement by construction. It also means applying a root
+			// transform field does what it says, rather than being silently dropped by a guard
+			// aimed at a different operation.
+			return PrefabSerializer::Save(*templ.Storage, root,
+				GetAssetRoot() / metadata->FilePath);
+		}
+
 	}
 
 }

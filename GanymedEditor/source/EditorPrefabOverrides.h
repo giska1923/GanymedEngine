@@ -109,6 +109,55 @@ namespace GanymedE::EditorUI {
 		return false;
 	}
 
+	namespace Detail {
+
+		// Write the cached template for whatever prefab `instanceEntity` belongs to back to its
+		// `.gprefab`. Only `ApplyProperty` below should need this.
+		bool WriteTemplateToDisk(Entity instanceEntity, Scene& scene);
+
+	}
+
+	// Push one field of `T` from the instance to the prefab, and write the prefab file.
+	//
+	// **The mirror of RevertProperty, and the asymmetry it removes.** Reverting one field has
+	// always worked; pushing one field has not, so the only way to send a single tweak back to the
+	// asset was "Apply to Prefab" on the whole instance - which overwrites the prefab with the
+	// entire subtree and carries every other difference along with it, irreversibly.
+	//
+	// The value is written onto the **cached template**, and it is the template that is saved.
+	// That is what makes this per-*property*: everything the prefab already held stays exactly as
+	// it was, because it is still the same template object that was loaded from the file. Writing
+	// the instance instead would have meant reconstructing "the prefab, but with one field
+	// changed" from the other side.
+	//
+	// Mutating the template also leaves the diff correct for free: the next frame compares
+	// against a template that now agrees, so the override marker clears without an invalidation
+	// round-trip.
+	//
+	// **This edits an asset and is not undoable**, the same as whole-instance apply - the undo
+	// stack is the scene's, and no scene data changed. Other instances of the same prefab already
+	// in the scene are not touched.
+	template<typename T>
+	bool ApplyProperty(Entity entity, Scene& scene, const entt::meta_data& field)
+	{
+		Entity source = FindPrefabTemplate(entity, scene);
+		if (!source || !entity.HasComponent<T>() || !source.HasComponent<T>())
+			return false;
+
+		// Named for the same reason as in RevertProperty: meta_data::get builds a meta_handle
+		// that binds a non-const lvalue reference, so a temporary cannot be passed inline.
+		entt::meta_any live = entt::forward_as_meta(entity.GetComponent<T>());
+		entt::meta_any value = field.get(live);
+		if (!value)
+			return false;
+
+		entt::meta_any templ = entt::forward_as_meta(source.GetComponent<T>());
+		if (!field.set(templ, value))
+			return false;
+
+		return Detail::WriteTemplateToDisk(entity, scene);
+	}
+
 	// Copy the prefab's value for one field back onto the entity. False when there was nothing to
 	// revert to.
 	template<typename T>

@@ -173,8 +173,31 @@ are single-entity even though the selection no longer is.
 ### Per-property overrides
 
 A field of a prefab instance that differs from the prefab is **tinted blue in the inspector**, and
-right-clicking it offers **Revert to Prefab**. A component with any differing field gets a `*` on its
-section header.
+right-clicking it offers **Revert to Prefab** and **Apply to Prefab** — the two directions of the
+same diff. A component with any differing field gets a `*` on its section header.
+
+The two are opposites in consequence as well as direction, which is why they read differently:
+
+| | Revert to Prefab | Apply to Prefab (per field) |
+|---|---|---|
+| Writes | the scene | the `.gprefab` asset |
+| Undo | yes — reported as an edit, so the section's commit boundary turns it into one undo command | **no**, like every other asset edit; the undo stack is the scene's and no scene data changed |
+| Other instances | n/a | unchanged |
+
+**Per-field apply writes the field onto the cached template and saves the template**, rather than
+writing the instance. That is what makes it per-*property*: everything else in the prefab is still
+the object that was loaded from the file, so it round-trips untouched. Verified by applying one
+field of a particle emitter while a second field of the same component also differed — the
+`.gprefab` came back with exactly one line changed, and the second field stayed as the prefab had
+it. Whole-instance **Apply to Prefab** (the button on the prefab section, behind a confirmation
+modal) is the blunt counterpart: it overwrites the asset with the entire subtree, carrying every
+other difference with it.
+
+Saving the template also means no placement guard is needed here. Whole-instance apply passes the
+file's *existing* root transform to `PrefabSerializer::Save` so an instance's position is never
+baked into the asset; the template's root transform came from the file to begin with, so writing it
+back preserves placement by construction — and applying a root transform field does what it says
+rather than being silently dropped by a guard aimed at the other operation.
 
 **Overrides are computed, not stored.** Unity records an override list on the instance; Ganymed diffs
 the instance against the prefab instead. A recorded list is a second source of truth that goes stale
@@ -190,7 +213,7 @@ claim.
 | | |
 |---|---|
 | What makes it possible | `PrefabMemberComponent::CanonicalID` on every instantiated entity — see [scene.md](../engine/scene.md#prefab-member-links) |
-| Per-field affordance | Reflected sections only; the per-field hook lives in the property drawer |
+| Per-field affordance | Reflected sections only; the per-field hook lives in the property drawer (`OverrideHook`: `IsOverridden` / `Revert` / `Apply`) |
 | Hand-written sections | Section-level `*` marker only — "something in here differs", not which field |
 | Cost | **0.14 ms/frame** worst case (a selected prefab instance with a particle emitter: 46 fields, section marker plus every per-field query, Release). Zero when nothing selected is a prefab member |
 
@@ -199,9 +222,13 @@ Two limitations worth knowing:
 - **Prefab instances already in committed scenes have no canonical link**, because they were
   instantiated before it existed. They report no overrides until they are re-instantiated — which
   *Revert Instance* does, since it rebuilds the subtree from the file.
-- The template cache is keyed on the prefab handle and dropped when the scene changes. Editing a
-  `.gprefab` on disk while a scene is open will not refresh it until the scene is reopened; the
-  cache has no way to notice a file edit on its own.
+- The template cache is keyed on the prefab handle and dropped on every scene change (from
+  `EditorLayer::RetargetPanels`, which new / open / play / stop all pass through) and after a
+  whole-instance apply, which rewrites the file underneath it. Editing a `.gprefab` **on disk**
+  while a scene is open still will not refresh it until the scene is reopened; the cache has no way
+  to notice a file edit on its own, and hooking the watcher is blocked on prefabs being
+  path-resolved with no asset manager. Per-field apply needs no invalidation at all — it edits the
+  template itself, so the two agree by construction and the blue tint clears on the next frame.
 
 ### Play / Stop (toolbar)
 

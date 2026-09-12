@@ -44,10 +44,15 @@ namespace GanymedE::EditorUI {
 	// stay ignorant of prefabs.
 	struct OverrideHook
 	{
-		// "Does this field differ from the prefab", and "put the prefab's value back". Both are
-		// templates on the component type at the call site, bound here as plain function objects.
+		// "Does this field differ from the prefab", "put the prefab's value back", and "push this
+		// field to the prefab". All three are templates on the component type at the call site,
+		// bound here as plain function objects.
+		//
+		// Revert and Apply are opposites in direction and in consequence: Revert writes the scene
+		// and is undoable, Apply writes the asset and is not.
 		bool (*IsOverridden)(void* owner, const entt::meta_data&) = nullptr;
 		bool (*Revert)(void* owner, const entt::meta_data&) = nullptr;
+		bool (*Apply)(void* owner, const entt::meta_data&) = nullptr;
 		void* Owner = nullptr;
 
 		explicit operator bool() const { return IsOverridden != nullptr; }
