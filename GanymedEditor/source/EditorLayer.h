@@ -46,6 +46,7 @@ namespace GanymedE {
 
 		// UI
 		void UI_Toolbar();
+		void UI_StatusBar();
 	private:
 		Ref<SceneRenderer> m_SceneRenderer; // owns the HDR target + post stack (bloom, tonemap, FXAA)
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
@@ -90,5 +91,9 @@ namespace GanymedE {
 		ContentBrowserPanel m_ContentBrowserPanel;
 
 		bool m_ResetDockLayout = false;
+
+		// Exponential moving average of 1/ts. Raw frame time flickers; this is the
+		// status-bar FPS chip. Seeded on the first sane timestep.
+		float m_SmoothedFps = 0.0f;
 	};
 }

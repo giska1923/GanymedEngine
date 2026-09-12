@@ -10,14 +10,16 @@ either order.
 
 ## Layout
 
-A dockable ImGui workspace. The main toolbar is a **fixed 41 px child** of the dockspace host
-(menu bar → toolbar → `DockSpace()`), not a docked window: it cannot be resized, undocked, or
-given a tab. On first run, after **View → Reset Layout**, or when the dock-layout version in
-`imgui.ini` mismatches (`[GanymedEditor][Dock] Version`, currently 2), `EditorLayer` builds a
-default DockBuilder tree: Scene Hierarchy left, Properties below it, Viewport center, Stats
-right, Content Browser bottom. After that, panel layout persists in `GanymedEditor/imgui.ini`.
-Later chrome changes that alter the default tree bump that version so an existing ini does not
-keep a stale split.
+A dockable ImGui workspace. Host chrome is stacked in the dockspace window: menu bar, a **fixed
+41 px `SurfaceBg` toolbar child**, `DockSpace(size.y = -StatusBarHeight)`, then a **fixed 41 px
+`ChromeBg` status bar child**. Neither strip is a docked window: they cannot be resized,
+undocked, or given a tab. On first run, after **View → Reset Layout**, or when the dock-layout
+version in `imgui.ini` mismatches (`[GanymedEditor][Dock] Version`, currently 2), `EditorLayer`
+builds a default DockBuilder tree: Scene Hierarchy left, Properties below it, Viewport center,
+Stats right, Content Browser bottom. After that, panel layout persists in
+`GanymedEditor/imgui.ini`. Later chrome changes that alter the default tree bump that version
+so an existing ini does not keep a stale split. The status bar sits outside the dock tree, so
+it did not need a version bump.
 
 ## Look and feel
 
@@ -123,7 +125,7 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
 The outliner, Properties, and Content Browser are wrapped (`BeginPanel`); remaining chrome is
-the status bar and viewport bars (phases 7–8 of
+the viewport bars (phase 8 of
 [editor-visual-parity.md](../ToDo/editor-visual-parity.md)).
 
 ## EditorLayer
@@ -351,6 +353,30 @@ first.
 New scenes are seeded by `SetupDefaultEnvironment`: a "Sun" (directional light tilted from above,
 shadow-casting) and a "Sky Light" (HDR environment `environments/studio_small_08_1k.hdr` when
 present, procedural fallback otherwise), so imported meshes are lit immediately.
+
+### Status bar
+
+A 41 px `ChromeBg` child (`Theme().StatusBarHeight`) below the dockspace. Phase 2 deliberately
+did not reserve the strip — `DockSpace(..., ImVec2(0, -StatusBarHeight))` would have been a
+41 px hole until this existed. `EditorUI::StatusBarItem` draws each chip. The scene name +
+dirty `*` used to live in the menu bar; it moved here rather than being duplicated.
+
+Left, middot-separated:
+
+| Chip | Source |
+|---|---|
+| Scene filename + `*` | `m_EditorScenePath` (or `Untitled`), `m_UndoStack.IsDirtySinceSave()`. Dirtiness is stack *position*, so undoing back to the saved state clears the asterisk. Hover shows the full path. Asset edits (`.gmat`, prefab Apply) do not set it |
+| Configuration | `GE_DEBUG` / `GE_RELEASE` / `GE_DIST` → Debug / Release / Dist |
+| Backend | `bgfx::getRendererName(bgfx::getRendererType())` |
+
+Right, live counters: entity count (`m_ActiveScene` `IDComponent` storage — the play copy while
+playing), `Renderer3D::GetStats().DrawCalls`, an exponential moving average of `1/ts` (raw
+frame time flickers; debugger pauses ≥ 1 s are ignored so they do not pull the average to 1),
+and play state (`Success` + `Play` while playing, `TextDim` + `Edit` otherwise).
+
+There is no engine-version chip. Nothing in the repo is a version string, and a hard-coded one
+would rot. Cold War's `Default` / `mainline` / `game` chips have no Ganymed source either and
+are omitted for the same reason.
 
 ### Stats panel
 

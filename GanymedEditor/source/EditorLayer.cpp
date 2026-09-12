@@ -32,6 +32,7 @@
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -154,6 +155,19 @@ namespace GanymedE {
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		GE_PROFILE_FUNCTION();
+
+		// Status-bar FPS. Skip dt >= 1 s so a debugger pause does not pull the
+		// average to 1; skip tiny dt so a hitch-recovery spike cannot mint 10k FPS.
+		{
+			const float dt = ts.GetSeconds();
+			if (dt > 0.0001f && dt < 1.0f)
+			{
+				const float instant = 1.0f / dt;
+				m_SmoothedFps = (m_SmoothedFps <= 0.0f)
+					? instant
+					: m_SmoothedFps + (instant - m_SmoothedFps) * 0.1f;
+			}
+		}
 
 		// Resize
 		if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && // zero sized framebuffer is invalid
@@ -372,18 +386,6 @@ namespace GanymedE {
 				ImGui::EndMenu();
 			}
 
-			// Which scene is open, and whether it has unsaved changes.
-			//
-			// Dirtiness comes from the undo stack's *position* rather than a flag, so undoing
-			// back to the saved state correctly clears the asterisk - the property an ad-hoc
-			// dirty bool always gets wrong. Asset edits (.gmat fields, prefab Apply) do not
-			// touch the scene stack and deliberately do not set it: they are asset dirt, and the
-			// .gmat editor's own Save button is their indicator.
-			ImGui::Separator();
-			const std::string sceneName = m_EditorScenePath.empty()
-				? std::string("Untitled") : m_EditorScenePath.filename().string();
-			ImGui::TextUnformatted((sceneName + (m_UndoStack.IsDirtySinceSave() ? "*" : "")).c_str());
-
 			ImGui::EndMenuBar();
 		}
 
@@ -414,8 +416,10 @@ namespace GanymedE {
 			if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
 				BuildDefaultDockLayout(dockspace_id);
 
-			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, -EditorUI::Theme().StatusBarHeight), dockspace_flags);
 		}
+
+		UI_StatusBar();
 
 		m_SceneHierarchyPanel.OnImGuiRender();
 		m_ContentBrowserPanel.OnImGuiRender();
@@ -778,6 +782,118 @@ namespace GanymedE {
 			ImVec2(wp.x, wp.y + ws.y - 1.0f),
 			ImVec2(wp.x + ws.x, wp.y + ws.y - 1.0f),
 			theme.Border);
+
+		ImGui::EndChild();
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor();
+	}
+
+	void EditorLayer::UI_StatusBar()
+	{
+		using EditorUI::Color;
+		using EditorUI::StatusBarItem;
+		using EditorUI::Theme;
+
+		const EditorUI::EditorTheme& theme = Theme();
+		const float height = theme.StatusBarHeight;
+
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, Color(theme.ChromeBg));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 0.0f));
+		ImGui::BeginChild("##StatusBar", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+
+		const float lineH = ImGui::GetTextLineHeight();
+		const float rowY = (ImGui::GetContentRegionAvail().y - lineH) * 0.5f;
+		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + rowY);
+		const ImVec2 lineStart = ImGui::GetCursorPos();
+		const float availX = ImGui::GetContentRegionAvail().x;
+
+		auto itemWidth = [](const char* icon, const char* text) -> float
+		{
+			float w = 0.0f;
+			if (icon && icon[0])
+				w += ImGui::CalcTextSize(icon).x;
+			if (icon && icon[0] && text && text[0])
+				w += 6.0f;
+			if (text && text[0])
+				w += ImGui::CalcTextSize(text).x;
+			return w;
+		};
+
+		auto sep = [&]()
+		{
+			ImGui::SameLine();
+			ImGui::PushStyleColor(ImGuiCol_Text, Color(theme.TextDim));
+			ImGui::TextUnformatted("·");
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+		};
+
+		const std::string sceneName = m_EditorScenePath.empty()
+			? std::string("Untitled") : m_EditorScenePath.filename().string();
+		const std::string sceneChip = sceneName + (m_UndoStack.IsDirtySinceSave() ? "*" : "");
+		StatusBarItem(ICON_LC_FILE_TEXT, sceneChip.c_str());
+		if (!m_EditorScenePath.empty())
+			ImGui::SetItemTooltip("%s", m_EditorScenePath.string().c_str());
+
+#if defined(GE_DEBUG)
+		constexpr const char* kConfig = "Debug";
+#elif defined(GE_RELEASE)
+		constexpr const char* kConfig = "Release";
+#elif defined(GE_DIST)
+		constexpr const char* kConfig = "Dist";
+#else
+		constexpr const char* kConfig = nullptr;
+#endif
+		if (kConfig)
+		{
+			sep();
+			StatusBarItem(ICON_LC_HAMMER, kConfig);
+		}
+
+		sep();
+		StatusBarItem(ICON_LC_MONITOR, bgfx::getRendererName(bgfx::getRendererType()));
+
+		const std::size_t entityCount = m_ActiveScene
+			? m_ActiveScene->Reg().storage<IDComponent>().size()
+			: 0;
+		char entities[32];
+		std::snprintf(entities, sizeof(entities), "%zu", entityCount);
+
+		char draws[32];
+		std::snprintf(draws, sizeof(draws), "%u", Renderer3D::GetStats().DrawCalls);
+
+		char fps[32];
+		std::snprintf(fps, sizeof(fps), "FPS %d", (int)(m_SmoothedFps + 0.5f));
+
+		const bool playing = m_SceneState == SceneState::Play;
+		const char* playIcon = playing ? ICON_LC_PLAY : ICON_LC_PENCIL;
+		const char* playText = playing ? "Play" : "Edit";
+		const ImU32 playColour = playing ? theme.Success : theme.TextDim;
+
+		const float gap = ImGui::GetStyle().ItemSpacing.x;
+		const float rightWidth =
+			itemWidth(ICON_LC_BOXES, entities) + gap +
+			itemWidth(ICON_LC_LAYERS, draws) + gap +
+			itemWidth(ICON_LC_GAUGE, fps) + gap +
+			itemWidth(playIcon, playText);
+
+		const float rightX = lineStart.x + availX - rightWidth;
+		if (rightX > ImGui::GetCursorPosX() + gap)
+			ImGui::SetCursorPos(ImVec2(rightX, lineStart.y));
+		else
+			ImGui::SameLine();
+
+		StatusBarItem(ICON_LC_BOXES, entities);
+		ImGui::SetItemTooltip("Entities");
+		ImGui::SameLine();
+		StatusBarItem(ICON_LC_LAYERS, draws);
+		ImGui::SetItemTooltip("Draw calls");
+		ImGui::SameLine();
+		StatusBarItem(ICON_LC_GAUGE, fps);
+		ImGui::SameLine();
+		StatusBarItem(playIcon, playText, playColour);
 
 		ImGui::EndChild();
 		ImGui::PopStyleVar(2);

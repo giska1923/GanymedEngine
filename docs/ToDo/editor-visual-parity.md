@@ -107,7 +107,7 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 **done** |
 | 7 | Toolbar is a docked window with one centred button | high | low | 2 **done** |
 | 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `OverflowMenuButton` in 3, used in 5 **done**) |
-| 9 | No status bar | medium | low | 7 |
+| 9 | No status bar | medium | low | 7 **done** |
 | 10 | Inspector component headers are ImGui `CollapsingHeader`s, not full-width `#1A1A1A` rows with icon + eye + `•••` | medium | medium | 5 **done** (eye omitted: no component-enable) |
 | 11 | Content Browser: no breadcrumb, no folder sidebar, no search, no item count, no view toggle | medium | high | 6 **done** |
 | 12 | Viewport has no header row (camera/quality/visualizers) and no transform readout | medium | medium | 8 |
@@ -517,7 +517,14 @@ the milestone where a cosmetic change has a real performance consequence.
 
 ---
 
-### Phase 7 — Status bar
+### Phase 7 — Status bar — **done**
+
+41 px `ChromeBg` host child below the dockspace. Scene name + dirty `*` moved out of the menu
+bar. Engine version omitted (no source). `Default` / `mainline` / `game` omitted (no source).
+FPS is an EMA of `1/ts`, not the raw reciprocal. Live description:
+[editor.md](../editor/editor.md#status-bar).
+
+The spec that was executed:
 
 A 41 px `ChromeBg` strip below the dockspace. Left-to-centre: project/version chips with icons;
 right: live counters. Cold War shows `WoT HEAT 1.3 · Engine 0.9.26.WIP · Release · Default ·
@@ -527,7 +534,7 @@ Ganymed can fill nearly all of these from data it already has:
 
 | Chip | Source |
 |---|---|
-| Project / scene name + dirty `*` | `m_EditorScenePath`, `m_UndoStack.IsDirtySinceSave()` — currently crammed into the menu bar (`EditorLayer.cpp:329-332`); move it here |
+| Project / scene name + dirty `*` | `m_EditorScenePath`, `m_UndoStack.IsDirtySinceSave()` — was crammed into the menu bar; moved here |
 | Configuration | `GE_DEBUG` / `GE_RELEASE` / `GE_DIST` |
 | Backend | `bgfx::getRendererName(bgfx::getRendererType())` |
 | Entity count | `m_ActiveScene` registry size |
@@ -655,7 +662,7 @@ menu buttons that move the window instead of opening.
 | 4 — outliner | **done** |
 | 5 — inspector headers | **done** |
 | 6 — asset browser | **done** |
-| 7 — status bar | 0.5 day |
+| 7 — status bar | **done** |
 | 8 — viewport bars | 1 day |
 | 9 — custom chrome | 2–3 days |
 | | **~11–13 days** |
