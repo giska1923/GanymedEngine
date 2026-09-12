@@ -9,9 +9,12 @@ What remains is hygiene. The one-liner batch is **done** — the `IsAssetsWritab
 a one-off re-save of all seven committed fixtures (which fixed the duplicate entity UUIDs in
 `3DExample` and `Example`, so `git diff` is a valid byte-identity check against them again).
 
-**Both have now been measured**, which was the thing standing in front of them. The numbers changed
-the shape of both: one is smaller than it looked, the other is real but is a *memory* bound rather
-than the frame bound it was written up as. Details below; neither is implemented.
+**Both were measured**, which was the thing standing in front of them, and the numbers changed the
+shape of both. **Parse backpressure is now done** — it was real, it was a *memory* bound rather than
+the frame bound it had been written up as, and the cap that fixed it is in
+[assets.md](../engine/assets.md#backpressure-the-in-flight-cap). What is left here is the dependency
+hashing question (smaller than it looked, and now a known small change) and a third problem the
+backpressure entry turned out to be hiding.
 
 A note on method, because it constrains what the numbers mean: **the committed tree cannot reproduce
 either case.** It indexes 8 compilable assets, and `Phase5Test`'s 40 `StaticMeshComponent`s all
@@ -54,30 +57,14 @@ cheaper than the read.
 This is now a small, bounded change with a known payoff rather than an open question. What it needs
 is a second hash stored per dependency in the epoch record, which is a format change.
 
-## Parse results in flight are unbounded — confirmed, and it is a memory bound
+## The Apply budget cannot subdivide one apply
 
-**This one is real and the numbers are worse than the write-up suggested.** 24 meshes requested in a
-single frame, x64 Release:
+*(What is left of the old "parse results in flight" entry. **Backpressure itself is done** — the
+in-flight cap landed with the measurements behind it; see
+[assets.md](../engine/assets.md#backpressure-the-in-flight-cap).)*
 
-| | |
-|---|---|
-| Peak parses in flight | **24** — i.e. all of them; nothing throttles the queue |
-| Working set before | 196 MB |
-| Working set at peak | **330 MB** |
-| Working set once drained, all 24 meshes still loaded | 203 MB |
-
-So the 24 loaded meshes *retain* about **7 MB** between them, while the parse results waiting for
-Apply held about **127 MB** — roughly **5.3 MB per pending asset, 18x what the finished asset
-keeps**. That is decoded image data sitting in memory until the main thread gets to it, and it
-scales linearly with how many assets are accepted at once: a 200-asset cold open extrapolates to
-~1.1 GB of transient footprint, on top of everything else.
-
-Backpressure — a cap on parses in flight, with the watcher deferring rather than queueing past it —
-is the right fix, and the cap can now be chosen from a number rather than guessed.
-
-### The frame-time half of that entry is a *different* bug, and backpressure would not fix it
-
-Worth separating, because the two were recorded together. The same burst:
+Worth separating from backpressure, because the two were recorded as one item and only one of them
+is fixed. The 24-mesh burst, x64 Release:
 
 | | Peak Apply frame (budget 4.00 ms) |
 |---|---|
@@ -87,7 +74,8 @@ Worth separating, because the two were recorded together. The same burst:
 Warm is *worse* because parses finish sooner and land together. This is not queue depth — it is
 [the Apply budget's documented limitation](../engine/assets.md#the-apply-budget): `HasRoom()` always
 lets the first apply of a frame run and an apply cannot be interrupted, so a frame costs 4 ms plus
-one whole apply. Capping how many parses are in flight does not make one apply cheaper.
+one whole apply. Capping how many parses are in flight does not make one apply cheaper, and the cap
+that shipped confirms it: with it in place the same burst still peaks at 23.9 ms.
 
 This does not contradict Phase 6's table in [assets.md](../engine/assets.md#the-apply-budget), which
 measured a 22-asset **texture reload** at a 5.3 ms worst apply. A skinned mesh apply is a much larger

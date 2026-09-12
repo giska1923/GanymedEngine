@@ -29,6 +29,13 @@ namespace GanymedE {
 		uint32_t Deferred = 0;   // finished parsing but over budget - they land on a later frame
 		double Milliseconds = 0.0;
 		double BudgetMs = 0.0;
+
+		// Loads refused last frame because kMaxParsesInFlight was full, and how many parses were
+		// in flight when the frame's Apply pass ran. Distinct from `Deferred` above: that is work
+		// that finished parsing and did not fit the Apply budget, this is work that was never
+		// started so its decoded bytes were never held. See AssetManagerRegistry.h.
+		uint32_t LoadsDeferred = 0;
+		uint32_t InFlight = 0;
 	};
 
 	class AssetManager

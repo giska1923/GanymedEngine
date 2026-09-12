@@ -31,7 +31,7 @@ documented.** A file here is a promise, not a description.
 |---|---|---|
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred | 1 (parked) |
 | [reflection.md](reflection.md) | Prefab template cache vs. on-disk edits, multi-entity editing gaps | 3 |
-| [assets.md](assets.md) | Dependency hashing, parse backpressure — both now measured | 2 |
+| [assets.md](assets.md) | Dependency hashing; the Apply budget cannot subdivide one apply | 2 |
 | [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, whether to adopt Tracy | 3 |
 
 **Priority, as a recommendation rather than a schedule:** **Linux is now built and run** — all
@@ -40,13 +40,13 @@ three configurations, editor and runtime, with the status table in
 [cross-cutting.md](cross-cutting.md) is macOS (never compiled) and the gap between "runs in WSL2"
 and "runs on Linux" — chiefly Vulkan, which WSL cannot load.
 
-[assets.md](assets.md)'s two remaining entries have now been **measured**, which is what they were
-waiting on. Parse backpressure is confirmed and is a memory bound — 24 meshes loaded at once held
-127 MB of decoded data waiting for Apply, 18x what the finished assets retain. Dependency hashing
-turned out smaller than written up, and the answer is a two-level check rather than content hashing.
-The measurement also separated out a third thing that was folded into the backpressure entry: a
-30 ms Apply frame in Release is the budget's inability to subdivide one apply, which backpressure
-would not fix. [rendering.md](rendering.md) is effectively closed — all four backends
+[assets.md](assets.md)'s entries were **measured**, and one of them is now **done**: parse
+backpressure was real and was a memory bound — 24 meshes loaded at once held 127 MB of decoded data
+waiting for Apply, 18x what the finished assets retain — and an in-flight cap of 8 roughly halves
+the peak at no cost in drain time. What remains is dependency hashing (smaller than written up; the
+answer is a two-level check rather than content hashing) and a third problem the backpressure entry
+was hiding: a 24 ms Apply frame in Release is the budget's inability to subdivide one apply, which
+backpressure does not fix and did not. [rendering.md](rendering.md) is effectively closed — all four backends
 render, pick and agree on colour. Its one remaining entry, **MSAA, is parked on purpose**: the abort
 is diagnosed and the fix is one line, but whether MSAA is wanted at all is the open question, and
 FXAA already ships. Nothing there blocks anything else.

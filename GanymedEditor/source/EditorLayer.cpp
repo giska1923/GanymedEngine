@@ -382,6 +382,13 @@ namespace GanymedE {
 		ImGui::Text("Apply: %u done, %u deferred, %.2f / %.1f ms",
 			apply.Applied, apply.Deferred, apply.Milliseconds, apply.BudgetMs);
 
+		// The other throttle, and a different one: `deferred` above is work that finished
+		// parsing and did not fit the frame's Apply budget, `refused` here is work that was
+		// never started because the in-flight cap was full - so its decoded bytes were never
+		// held at all. A steady stream of refusals during a burst is the cap doing its job.
+		ImGui::Text("Parses: %u in flight / %u max, %u load(s) refused",
+			apply.InFlight, (uint32_t)kMaxParsesInFlight, apply.LoadsDeferred);
+
 		// Compiles vs cache hits is the number that says whether the compiled tree is doing its
 		// job: a second run over an unchanged project must read 0 compiled. The in-flight count
 		// is what a cold open looks like while it is happening.

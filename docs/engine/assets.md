@@ -491,6 +491,69 @@ with it.
 The compiles themselves did not get faster — they moved. The frame loop ran at 7–11 ms throughout,
 including the frame during which a 566 ms BC3 encode was in flight.
 
+### Backpressure: the in-flight cap
+
+The Apply budget bounds how much *applying* a frame does. It says nothing about how many parses may
+be accepted, and until this existed nothing did — every load that was asked for was queued, and each
+finished parse held its decoded bytes until Apply got to it.
+
+Measured before the cap (x64 Release, 24 skinned meshes requested in one frame): all 24 parsed
+concurrently, working set went **196 → 330 MB**, and settled at 203 MB once drained with all 24
+still loaded. So the finished meshes retain about **7 MB** between them while the results waiting for
+Apply held about **127 MB** — roughly **5.3 MB per pending asset, 18× what the asset itself keeps**.
+It scales linearly with how many loads are accepted at once, so a 200-asset cold open extrapolates
+to ~1.1 GB of transient footprint.
+
+`kMaxParsesInFlight` (**8**, in
+[`AssetManagerRegistry.h`](../../GanymedEngine/source/GanymedE/Assets/AssetManagerRegistry.h)) caps
+parses submitted and not yet applied, **summed across every manager**. A `Load` that hits the cap
+returns null *without recording anything* — not failed, not pending — so the caller asks again next
+frame. That is already how a pending load behaves (`AssetRef::Get()` re-asks every frame by design),
+which is what makes deferring safe rather than lossy.
+
+The count is summed from the managers rather than kept in a counter: a counter would have to stay in
+step with `Load`, `Finish`, `Evict`, `WaitFor` and `CancelPending`, and drift there would show up as
+loading that quietly stops.
+
+**`WaitFor` is exempt, and has to be.** Its only caller is `MeshImporter::Instantiate`, whose whole
+reason for blocking is that "not loaded yet" is not an answer it can act on. Its sequence is
+`Get → WaitFor → Get`, so a first `Get` refused by the cap would leave nothing pending, `WaitFor`
+would no-op, and the instantiate would silently produce an entity with no material slots.
+
+Measured on the same 24-mesh burst, warm:
+
+| `kMaxParsesInFlight` | Peak in flight | Peak working-set delta | Frames to drain |
+|---|---|---|---|
+| 4 | 4 | 40.2 MB | 27 (0.30 s) |
+| **8 (current)** | 8 | **84.2 MB** | 28 (0.38 s) |
+| 16 | 16 | 107.4 MB | 25 (0.36 s) |
+| uncapped | 24 | 158.9 MB | 24 (0.35 s) |
+
+**Drain time is flat across every cap** — that is the property that makes this nearly free. Apply is
+the bottleneck, not Parse: one mesh apply runs 5–30 ms against a 4 ms budget, so a frame retires
+about one of them, and eight in flight is already several frames of lookahead.
+
+The cost is real but small, and lands on the *cheap* types rather than the expensive ones. A new
+parse can only be accepted when a slot is free, so the ceiling is `cap` loads per frame — which
+binds for assets whose Apply is microseconds. Measured, 200 materials:
+
+| | Frames | Time |
+|---|---|---|
+| cap 8 | 28 | 0.19 s |
+| uncapped | 5 | 0.04 s |
+
+~5× slower, on a type that contributes almost nothing to the memory the cap exists to bound. Both
+figures are well under a fifth of a second, and assets appear progressively either way, so this is
+accepted rather than worked around — a per-type cap would be a knob nobody maintains. Raising the
+constant is a one-line change with a known memory cost per step, from the table above.
+
+A byte budget would be the better control, for the same reason `ApplyBudget` prefers time to a count:
+parse results are not comparable to each other. It is not used because a result's size is not known
+until its parse has finished, and by then the memory is already held — the count is what limits the
+initial surge, which is the part that matters.
+
+The editor's Stats panel shows `Parses: N in flight / 8 max, M load(s) refused`.
+
 ### The Apply budget
 
 Apply cannot leave the main thread — creating bgfx resources belongs to the submit thread — so it is

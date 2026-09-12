@@ -46,6 +46,9 @@ namespace GanymedE {
 
 		AssetApplyStats LastApply;
 
+		// Reset at the top of every Update, so the figure the editor shows is "last frame".
+		uint32_t LoadsDeferredThisFrame = 0;
+
 		// `.meta` sidecars found by the last scan whose asset is gone. Collected rather than
 		// acted on: a sidecar is the only link between a file and every scene handle naming it,
 		// so an asset that is merely *absent right now* - a partial checkout, a branch without
@@ -71,6 +74,19 @@ namespace GanymedE {
 		// with its asset. Worth saying out loud: the consequence is an entity that renders
 		// nothing, which is indistinguishable from a bad transform or an unlit material
 		// until you know.
+		std::size_t ParsesInFlight()
+		{
+			std::size_t count = 0;
+			AssetManagerRegistry::ForEach(
+				[&count](IAssetManager& manager) { count += manager.PendingCount(); });
+			return count;
+		}
+
+		void RecordBackpressureDefer()
+		{
+			++s_Data.LoadsDeferredThisFrame;
+		}
+
 		void WarnUnknownAssetHandle(AssetHandle handle, const char* expectedTypeName)
 		{
 			if (!s_Data.WarnedUnknownHandles.insert(handle).second)
@@ -849,6 +865,12 @@ namespace GanymedE {
 		s_Data.LastApply.Deferred = budget.Deferred();
 		s_Data.LastApply.Milliseconds = budget.ElapsedMs();
 		s_Data.LastApply.BudgetMs = kApplyBudgetMs;
+		s_Data.LastApply.LoadsDeferred = s_Data.LoadsDeferredThisFrame;
+		s_Data.LastApply.InFlight = (uint32_t)Detail::ParsesInFlight();
+
+		// After the applies, so the count reported is what the frame just finished refusing
+		// rather than what it is about to.
+		s_Data.LoadsDeferredThisFrame = 0;
 	}
 
 	AssetApplyStats AssetManager::GetApplyStats()
