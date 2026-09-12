@@ -80,10 +80,11 @@ Two halves:
 - [`ImGuiLayer`](../../GanymedEngine/source/GanymedE/ImGui/ImGuiLayer.h) (engine, an overlay
   pushed by `Application` **when `ApplicationSpecification::EnableImGui` is set** — a non-editor
   front-end runs with no ImGui at all, so nothing here initializes and
-  `Application::GetImGuiLayer()` is null) owns the ImGui context: docking enabled, dark theme
-  (`SetDarkThemeColors`), **built-in font only**. Editor fonts (Inter + Lucide) are loaded by
-  `EditorFonts::Load` after this layer attaches; the engine must not hold `ImFont*` values the
-  editor then invalidates with `io.Fonts->Clear()`. `Begin()`/`End()` bracket each frame's UI;
+  `Application::GetImGuiLayer()` is null) owns the ImGui context: docking enabled,
+  `StyleColorsDark()`, **built-in font only**. The engine does not own a brand palette.
+  Editor fonts (Inter + Lucide) and `EditorTheme` are applied from `EditorLayer::OnAttach` after
+  this layer attaches; the engine must not hold `ImFont*` values the editor then invalidates with
+  `io.Fonts->Clear()`. `Begin()`/`End()` bracket each frame's UI;
   `OnEvent` marks events handled when ImGui wants the mouse/keyboard **unless**
   `BlockEvents(false)` — which the editor sets while the viewport is hovered/focused so camera and
   gizmo input reach the layers beneath. Platform half is stock `ImGui_ImplGlfw`, initialized with

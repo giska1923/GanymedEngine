@@ -10,27 +10,33 @@ either order.
 
 ## Layout
 
-A dockable ImGui workspace. On first run (no `imgui.ini` yet) `EditorLayer::OnImGuiRender` builds
-a default layout with DockBuilder: toolbar strip on top (no tab bar), Scene Hierarchy left,
-Properties below it, Viewport center, Stats right, Content Browser bottom. After that, layout
-changes persist in `GanymedEditor/imgui.ini`.
+A dockable ImGui workspace. On first run (no `imgui.ini` yet), or after **View → Reset Layout**,
+`EditorLayer` builds a default DockBuilder layout: toolbar strip on top (no tab bar), Scene
+Hierarchy left, Properties below it, Viewport center, Stats right, Content Browser bottom. After
+that, layout changes persist in `GanymedEditor/imgui.ini`. Phases 2–8 of the visual-parity work
+change that geometry; Reset Layout is how an existing ini actually picks them up.
 
 ## Look and feel
 
-Editor chrome is Inter + Lucide, rasterized by FreeType. Colour tokens and density land in a
-later pass; this is the type stack.
+Editor chrome is Inter + Lucide, rasterized by FreeType, on Cold War's neutral ramp with a
+Ganymed violet accent. Colour, density and geometry come from `EditorTheme` /
+`ApplyTheme` — **not** from the engine. `ImGuiLayer` only calls `StyleColorsDark()` and ships
+the embedded font, so Sandbox does not depend on editor assets and the engine does not hold a
+brand palette.
 
-`EditorFonts::Load` runs from `EditorLayer::OnAttach`, after `ImGuiLayer` has created the context.
-The engine ships ImGui's embedded font and nothing else — Sandbox has no `assets/fonts` and must
-not warn (or assert) on a missing TTF. `Load` `Clear()`s the atlas, so `io.FontDefault` is
+`EditorFonts::Load` and `ApplyTheme(MakeGanymedTheme())` run from `EditorLayer::OnAttach`, after
+`ImGuiLayer` has created the context. `Load` `Clear()`s the atlas, so `io.FontDefault` is
 reassigned in the same call; `ImFont*` values held across a `Clear()` dangle.
 `ImGuiRendererBgfx::NewFrame` already rebuilds the bgfx font texture when `!io.Fonts->IsBuilt()`,
-which is why this needs no engine API.
+which is why this needs no engine API. **View → Theme** switches the accent between Ganymed
+(lilac) and Cold War (sampled orange) without a theme editor.
+
+### Type
 
 | Use | Face | Size |
 |---|---|---|
 | Body (`io.FontDefault`) | Inter Regular | 18 px |
-| Panel/section headers, active tab | Inter Medium | 18 px |
+| Panel/section headers, XYZ reset labels | Inter Medium | 18 px |
 | Status bar, hints, column headers | Inter Regular | 16 px |
 
 Rasterizer flags: `ImGuiFreeTypeBuilderFlags_LightHinting` on the atlas. Do **not** use
@@ -47,6 +53,58 @@ font was taken from.
 RmlUi game UI is a separate atlas and still uses Montserrat (`UIEngine` loads Regular/Bold/Italic
 from `assets/fonts/montserrat/`). Those three faces stay; they are the Play-mode HUD, not editor
 chrome.
+
+### Colour tokens
+
+`EditorTheme` is a flat `ImU32` struct in `GanymedEditor/source/EditorTheme.h`. One `ApplyTheme`
+call writes the full `ImGuiStyle`. Two presets share the sampled Cold War ramp and differ only
+in accent:
+
+| Token | Hex | Role |
+|---|---|---|
+| `ChromeBg` / `Border` | `#1A1A1A` | Title bar, tab strips, inspector headers, 1 px gutters. Same value — panels separate with chrome-coloured gaps, not lighter outlines |
+| `SurfaceSunken` | `#272727` | Recessed fills: inputs (`FrameBg`), column headers |
+| `SurfaceBg` | `#313131` | Panel content, active tab, window background |
+| `GrabBg` | `#4D4D4D` | Scrollbar grab, slider track hover |
+| `TextPrimary` | `#CCCCCC` | Body |
+| `TextDim` | `#878787` | Secondary / hint |
+| `TextDisabled` | `#717171` | Disabled, unselected tab labels |
+| `Accent` | `#B182ED` (Ganymed) / `#F7A356` (Cold War) | Selection fill, checkmarks, grabs |
+| `AccentHover` / `AccentActive` | `#C39BFF` / `#9152E0` (Ganymed); `#FFB56A` / `#E08A3C` (Cold War, derived not sampled) | Hover / pressed |
+| `AccentText` | `#B07BF4` / `#F7A356` | Accent-coloured text on a panel, no fill |
+| `TextOnAccent` | `#1A1A1A` | Glyphs on an accent fill (phase 4 will paint this on selected rows) |
+| `Link` | `#589FFD` | Entity-name links in the outliner (phase 4). **Not** the accent |
+| `FieldMixed` | `#FFC759` | Multi-select fields that disagree |
+| `FieldOverride` | `#73B8FF` | Prefab instance fields that differ from the prototype |
+| `Warning` / `Error` | `#E6B450` / `#E5534B` | Ganymed-chosen; Cold War did not sample these |
+| `AxisX/Y/Z` | existing RGB | `DrawVec3Control` reset buttons |
+| `AssetTint[AssetType]` | per-type | Content Browser icon tints; directories stay white |
+
+`FieldOverride` (`#73B8FF`) and `Link` (`#589FFD`) are both blue on purpose. They never share a
+panel — the outliner has no property rows and the inspector has no entity links — so collapsing
+them into one colour would only merge two independent signals later.
+
+The lilac fill (`#B182ED`) with dark glyphs is the shipping accent: a saturated copy of the app
+icon (`#7B43C2`) cannot reach Cold War orange's luminance, and keeping the dark fill with light
+glyphs would invert the treatment (selected row darker than the panel, which reads as
+collapsed/disabled).
+
+### Geometry and the two inversions
+
+`ApplyTheme` sets rounding to 0 everywhere, `FramePadding` to `(6, 3)` (18 px text + 6 = the
+measured 24 px row), `WindowMenuButtonPosition = ImGuiDir_None` (kills the dock-tab `▼`), tab
+overlines to 0 (active tab is a background change only), and `DockingSeparatorSize = 1`.
+
+Two mappings invert ImGui's defaults, and they are not bugs:
+
+| ImGui colour | Token | Why |
+|---|---|---|
+| `FrameBg` | `SurfaceSunken` | Inputs are **recessed** — darker than the window, not lighter |
+| `Header` / `HeaderHovered` | `ChromeBg` / `SurfaceSunken` | Inspector component headers are `#1A1A1A` on `#313131`. ImGui's default is a *lighter* fill |
+
+`HeaderActive` is `Accent`. Until phase 4 paints `TextOnAccent` on selected tree rows, those
+rows keep `ImGuiCol_Text` (light on lilac). Do not "fix" FrameBg or Header back toward ImGui
+defaults.
 
 ## EditorLayer
 
@@ -100,6 +158,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene |
 | Ctrl (held while dragging gizmo) | Snapping |
 | Ctrl+U | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only) |
+| View → Reset Layout | Rebuild the default dock tree. Existing `imgui.ini` otherwise hides layout work |
+| View → Theme | Ganymed (lilac accent) or Cold War (sampled orange) — screenshot verification, not a theme editor |
 | F1 | bgfx stats overlay |
 
 **Two shortcut layers, on purpose.** Q/W/E/R and Ctrl+U go through the engine event path
@@ -647,7 +707,7 @@ so the first call always wins the delivery and the second type would never fire.
 
 | Want to… | Touch |
 |---|---|
-| New panel | Create under `Panels/`, own it in `EditorLayer`, call `OnImGuiRender`, dock it in the DockBuilder block |
+| New chrome colour | Add a token on `EditorTheme`, map it in `ApplyTheme` if it is an ImGui style colour, consume `Theme().X` — never a new literal |
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
 | Custom canvas widget | `EditorWidgets.cpp`; one `InvisibleButton` spanning the canvas so `ActiveId` holds for the drag; return true only on a real value change |
 | New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |

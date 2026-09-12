@@ -102,37 +102,36 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | 1 | White OS title bar against a dark app | very high | high | 9 |
 | 2 | Icon font in the atlas; most panels still unlabeled | very high | medium | 0 **done** (play/stop uses `ICON_LC_*`; remaining chrome in 4–6) |
 | 3 | Montserrat (geometric display face) instead of a UI grotesque | high | low | 0 **done** (Inter; Montserrat remains for RmlUi HUD) |
-| 4 | Noisy near-identical greys; rounding on | high | low | 1 |
+| 4 | Noisy near-identical greys; rounding on | high | low | 1 **done** |
 | 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 |
 | 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 |
 | 7 | Toolbar is a docked window with one centred button | high | low | 2 |
-| 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 |
+| 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `•••` is phase 3) |
 | 9 | No status bar | medium | low | 7 |
 | 10 | Inspector component headers are ImGui `CollapsingHeader`s, not full-width `#1A1A1A` rows with icon + eye + `•••` | medium | medium | 5 |
 | 11 | Content Browser: no breadcrumb, no folder sidebar, no search, no item count, no view toggle | medium | high | 6 |
 | 12 | Viewport has no header row (camera/quality/visualizers) and no transform readout | medium | medium | 8 |
-| 13 | Hard-coded colours scattered across 5 files (see below) | low visually, high for maintenance | low | 1 |
+| 13 | Hard-coded colours scattered across 5 files (see below) | low visually, high for maintenance | low | 1 **done** |
 | 14 | Dock tab label colour cannot differ selected vs unselected | low | — | accepted deviation |
 
-**The scattered colours that phase 1 has to absorb** — these are the reason a token layer is
+**The scattered colours that phase 1 absorbed** — these were the reason a token layer was
 worth the file:
 
-| Site | Value | Becomes |
+| Site | Value | Became |
 |---|---|---|
-| `EditorInspector.cpp:592` | `(1.0, 0.78, 0.35)` mixed-value amber | `Theme.FieldMixed` |
-| `EditorInspector.cpp:594` | `(0.45, 0.72, 1.0)` prefab-override blue | `Theme.FieldOverride` |
-| `EditorWidgets.cpp:405/423/441` | vec3 reset buttons, red/green/blue | `Theme.AxisX/Y/Z` |
-| `EditorWidgets.cpp:203-233, 349-360` | eight `IM_COL32` literals in the curve/gradient editors, including `3.0f` rounding | `Theme.*` + rounding 0 |
-| `ContentBrowserPanel.cpp:35-43` | eight per-asset-type tints | `Theme.AssetTint[AssetType]` |
-| `EditorLayer.cpp:634-639` | toolbar transparent-button push | `EditorUI::IconButton` |
+| `EditorInspector.cpp` mixed/override tints | amber / override blue | `Theme.FieldMixed` / `Theme.FieldOverride` |
+| `EditorWidgets.cpp` vec3 reset buttons | red/green/blue | `Theme.AxisX/Y/Z` |
+| `EditorWidgets.cpp` curve/gradient editors | eight `IM_COL32` literals + `3.0f` rounding | `Theme.*` + rounding 0 |
+| `ContentBrowserPanel.cpp` per-asset tints | eight tints | `Theme.AssetTint[AssetType]` |
+| `EditorLayer.cpp` toolbar transparent-button push | hover/active from `ImGuiCol_Button*` | accent tokens at 35%/55% (`IconButton` is still phase 3) |
 
-Note the collision phase 1 must resolve: the prefab-override blue `#73B8FF` and the proposed
-entity-link blue `#589FFD` are the same colour to the eye, in the same window, meaning different
-things. Either move the override marker to the accent (it is a "differs from default" signal, which
-is what accents are for) or pick a distinctly cooler blue for links. **Recommendation:** overrides
-keep blue, links get blue, and they never appear in the same panel — the outliner has no property
-rows and the inspector has no entity links — so this is acceptable, but it must be a conscious
-choice recorded in `editor.md` rather than a coincidence.
+`SceneHierarchyPanel.cpp` had no colour literals; it was listed as a consumer and did not need
+edits.
+
+Note the collision phase 1 resolved: the prefab-override blue `#73B8FF` and the entity-link blue
+`#589FFD` are the same colour to the eye, in the same window, meaning different things. Overrides
+keep blue, links keep blue, and they never appear in the same panel — the outliner has no property
+rows and the inspector has no entity links — recorded in `editor.md`.
 
 ## The token layer
 
@@ -181,13 +180,11 @@ Design rules, and why:
 - Semantic names, never colour names. `Accent`, not `Violet`; the whole point is that re-branding is
   a data change.
 
-### Where theming should live
+### Where theming lives
 
-Today `ImGuiLayer::SetDarkThemeColors()` is still in **engine** code. Fonts moved editor-side in
-phase 0 (`EditorFonts::Load`). Phase 1 moves the theme too:
-
-- `ImGuiLayer::OnAttach` keeps `ImGui::StyleColorsDark()` and the built-in font. Nothing else.
-- `EditorLayer::OnAttach` already calls `EditorFonts::Load()`; phase 1 adds `ApplyTheme(...)`.
+`ImGuiLayer::OnAttach` keeps `ImGui::StyleColorsDark()` and the built-in font. Nothing else.
+`EditorLayer::OnAttach` calls `EditorFonts::Load()` then `ApplyTheme(MakeGanymedTheme())`.
+`SetDarkThemeColors` is gone from the engine.
 
 **No engine API is needed for the font swap.** `ImGuiRendererBgfx::NewFrame()` already rebuilds the
 atlas whenever `!io.Fonts->IsBuilt()` (`ImGuiRendererBgfx.cpp:89`), so the editor can
@@ -222,7 +219,15 @@ planned would empty the HUD. Live description: [editor.md](../editor/editor.md#l
 
 ---
 
-### Phase 1 — The token layer and the style application
+### Phase 1 — The token layer and the style application — **done**
+
+`EditorTheme` + two presets (`Ganymed` / `Coldwar`), `ApplyTheme` writes the full `ImGuiStyle`
+(0 rounding, `FramePadding (6,3)`, `WindowMenuButtonPosition = None`, 1 px dock gutters).
+Scattered literals absorbed; `SetDarkThemeColors` removed from the engine. **View → Reset Layout**
+rebuilds the DockBuilder tree; **View → Theme** switches the accent. Live description:
+[editor.md](../editor/editor.md#look-and-feel).
+
+The spec that was executed (kept so later phases can cite the mapping):
 
 **1.1 Write `EditorTheme.h/.cpp`** with the two presets from the tables above.
 
@@ -280,9 +285,9 @@ every layout change in phases 2–8 is **invisible** on a machine with an existi
 bump a layout-version key in the ini and rebuild when it mismatches. Do this before phase 2, not
 after debugging a change that "did not apply".
 
-- **Files:** new `EditorTheme.h/.cpp`; `EditorLayer.cpp`, `EditorInspector.cpp`,
-  `EditorWidgets.cpp`, `ContentBrowserPanel.cpp`, `SceneHierarchyPanel.cpp`;
-  `ImGuiLayer.cpp` (drop `SetDarkThemeColors` from the engine).
+- **Files:** `EditorTheme.h/.cpp`; `EditorLayer.cpp/.h`, `EditorInspector.cpp`,
+  `EditorWidgets.cpp`, `ContentBrowserPanel.cpp`; `ImGuiLayer.cpp/.h` (dropped
+  `SetDarkThemeColors`). `SceneHierarchyPanel.cpp` had no literals.
 - **Verify:** side-by-side against the reference screenshot with the `Coldwar` preset active — the
   ramp should match exactly. Then switch to `Ganymed` and confirm only the accent moved.
 - **Docs:** `editor/editor.md` "Look and feel" — the token table, the two presets, the
@@ -592,7 +597,7 @@ menu buttons that move the window instead of opening.
 | Phase | Estimate |
 |---|---|
 | 0 — fonts + icons | **done** |
-| 1 — token layer | 1 day |
+| 1 — token layer | **done** |
 | 2 — toolbar geometry | 0.5 day |
 | 3 — furniture helpers | 1 day |
 | 4 — outliner | 1.5 days |
@@ -622,9 +627,8 @@ as phase 1 does.
 
 1. **Font family** — **Inter** (done, phase 0).
 2. **Icon set** — **Lucide** (done, phase 0).
-3. **Accent** — is `#B182ED` (lilac fill, dark glyph, keeps Cold War's treatment) the right read of
-   "Ganymed's accent", or would you rather keep `#7B43C2` exactly and accept light-on-violet
-   selections?
+3. **Accent** — **`#B182ED`** (lilac fill, dark glyph, keeps Cold War's treatment). `#7B43C2` with
+   light glyphs was rejected: it inverts the selected-row treatment.
 4. **Outliner eye/lock storage** — editor-side `unordered_set<UUID>` (recommended: honest about
    being an editor filter) or real components that serialize?
 5. **Properties split** — move the inspector out of `SceneHierarchyPanel.cpp` (1642 lines) during

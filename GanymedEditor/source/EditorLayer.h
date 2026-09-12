@@ -88,5 +88,7 @@ namespace GanymedE {
 		// Panels
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
+
+		bool m_ResetDockLayout = false;
 	};
 }

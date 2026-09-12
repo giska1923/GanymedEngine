@@ -6,6 +6,7 @@
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Core/Log.h"
+#include "../EditorTheme.h"
 
 #include <imgui/imgui.h>
 
@@ -29,19 +30,10 @@ namespace GanymedE {
 		if (isDirectory)
 			return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 
-		AssetType type = AssetTypeFromExtension(path.extension().string());
-		switch (type)
-		{
-			case AssetType::StaticMesh:  return ImVec4(0.55f, 0.75f, 1.0f, 1.0f);
-			case AssetType::Environment: return ImVec4(1.0f, 0.75f, 0.35f, 1.0f);
-			case AssetType::Scene:       return ImVec4(0.55f, 1.0f, 0.65f, 1.0f);
-			case AssetType::Texture:     return ImVec4(1.0f, 0.55f, 0.85f, 1.0f);
-			case AssetType::Material:    return ImVec4(0.85f, 0.55f, 1.0f, 1.0f);
-			case AssetType::Script:      return ImVec4(1.0f, 0.95f, 0.5f, 1.0f);
-			case AssetType::Audio:       return ImVec4(0.55f, 1.0f, 0.95f, 1.0f);
-			case AssetType::Prefab:      return ImVec4(0.6f, 0.85f, 0.85f, 1.0f);
-			default:                     return ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
-		}
+		const int i = static_cast<int>(AssetTypeFromExtension(path.extension().string()));
+		if (i >= 0 && i < EditorUI::kAssetTintCount)
+			return EditorUI::Color(EditorUI::Theme().AssetTint[i]);
+		return EditorUI::Color(EditorUI::Theme().AssetTint[0]);
 	}
 
 	static bool IsImportableAsset(const std::filesystem::path& path)

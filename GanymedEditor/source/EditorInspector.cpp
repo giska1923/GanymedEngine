@@ -2,6 +2,7 @@
 
 #include "AssetDragDrop.h"
 #include "GanymedE/Math/Curve.h"
+#include "EditorTheme.h"
 #include "EditorWidgets.h"
 
 #include "GanymedE/Assets/AssetManager.h"
@@ -580,18 +581,18 @@ namespace GanymedE::EditorUI {
 			ImGui::BeginDisabled();
 
 		// A field that differs from the prefab is tinted for its whole row. Unity bolds just the
-		// label; doing that here would need a second font the editor does not load, and a colour
-		// is unambiguous without disturbing layout - which matters because the row is drawn by
-		// the widget itself, not by this function.
+		// label; Medium is loaded (EditorFonts::Header) but a colour is unambiguous without
+		// disturbing layout - which matters because the row is drawn by the widget itself, not
+		// by this function.
 		// Mixed wins over overridden when both apply: "these entities disagree" is the more urgent
 		// fact, because the widget is showing one of several values rather than the value.
 		const bool mixed = multi && multi.IsMixed(multi.Owner, field);
 		const bool overridden = !mixed && overrides && overrides.IsOverridden(overrides.Owner, field);
 
 		if (mixed)
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{ 1.0f, 0.78f, 0.35f, 1.0f });
+			ImGui::PushStyleColor(ImGuiCol_Text, Color(Theme().FieldMixed));
 		else if (overridden)
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{ 0.45f, 0.72f, 1.0f, 1.0f });
+			ImGui::PushStyleColor(ImGuiCol_Text, Color(Theme().FieldOverride));
 
 		const bool edited = drawer(ctx);
 

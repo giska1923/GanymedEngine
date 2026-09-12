@@ -3,6 +3,7 @@
 #include "EditorFonts.h"
 #include "EditorIcons.h"
 #include "EditorInspector.h"
+#include "EditorTheme.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -49,6 +50,7 @@ namespace GanymedE {
 		// first): the context exists, the default atlas is already uploaded, and
 		// Clear() here makes NewFrame rebuild it with Inter + Lucide.
 		EditorUI::EditorFonts::Load();
+		EditorUI::ApplyTheme(EditorUI::MakeGanymedTheme());
 
 		// After Reflection::Init (Application's constructor), because a drawer is keyed on a
 		// meta_type that has to exist first.
@@ -184,6 +186,35 @@ namespace GanymedE {
 	}
 
 
+	namespace {
+
+		void BuildDefaultDockLayout(ImGuiID dockspaceId)
+		{
+			ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+			ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
+
+			ImGuiID dockMain = dockspaceId;
+			ImGuiID dockToolbar = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Up, 0.06f, nullptr, &dockMain);
+			ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.28f, nullptr, &dockMain);
+			ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.24f, nullptr, &dockMain);
+			ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.22f, nullptr, &dockMain);
+			ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
+
+			// The toolbar strip should not show a tab bar or be rearranged
+			ImGuiDockNode* toolbarNode = ImGui::DockBuilderGetNode(dockToolbar);
+			toolbarNode->SetLocalFlags(toolbarNode->LocalFlags | ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingOverMe);
+
+			ImGui::DockBuilderDockWindow("##toolbar", dockToolbar);
+			ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
+			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
+			ImGui::DockBuilderDockWindow("Viewport", dockMain);
+			ImGui::DockBuilderDockWindow("Stats", dockRight);
+			ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
+			ImGui::DockBuilderFinish(dockspaceId);
+		}
+
+	}
+
 	void EditorLayer::OnImGuiRender()
 	{
 		GE_PROFILE_FUNCTION();
@@ -237,31 +268,16 @@ namespace GanymedE {
 		{
 			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
 
-			// Build a default layout the first time (no imgui.ini entry for the dockspace yet)
-			if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
+			// View → Reset Layout tears the node down so the same builder path as a
+			// missing imgui.ini entry runs again. Do not bump an ini layout version
+			// here — geometry is unchanged until phase 2.
+			if (m_ResetDockLayout)
 			{
-				ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-				ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
-
-				ImGuiID dockMain = dockspace_id;
-				ImGuiID dockToolbar = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Up, 0.06f, nullptr, &dockMain);
-				ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.28f, nullptr, &dockMain);
-				ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.24f, nullptr, &dockMain);
-				ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.22f, nullptr, &dockMain);
-				ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
-
-				// The toolbar strip should not show a tab bar or be rearranged
-				ImGuiDockNode* toolbarNode = ImGui::DockBuilderGetNode(dockToolbar);
-				toolbarNode->SetLocalFlags(toolbarNode->LocalFlags | ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingOverMe);
-
-				ImGui::DockBuilderDockWindow("##toolbar", dockToolbar);
-				ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
-				ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
-				ImGui::DockBuilderDockWindow("Viewport", dockMain);
-				ImGui::DockBuilderDockWindow("Stats", dockRight);
-				ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
-				ImGui::DockBuilderFinish(dockspace_id);
+				ImGui::DockBuilderRemoveNode(dockspace_id);
+				m_ResetDockLayout = false;
 			}
+			if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
+				BuildDefaultDockLayout(dockspace_id);
 
 			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 		}
@@ -320,6 +336,30 @@ namespace GanymedE {
 				bool debuggerVisible = UIEngine::IsDebuggerVisible();
 				if (ImGui::MenuItem("Game UI Debugger", "Ctrl+U", &debuggerVisible))
 					UIEngine::SetDebuggerVisible(debuggerVisible);
+
+				if (ImGui::MenuItem("Reset Layout"))
+					m_ResetDockLayout = true;
+
+				ImGui::Separator();
+
+				// 0 = Ganymed (OnAttach default), 1 = Cold War. Two menu items, not a
+				// theme editor — the Cold War preset exists so a screenshot can match
+				// the sampled ramp without swapping the shipping accent.
+				static int s_ThemePreset = 0;
+				if (ImGui::BeginMenu("Theme"))
+				{
+					if (ImGui::MenuItem("Ganymed", nullptr, s_ThemePreset == 0))
+					{
+						s_ThemePreset = 0;
+						EditorUI::ApplyTheme(EditorUI::MakeGanymedTheme());
+					}
+					if (ImGui::MenuItem("Cold War", nullptr, s_ThemePreset == 1))
+					{
+						s_ThemePreset = 1;
+						EditorUI::ApplyTheme(EditorUI::MakeColdwarTheme());
+					}
+					ImGui::EndMenu();
+				}
 
 				ImGui::EndMenu();
 			}
@@ -636,12 +676,12 @@ namespace GanymedE {
 	{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 2));
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
+		// Transparent by default; IconButton (phase 3) will own this pattern.
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-		auto& colors = ImGui::GetStyle().Colors;
-		const auto& buttonHovered = colors[ImGuiCol_ButtonHovered];
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(buttonHovered.x, buttonHovered.y, buttonHovered.z, 0.5f));
-		const auto& buttonActive = colors[ImGuiCol_ButtonActive];
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(buttonActive.x, buttonActive.y, buttonActive.z, 0.5f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+			EditorUI::Color(EditorUI::WithAlpha(EditorUI::Theme().AccentHover, 0.35f)));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+			EditorUI::Color(EditorUI::WithAlpha(EditorUI::Theme().Accent, 0.55f)));
 
 		ImGui::Begin("##toolbar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 

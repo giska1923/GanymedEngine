@@ -1,4 +1,6 @@
 #include "EditorWidgets.h"
+#include "EditorFonts.h"
+#include "EditorTheme.h"
 
 #include <imgui/imgui_internal.h>
 
@@ -199,20 +201,21 @@ namespace GanymedE::EditorUI {
 
 		ImDrawList* draw = ImGui::GetWindowDrawList();
 		const ImVec2 canvasMax(canvas.x + size.x, canvas.y + size.y);
+		const EditorTheme& theme = Theme();
 		draw->PushClipRect(canvas, canvasMax, true);
-		draw->AddRectFilled(canvas, canvasMax, IM_COL32(24, 24, 28, 255), 3.0f);
-		draw->AddRect(canvas, canvasMax, IM_COL32(70, 70, 80, 255), 3.0f);
+		draw->AddRectFilled(canvas, canvasMax, theme.ChromeBg);
+		draw->AddRect(canvas, canvasMax, theme.GrabBg);
 
 		for (int i = 0; i <= 4; i++)
 		{
 			const float t = kTimeMin + (kTimeMax - kTimeMin) * (float)i / 4.0f;
 			const float x = CanvasToScreen(canvas, size, t, yMin, yMin, yMax).x;
-			draw->AddLine(ImVec2(x, canvas.y), ImVec2(x, canvasMax.y), IM_COL32(50, 50, 58, 255));
+			draw->AddLine(ImVec2(x, canvas.y), ImVec2(x, canvasMax.y), WithAlpha(theme.GrabBg, 0.55f));
 		}
 		if (0.0f >= yMin && 0.0f <= yMax)
 		{
 			const float y = CanvasToScreen(canvas, size, 0.0f, 0.0f, yMin, yMax).y;
-			draw->AddLine(ImVec2(canvas.x, y), ImVec2(canvasMax.x, y), IM_COL32(70, 70, 40, 255));
+			draw->AddLine(ImVec2(canvas.x, y), ImVec2(canvasMax.x, y), WithAlpha(theme.FieldMixed, 0.40f));
 		}
 
 		const auto& drawn = curve.Keys();
@@ -220,7 +223,7 @@ namespace GanymedE::EditorUI {
 		{
 			const ImVec2 a = CanvasToScreen(canvas, size, drawn[i - 1].Time, drawn[i - 1].Value, yMin, yMax);
 			const ImVec2 b = CanvasToScreen(canvas, size, drawn[i].Time, drawn[i].Value, yMin, yMax);
-			draw->AddLine(a, b, IM_COL32(220, 180, 70, 255), 1.5f);
+			draw->AddLine(a, b, theme.FieldMixed, 1.5f);
 		}
 
 		const int hoverIndex = hovered ? HitKey(canvas, size, mouse, yMin, yMax, drawn) : -1;
@@ -228,9 +231,11 @@ namespace GanymedE::EditorUI {
 		{
 			const ImVec2 p = CanvasToScreen(canvas, size, drawn[i].Time, drawn[i].Value, yMin, yMax);
 			const bool hot = i == dragIndex || i == hoverIndex;
-			draw->AddCircleFilled(p, hot ? kKeyRadius + 1.5f : kKeyRadius,
-				hot ? IM_COL32(255, 220, 90, 255) : IM_COL32(240, 200, 80, 255));
-			draw->AddCircle(p, hot ? kKeyRadius + 1.5f : kKeyRadius, IM_COL32(20, 20, 24, 255));
+			const ImU32 keyFill = hot
+				? ImGui::ColorConvertFloat4ToU32(ColorHover(theme.FieldMixed))
+				: theme.FieldMixed;
+			draw->AddCircleFilled(p, hot ? kKeyRadius + 1.5f : kKeyRadius, keyFill);
+			draw->AddCircle(p, hot ? kKeyRadius + 1.5f : kKeyRadius, theme.ChromeBg);
 		}
 		draw->PopClipRect();
 
@@ -346,7 +351,7 @@ namespace GanymedE::EditorUI {
 				ImVec2(canvas.x + t1 * width, canvasMax.y),
 				ColorU32(c));
 		}
-		draw->AddRect(canvas, canvasMax, IM_COL32(70, 70, 80, 255));
+		draw->AddRect(canvas, canvasMax, Theme().GrabBg);
 
 		const auto& drawn = gradient.Keys();
 		const int hoverIndex = hovered ? HitGradientKey(canvas, width, height, mouse, drawn) : -1;
@@ -357,7 +362,7 @@ namespace GanymedE::EditorUI {
 			const bool hot = i == dragIndex || i == hoverIndex || i == selected;
 			draw->AddCircleFilled(ImVec2(x, y), hot ? kKeyRadius + 1.5f : kKeyRadius, ColorU32(drawn[i].Value));
 			draw->AddCircle(ImVec2(x, y), hot ? kKeyRadius + 1.5f : kKeyRadius,
-				hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(20, 20, 24, 255));
+				hot ? Theme().TextPrimary : Theme().ChromeBg);
 		}
 		draw->PopClipRect();
 
@@ -386,8 +391,7 @@ namespace GanymedE::EditorUI {
 		float columnWidth, float speed)
 	{
 		bool edited = false;
-		ImGuiIO& io = ImGui::GetIO();
-		auto boldFont = io.Fonts->Fonts[0];
+		ImFont* headerFont = EditorFonts::Header();
 
 		ImGui::PushID(label.c_str());
 
@@ -402,17 +406,32 @@ namespace GanymedE::EditorUI {
 		float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
 		ImVec2 buttonSize = { lineHeight + 3.0f, lineHeight };
 
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.9f, 0.2f, 0.2f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
-		ImGui::PushFont(boldFont);
+		auto pushAxis = [](ImU32 c)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Button, Color(c));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ColorHover(c));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, Color(c));
+		};
+		auto pushHeader = [headerFont]()
+		{
+			if (headerFont)
+				ImGui::PushFont(headerFont);
+		};
+		auto popHeader = [headerFont]()
+		{
+			if (headerFont)
+				ImGui::PopFont();
+		};
+
+		pushAxis(Theme().AxisX);
+		pushHeader();
 		if (ImGui::Button("X", buttonSize))
 		{
 			values.x = resetValue;
 			edited = true;
 		}
 
-		ImGui::PopFont();
+		popHeader();
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
@@ -420,17 +439,15 @@ namespace GanymedE::EditorUI {
 		ImGui::PopItemWidth();
 		ImGui::SameLine();
 
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.3f, 0.8f, 0.3f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
-		ImGui::PushFont(boldFont);
+		pushAxis(Theme().AxisY);
+		pushHeader();
 		if (ImGui::Button("Y", buttonSize))
 		{
 			values.y = resetValue;
 			edited = true;
 		}
 
-		ImGui::PopFont();
+		popHeader();
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
@@ -438,17 +455,15 @@ namespace GanymedE::EditorUI {
 		ImGui::PopItemWidth();
 		ImGui::SameLine();
 
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.2f, 0.35f, 0.9f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
-		ImGui::PushFont(boldFont);
+		pushAxis(Theme().AxisZ);
+		pushHeader();
 		if (ImGui::Button("Z", buttonSize))
 		{
 			values.z = resetValue;
 			edited = true;
 		}
 
-		ImGui::PopFont();
+		popHeader();
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
