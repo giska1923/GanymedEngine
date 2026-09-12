@@ -100,16 +100,16 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 | # | Gap | Impact | Effort | Phase |
 |---|---|---|---|---|
 | 1 | White OS title bar against a dark app | very high | high | 9 |
-| 2 | Icon font in the atlas; most panels still unlabeled | very high | medium | 0 **done** (play/stop uses `ICON_LC_*`; remaining chrome in 4–6) |
+| 2 | Icon font in the atlas; most panels still unlabeled | very high | medium | 0 **done** (chrome icons consumed through 6) |
 | 3 | Montserrat (geometric display face) instead of a UI grotesque | high | low | 0 **done** (Inter; Montserrat remains for RmlUi HUD) |
 | 4 | Noisy near-identical greys; rounding on | high | low | 1 **done** |
-| 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 helpers **done**; outliner consumes in 4 **done**; inspector headers in 5 **done**; 6 remains |
+| 5 | Panels have no toolbar row, no search, no column headers | high | medium | 3 helpers **done**; outliner 4, inspector 5, browser 6 **done** |
 | 6 | Outliner rows are bare `TreeNodeEx` labels — no type icon, no per-row actions, no link colour | high | medium | 4 **done** |
 | 7 | Toolbar is a docked window with one centred button | high | low | 2 **done** |
 | 8 | Collapse arrow (`▼`) on every dock tab; no `•••` overflow | medium | trivial | 1 **done** (`WindowMenuButtonPosition = None`; `OverflowMenuButton` in 3, used in 5 **done**) |
 | 9 | No status bar | medium | low | 7 |
 | 10 | Inspector component headers are ImGui `CollapsingHeader`s, not full-width `#1A1A1A` rows with icon + eye + `•••` | medium | medium | 5 **done** (eye omitted: no component-enable) |
-| 11 | Content Browser: no breadcrumb, no folder sidebar, no search, no item count, no view toggle | medium | high | 6 |
+| 11 | Content Browser: no breadcrumb, no folder sidebar, no search, no item count, no view toggle | medium | high | 6 **done** |
 | 12 | Viewport has no header row (camera/quality/visualizers) and no transform readout | medium | medium | 8 |
 | 13 | Hard-coded colours scattered across 5 files (see below) | low visually, high for maintenance | low | 1 **done** |
 | 14 | Dock tab label colour cannot differ selected vs unselected | low | — | accepted deviation |
@@ -473,7 +473,20 @@ stay unchanged.
 
 ---
 
-### Phase 6 — Content Browser → Asset Browser
+### Phase 6 — Content Browser → Asset Browser — **done**
+
+`BeginPanel` + toolbar (`SearchField`, Name/Type sort) + `SurfaceSunken` breadcrumb (`←`/`→`/`↑`/
+home + clickable segments) + resizable folder-tree / file-pane `BeginTable` + footer count and
+grid/list toggle. Window title stays **Content Browser**. `ImGui::Columns` is gone. Navigation
+all goes through `TryNavigate` (the old root-escape check). Listing is cached (dir mtime +
+`AssetWatcher` reloads + 0.25 s directories-and-files walk because the watcher only sees indexed
+*files*). Search filters that index recursively (lowercase `find` on the filename); empty query
+is the current folder. **Omitted** toolbar `+` add and toolbar Import —
+no create-asset path, Import already lives on the file context menu. Payload remains
+`CONTENT_BROWSER_ITEM` + relative path. Live description:
+[editor.md](../editor/editor.md#content-browser-panel).
+
+The spec that was executed:
 
 The largest single panel job. Cold War's has four regions Ganymed lacks:
 
@@ -641,7 +654,7 @@ menu buttons that move the window instead of opening.
 | 3 — furniture helpers | **done** |
 | 4 — outliner | **done** |
 | 5 — inspector headers | **done** |
-| 6 — asset browser | 1.5 days |
+| 6 — asset browser | **done** |
 | 7 — status bar | 0.5 day |
 | 8 — viewport bars | 1 day |
 | 9 — custom chrome | 2–3 days |

@@ -122,8 +122,9 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-The outliner and Properties are wrapped (`BeginPanel`); Content Browser follows in phase 6 of
-[editor-visual-parity.md](../ToDo/editor-visual-parity.md).
+The outliner, Properties, and Content Browser are wrapped (`BeginPanel`); remaining chrome is
+the status bar and viewport bars (phases 7–8 of
+[editor-visual-parity.md](../ToDo/editor-visual-parity.md)).
 
 ## EditorLayer
 
@@ -708,16 +709,37 @@ Two gaps, deliberate in v1:
 
 ## Content Browser panel
 
-[`ContentBrowserPanel`](../../GanymedEditor/source/Panels/ContentBrowserPanel.h) — a grid view of
-`assets/`. Two classes of entry are hidden: anything whose name starts with `.` (the `.compiled/`
-mesh cache today, `.compiled/` when the asset compiler lands) and `.meta`/`.meta.bad` sidecars.
-Hiding the sidecars is not cosmetic — one per asset would double every row in the grid and offer
-**Import** on a file that is not an asset. They are the `AssetManager`'s to write, never a human's
-(see [assets.md](../engine/assets.md#the-meta-sidecar)):
+[`ContentBrowserPanel`](../../GanymedEditor/source/Panels/ContentBrowserPanel.h) — a `BeginPanel`
+view of `assets/`. Window title stays **Content Browser** (renaming would bust `imgui.ini`). Two
+classes of entry are hidden: anything whose name starts with `.` (the `.compiled/` mesh cache
+today) and `.meta`/`.meta.bad` sidecars. Hiding the sidecars is not cosmetic — one per asset would
+double every row and offer **Import** on a file that is not an asset. They are the
+`AssetManager`'s to write, never a human's (see [assets.md](../engine/assets.md#the-meta-sidecar)).
 
-- Directory/file icons, tinted by asset type (mesh blue, environment orange, scene green, texture
-  pink, material purple, script yellow, audio cyan). Double-click enters directories; the `<-` button goes up but can never
-  escape the asset root (path-normalized check).
+**Toolbar.** `SearchField` (case-insensitive **filename** substring across the whole `assets/`
+tree) and a sort popup (Name / Type; directories always first). Empty query shows the current
+folder only. Cold War's `+` add and toolbar Import are omitted: there is no create-asset path,
+and Import already lives on the file context menu. A dead `+` is worse than a missing one.
+
+**Breadcrumb** (`SurfaceSunken`). `←` / `→` history (two `std::vector<path>` stacks), `↑` parent,
+`ICON_LC_HOME` for the asset root, then clickable path segments. Every navigation path — history,
+parent, home, crumbs, sidebar, double-click — goes through `TryNavigate`, which is the
+path-normalized root-escape check the old `<-` button used to own alone.
+
+**Split.** A two-column `BeginTable` (`Resizable | BordersInnerV`); sidebar width persists in
+`imgui.ini`. Left: folder tree (directories only, Lucide folder glyphs). Right: grid or list of
+the current folder. The legacy `ImGui::Columns` grid is gone — no per-cell clip, no hover fill.
+
+**Footer.** Visible item count (after the search filter) on the left; grid / list toggle on the
+right. Grid keeps the PNG directory/file thumbnails with `AssetTint`. List uses Lucide type icons.
+
+**Cache.** One recursive walk fills a flat index of every visible file and folder *and* the
+sidebar tree. It rebuilds when a watched directory's `last_write_time` moves, when
+`AssetWatcher` reports a reload, or every 0.25 s — `AssetWatcher` only polls *indexed files*,
+so an empty folder created in Explorer would never dirty from Reloads alone. Search and the
+current-folder view are filters of that index (`std::string::find` on a lowercase name stored
+at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
+
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
 - Right-click on an importable file (mesh/environment/texture/material/script/audio/prefab) →
