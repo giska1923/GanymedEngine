@@ -385,6 +385,20 @@ namespace GanymedE {
 		float AngularDamping = 0.05f;
 		bool UseGravity = true;
 
+		// Forbid rotation entirely, keeping the body's authored orientation while it still
+		// translates and collides. This is what a walking character needs: a dynamic capsule
+		// driven by velocity torques itself over the moment it brushes anything, and lies down.
+		//
+		// Implemented with Jolt's mAllowedDOFs rather than by cranking AngularDamping, which
+		// only slows a fall down, or by zeroing the inertia tensor by hand, which Jolt then
+		// recomputes. Dynamic bodies only - Static does not move and Kinematic is already
+		// driven entirely by its transform.
+		//
+		// Read at body creation, so toggling it during play does nothing until the body is
+		// rebuilt. That is a limitation, not a design: it is a per-frame push to Jolt whenever
+		// anyone needs it. See docs/engine/physics.md.
+		bool LockRotation = false;
+
 		RigidBodyComponent() = default;
 		RigidBodyComponent(const RigidBodyComponent&) = default;
 	};

@@ -168,3 +168,29 @@ Options, none of them obviously right:
 the Linux bring-up as "Debug, Release and Dist all build clean". That run was reading this archive,
 so it did not link Debug from scratch, and the Debug result in that record is weaker than it reads.
 The history file is immutable and correct as written, so the correction is recorded here instead.
+
+## The first frame's timestep is over a second
+
+Measured while verifying P0.2's rotation lock, from a Lua script logging its own `ts`:
+
+```
+f1 ts=1.3764    f2 ts=0.0472    f3 ts=0.0076    f4 ts=0.0039    f5 ts=0.0033
+```
+
+Frame 1 covers boot — asset scan, shader loads, the first mesh applies — and that whole interval
+is delivered to gameplay as one timestep. Frame 2 is still 10x a normal frame.
+
+Physics survives it: `PhysicsSystem` accumulates and clamps to `MaxStepsPerFrame`, so the
+spiral-of-death guard absorbs the spike. **Gameplay does not.** Any script that accumulates time
+sees more than a second elapse before it has run once, which silently broke this probe's own
+`if t < 0.5 then push() end` gate - the gate was already false on the frame it first ran, so the
+push never happened and the test reported a clean pass for the wrong reason. A cooldown, a spawn
+timer, or a "wait half a second then do X" in the game will all misfire the same way.
+
+The usual fix is to clamp the delta handed to layers - most engines cap it around 0.1-0.25 s - and
+optionally to discard the first frame outright. Neither is done here.
+
+Not scheduled, because the right shape of the fix is a real decision: clamping changes what `ts`
+means for everyone, and a game that legitimately hitches wants to know. Recorded because it will be
+met again in [PROVING_GROUND.md](PROVING_GROUND.md)'s P1, and the failure looks like a gameplay bug
+rather than a frame-timing one.

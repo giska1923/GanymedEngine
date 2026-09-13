@@ -135,7 +135,29 @@ Two consequences worth stating, because they change the branch policy above:
 
 **This is the largest Phase 0 item and the one most likely to be underestimated.** See Decision 4.
 
-### P0.2 — A character that does not fall over
+### P0.2 — A character that does not fall over — **DONE (the flag; not `CharacterVirtual`)**
+
+Built: `RigidBodyComponent::LockRotation`, applied as Jolt `mAllowedDOFs` with all three
+translation bits kept and all three rotation bits dropped. Reflected, so serialization and the
+inspector came free. See [physics.md](../engine/physics.md#locked-rotation).
+
+Verified on a capsule (r 0.35, half-height 0.6, mass 70) pushed at 6 m/s over a 0.15 m kerb, after
+three seconds: unlocked ended at `rot=(0, 0, -1.141)` — **65 degrees over** — and its centre
+dropped to 0.60; locked held `(0, 0, 0)` upright at 0.95. Travel was 3.29 vs 3.28, so the
+constraint costs nothing in translation.
+
+Decision 1 stands for now: this is the flag, not `CharacterVirtual`. Step-up, slope limits and
+wall-sticking are still absent, and P1's gate is what decides whether they are needed.
+
+**The probe found an engine issue that has nothing to do with physics:** the first frame's timestep
+is **1.38 seconds** (boot: asset scan, shader loads, first mesh applies), and frame 2 is still
+0.047. The first version of this test gated its push on `if t < 0.5`, which was already false the
+first time it ran, so nothing was pushed and the test *passed cleanly for the wrong reason*. Any
+gameplay timer will misfire the same way. Recorded in
+[cross-cutting.md](cross-cutting.md#the-first-frames-timestep-is-over-a-second); it will be met
+again in P1.
+
+*Original text follows.*
 
 `RigidBodyComponent` is `{Type, Mass, LinearDamping, AngularDamping, UseGravity}`. **There is no
 rotation lock.** A dynamic capsule driven by `SetLinearVelocity` tips over the first time it

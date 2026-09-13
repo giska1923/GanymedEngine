@@ -372,7 +372,9 @@ namespace GanymedE::Reflection {
 				.data<&RigidBodyComponent::AngularDamping>("AngularDamping")
 					.custom<Attr>(Attr{}.Label("Angular Damping").Range(0.0f, 10.0f).Speed(0.01f))
 				.data<&RigidBodyComponent::UseGravity>("UseGravity")
-					.custom<Attr>(Attr{}.Label("Use Gravity"));
+					.custom<Attr>(Attr{}.Label("Use Gravity"))
+				.data<&RigidBodyComponent::LockRotation>("LockRotation")
+					.custom<Attr>(Attr{}.Label("Lock Rotation"));
 
 			// Flatten on Material is not cosmetic: SceneSerializer emits Friction and Restitution
 			// as SIBLINGS of HalfExtents, never under a "Material" sub-map. Without this flag a

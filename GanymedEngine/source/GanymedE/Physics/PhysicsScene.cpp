@@ -678,6 +678,20 @@ namespace GanymedE {
 				settings.mMassPropertiesOverride.mMass = rb.Mass;
 			}
 
+			// Translation on all three axes, rotation on none. EAllowedDOFs::None is documented
+			// as invalid and crashes, so this never clears the translation bits - a body that
+			// may not move is a Static body, which is a different authoring choice.
+			//
+			// Only Dynamic asks: Static never integrates, and Kinematic takes its orientation
+			// from the transform each step, so restricting its DOFs would change nothing while
+			// looking like it should.
+			if (motionType == JPH::EMotionType::Dynamic && rb.LockRotation)
+			{
+				settings.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX
+					| JPH::EAllowedDOFs::TranslationY
+					| JPH::EAllowedDOFs::TranslationZ;
+			}
+
 			JPH::BodyID bodyID = bodyInterface.CreateAndAddBody(settings,
 				motionType == JPH::EMotionType::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
 

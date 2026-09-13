@@ -25,6 +25,42 @@ map 1:1 from the components: motion type, friction/restitution, damping, gravity
 Identity: `body.mUserData = UUID`, plus `UUID → BodyID` and `BodyID → UUID` maps. Everything
 crossing the physics/ECS boundary is keyed by UUID, so it survives the play-mode scene copy.
 
+### Locked rotation
+
+`RigidBodyComponent::LockRotation` forbids rotation entirely while leaving translation and
+collision untouched, via Jolt's `mAllowedDOFs`:
+
+```cpp
+settings.mAllowedDOFs = EAllowedDOFs::TranslationX | TranslationY | TranslationZ;
+```
+
+It exists because **a walking character cannot be a plain dynamic capsule**. Give one a horizontal
+velocity and the first thing it brushes applies a torque it has no reason to resist; it topples and
+stays down. Measured on a capsule (radius 0.35, half-height 0.6, mass 70) pushed at 6 m/s across a
+0.15 m kerb, after three seconds:
+
+| | Rotation (rad) | Centre height | Distance travelled |
+|---|---|---|---|
+| `LockRotation: false` | `(0, 0, -1.141)` — **65° over** | 0.60 (fallen) | 3.29 |
+| `LockRotation: true` | `(0, 0, 0)` | 0.95 (upright) | 3.28 |
+
+Identical travel, so the constraint costs nothing in translation.
+
+The bits are never cleared to `EAllowedDOFs::None`, which Jolt documents as invalid and which
+crashes — a body that may not move at all is a **Static** body, a different authoring choice.
+Only `Dynamic` consults the flag: `Static` never integrates, and `Kinematic` takes its orientation
+from the transform every step, so restricting its DOFs would change nothing while appearing to.
+
+Two limits worth knowing before this is mistaken for a character controller:
+
+- **It is read at body creation**, so toggling it during play does nothing until the body is
+  rebuilt. Jolt exposes a runtime setter; nothing pushes it per-frame yet because nothing has
+  needed to.
+- **It is not step-up, slope limits, or wall-sticking.** An upright capsule still catches on
+  geometry a walking character should climb. That is `CharacterVirtual`'s job, and this flag is
+  the cheap thing that unblocks a moving character without it — see
+  [ToDo/PROVING_GROUND.md](../ToDo/PROVING_GROUND.md).
+
 ### Reconciling bodies with the registry
 
 Bodies used to be created **once at Start**, so an entity that gained a `RigidBodyComponent` during

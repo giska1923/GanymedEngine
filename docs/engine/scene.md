@@ -162,7 +162,8 @@ precedent.
 ### Physics (pure data — Jolt never appears here)
 
 - **`RigidBodyComponent`** — `Static | Dynamic | Kinematic`, mass, linear/angular damping,
-  `UseGravity`.
+  `UseGravity`, `LockRotation` (forbids rotation while keeping translation — what an upright
+  walking capsule needs; see [physics.md](physics.md#locked-rotation)).
 - **`BoxColliderComponent`** (half extents), **`SphereColliderComponent`** (radius),
   **`CapsuleColliderComponent`** (radius + half height) — each with a local `Offset` and a
   `PhysicsMaterial { Friction, Restitution }`.
