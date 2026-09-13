@@ -55,6 +55,15 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   change tracking and the world-transform cache would go stale (the entity would keep rendering at
   its pre-drag position). Ctrl snaps (0.5 units, 45° for rotation).
 
+  **It drives the whole selection.** The gizmo manipulates the primary, and the world-space change
+  it made — `after * inverse(before)` — is applied to every other selected entity through
+  `ApplyWorldDelta`. Composing in world space rather than adding a local offset is what makes a
+  group rotate and scale *about the primary* instead of each object spinning about its own origin;
+  verified by construction, a 90° yaw moves an entity at (2,0,0) to (0,0,-2). An entity whose
+  ancestor is also selected is skipped, or it would take the delta twice — once from its parent's
+  transform and once from its own. One drag is one undo entry: the falling edge folds every moved
+  entity into a single `CompositeCommand`, the same rule the inspector's multi-edit follows.
+
 ### Controls
 
 | Input | Action |
@@ -542,8 +551,19 @@ needs nothing: it is driven by `ComponentList`, so a new component type joins it
 
 ## Multi-entity editing
 
-**Ctrl+click** adds an entity to the selection or removes it; a plain click replaces the selection.
-Every selected entity is highlighted in the hierarchy.
+**Ctrl+click** adds an entity to the selection or removes it, **Shift+click** selects everything
+between the anchor and the clicked entity, and a plain click replaces the selection. Every selected
+entity is highlighted in the hierarchy.
+
+Shift-range works off `m_VisibleOrder`, the flattened tree the panel now records as it draws — the
+thing it used not to keep, since drawing recursively leaves the visible order existing only as the
+shape of the call stack. Children of a collapsed node are never drawn and so are never in it, which
+is what makes a range cover what the author can see rather than what the scene contains. Two details
+follow the convention every file browser has: the **anchor** is the last entity picked *without*
+shift, held apart from the primary so repeated shift-clicks re-extend from the same place rather
+than walking it along; and a range **replaces** the selection rather than adding to it, so a
+mis-aimed range is fixed by aiming again. The click is recorded and serviced after the walk
+completes, because mid-draw the flattened order only holds the nodes drawn so far.
 
 The design keeps a **primary** selection — the entity clicked last, `GetSelectedEntity()` — and adds
 the full set beside it as `GetSelection()`, primary first. That is why multi-select cost six call
@@ -555,22 +575,20 @@ the primary and did not change at all.
 | Which sections appear | Only components **every** selected entity has. Showing one that only some have would make an edit either silently skip entities or silently add the component to them |
 | Fields that disagree | Tinted **amber**. Mixed wins over the prefab-override blue when both apply — "these entities disagree" is the more urgent fact, because the widget is showing one of several values rather than the value |
 | Editing | The widgets drive the **primary**; the new value is copied to the rest *after* a widget reports an edit. Merely selecting several entities never flattens their differing values |
-| Undo | **One entry per gesture, spanning the whole selection.** Verified: a 3-entity drag produces `UndoDepth == 1`, and one Ctrl+Z restores all three to their *individual* prior values |
+| Undo | **One entry per gesture, spanning the whole selection** — including edits with no active phase (a checkbox, a combo, a drop). Verified by driving the editor: a 4-entity checkbox toggle produces `UndoDepth == 1` and one Ctrl+Z restores all four |
 | Delete | Deletes every selected entity |
 
 Propagating after the fact, rather than driving N widgets, is what keeps every property drawer
 single-entity and unaware that multi-edit exists — the same trick the prefab-override hook uses.
 
-Two gaps, deliberate in v1:
-
-- **Shift-range selection is not implemented.** It needs a flattened view of the tree that this panel
-  draws recursively and does not keep; Ctrl covers the case multi-edit exists for.
-- **The gizmo still moves the primary only.** Moving N entities is transform composition across a
-  selection, which is a viewport feature rather than an inspector one.
-- **A drop or popup edit with no active phase records undo for the primary only.** That path has no
-  gesture to wait for, so the other entities' before-values are already gone by the time it runs;
-  making it multi-entity means moving the pre-copy up into `DrawComponent`. Stated rather than
-  hidden.
+**The before-values are snapshotted in `DrawComponent`, before the widget runs.** They used to be
+read at the moment a gesture started, which was wrong twice over: the no-active-phase path (a
+checkbox, a combo, a drop) has no such moment at all, so those entities got no undo entry and their
+edit was unrecoverable — toggle a checkbox across four entities, press Ctrl+Z, and one came back;
+and even on the gesture path, a widget that became active *and* reported an edit in the same frame
+had already propagated to the rest, so their "before" was the new value. The snapshot is taken only
+when something else is selected, so single-entity editing — every frame of ordinary work — copies
+nothing.
 
 ## Content Browser panel
 

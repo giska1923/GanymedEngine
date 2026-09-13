@@ -67,12 +67,21 @@ namespace GanymedE {
 		if (m_Context)
 		{
 			// Draw root entities only; children are drawn recursively
+			m_VisibleOrder.clear();
+
 			auto view = m_Context->m_Registry.view<IDComponent, RelationshipComponent, TagComponent>();
 			for (auto entityID : view)
 			{
 				Entity entity{ entityID, m_Context.get() };
 				if (entity.GetComponent<RelationshipComponent>().Parent == UUID{ 0 })
 					DrawEntityNode(entity);
+			}
+
+			// After the walk, when m_VisibleOrder is complete. See m_PendingRange.
+			if (m_PendingRange)
+			{
+				SelectRange(m_PendingRange);
+				m_PendingRange = {};
 			}
 
 			// Serviced here rather than inside the walk: an editor delete now takes the whole
@@ -83,7 +92,13 @@ namespace GanymedE {
 				m_EntityToDelete = UUID{ 0 };
 			}
 
-			if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
+			// Click empty space to deselect. `!IsAnyItemHovered()` is what makes it *empty*
+			// space: without it this fires on any held-mouse frame where no item happens to own
+			// ActiveId, which includes the frame after a tree node was clicked - so a selection
+			// made by that very click could be wiped by this line a moment later. Harmless for a
+			// plain click, which re-selects one entity anyway, and visibly wrong for a
+			// shift-range, which is how it was found.
+			if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
 			{
 				SelectSingle({});
 			}
@@ -148,10 +163,53 @@ namespace GanymedE {
 	void SceneHierarchyPanel::SelectSingle(Entity entity)
 	{
 		m_SelectionContext = entity;
+		m_RangeAnchor = entity;
 
 		m_Selection.clear();
 		if (entity)
 			m_Selection.push_back(entity);
+	}
+
+	// Shift+click: everything between the anchor and `to` in the order the tree is drawn.
+	//
+	// Replaces the selection rather than adding to it, so shift-clicking twice gives the second
+	// range and not the union of both - the behaviour a file browser has, and the one that makes
+	// a mis-aimed range recoverable by aiming again.
+	void SceneHierarchyPanel::SelectRange(Entity to)
+	{
+		if (!to || !m_RangeAnchor)
+			return;
+
+		const auto anchorIt = std::find(m_VisibleOrder.begin(), m_VisibleOrder.end(), m_RangeAnchor);
+		const auto toIt = std::find(m_VisibleOrder.begin(), m_VisibleOrder.end(), to);
+
+		// Either end can be missing: an ancestor of the anchor may have been collapsed since it
+		// was set, which takes it out of the drawn tree. Falling back to a plain single select is
+		// better than selecting a range measured from something the author cannot see.
+		if (anchorIt == m_VisibleOrder.end() || toIt == m_VisibleOrder.end())
+		{
+			SelectSingle(to);
+			return;
+		}
+
+		auto first = anchorIt;
+		auto last = toIt;
+		if (first > last)
+			std::swap(first, last);
+
+		m_Selection.clear();
+
+		// `to` first: the primary is what the author just clicked, which is what the gizmo grabs
+		// and what the inspector draws. The anchor keeps its value so the next shift-click
+		// re-measures from the same place.
+		m_Selection.push_back(to);
+		for (auto it = first; it <= last; ++it)
+		{
+			if (*it != to)
+				m_Selection.push_back(*it);
+		}
+
+		m_SelectionContext = to;
 	}
 
 	// Ctrl+click. The primary stays the entity clicked *last*, because everything single-entity
@@ -172,6 +230,7 @@ namespace GanymedE {
 
 		m_Selection.insert(m_Selection.begin(), entity);
 		m_SelectionContext = entity;
+		m_RangeAnchor = entity;
 	}
 
 	void SceneHierarchyPanel::DrawEntityNode(Entity entity)
@@ -189,13 +248,17 @@ namespace GanymedE {
 		if (relationship.Children.empty())
 			flags |= ImGuiTreeNodeFlags_Leaf;
 
+		m_VisibleOrder.push_back(entity);
+
 		bool opened = ImGui::TreeNodeEx("Entity", flags, "%s", tag.c_str());
 		if (ImGui::IsItemClicked())
 		{
-			// Ctrl adds to or removes from the selection; a plain click replaces it. Shift-range
-			// is deliberately not here - it needs a flattened view of the tree that this panel
-			// draws recursively and does not keep, and Ctrl covers the case multi-edit exists for.
-			if (ImGui::GetIO().KeyCtrl)
+			// Shift extends from the anchor, Ctrl adds to or removes from the selection, and a
+			// plain click replaces it. Shift wins over Ctrl when both are held, which is the
+			// convention everywhere else.
+			if (ImGui::GetIO().KeyShift && m_RangeAnchor)
+				m_PendingRange = entity;
+			else if (ImGui::GetIO().KeyCtrl)
 				ToggleSelection(entity);
 			else
 				SelectSingle(entity);
@@ -535,7 +598,8 @@ namespace GanymedE {
 
 	template<typename T>
 	void SceneHierarchyPanel::TrackCommitBoundary(Entity entity, const std::string& name,
-		const T& before, uint32_t activeOnEntry, uint32_t activeOnExit, bool edited)
+		const T& before, const std::vector<std::pair<UUID, T>>& othersBefore,
+		uint32_t activeOnEntry, uint32_t activeOnExit, bool edited)
 	{
 		if (!Recording())
 			return;
@@ -565,18 +629,14 @@ namespace GanymedE {
 			m_Pending.Command = CreateScope<ComponentEditCommand<T>>(
 				"Edit " + name, entity.GetUUID(), before);
 
-			// The rest of the selection, captured in the same frame and from the same signal.
-			// Their before-values are read here rather than snapshotted alongside `before` in
-			// DrawComponent, because that copy happens every frame for every section and this
-			// one happens once per gesture.
+			// From the snapshot DrawComponent took before the widget ran, not from the live
+			// components: a widget that becomes active and edits in the same frame has already
+			// propagated to the rest of the selection by now.
 			m_Pending.Secondary.clear();
-			for (Entity other : m_Selection)
+			for (const auto& entry : othersBefore)
 			{
-				if (other == entity || !other.HasComponent<T>())
-					continue;
-
 				m_Pending.Secondary.push_back(CreateScope<ComponentEditCommand<T>>(
-					"Edit " + name, other.GetUUID(), other.GetComponent<T>()));
+					"Edit " + name, entry.first, entry.second));
 			}
 
 			m_Pending.ActiveId = activeOnExit;
@@ -585,16 +645,39 @@ namespace GanymedE {
 			return;
 		}
 
-		// An edit with no active phase: a drop delivered onto this section, or a popup item
-		// that closed in the same frame. There is nothing to wait for.
+		// An edit with no active phase: a checkbox, a combo, a drop delivered onto this section,
+		// or a popup item that closed in the same frame. There is nothing to wait for, so the
+		// command is complete here - before and after both.
 		if (edited && entity.HasComponent<T>())
 		{
-			// No gesture to wait for, so the before-value for the others is already lost - they
-			// were propagated to in the same frame. Recording just the primary would be a lie, so
-			// this path stays single-entity and a multi-selection drop is not undoable across the
-			// rest. Stated rather than hidden; it needs the pre-copy to move into DrawComponent.
-			m_UndoStack->Push(CreateScope<ComponentEditCommand<T>>(
-				"Edit " + name, entity.GetUUID(), before, entity.GetComponent<T>()));
+			Scope<EditorCommand> primary = CreateScope<ComponentEditCommand<T>>(
+				"Edit " + name, entity.GetUUID(), before, entity.GetComponent<T>());
+
+			if (othersBefore.empty())
+			{
+				m_UndoStack->Push(std::move(primary));
+				return;
+			}
+
+			// The rest of the selection was propagated to during the widget, and their
+			// before-values survive because DrawComponent snapshotted them first. One composite,
+			// for the reason CommitPendingEdit gives: one gesture is one undo entry.
+			std::vector<Scope<EditorCommand>> children;
+			children.reserve(othersBefore.size() + 1);
+			children.push_back(std::move(primary));
+
+			for (const auto& entry : othersBefore)
+			{
+				Entity other = m_Context->FindEntityByUUID(entry.first);
+				if (!other || !other.HasComponent<T>())
+					continue;
+
+				children.push_back(CreateScope<ComponentEditCommand<T>>(
+					"Edit " + name, entry.first, entry.second, other.GetComponent<T>()));
+			}
+
+			const std::string label = "Edit " + std::to_string(children.size()) + " entities";
+			m_UndoStack->Push(CreateScope<CompositeCommand>(label, std::move(children)));
 		}
 	}
 
@@ -823,9 +906,33 @@ namespace GanymedE {
 				T before = component;
 				const ImGuiID activeOnEntry = ImGui::GetActiveID();
 
+				// The rest of the selection, at the same instant. This used to be read inside
+				// TrackCommitBoundary at the moment a gesture started, which was wrong in two
+				// ways: on the no-active-phase path (a checkbox, a combo, a drop) there is no
+				// such moment at all, so those entities got no undo entry and their edit was
+				// unrecoverable; and even on the gesture path, a widget that became active *and*
+				// reported an edit in the same frame had already propagated to them, so their
+				// "before" was the new value.
+				//
+				// Only when something else is selected: for a single selection this is an empty
+				// vector and costs nothing, which is every frame of ordinary editing.
+				std::vector<std::pair<UUID, T>> othersBefore;
+				if (m_Selection.size() > 1)
+				{
+					othersBefore.reserve(m_Selection.size() - 1);
+					for (Entity other : m_Selection)
+					{
+						if (other == entity || !other.HasComponent<T>())
+							continue;
+
+						othersBefore.emplace_back(other.GetUUID(), other.GetComponent<T>());
+					}
+				}
+
 				const bool edited = uiFunction(component);
 
-				TrackCommitBoundary<T>(entity, name, before, activeOnEntry, ImGui::GetActiveID(), edited);
+				TrackCommitBoundary<T>(entity, name, before, othersBefore,
+					activeOnEntry, ImGui::GetActiveID(), edited);
 				ImGui::TreePop();
 			}
 
@@ -1261,7 +1368,9 @@ namespace GanymedE {
 				edited = true;
 			}
 
-			TrackCommitBoundary<TagComponent>(entity, "Name", before, activeOnEntry,
+			// Empty snapshot: a name is per-entity by definition, so the Tag field is the one
+			// place multi-edit deliberately does not apply.
+			TrackCommitBoundary<TagComponent>(entity, "Name", before, {}, activeOnEntry,
 				ImGui::GetActiveID(), edited);
 		}
 

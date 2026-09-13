@@ -11,6 +11,12 @@ What is left is a short tail, roughly in descending order of value.
 Prefab* beside *Revert to Prefab*, writing that one field into the asset and nothing else. See
 [editor.md](../editor/editor.md#per-property-overrides).
 
+**The three multi-entity editing gaps are done too**: shift-range selection, the gizmo driving the
+whole selection, and the no-active-phase undo path — which was not a gap but a correctness bug, and
+lost data (toggle a checkbox across four entities, Ctrl+Z, and one came back). See
+[editor.md](../editor/editor.md#multi-entity-editing). Verified by driving the editor with
+synthesised input rather than by inspection.
+
 Two further entries are gone: `PrefabSerializer::ReadRootTransform` now uses `ReadReflectedComponent` (the
 last hand-written component read in the engine), and `PrefabSerializer::Save` no longer bakes a
 stale `PrefabMemberComponent` into the file it writes — that one turned out to assert on the next
@@ -31,15 +37,6 @@ it was declared, defined and never called. So a template was cached the first ti
 and never dropped, and a whole-instance apply left every field of that instance marked as overridden
 until the editor restarted. It is now called on scene change and after a whole-instance apply; only
 the on-disk-edit case above is still open.
-
-## Multi-entity editing gaps
-
-R4b landed multi-select with one-gesture-one-undo-command. Three things it did not cover:
-
-- **Shift-range selection** in the hierarchy panel. Ctrl-toggle works; shift-range does not.
-- **The gizmo moves the primary selection only**, not the whole selection.
-- **The no-active-phase edit path is single-entity for undo.** An edit that completes without ImGui
-  ever reporting an active ID — a checkbox, a combo — mints a command for the primary entity only.
 
 ## Per-field override marking never fully closes
 

@@ -63,8 +63,13 @@ namespace GanymedE {
 		template<typename T>
 		void DrawAddComponentEntry(const char* label);
 
+		// `othersBefore` is the rest of the selection snapshotted at the same instant as
+		// `before`, i.e. *before* the widget ran. It has to be taken there rather than here:
+		// the reflected drawer propagates an edit to the selection inside `uiFunction`, so by
+		// the time this is called their live values are already the new ones.
 		template<typename T>
 		void TrackCommitBoundary(Entity entity, const std::string& name, const T& before,
+			const std::vector<std::pair<UUID, T>>& othersBefore,
 			uint32_t activeOnEntry, uint32_t activeOnExit, bool edited);
 
 		void CommitPendingEdit();
@@ -121,7 +126,26 @@ namespace GanymedE {
 		PendingEdit m_Pending;
 
 		// Primary first. m_SelectionContext is always m_Selection.front() when non-empty; the
-		// two are kept in step by SelectSingle/ToggleSelection and by nothing else.
+		// two are kept in step by SelectSingle/ToggleSelection/SelectRange and by nothing else.
 		std::vector<Entity> m_Selection;
+
+		// The tree as drawn, top to bottom, rebuilt every frame by DrawEntityNode. This is what
+		// shift-range needs and what the panel used not to keep: it draws recursively, so the
+		// visible order exists only as the shape of the call stack. Children of a collapsed node
+		// are never drawn and so are never in here, which is what makes a range cover what the
+		// author can actually see rather than what the scene happens to contain.
+		std::vector<Entity> m_VisibleOrder;
+
+		// Where a shift-range measures from: the last entity picked *without* shift. Held apart
+		// from the primary so repeated shift-clicks re-extend from the same anchor instead of
+		// walking it along, which is what every file browser does.
+		Entity m_RangeAnchor;
+
+		// A shift-click seen mid-draw. It cannot be serviced there - m_VisibleOrder only holds
+		// the nodes drawn so far, so a range running *down* the tree would be half empty - so it
+		// is recorded and applied once the walk is complete.
+		Entity m_PendingRange;
+
+		void SelectRange(Entity to);
 	};
 }

@@ -75,9 +75,12 @@ namespace GanymedE {
 		// A gizmo drag writes the transform every frame and accumulates rotation as a delta, so
 		// the pre-drag value cannot be reconstructed after the fact - it is snapshotted on the
 		// rising edge of ImGuizmo::IsUsing() and committed on the falling one.
+		//
+		// **Every entity the drag moves**, primary first, because the gizmo drives the whole
+		// selection. One drag is one undo entry, so the falling edge folds these into a single
+		// CompositeCommand exactly as the inspector's multi-edit does.
 		bool m_GizmoUsing = false;
-		UUID m_GizmoEntity = UUID{ 0 };
-		TransformComponent m_GizmoBefore;
+		std::vector<std::pair<UUID, TransformComponent>> m_GizmoBefore;
 
 		enum class SceneState
 		{

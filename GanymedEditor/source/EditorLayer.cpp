@@ -33,6 +33,80 @@ namespace GanymedE {
 
 	extern const std::filesystem::path g_AssetPath;
 
+	namespace {
+
+		// Is any ancestor of `entity` also in `selection`?
+		//
+		// A group gizmo drag applies one world-space delta per selected entity, and a child's
+		// world transform already carries its parent's. Moving both would apply the delta twice
+		// - the child drifts away at double speed - so a selected entity whose ancestor is also
+		// selected is left to move with its parent. Selecting a whole hierarchy and dragging it
+		// is the obvious way to hit this, so it is the default case rather than an edge one.
+		bool IsDescendantOfSelection(Scene& scene, Entity entity, const std::vector<Entity>& selection)
+		{
+			if (!entity.HasComponent<RelationshipComponent>())
+				return false;
+
+			UUID parentID = entity.GetComponent<RelationshipComponent>().Parent;
+			while (parentID != UUID{ 0 })
+			{
+				Entity parent = scene.FindEntityByUUID(parentID);
+				if (!parent)
+					return false;
+
+				for (Entity selected : selection)
+				{
+					if (selected == parent)
+						return true;
+				}
+
+				if (!parent.HasComponent<RelationshipComponent>())
+					return false;
+
+				parentID = parent.GetComponent<RelationshipComponent>().Parent;
+			}
+
+			return false;
+		}
+
+		// Move one entity by a world-space delta, writing the result back as a local transform.
+		//
+		// Factored out of the gizmo block so the arithmetic can be exercised on its own: a wrong
+		// delta compiles perfectly and simply puts things in the wrong place.
+		void ApplyWorldDelta(Scene& scene, Entity entity, const glm::mat4& worldDelta)
+		{
+			if (!entity || !entity.HasComponent<TransformComponent>())
+				return;
+
+			glm::mat4 world = worldDelta * scene.GetWorldSpaceTransform(entity);
+
+			const UUID parentID = entity.HasComponent<RelationshipComponent>()
+				? entity.GetComponent<RelationshipComponent>().Parent : UUID{ 0 };
+
+			if (parentID != UUID{ 0 })
+			{
+				Entity parent = scene.FindEntityByUUID(parentID);
+				if (parent)
+					world = glm::inverse(scene.GetWorldSpaceTransform(parent)) * world;
+			}
+
+			glm::vec3 translation, rotation, scale;
+			Math::DecomposeTransform(world, translation, rotation, scale);
+
+			auto& tc = entity.GetComponent<TransformComponent>();
+
+			// Rotation as a delta against the current value, matching what the primary does -
+			// DecomposeTransform picks one of several equivalent Euler triples, and jumping
+			// straight to it makes a continuous drag flip.
+			tc.Rotation += rotation - tc.Rotation;
+			tc.Translation = translation;
+			tc.Scale = scale;
+
+			scene.MarkChanged<TransformComponent>(entity);
+		}
+
+	}
+
 	EditorLayer::EditorLayer()
 		: Layer("EditorLayer"), m_GizmoType(ImGuizmo::OPERATION::TRANSLATE)
 	{
@@ -521,21 +595,47 @@ namespace GanymedE {
 
 			float snapValues[3] = { snapValue, snapValue, snapValue };
 
+			// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
+			// kept: it is what the rest of the selection's delta is measured against.
+			const glm::mat4 worldBefore = transform;
+
 			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
 				(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform),
 				nullptr, snap ? snapValues : nullptr);
 
 			if (ImGuizmo::IsUsing())
 			{
-				// Rising edge. This is the last moment the pre-drag transform still exists:
+				const std::vector<Entity>& selection = m_SceneHierarchyPanel.GetSelection();
+
+				// Rising edge. This is the last moment the pre-drag transforms still exist:
 				// rotation below is accumulated as a delta against the current value, so one
-				// frame later there is nothing left to reconstruct it from.
+				// frame later there is nothing left to reconstruct them from.
 				if (!m_GizmoUsing)
 				{
 					m_GizmoUsing = true;
-					m_GizmoEntity = selectedEntity.GetUUID();
-					m_GizmoBefore = tc;
+					m_GizmoBefore.clear();
+					m_GizmoBefore.emplace_back(selectedEntity.GetUUID(), tc);
+
+					for (Entity other : selection)
+					{
+						if (other == selectedEntity || !other.HasComponent<TransformComponent>())
+							continue;
+
+						// Skip anything that already moves because an ancestor of it is selected
+						// too - it would otherwise take the delta twice, once from its parent's
+						// transform and once from its own.
+						if (IsDescendantOfSelection(*m_ActiveScene, other, selection))
+							continue;
+
+						m_GizmoBefore.emplace_back(other.GetUUID(),
+							other.GetComponent<TransformComponent>());
+					}
 				}
+
+				// The world-space change the gizmo just made. Applied to every other entity in
+				// the selection, which is what makes a group drag rotate and scale about the
+				// primary rather than each object about its own origin.
+				const glm::mat4 worldDelta = transform * glm::inverse(worldBefore);
 
 				// Convert manipulated world transform back to local
 				UUID parentID = selectedEntity.GetComponent<RelationshipComponent>().Parent;
@@ -558,6 +658,15 @@ namespace GanymedE {
 				// Gizmo edits write the component directly, so the world-transform cache has to be
 				// told; without this the entity would keep rendering at its pre-drag position.
 				m_ActiveScene->MarkChanged<TransformComponent>(selectedEntity);
+
+				// The rest of the selection. Driven from m_GizmoBefore rather than from the live
+				// selection, so an entity that leaves the selection mid-drag is not left half
+				// moved, and the ancestor filter above is applied once rather than per frame.
+				for (std::size_t i = 1; i < m_GizmoBefore.size(); i++)
+				{
+					ApplyWorldDelta(*m_ActiveScene,
+						m_ActiveScene->FindEntityByUUID(m_GizmoBefore[i].first), worldDelta);
+				}
 			}
 		}
 
@@ -567,13 +676,36 @@ namespace GanymedE {
 		{
 			m_GizmoUsing = false;
 
-			Entity dragged = m_EditorScene ? m_EditorScene->FindEntityByUUID(m_GizmoEntity) : Entity{};
-			if (dragged && m_SceneState == SceneState::Edit && dragged.HasComponent<TransformComponent>())
+			if (m_EditorScene && m_SceneState == SceneState::Edit)
 			{
-				m_UndoStack.Push(CreateScope<ComponentEditCommand<TransformComponent>>(
-					"Gizmo Transform", m_GizmoEntity, m_GizmoBefore,
-					dragged.GetComponent<TransformComponent>()));
+				std::vector<Scope<EditorCommand>> moved;
+				moved.reserve(m_GizmoBefore.size());
+
+				for (const auto& entry : m_GizmoBefore)
+				{
+					Entity dragged = m_EditorScene->FindEntityByUUID(entry.first);
+					if (!dragged || !dragged.HasComponent<TransformComponent>())
+						continue;
+
+					moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
+						"Gizmo Transform", entry.first, entry.second,
+						dragged.GetComponent<TransformComponent>()));
+				}
+
+				// One drag is one undo entry, the same rule the inspector's multi-edit follows.
+				if (moved.size() == 1)
+				{
+					m_UndoStack.Push(std::move(moved.front()));
+				}
+				else if (!moved.empty())
+				{
+					m_UndoStack.Push(CreateScope<CompositeCommand>(
+						"Gizmo Transform (" + std::to_string(moved.size()) + " entities)",
+						std::move(moved)));
+				}
 			}
+
+			m_GizmoBefore.clear();
 		}
 
 		ImGui::End();
