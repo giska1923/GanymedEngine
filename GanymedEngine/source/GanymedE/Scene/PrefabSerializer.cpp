@@ -1,4 +1,6 @@
 #include "gepch.h"
+#include "GanymedE/Scene/Prefab.h"
+#include "GanymedE/Assets/AssetManager.h"
 #include "PrefabSerializer.h"
 
 #include "Components.h"
@@ -147,40 +149,40 @@ namespace GanymedE {
 			return true;
 		}
 
-		namespace {
-
-			// Shared by ReadRootTransform and Instantiate. Null on anything unreadable; the
-			// SceneSerializer posture - malformed content is reported, not fatal.
-			bool LoadDocument(const std::filesystem::path& fullPath, YAML::Node& out)
+		// Shared by ReadRootTransform, Instantiate and the asset layer's Parse stage. Null on
+		// anything unreadable; the SceneSerializer posture - malformed content is reported, not
+		// fatal.
+		//
+		// **Runs on a worker thread** when the asset manager calls it, so everything it touches
+		// is local or passed in: a filesystem read, a YAML parse, and logging.
+		bool LoadDocument(const std::filesystem::path& fullPath, YAML::Node& out)
+		{
+			if (!std::filesystem::exists(fullPath))
 			{
-				if (!std::filesystem::exists(fullPath))
-				{
-					GE_CORE_ERROR("Prefab '{0}' does not exist", fullPath.string());
-					return false;
-				}
-
-				try
-				{
-					std::ifstream stream(fullPath);
-					std::stringstream buffer;
-					buffer << stream.rdbuf();
-					out = YAML::Load(buffer.str());
-				}
-				catch (const YAML::Exception& e)
-				{
-					GE_CORE_ERROR("Prefab '{0}' failed to parse: {1}", fullPath.string(), e.what());
-					return false;
-				}
-
-				if (!out["Prefab"] || !out["Entities"] || !out["Entities"].IsSequence())
-				{
-					GE_CORE_ERROR("Prefab '{0}' is not a prefab document", fullPath.string());
-					return false;
-				}
-
-				return true;
+				GE_CORE_ERROR("Prefab '{0}' does not exist", fullPath.string());
+				return false;
 			}
 
+			try
+			{
+				std::ifstream stream(fullPath);
+				std::stringstream buffer;
+				buffer << stream.rdbuf();
+				out = YAML::Load(buffer.str());
+			}
+			catch (const YAML::Exception& e)
+			{
+				GE_CORE_ERROR("Prefab '{0}' failed to parse: {1}", fullPath.string(), e.what());
+				return false;
+			}
+
+			if (!out["Prefab"] || !out["Entities"] || !out["Entities"].IsSequence())
+			{
+				GE_CORE_ERROR("Prefab '{0}' is not a prefab document", fullPath.string());
+				return false;
+			}
+
+			return true;
 		}
 
 		bool ReadRootTransform(const std::filesystem::path& fullPath, TransformComponent& out)
@@ -215,6 +217,24 @@ namespace GanymedE {
 			return true;
 		}
 
+		Entity InstantiateFromAsset(AssetHandle source, Scene& scene,
+			const InstantiateOptions& options)
+		{
+			// Ensures the parse exists and has finished, even if backpressure declined to start
+			// it - WaitFor forces the load past the cap for exactly this kind of caller.
+			AssetManager::WaitFor(source);
+
+			Ref<Prefab> prefab = AssetManager::GetAsset<Prefab>(source);
+			if (!prefab)
+			{
+				GE_CORE_ERROR("Prefab asset {0} could not be loaded - nothing instantiated",
+					static_cast<uint64_t>(source));
+				return {};
+			}
+
+			return Instantiate(prefab->Document(), scene, source, options);
+		}
+
 		Entity Instantiate(const std::filesystem::path& fullPath, Scene& scene, AssetHandle source,
 			const InstantiateOptions& options)
 		{
@@ -222,7 +242,19 @@ namespace GanymedE {
 			if (!LoadDocument(fullPath, root))
 				return {};
 
+			return Instantiate(root, scene, source, options);
+		}
+
+		Entity Instantiate(const YAML::Node& root, Scene& scene, AssetHandle source,
+			const InstantiateOptions& options)
+		{
 			auto entities = root["Entities"];
+			if (!entities || !entities.IsSequence())
+			{
+				GE_CORE_ERROR("Instantiate was handed something that is not a prefab document");
+				return {};
+			}
+
 
 			std::vector<Entity> created;
 			std::vector<UUID> fileUUIDs;
@@ -251,8 +283,11 @@ namespace GanymedE {
 			}
 			catch (const YAML::Exception& e)
 			{
+				// The document's own name rather than a path: this overload may be handed a
+				// cached document by the asset manager and never sees a filename. `Prefab:` is
+				// required for a document to have got this far, so it is always there.
 				GE_CORE_ERROR("Prefab '{0}' failed to read: {1} - instantiating what was read",
-					fullPath.string(), e.what());
+					root["Prefab"].as<std::string>(std::string("<unnamed>")), e.what());
 			}
 
 			if (created.empty())

@@ -84,9 +84,9 @@ So this milestone adds a `Prefab` asset type whose parsed form is the YAML docum
 prefab moves to a worker**, which is the other half of the win. The editor's template cache then
 becomes that manager's cache rather than a second one.
 
-**Open**: whether the cached form is the parsed YAML or a detached `Scene`. The template cache uses
-a `Scene` because it wants entities to diff against; a spawner wants whatever makes `Instantiate`
-cheapest. Settle it in Phase 2 with both call sites in view.
+**Settled in P2: the parsed YAML.** The template cache wants entities to diff against, but it is the
+only consumer that does; the document is what it and a spawner both instantiate *from*, and it is
+the read and the parse — the expensive half — that caching removes.
 
 ## Decision 3 — physics bodies for entities that appear mid-run
 
@@ -139,10 +139,28 @@ through `int64_t`, verified bit-exact at 1, 2^53+1, 2^63+12345 and 2^64-2, plus 
 This is why the phase existed. Had P3 been written first, spawning would have handed back a UUID
 that killed the script host for half of all spawns.
 
-**P2 — `Prefab` asset type and manager.** Parse on a worker, Apply on the main thread, and the
-editor's template cache re-pointed at it. No spawning yet: the gate is that the editor behaves
-exactly as before, including the prefab-override diff and hot reload, with the file parsed once
-instead of per call.
+**P2 — `Prefab` asset type and manager — done.** Parse on a worker, Apply a move, and all three
+editor call sites re-pointed at `PrefabSerializer::InstantiateFromAsset`. Gate met and measured:
+**five instantiations produce one document load**, the instantiated entity is unchanged
+(components, values, `PrefabInstanceComponent` / `PrefabMemberComponent`), the override diff reads
+clean against an untouched instance, per-property apply still writes exactly one field, and a
+`.gprefab` edited on disk still reaches the diff. See
+[assets.md](../engine/assets.md#path-resolved-types).
+
+Two things settled differently from the sketch above:
+
+- **The cached form is the parsed document, not a detached `Scene`.** The document is what both
+  consumers instantiate *from* and is the expensive half; a `Scene` would serve only the editor.
+- **The editor's template cache did not become the manager's cache.** They hold different things —
+  instantiated entities to diff against, versus a document — so the template cache remains, now
+  built from the manager rather than from its own file read. The plan said otherwise; the plan was
+  wrong about that.
+
+One consequence found while building it: per-property apply writes the `.gprefab` but deliberately
+does *not* invalidate the template it just mutated, so the manager's document would have stayed
+stale until the watcher noticed (~0.45 s). Anything rebuilding a template in that window — a scene
+change, entering play — would have shown the applied field as overridden again. The apply now evicts
+the asset, which closes the window without disturbing the template.
 
 **P3 — `CommandQueue::InstantiatePrefab` + `Scene.Spawn` in Lua.** The spawn command runs the
 existing `Instantiate` at flush time, where `IsUpdating` is false and it is legal unchanged. Returns
