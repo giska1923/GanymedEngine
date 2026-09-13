@@ -30,6 +30,13 @@ declare const Vec3: {
 
 declare interface Entity {
 	GetName(): string;
+	/**
+	 * The entity's stable id. **Opaque**: equality and table keys work, arithmetic does not.
+	 *
+	 * It is a full 64-bit value carried in Lua's 64-bit integer, so about half of all ids
+	 * print as negative. That is the representation, not a bug — pass the value back to
+	 * `Scene.FindEntityByUUID` unchanged and it resolves.
+	 */
 	GetUUID(): number;
 	IsValid(): boolean;
 
@@ -289,6 +296,16 @@ declare namespace Log {
 declare namespace Scene {
 	/** Linear scan over tags. Fine for setup; do not call it every frame. */
 	function FindEntityByName(name: string): Entity | undefined;
+
+	/**
+	 * Look an entity up by the value `Entity.GetUUID()` returned. Unlike a tag, a UUID is
+	 * unique and survives a rename, so this is what to hold across frames.
+	 *
+	 * **Treat the value as opaque.** It is a full 64-bit id: it round-trips exactly, but Lua
+	 * prints ids with the high bit set as negative numbers, and arithmetic on one is
+	 * meaningless. Store it and pass it back, nothing else.
+	 */
+	function FindEntityByUUID(id: number): Entity | undefined;
 }
 
 /**

@@ -137,8 +137,26 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 (`GetName`, `GetUUID`, `GetChildByName`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians),
 `Get/SetScale`, `HasRigidBody`, the physics, animation, audio and particle calls below), `Input`,
 `Key`, `Mouse`, `Log`
-(routed to the **client** logger — script output is game output), `Scene.FindEntityByName`,
+(routed to the **client** logger — script output is game output),
+`Scene.FindEntityByName` / `Scene.FindEntityByUUID`,
 `Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
+
+> **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
+> `int64_t`, and sol2 with `SOL_ALL_SAFETIES_ON` **throws** rather than truncating when asked to
+> push a `uint64_t` above `INT64_MAX` — *"integer value will be misrepresented in lua"*. UUIDs come
+> from `uniform_int_distribution<uint64_t>` over the whole range, so about half of them are above
+> that line, and `GetUUID` used to return `uint64_t`: it threw for roughly **one entity in two**,
+> and the throw escaped into the frame rather than being reported. Nothing shipped called it, which
+> is the only reason it went unnoticed until `FindEntityByUUID` was added.
+>
+> Both sides now reinterpret through `int64_t`, which preserves every bit — Lua simply prints the
+> top half of the range as negative. A script must treat the value as **opaque**: equality and table
+> keys work, arithmetic is meaningless. The pair round-trips exactly across the full 64-bit range,
+> which is the property runtime prefab spawning depends on
+> ([RUNTIME_PREFAB_SPAWNING.md](../ToDo/RUNTIME_PREFAB_SPAWNING.md)).
+>
+> The general rule this is an instance of: **any engine handle wider than 53 bits needs its Lua
+> representation chosen deliberately.** Asset handles are `UUID` too.
 
 > **The `Log` global collides with RmlUi's.** RmlUi's Lua plugin registers its own `Log` usertype,
 > and it loads after `ScriptEngine::Init`, so it shadowed ours until `UIEngine` started calling

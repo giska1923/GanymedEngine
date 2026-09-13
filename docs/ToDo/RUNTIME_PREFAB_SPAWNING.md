@@ -59,12 +59,12 @@ The entity does not exist yet, so the API cannot hand one back. Three options we
   lifetime problem the engine would then have to police — the same argument `ScriptBindings` already
   makes for not exposing audio `VoiceId`.
 - **Pre-mint the root UUID and return that.** `InstantiateOptions::RootUUID` exists for exactly this
-  reason. The script gets a `uint64` immediately, and resolves it with `Scene.FindEntityByUUID` on a
+  reason. The script gets an opaque 64-bit id, and resolves it with `Scene.FindEntityByUUID` on a
   later frame. A UUID that does not resolve yet is indistinguishable from one whose entity has been
   destroyed, which is the correct thing for a script to have to handle anyway.
 
-**Take the third.** It needs `Scene.FindEntityByUUID` added to the Lua table, which is a one-line
-binding over an existing `Scene` method and is independently useful.
+**Take the third** — with the caveat P1 then turned up: the id must cross into Lua as `int64`, not
+`uint64`, or sol2 throws for half of all ids. See P1 below.
 
 ## Decision 2 — the Prefab asset manager, finally justified
 
@@ -128,8 +128,16 @@ memory from a script typo.
 Each phase should land building, documented and verified on its own, as the threading and asset
 milestones did.
 
-**P1 — `Scene.FindEntityByUUID` in Lua.** One binding. Independently useful, and Decision 1 depends
-on it. The smallest possible first step, deliberately.
+**P1 — `Scene.FindEntityByUUID` in Lua — done.** It was not one binding. Pushing a `uint64_t` above
+`INT64_MAX` makes sol2 throw under `SOL_ALL_SAFETIES_ON`, so Decision 1 as written — "the script
+gets a `uint64`" — was **invalid**, and `Entity:GetUUID()` had the same bug already: it threw for
+about one entity in two, silently, because nothing shipped called it. Both sides now reinterpret
+through `int64_t`, verified bit-exact at 1, 2^53+1, 2^63+12345 and 2^64-2, plus the pure-Lua
+`GetUUID() -> FindEntityByUUID()` round trip and an unknown id reading as `nil`. See
+[scripting.md](../engine/scripting.md).
+
+This is why the phase existed. Had P3 been written first, spawning would have handed back a UUID
+that killed the script host for half of all spawns.
 
 **P2 — `Prefab` asset type and manager.** Parse on a worker, Apply on the main thread, and the
 editor's template cache re-pointed at it. No spawning yet: the gate is that the editor behaves

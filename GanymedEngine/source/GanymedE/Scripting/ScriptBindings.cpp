@@ -154,7 +154,21 @@ namespace GanymedE {
 				sol::no_constructor,   // entities come from the engine, never from `Entity()` in Lua
 
 				"GetName", [](Entity& e) { return e.GetName(); },
-				"GetUUID", [](Entity& e) { return static_cast<uint64_t>(e.GetUUID()); },
+				// **int64, not uint64, and the cast is load-bearing.** Lua 5.4's integer is
+				// int64, and sol2 with SOL_ALL_SAFETIES_ON refuses to push a uint64 above
+				// INT64_MAX - it throws "integer value will be misrepresented in lua". UUIDs are
+				// `uniform_int_distribution<uint64_t>` over the whole range, so about half of
+				// them are above that line: this used to throw for one entity in two, and the
+				// throw escaped into the frame. Nothing shipped calls it, which is the only
+				// reason it went unnoticed.
+				//
+				// Reinterpreting preserves every bit; Lua just prints the top half of the range
+				// as negative. Scripts must treat the value as opaque - equality and table keys
+				// work, arithmetic is meaningless - which is what the .d.ts says.
+				"GetUUID", [](Entity& e)
+				{
+					return static_cast<int64_t>(static_cast<uint64_t>(e.GetUUID()));
+				},
 				"IsValid", [](Entity& e) { return static_cast<bool>(e); },
 
 				// Direct children only. Scene.FindEntityByName is a global first-match; two
@@ -544,6 +558,28 @@ namespace GanymedE {
 				}
 				return sol::nullopt;
 			};
+
+			// The counterpart to Entity:GetUUID(), and the one lookup that is stable: a tag can
+			// be renamed or duplicated, a UUID cannot. This is what a script holds onto across
+			// frames, and what runtime prefab spawning will hand back - see
+			// docs/ToDo/RUNTIME_PREFAB_SPAWNING.md.
+			//
+			// int64 in, for the reason GetUUID returns int64 out - see the comment there. The
+			// pair round-trips bit-exactly across the whole 64-bit range, which is the property
+			// runtime prefab spawning depends on: it hands back a pre-minted UUID and the script
+			// resolves it a frame later.
+			scene["FindEntityByUUID"] = [](int64_t id) -> sol::optional<Entity>
+			{
+				Scene* context = Context();
+				if (!context)
+					return sol::nullopt;
+
+				Entity entity = context->FindEntityByUUID(UUID{ static_cast<uint64_t>(id) });
+				if (!entity)
+					return sol::nullopt;
+
+				return entity;
+			};
 		}
 
 		void RegisterAudio(sol::state& lua)
@@ -624,4 +660,5 @@ namespace GanymedE {
 		RegisterEntity(lua);
 		RegisterScriptGlobals(lua);
 	}
+
 }
