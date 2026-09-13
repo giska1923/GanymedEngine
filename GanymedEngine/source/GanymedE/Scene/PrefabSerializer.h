@@ -7,6 +7,11 @@
 
 #include <filesystem>
 
+// Declared, not included: the editor links this header and has no yaml-cpp include path, and a
+// reference parameter does not need the definition. Only the engine-side callers that actually
+// hold a document include <yaml-cpp/yaml.h>.
+namespace YAML { class Node; }
+
 namespace GanymedE {
 
 	class Scene;
@@ -66,8 +71,40 @@ namespace GanymedE {
 
 		// Creates the subtree in `scene` with fresh UUIDs and tags the root with
 		// PrefabInstanceComponent{source}. Returns an invalid Entity on failure; never throws.
+		//
+		// **The document overload is the primary one**; the path overload reads the file and
+		// calls it. They exist as a pair because the two callers want different things: an
+		// editor gesture has a path and wants the answer now, while anything instantiating the
+		// same prefab repeatedly should hold a `Ref<Prefab>` from the asset manager and pay the
+		// read and parse once. See Prefab.h.
+		Entity Instantiate(const YAML::Node& document, Scene& scene, AssetHandle source,
+			const InstantiateOptions& options = {});
+
 		Entity Instantiate(const std::filesystem::path& fullPath, Scene& scene, AssetHandle source,
 			const InstantiateOptions& options = {});
+
+		// Instantiate from the **asset manager's cached document**, which is what anything
+		// instantiating the same prefab more than once should use: the read and the YAML parse
+		// happen once, on a worker, and every later call reuses them.
+		//
+		// This exists rather than having callers fetch a `Ref<Prefab>` themselves because it is
+		// what keeps yaml-cpp out of the editor. Every serializer in the engine hides YAML behind
+		// its API and the editor has never seen the dependency; handing it a `Prefab` whose
+		// accessor returns a `YAML::Node` would have ended that for one call site.
+		//
+		// **Blocks if the parse has not finished** - `AssetManager::WaitFor`, which pumps other
+		// jobs while it waits. Instantiation is a gesture or a spawn, and "not yet" is not an
+		// answer either can act on.
+		Entity InstantiateFromAsset(AssetHandle source, Scene& scene,
+			const InstantiateOptions& options = {});
+
+		// Read and validate a `.gprefab` into `out`. False on anything unreadable, having said
+		// why - malformed content is reported, not fatal.
+		//
+		// Exposed because the asset layer's Parse stage needs it: that is the one place this
+		// runs on a worker thread, and it must be the same read and the same validation the
+		// editor path uses or the two would drift.
+		bool LoadDocument(const std::filesystem::path& fullPath, YAML::Node& out);
 
 	}
 

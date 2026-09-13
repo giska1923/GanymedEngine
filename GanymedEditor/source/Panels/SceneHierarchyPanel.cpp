@@ -491,7 +491,9 @@ namespace GanymedE {
 			ImGui::PushStyleColor(ImGuiCol_HeaderActive, secondary);
 		}
 
-		bool opened = ImGui::TreeNodeEx("Entity", flags, "");
+		// See the note in ContentBrowserPanel: blank label on purpose, but spelled so GCC's
+		// -Wformat-zero-length has nothing to say about it.
+		bool opened = ImGui::TreeNodeEx("Entity", flags, "%s", "");
 		if (selected)
 			ImGui::PopStyleColor(3);
 
@@ -1632,7 +1634,7 @@ namespace GanymedE {
 		options.RootUUID = rootID;
 		options.RootTransform = &rootTransform;
 
-		Entity rebuilt = PrefabSerializer::Instantiate(fullPath, *m_Context, source, options);
+		Entity rebuilt = PrefabSerializer::InstantiateFromAsset(source, *m_Context, options);
 		if (!rebuilt)
 		{
 			// Put the instance back rather than leaving a hole where it was.
@@ -1670,7 +1672,7 @@ namespace GanymedE {
 		if (!IsAssetHandleValid(handle))
 			return {};
 
-		Entity root = PrefabSerializer::Instantiate(GetAssetRoot() / relativePath, *m_Context, handle);
+		Entity root = PrefabSerializer::InstantiateFromAsset(handle, *m_Context);
 		if (!root)
 			return {};
 

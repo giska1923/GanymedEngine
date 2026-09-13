@@ -48,12 +48,15 @@ namespace GanymedE::EditorUI {
 
 			if (const AssetMetadata* metadata = AssetManager::GetMetadata(source))
 			{
-				const std::filesystem::path full = GetAssetRoot() / metadata->FilePath;
-
 				// Instantiated rather than parsed by hand, so the template goes through exactly
 				// the path a real instance does. A diff can then never disagree with reality
 				// because the two sides were built differently.
-				Entity root = PrefabSerializer::Instantiate(full, *built.Storage, source);
+				//
+				// Through the asset manager, so the document is read and parsed once rather than
+				// per template rebuild - and the rebuilds are not rare: the cache is dropped on
+				// every scene change, after a whole-instance apply, and when the file changes on
+				// disk.
+				Entity root = PrefabSerializer::InstantiateFromAsset(source, *built.Storage);
 				if (root)
 				{
 					built.Valid = true;
@@ -157,8 +160,21 @@ namespace GanymedE::EditorUI {
 			// it back preserves placement by construction. It also means applying a root
 			// transform field does what it says, rather than being silently dropped by a guard
 			// aimed at a different operation.
-			return PrefabSerializer::Save(*templ.Storage, root,
-				GetAssetRoot() / metadata->FilePath);
+			if (!PrefabSerializer::Save(*templ.Storage, root,
+				GetAssetRoot() / metadata->FilePath))
+			{
+				return false;
+			}
+
+			// The file just changed, so the asset manager's cached document is stale. The
+			// *template* is deliberately not invalidated - it was mutated to match and the
+			// marker clears from it on the next frame - but anything that rebuilds a template
+			// before the watcher notices (a scene change, entering play) would otherwise
+			// rebuild it from the pre-apply document and show the field as overridden again for
+			// half a second. Evicting the asset closes that window without disturbing the
+			// template.
+			AssetManager::Reload(source);
+			return true;
 		}
 
 	}

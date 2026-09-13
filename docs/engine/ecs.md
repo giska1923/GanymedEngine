@@ -282,6 +282,22 @@ remove+re-add and "create an entity and give it components" both work. A queued 
 that already has the component asserts (two callers queued the same add); an add on an entity that
 died in the meantime is silently dropped (not an error).
 
+**`InstantiatePrefab` is a creation op**, and the one that returns something: a whole subtree cannot
+be described as a `PendingEntity` plus queued components, so it runs `PrefabSerializer::
+InstantiateFromAsset` during the creation phase — legal there and nowhere else on that path, because
+the flush runs with `IsUpdating` false and the immediate `Entity` API is allowed. It hands the
+caller the **root's UUID at the call**, minted up front and pinned through
+`InstantiateOptions::RootUUID`, because the entity does not exist yet and a `PendingEntity` is
+meaningful only inside the frame it was made in. This is what `Scene.Spawn` is built on — see
+[scripting.md](scripting.md). It is capped at `MaxSpawnsPerFrame` (64) and refuses past that with
+one warning per frame, because the queue only drains at the next flush and an unguarded script loop
+would otherwise queue without bound.
+
+`DestroyEntityTree` is its counterpart and destroys the whole subtree, deepest first. It is named
+apart from `DestroyEntity` rather than replacing it because `Scene::DestroyEntity` deliberately
+*unparents* children instead of destroying them — correct for deleting one authored entity, and the
+wrong reach for despawning a prefab instance.
+
 ## Graveyard
 
 When a component with `EnableFini` is removed, `Scene`'s `on_destroy` handler copies it into a

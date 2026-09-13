@@ -1,5 +1,12 @@
 #pragma once
 
+// **Guarded as a whole**, like WindowsInput.cpp and WindowsPlatformUtils.cpp. The engine project
+// globs `source/**.cpp` with no per-platform `removefiles`, so every platform's sources are
+// compiled everywhere and it is the in-file guard that makes that harmless. This header only
+// became platform-specific when the custom title bar arrived and pulled in <Windows.h>; before
+// that it was GLFW-only and compiled anywhere.
+#ifdef GE_PLATFORM_WINDOWS
+
 #include "GanymedE/Core/Window.h"
 #include "Platform/Bgfx/BgfxContext.h"
 
@@ -65,3 +72,5 @@ namespace GanymedE {
 	};
 
 }
+
+#endif   // GE_PLATFORM_WINDOWS

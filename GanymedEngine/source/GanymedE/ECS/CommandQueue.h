@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "GanymedE/Assets/AssetTypes.h"
+#include "GanymedE/Core/UUID.h"
 #include "GanymedE/Scene/Entity.h"
 
 // Deferred structural changes.
@@ -18,6 +20,8 @@
 // Consequence to accept consciously: a structural change made by a system becomes visible on the
 // *next* frame. Editor and tooling code runs outside the update loop and keeps using the immediate
 // Entity API.
+
+namespace GanymedE { struct TransformComponent; }
 
 namespace GanymedE::ECS {
 
@@ -85,7 +89,52 @@ namespace GanymedE::ECS {
 			});
 		}
 
+		// Instantiate a prefab at the next flush, and hand back the root's UUID **now**.
+		//
+		// ---- Why it returns a UUID rather than an entity or a PendingEntity ----
+		//
+		// The entity does not exist yet and will not until `Scene::FrameBegin` runs the queue, so
+		// there is nothing to return. `PendingEntity` is the queue's own answer to that, but it
+		// is meaningful only within the frame it was made in, and a script holding a handle whose
+		// validity expires at a frame boundary is a lifetime problem the engine would then have
+		// to police - the argument ScriptBindings already makes for not exposing audio voices.
+		//
+		// A UUID has none of those problems: it is minted here, pinned onto the root through
+		// `InstantiateOptions::RootUUID`, and resolves through `Scene::FindEntityByUUID` from the
+		// next frame onwards. One that does not resolve *yet* is indistinguishable from one whose
+		// entity has since been destroyed, and a caller has to handle the second case anyway.
+		//
+		// **The subtree appears next frame**, like every other structural change made from inside
+		// an update. See the note at the top of this header.
+		// `rootTransform` null places the root where the `.gprefab` says, which is what a
+		// pre-placed decoration wants; a caller that has somewhere to put it passes one.
+		UUID InstantiatePrefab(AssetHandle source, const TransformComponent* rootTransform = nullptr);
+
 		void DestroyEntity(Entity entity);
+
+		// Destroy `root` **and everything under it**, which is what despawning a prefab instance
+		// means - an instance is a subtree, and `Scene::DestroyEntity` deliberately *unparents*
+		// children rather than destroying them, leaving them in the scene as roots. That is the
+		// right behaviour for deleting one hand-authored entity and the wrong one for a
+		// projectile going away: its children would accumulate for the rest of the session.
+		//
+		// Named apart from `DestroyEntity` rather than changing it, because two functions with
+		// the same name and different reach is exactly the trap this note exists to describe.
+		void DestroyEntityTree(Entity root);
+
+		// Prefab spawns accepted per frame.
+		//
+		// A guard against a script typo, not a design budget: `while true do Scene.Spawn(...) end`
+		// is one line and would otherwise queue until the machine gives out, because the queue
+		// only drains at the next flush. Anything past the cap is refused and `Scene.Spawn`
+		// returns nil, so a script can notice; the queue logs **once per frame** with the count
+		// rather than once per refusal, or a runaway loop would trade memory exhaustion for log
+		// exhaustion.
+		//
+		// 64 is chosen to sit well above deliberate use - a bullet-hell firing every frame is
+		// single digits, and 64/frame is ~3,800 subtrees a second - and well below anything that
+		// threatens the process.
+		static constexpr std::size_t MaxSpawnsPerFrame = 64;
 
 		bool Empty() const
 		{
@@ -126,5 +175,9 @@ namespace GanymedE::ECS {
 
 		std::vector<Entity> m_CreatedEntities;   // index -> real entity, valid only during a flush
 		size_t m_PendingCount = 0;
+
+		// Reset by Flush, so the cap is per frame rather than per session.
+		std::size_t m_SpawnsThisFrame = 0;
+		std::size_t m_SpawnsRefused = 0;
 	};
 }

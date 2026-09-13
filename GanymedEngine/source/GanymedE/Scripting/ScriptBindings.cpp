@@ -1,4 +1,6 @@
 #include "gepch.h"
+#include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/ECS/CommandQueue.h"
 #include "GanymedE/Scripting/ScriptBindings.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 
@@ -154,7 +156,21 @@ namespace GanymedE {
 				sol::no_constructor,   // entities come from the engine, never from `Entity()` in Lua
 
 				"GetName", [](Entity& e) { return e.GetName(); },
-				"GetUUID", [](Entity& e) { return static_cast<uint64_t>(e.GetUUID()); },
+				// **int64, not uint64, and the cast is load-bearing.** Lua 5.4's integer is
+				// int64, and sol2 with SOL_ALL_SAFETIES_ON refuses to push a uint64 above
+				// INT64_MAX - it throws "integer value will be misrepresented in lua". UUIDs are
+				// `uniform_int_distribution<uint64_t>` over the whole range, so about half of
+				// them are above that line: this used to throw for one entity in two, and the
+				// throw escaped into the frame. Nothing shipped calls it, which is the only
+				// reason it went unnoticed.
+				//
+				// Reinterpreting preserves every bit; Lua just prints the top half of the range
+				// as negative. Scripts must treat the value as opaque - equality and table keys
+				// work, arithmetic is meaningless - which is what the .d.ts says.
+				"GetUUID", [](Entity& e)
+				{
+					return static_cast<int64_t>(static_cast<uint64_t>(e.GetUUID()));
+				},
 				"IsValid", [](Entity& e) { return static_cast<bool>(e); },
 
 				// Direct children only. Scene.FindEntityByName is a global first-match; two
@@ -195,6 +211,20 @@ namespace GanymedE {
 				{
 					e.GetComponent<TransformComponent>().Scale = value;
 					MarkTransformChanged(e);
+				},
+
+				// Despawn. Queued like every structural change from inside an update, so the
+				// entity survives the rest of this frame and is gone from the next - the mirror
+				// of Scene.Spawn's delay, and for the same reason.
+				//
+				// Takes the **whole subtree**: a prefab instance is a subtree, and leaving its
+				// children behind as roots is the one outcome nobody wants. A script holding a
+				// child's id will find it gone too, which is the same as its parent going.
+				"Destroy", [](Entity& e)
+				{
+					Scene* scene = Context();
+					if (scene && e)
+						scene->Commands().DestroyEntityTree(e);
 				},
 
 				"HasRigidBody",      [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
@@ -544,6 +574,85 @@ namespace GanymedE {
 				}
 				return sol::nullopt;
 			};
+
+			// The counterpart to Entity:GetUUID(), and the one lookup that is stable: a tag can
+			// be renamed or duplicated, a UUID cannot. This is what a script holds onto across
+			// frames, and what runtime prefab spawning will hand back - see
+			// docs/ToDo/RUNTIME_PREFAB_SPAWNING.md.
+			//
+			// int64 in, for the reason GetUUID returns int64 out - see the comment there. The
+			// pair round-trips bit-exactly across the whole 64-bit range, which is the property
+			// runtime prefab spawning depends on: it hands back a pre-minted UUID and the script
+			// resolves it a frame later.
+			scene["FindEntityByUUID"] = [](int64_t id) -> sol::optional<Entity>
+			{
+				Scene* context = Context();
+				if (!context)
+					return sol::nullopt;
+
+				Entity entity = context->FindEntityByUUID(UUID{ static_cast<uint64_t>(id) });
+				if (!entity)
+					return sol::nullopt;
+
+				return entity;
+			};
+
+			// Spawn a prefab. Returns the root's id, or nil if the path is not a prefab.
+			//
+			// **The entity appears on the NEXT frame**, and that is the contract rather than an
+			// implementation detail. Scripts run inside the scene update, where the immediate
+			// Entity API asserts, so this queues the instantiate onto the command queue and the
+			// flush at the top of the next FrameBegin performs it. The id comes back now
+			// precisely so a script has something to hold across that boundary:
+			//
+			//     local id = Scene.Spawn("prefabs/SparkBurst.gprefab", self.entity:GetTranslation())
+			//     -- next frame, or any frame after:
+			//     local e = Scene.FindEntityByUUID(id)
+			//     if e then e:SetTranslation(...) end
+			//
+			// Position and rotation are optional; omitting both places the root where the
+			// `.gprefab` says, which is what a pre-placed decoration wants.
+			scene["Spawn"] = [](const std::string& path, sol::optional<glm::vec3> position,
+				sol::optional<glm::vec3> rotation) -> sol::optional<int64_t>
+			{
+				Scene* context = Context();
+				if (!context)
+					return sol::nullopt;
+
+				const AssetHandle handle = AssetManager::GetHandle(path);
+				if (!IsAssetHandleValid(handle))
+				{
+					GE_WARN("Scene.Spawn: '{0}' is not an indexed asset", path);
+					return sol::nullopt;
+				}
+
+				// Checked rather than trusted: spawning a texture is a script typo, and the
+				// instantiate would otherwise fail a frame later with nothing pointing at the
+				// call that caused it.
+				if (AssetManager::GetAssetType(handle) != AssetType::Prefab)
+				{
+					GE_WARN("Scene.Spawn: '{0}' is a {1}, not a prefab", path,
+						AssetTypeToString(AssetManager::GetAssetType(handle)));
+					return sol::nullopt;
+				}
+
+				TransformComponent transform;
+				const bool placed = position.has_value() || rotation.has_value();
+				if (position) transform.Translation = *position;
+				if (rotation) transform.Rotation = *rotation;
+
+				const UUID id = context->Commands().InstantiatePrefab(
+					handle, placed ? &transform : nullptr);
+
+				// Refused by the per-frame spawn cap. Nil rather than a zero id, so a script
+				// that checks its return sees the same "did not happen" it gets from a bad path;
+				// the queue has already said why, once for the whole frame.
+				if (id == UUID{ 0 })
+					return sol::optional<int64_t>(sol::nullopt);
+
+				// int64, for the reason GetUUID returns int64 - see the comment there.
+				return sol::optional<int64_t>(static_cast<int64_t>(static_cast<uint64_t>(id)));
+			};
 		}
 
 		void RegisterAudio(sol::state& lua)
@@ -624,4 +733,7 @@ namespace GanymedE {
 		RegisterEntity(lua);
 		RegisterScriptGlobals(lua);
 	}
+
+
+
 }

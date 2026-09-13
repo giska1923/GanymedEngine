@@ -2,6 +2,8 @@
 #include "AssetManager.h"
 
 #include "GanymedE/Assets/AssetMeta.h"
+#include "GanymedE/Scene/PrefabSerializer.h"
+#include "GanymedE/Scene/Prefab.h"
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/AssetWatcher.h"
 #include "GanymedE/Assets/MaterialSerializer.h"
@@ -587,6 +589,30 @@ namespace GanymedE {
 			return mesh;
 		}
 
+		// ---- Prefab -------------------------------------------------------------------
+		//
+		// The whole of the work is in Parse, and none of it touches the GPU: a `.gprefab` is a
+		// file read and a YAML parse, which is exactly the shape the Parse stage exists for.
+		// Apply is a move, and runs on the main thread only because every Apply does.
+		struct PrefabParse : AssetParseResult
+		{
+			YAML::Node Document;
+		};
+
+		Scope<AssetParseResult> ParsePrefab(const AssetMetadata& metadata)
+		{
+			auto parsed = CreateScope<PrefabParse>();
+			if (!PrefabSerializer::LoadDocument(GetAssetRoot() / metadata.FilePath, parsed->Document))
+				return nullptr;
+
+			return parsed;
+		}
+
+		Ref<Prefab> ApplyPrefab(const AssetMetadata&, Scope<AssetParseResult> parsed)
+		{
+			return CreateRef<Prefab>(std::move(static_cast<PrefabParse&>(*parsed).Document));
+		}
+
 		// ---- Environment --------------------------------------------------------------
 		//
 		// The claim that used to sit here - that the separable CPU part is "a few percent" of an
@@ -668,6 +694,7 @@ namespace GanymedE {
 		AssetManagerRegistry::Register<Environment>("Environment", &ParseEnvironment, &ApplyEnvironment);
 		AssetManagerRegistry::Register<Texture2D>("Texture2D", &ParseTexture, &ApplyTexture);
 		AssetManagerRegistry::Register<Material>("Material", &ParseMaterial, &ApplyMaterial);
+		AssetManagerRegistry::Register<Prefab>("Prefab", &ParsePrefab, &ApplyPrefab);
 
 		// Which types have an offline step. A type absent from this list still loads - the cache
 		// hands back its source bytes untouched - which is the right answer for `.hdr`
@@ -683,8 +710,9 @@ namespace GanymedE {
 		if (!metadata)
 			return;
 
-		// Scene, Script, Audio and Prefab have no manager, so there is nothing to evict - they
-		// are path-resolved and their consumers own whatever caching they do.
+		// Scene, Script and Audio have no manager, so there is nothing to evict - they are
+		// path-resolved and their consumers own whatever caching they do. Prefab used to be in
+		// that list and now has one; see Prefab.h.
 		IAssetManager* manager = AssetManagerRegistry::Find(metadata->Type);
 		if (!manager)
 			return;

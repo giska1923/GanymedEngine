@@ -137,8 +137,56 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 (`GetName`, `GetUUID`, `GetChildByName`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians),
 `Get/SetScale`, `HasRigidBody`, the physics, animation, audio and particle calls below), `Input`,
 `Key`, `Mouse`, `Log`
-(routed to the **client** logger — script output is game output), `Scene.FindEntityByName`,
+(routed to the **client** logger — script output is game output),
+`Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.Spawn`, `Entity:Destroy`,
 `Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
+
+> **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
+> `int64_t`, and sol2 with `SOL_ALL_SAFETIES_ON` **throws** rather than truncating when asked to
+> push a `uint64_t` above `INT64_MAX` — *"integer value will be misrepresented in lua"*. UUIDs come
+> from `uniform_int_distribution<uint64_t>` over the whole range, so about half of them are above
+> that line, and `GetUUID` used to return `uint64_t`: it threw for roughly **one entity in two**,
+> and the throw escaped into the frame rather than being reported. Nothing shipped called it, which
+> is the only reason it went unnoticed until `FindEntityByUUID` was added.
+>
+> Both sides now reinterpret through `int64_t`, which preserves every bit — Lua simply prints the
+> top half of the range as negative. A script must treat the value as **opaque**: equality and table
+> keys work, arithmetic is meaningless. The pair round-trips exactly across the full 64-bit range,
+> which is the property runtime prefab spawning depends on
+> ([RUNTIME_PREFAB_SPAWNING.md](../ToDo/RUNTIME_PREFAB_SPAWNING.md)).
+>
+> The general rule this is an instance of: **any engine handle wider than 53 bits needs its Lua
+> representation chosen deliberately.** Asset handles are `UUID` too.
+
+> **`Scene.Spawn` returns an id, and the entity appears on the *next* frame.** That is the contract,
+> not an implementation detail. Scripts run inside the scene update, where `Entity::AddComponent`
+> asserts, so a spawn is queued onto `ECS::CommandQueue` and performed by the flush at the top of
+> the next `Scene::FrameBegin` — the same rule every structural change made from inside a system
+> follows ([ecs.md](ecs.md#commandqueue)).
+>
+> The root's UUID is **minted at the call** and pinned onto the instantiated root through
+> `InstantiateOptions::RootUUID`, which is what gives a script something to hold across that
+> boundary. The alternatives were worse: an `Entity` cannot be returned for something that does not
+> exist, and `PendingEntity` is meaningful only within the frame it was made in — a handle whose
+> validity expires at a frame boundary is a lifetime problem the engine would then have to police.
+> An id that does not resolve *yet* is indistinguishable from one whose entity has since been
+> destroyed, and a script has to handle the second case anyway.
+>
+> A path that is not an indexed asset, or is indexed as something other than a prefab, is refused
+> with a named warning and `nil` — a script spawning a texture is a typo, and letting it fail a
+> frame later would put the diagnostic nowhere near the call that caused it.
+>
+> **`Entity:Destroy()` is the mirror**, and takes the whole subtree. A prefab instance *is* a
+> subtree, and `Scene::DestroyEntity` deliberately unparents children rather than destroying them —
+> right for deleting one hand-authored entity, wrong for a projectile going away, whose children
+> would otherwise accumulate for the session. Same next-frame timing, for the same reason.
+>
+> **Spawns are capped at 64 per frame** (`ECS::CommandQueue::MaxSpawnsPerFrame`). That is a guard
+> against `while true do Scene.Spawn(...) end`, not a design budget: the queue only drains at the
+> next flush, so an unguarded loop would queue until the machine gave out. Past the cap `Spawn`
+> returns `nil` and the queue logs **once per frame** with the count — once per refusal would trade
+> memory exhaustion for log exhaustion. Deliberate use is nowhere near it; a bullet-hell firing
+> every frame is single digits.
 
 > **The `Log` global collides with RmlUi's.** RmlUi's Lua plugin registers its own `Log` usertype,
 > and it loads after `ScriptEngine::Init`, so it shadowed ours until `UIEngine` started calling

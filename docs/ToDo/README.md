@@ -34,7 +34,14 @@ documented.** A file here is a promise, not a description.
 | [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
 | [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, whether to adopt Tracy | 3 |
 
-**Priority, as a recommendation rather than a schedule:** **Linux is now built and run** — all
+**Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
+managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three
+things the plan got wrong, is in
+[`docs/history/RUNTIME_PREFAB_SPAWNING.md`](../history/RUNTIME_PREFAB_SPAWNING.md). It also fixed a
+latent bug that was never about spawning: `PhysicsScene::CreateBodies` ran only from `Start()`, so
+**any** entity that gained a rigid body during play never simulated.
+
+**Priority among the remaining fixes, as a recommendation rather than a schedule:** **Linux is now built and run** — all
 three configurations, editor and runtime, with the status table in
 [build-and-tooling.md](../engine/build-and-tooling.md#platform-status). What is left in
 [cross-cutting.md](cross-cutting.md) is macOS (never compiled) and the gap between "runs in WSL2"

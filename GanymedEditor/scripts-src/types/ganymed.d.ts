@@ -30,6 +30,13 @@ declare const Vec3: {
 
 declare interface Entity {
 	GetName(): string;
+	/**
+	 * The entity's stable id. **Opaque**: equality and table keys work, arithmetic does not.
+	 *
+	 * It is a full 64-bit value carried in Lua's 64-bit integer, so about half of all ids
+	 * print as negative. That is the representation, not a bug — pass the value back to
+	 * `Scene.FindEntityByUUID` unchanged and it resolves.
+	 */
 	GetUUID(): number;
 	IsValid(): boolean;
 
@@ -38,6 +45,15 @@ declare interface Entity {
 	 * so two boxes both parenting a child named `"Sparks"` cannot use it.
 	 */
 	GetChildByName(name: string): Entity | undefined;
+
+	/**
+	 * Despawn this entity **and everything under it**.
+	 *
+	 * Takes effect on the next frame, the mirror of `Scene.Spawn` and for the same reason:
+	 * structural changes from inside the update are queued. The entity stays usable for the
+	 * rest of this frame.
+	 */
+	Destroy(): void;
 
 	/**
 	 * Returns a COPY. Mutate it, then call the setter.
@@ -289,6 +305,40 @@ declare namespace Log {
 declare namespace Scene {
 	/** Linear scan over tags. Fine for setup; do not call it every frame. */
 	function FindEntityByName(name: string): Entity | undefined;
+
+	/**
+	 * Look an entity up by the value `Entity.GetUUID()` returned. Unlike a tag, a UUID is
+	 * unique and survives a rename, so this is what to hold across frames.
+	 *
+	 * **Treat the value as opaque.** It is a full 64-bit id: it round-trips exactly, but Lua
+	 * prints ids with the high bit set as negative numbers, and arithmetic on one is
+	 * meaningless. Store it and pass it back, nothing else.
+	 */
+	function FindEntityByUUID(id: number): Entity | undefined;
+
+	/**
+	 * Instantiate a prefab, returning the root's id — or `undefined` if the path is not an
+	 * indexed prefab.
+	 *
+	 * **The entity appears on the NEXT frame.** Scripts run inside the scene update, where
+	 * structural changes are illegal, so the spawn is queued and performed by the flush at the
+	 * start of the following frame. That is why an id comes back instead of an `Entity`: it is
+	 * something to hold across the boundary.
+	 *
+	 * ```ts
+	 * const id = Scene.Spawn("prefabs/SparkBurst.gprefab", this.entity.GetTranslation());
+	 * // ... a later frame:
+	 * const e = Scene.FindEntityByUUID(id);
+	 * if (e) e.SetTranslation(somewhere);
+	 * ```
+	 *
+	 * Omitting both `position` and `rotation` places the root where the `.gprefab` says.
+	 * Rotation is Euler angles in radians, matching `Entity.SetRotation`.
+	 *
+	 * Returns `undefined` if the per-frame spawn cap (64) is hit, so a loop that runs away is
+	 * refused rather than allowed to exhaust memory. Check the result if you spawn in bulk.
+	 */
+	function Spawn(path: string, position?: Vec3, rotation?: Vec3): number | undefined;
 }
 
 /**

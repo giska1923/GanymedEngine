@@ -214,18 +214,41 @@ GPU-resource destructors release real bgfx handles.
 
 ### Path-resolved types
 
-`Script`, `Audio` and `Prefab` have **no `GetAsset` specialization, and that is deliberate** rather
-than an omission. The manager answers handle → path through `GetMetadata` and the consumer loads the file
+`Script` and `Audio` have **no `GetAsset` specialization, and that is deliberate** rather than an
+omission. The manager answers handle → path through `GetMetadata` and the consumer loads the file
 itself: the Lua VM owns its chunks, and miniaudio's resource manager ref-counts and caches decoded
 audio by path (see [audio.md](audio.md)). A cache here would be a second ref-counting owner of the
-same resource, and two caches disagreeing about lifetime is the bug class this avoids. A prefab is
-there for a different reason: instantiating one is a rare editor action reading a small YAML, and a
-cached parsed form would add a staleness surface — Apply rewrites the file, and the next instantiate
-has to see it — for no measurable win.
+same resource, and two caches disagreeing about lifetime is the bug class this avoids.
+
+**`Prefab` was in that list and is not any more**, and the reason it left is worth keeping because
+it is not the reason it was there. The external-owner argument never applied to a prefab — nothing
+else owns a parsed one. What kept it path-resolved was that a manager would have bought nothing:
+every `PrefabSerializer::Instantiate` call site was an editor gesture, so re-reading a small YAML
+per call was a read per drag-drop, against which a cache is a staleness surface for no measurable
+win.
+
+Runtime prefab spawning changes that arithmetic — a script firing projectiles re-reads and re-parses
+the same file per spawn — so `Prefab` now has a manager
+([Prefab.h](../../GanymedEngine/source/GanymedE/Scene/Prefab.h)). What it caches is the **parsed
+document**, not a detached `Scene`: the document is what both consumers instantiate *from*, and it
+is the expensive half. A cached `Scene` would serve only the editor's override-template cache, and a
+spawner would have to deep-copy entities out of it — a different mechanism with different identity
+rules.
+
+The staleness surface the old note worried about is real and is handled in one place:
+`PrefabSerializer::InstantiateFromAsset` is the single entry point, per-property apply evicts the
+asset after writing the file, and a `.gprefab` changed on disk goes through the watcher like any
+other asset. Note the split that did **not** happen: the editor's template cache is still a separate
+cache, because it holds instantiated entities to diff against while the manager holds a document.
+It is now built *from* the manager rather than from its own file read.
+
+`InstantiateFromAsset` is also what keeps yaml-cpp out of the editor. Every serializer hides YAML
+behind its API and the editor has never seen the dependency; handing it a `Prefab` whose accessor
+returns a `YAML::Node` would have ended that for one call site.
 
 The `GetAsset` primary template is *defined* with a `static_assert` rather than left undeclared, so
-asking for one of these is a compile error with a message instead of an unresolved external at link
-time.
+asking for one of the remaining two is a compile error with a message instead of an unresolved
+external at link time.
 
 ### Identity portability
 
@@ -303,7 +326,7 @@ resolving a manager is an **array index, not a `std::type_index` hash**. It sat 
 when every consumer re-fetched by handle per entity per frame; `AssetRef` moved that to once per
 reference, and the array index is what keeps the re-resolve after an eviction cheap too.
 `MaxAssetManagers` is 16, sized for
-the four managed types and the eight `AssetType` values rather than for BlankEngine’s 64.
+the five managed types and the eight `AssetType` values rather than for BlankEngine’s 64.
 
 The id depends on registration order and is therefore **not stable across builds**. It must never be
 persisted; `AssetType`, stored by name in a `.meta`, is the durable form. `RegisterManagers()` runs

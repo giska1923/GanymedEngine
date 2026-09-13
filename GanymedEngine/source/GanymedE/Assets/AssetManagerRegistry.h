@@ -35,13 +35,17 @@ namespace GanymedE {
 	class IAssetManager;
 	class Material;
 	class Mesh;
+	class Prefab;
 	class Texture2D;
 
 	using AssetTypeId = uint8_t;
 
-	// Deliberately tight. There are four managed types today and eight `AssetType` values, and
-	// only a type with a *runtime object* ever gets a manager - Script, Audio and Prefab are
-	// path-resolved by design. BlankEngine's 64 is sized for an engine an order of magnitude larger.
+	// Deliberately tight. There are five managed types today and eight `AssetType` values, and
+	// only a type with a *runtime object* ever gets a manager - Script and Audio stay
+	// path-resolved because something else owns what they load (Lua owns its chunks, miniaudio
+	// owns decoded audio), and Scene is not an asset anything caches. Prefab joined the managed
+	// set when runtime spawning made a re-parse per instantiate matter; see Prefab.h.
+	// BlankEngine's 64 is sized for an engine an order of magnitude larger.
 	inline constexpr AssetTypeId MaxAssetManagers = 16;
 
 	// "Does this type have an asset manager?" False by default, true for the four below.
@@ -69,6 +73,7 @@ namespace GanymedE {
 	GE_ASSET_TYPE(Environment, Environment);
 	GE_ASSET_TYPE(Texture2D, Texture);
 	GE_ASSET_TYPE(Material, Material);
+	GE_ASSET_TYPE(Prefab, Prefab);
 
 	#undef GE_ASSET_TYPE
 
