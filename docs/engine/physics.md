@@ -154,6 +154,48 @@ Each wakes the body before acting — Jolt sleeps idle bodies and silently disca
 a sleeping one. All of them no-op when the entity has no body or play is not running, rather than
 asserting: a script poking at the wrong entity should not take the editor down.
 
+## Raycasts
+
+`PhysicsScene::CastRay(origin, direction, maxDistance, ignore)` returns a `RaycastHit`
+(`Hit`, `Entity`, `Point`, `Normal`, `Distance`) for the closest hit, exposed to Lua as
+`Physics.Raycast` ([scripting.md](scripting.md#physics-queries)).
+
+Three deliberate choices:
+
+- **`Distance` is world units, not Jolt's `[0,1]` fraction.** A fraction only means something
+  beside the length that produced it, and call sites lose that.
+- **`direction` need not be normalised.** Jolt encodes reach in the direction vector's length, so
+  the implementation scales a unit direction by `maxDistance` — which is what makes `maxDistance`
+  mean metres rather than interacting with however long the caller's vector happened to be.
+- **`ignore` takes a UUID**, because the overwhelmingly common caller casts from its own position
+  — a weapon muzzle, an eye — and its own collider is the first thing in the way. It resolves
+  through `EntityToBody`, so an entity with no body yields an invalid `BodyID`, which matches
+  nothing: the desired outcome, reached without a special case.
+
+Static and dynamic bodies are both hit. A line-of-sight test that could not see walls would be
+useless, and a weapon that could not hit scenery would be worse. Sensors are what would want
+filtering out here, and there are none yet.
+
+Reading the surface normal needs the body, so a `BodyLockRead` is taken and released before
+returning — never held across a call into script. A body that vanishes between the cast and the
+lock yields `Entity = 0` and a zero normal rather than failing the query.
+
+Measured against authored geometry (ground top at `y = 0`, a wall whose near face is `x = 9.5`, a
+capsule of radius 0.35 centred at `x = 0`):
+
+| Cast | Result |
+|---|---|
+| down from `(0,5,0)` | `Ground`, d = 5.000, n = `(0,1,0)` |
+| `+x` from `(0,1.5,0)` | `Wall`, d = 9.500, n = `(-1,0,0)` |
+| up, and a 2 m ray at a 5 m floor | miss |
+| direction `(0,-37.5,0)` | identical to the normalised cast |
+| from `x = -2` at the capsule, no ignore | `FreeCapsule`, d = 1.650 |
+| same cast ignoring the capsule | `Wall`, d = 11.500 |
+| zero-length direction | miss, no crash |
+
+**Not safe to call while the simulation is stepping.** Scripts run outside the step, so today this
+is a rule about future engine code rather than about gameplay.
+
 ## The job system
 
 **Jolt's jobs run on `Core/JobSystem`, not on a thread pool of Jolt's own.** `JoltJobSystem` in

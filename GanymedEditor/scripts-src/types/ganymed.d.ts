@@ -341,6 +341,43 @@ declare namespace Scene {
 	function Spawn(path: string, position?: Vec3, rotation?: Vec3): number | undefined;
 }
 
+/** What a ray hit. `entity` is absent when the body's entity vanished between the cast and the
+ * lookup — something was hit, and the geometry of the hit is still true. */
+declare interface RaycastHit {
+	/** World-space point where the ray met the surface. */
+	point: Vec3;
+	/** Outward surface normal at `point`, unit length. */
+	normal: Vec3;
+	/** Distance from the ray origin, in world units — not a [0,1] fraction. */
+	distance: number;
+	entity?: Entity;
+}
+
+/** Queries against the physics world. Only valid in play mode; outside it every cast misses. */
+declare namespace Physics {
+	/**
+	 * Closest hit along a ray, or `undefined` if nothing is in the way — so the idiomatic
+	 * shape is `const hit = Physics.Raycast(...); if (hit) { ... }`.
+	 *
+	 * `direction` need not be normalised; `maxDistance` sets the reach either way. Static and
+	 * dynamic bodies are both hit: a line-of-sight test that could not see walls would be
+	 * useless.
+	 *
+	 * Pass `ignore` when casting from an entity's own position — its collider is otherwise the
+	 * first thing in the way:
+	 *
+	 * ```ts
+	 * const eye = this.entity.GetTranslation();
+	 * const hit = Physics.Raycast(eye, forward, 50, this.entity);
+	 * if (hit && hit.entity && hit.entity.GetName() === "Player") { ... }
+	 * ```
+	 *
+	 * A zero-length `direction` or a non-positive `maxDistance` misses rather than throwing.
+	 */
+	function Raycast(origin: Vec3, direction: Vec3, maxDistance: number,
+		ignore?: Entity): RaycastHit | undefined;
+}
+
 /**
  * Sound with no entity behind it: fire-and-forget one-shots, and the mixer.
  *

@@ -551,6 +551,48 @@ namespace GanymedE {
 			log["Error"] = [](const std::string& message) { GE_ERROR("{0}", message); };
 		}
 
+		void RegisterPhysics(sol::state& lua)
+		{
+			sol::table physics = lua.create_named_table("Physics");
+
+			// Physics.Raycast(origin, direction, maxDistance [, ignoreEntity]) -> hit or nil.
+			//
+			// A table rather than multiple return values, because four unlabelled returns at a
+			// call site is unreadable and because nil-on-miss then reads as the Lua idiom
+			// `local hit = Physics.Raycast(...) if hit then`. sol::optional does the nil.
+			//
+			// `entity` in the table is a real Entity, resolved here, so a caller can go straight
+			// to hit.entity:GetName() without a second lookup. A body whose entity has gone
+			// between the cast and this resolve yields a table with no `entity` key rather than
+			// no table - something was hit, and the geometry of the hit is still true.
+			physics["Raycast"] = [&lua](const glm::vec3& origin, const glm::vec3& direction,
+				float maxDistance, sol::optional<Entity> ignore) -> sol::optional<sol::table>
+			{
+				PhysicsScene* scene = Physics();
+				if (!scene)
+					return sol::nullopt;
+
+				const UUID ignoreID = ignore ? ignore->GetUUID() : UUID(0);
+				const auto hit = scene->CastRay(origin, direction, maxDistance, ignoreID);
+				if (!hit.Hit)
+					return sol::nullopt;
+
+				sol::table out = lua.create_table();
+				out["point"] = hit.Point;
+				out["normal"] = hit.Normal;
+				out["distance"] = hit.Distance;
+
+				if (Scene* context = Context())
+				{
+					Entity entity = context->FindEntityByUUID(hit.Entity);
+					if (entity)
+						out["entity"] = entity;
+				}
+
+				return out;
+			};
+		}
+
 		void RegisterScene(sol::state& lua)
 		{
 			sol::table scene = lua.create_named_table("Scene");
@@ -721,6 +763,7 @@ namespace GanymedE {
 		RegisterKeyCodes(lua);
 		RegisterLog(lua);
 		RegisterScene(lua);
+		RegisterPhysics(lua);
 		RegisterAudio(lua);
 		RegisterUI(lua);
 	}

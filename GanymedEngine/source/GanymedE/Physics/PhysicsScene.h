@@ -82,6 +82,37 @@ namespace GanymedE {
 		void AddForce(UUID entity, const glm::vec3& force);
 		bool HasBody(UUID entity) const;
 
+		// ---- Queries ----
+
+		// What a ray hit, or Hit == false. Entity is the UUID behind the body, so a caller
+		// never sees a Jolt type; Distance is in world units along Direction, not Jolt's
+		// [0,1] fraction, because a fraction is only meaningful next to the length that
+		// produced it and call sites lose that.
+		struct RaycastHit
+		{
+			bool Hit = false;
+			UUID Entity = 0;
+			glm::vec3 Point{ 0.0f };
+			glm::vec3 Normal{ 0.0f };
+			float Distance = 0.0f;
+		};
+
+		// Closest hit along the ray. `direction` need not be normalised; `maxDistance` is what
+		// sets the reach either way.
+		//
+		// `ignore` exists because the overwhelmingly common caller is an entity casting from
+		// its own position - a weapon, an eye - and its own collider is the first thing in the
+		// way. Passing 0 ignores nothing.
+		//
+		// Hits static and dynamic bodies alike: a line-of-sight test that could not see walls
+		// would be useless, and a weapon that could not hit scenery would be worse. Sensors
+		// would be the thing to filter out here, and there are none yet.
+		//
+		// **Not safe to call while the simulation is stepping.** Scripts run outside the step,
+		// so this is a rule about future engine code rather than about gameplay.
+		RaycastHit CastRay(const glm::vec3& origin, const glm::vec3& direction,
+			float maxDistance, UUID ignore = 0) const;
+
 	private:
 		struct BodyPose
 		{

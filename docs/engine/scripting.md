@@ -353,6 +353,29 @@ if sparks then
 end
 ```
 
+### Physics queries
+
+`Physics.Raycast(origin, direction, maxDistance [, ignoreEntity])` returns a table or **nil**:
+
+```lua
+local eye = self.entity:GetTranslation()
+local hit = Physics.Raycast(eye, forward, 50, self.entity)
+if hit and hit.entity and hit.entity:GetName() == "Player" then
+    -- hit.point, hit.normal, hit.distance
+end
+```
+
+A table rather than four return values, because four unlabelled returns at a call site is
+unreadable; nil-on-miss so the idiom is `if hit then`. `hit.entity` is a real `Entity`, resolved
+in the binding, so there is no second lookup to do — and it is **absent** rather than nil-inside-
+a-table when the body's entity vanished between the cast and the resolve, because something was
+still hit and the geometry of the hit is still true.
+
+Pass `ignoreEntity` whenever casting from an entity's own position: its own collider is otherwise
+the first thing the ray meets. The engine-side rules — unnormalised directions, `distance` in
+world units, static and dynamic both hit — are in
+[physics.md](physics.md#raycasts), with the measured verification table.
+
 ## Errors
 
 A script error must never cross the C++ boundary. Every call into Lua goes through a

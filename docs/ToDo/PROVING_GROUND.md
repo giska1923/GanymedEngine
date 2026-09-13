@@ -174,7 +174,20 @@ Two options, and they are not the same size:
 Start with the flag, because it unblocks P1 in an afternoon and the game will say whether the rest
 is needed. See Decision 1 — this is the call I am least sure about.
 
-### P0.3 — Raycast
+### P0.3 — Raycast — **DONE**
+
+Built: `PhysicsScene::CastRay` over Jolt's `NarrowPhaseQuery`, returning a `RaycastHit`
+(`Hit`/`Entity`/`Point`/`Normal`/`Distance`), plus `Physics.Raycast` in Lua and typings in
+`ganymed.d.ts`. See [physics.md](../engine/physics.md#raycasts) and
+[scripting.md](../engine/scripting.md#physics-queries).
+
+Verified against authored geometry — eight cases, every distance and normal analytically checked:
+a floor hit at exactly 5.000 with normal `(0,1,0)`, a wall at 9.500 with `(-1,0,0)`, misses for an
+upward cast and for a 2 m ray at a 5 m floor, an unnormalised direction `(0,-37.5,0)` giving the
+identical result to the normalised one, the capsule hit at 1.650 without `ignore` and the wall at
+11.500 with it, and a zero-length direction missing without crashing.
+
+*Original text follows.*
 
 There is not one raycast call in the engine. Jolt has `NarrowPhaseQuery::CastRay`; it needs
 wrapping and binding to Lua. Needed **twice**: enemy line-of-sight acquisition, and any weapon that

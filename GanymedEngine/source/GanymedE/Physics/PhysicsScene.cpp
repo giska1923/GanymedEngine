@@ -22,7 +22,11 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 
 #ifdef JPH_DEBUG_RENDERER
 	#include <Jolt/Renderer/DebugRendererSimple.h>
@@ -935,6 +939,71 @@ namespace GanymedE {
 			return false;
 
 		return m_Impl->EntityToBody.find(entity) != m_Impl->EntityToBody.end();
+	}
+
+	PhysicsScene::RaycastHit PhysicsScene::CastRay(const glm::vec3& origin,
+		const glm::vec3& direction, float maxDistance, UUID ignore) const
+	{
+		RaycastHit result;
+
+		if (!m_Active || !m_Impl)
+			return result;
+
+		// A zero-length direction has no ray to cast and would divide by zero on normalise.
+		// Returning a miss rather than asserting matches the rest of this section: a script
+		// computing a direction from two coincident points should not take the game down.
+		const float length = glm::length(direction);
+		if (length <= 0.0f || maxDistance <= 0.0f)
+			return result;
+
+		// Jolt encodes reach in the direction vector's length - the hit fraction is along
+		// mDirection, not along a unit ray - so the scaling here is what makes maxDistance
+		// mean metres.
+		const glm::vec3 unit = direction / length;
+		const glm::vec3 reach = unit * maxDistance;
+
+		const JPH::RRayCast ray{
+			JPH::RVec3(origin.x, origin.y, origin.z),
+			JPH::Vec3(reach.x, reach.y, reach.z)
+		};
+
+		JPH::RayCastResult hit;
+
+		// IgnoreSingleBodyFilter takes a BodyID, so an ignore that names an entity with no
+		// body resolves to an invalid id, which matches nothing - the desired outcome.
+		JPH::BodyID ignoreBody;
+		if (ignore != 0)
+		{
+			auto it = m_Impl->EntityToBody.find(ignore);
+			if (it != m_Impl->EntityToBody.end())
+				ignoreBody = it->second;
+		}
+		const JPH::IgnoreSingleBodyFilter bodyFilter(ignoreBody);
+
+		if (!m_Impl->System.GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, bodyFilter))
+			return result;
+
+		result.Hit = true;
+		result.Distance = hit.mFraction * maxDistance;
+		result.Point = origin + unit * result.Distance;
+
+		// The body has to be locked to read its surface normal, and the lock has to be
+		// released before returning - holding one across a callback into script would be a
+		// deadlock waiting for a reason. A body that vanished between the cast and the lock
+		// leaves Entity 0 and a zero normal rather than failing the whole query.
+		{
+			JPH::BodyLockRead lock(m_Impl->System.GetBodyLockInterface(), hit.mBodyID);
+			if (lock.Succeeded())
+			{
+				const JPH::Body& body = lock.GetBody();
+				const JPH::Vec3 normal = body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2,
+					JPH::RVec3(result.Point.x, result.Point.y, result.Point.z));
+				result.Normal = glm::vec3(normal.GetX(), normal.GetY(), normal.GetZ());
+				result.Entity = static_cast<UUID>(body.GetUserData());
+			}
+		}
+
+		return result;
 	}
 
 	void PhysicsScene::SetLinearVelocity(UUID entity, const glm::vec3& velocity)
