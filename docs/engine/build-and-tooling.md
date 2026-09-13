@@ -50,8 +50,8 @@ which could not be started on this machine"*. bgfx compiles its D3D renderers on
 over vkd3d), so they appear in the supported list on that platform; the substitution notice is what
 makes that harmless.
 
-Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor`, `GanymedRuntime`
-and `Sandbox` (executables linking the engine), plus the dependency group built from source via their own
+Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor` and
+`GanymedRuntime` (executables linking the engine), plus the dependency group built from source via their own
 premake scripts in `GanymedEngine/extern/*.lua`: GLFW, ImGui (+ImGuizmo), yaml-cpp, Jolt,
 bx/bimg/bgfx, Lua. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug renderer), `Release`,
 `Dist` (no Jolt debug renderer). Output goes to `bin/<config>-<os>-<arch>/<project>/`,
@@ -142,12 +142,22 @@ Other build facts that have bitten before (details in
   right, pulling only objects that resolve symbols undefined so far, so a library must precede the
   ones it depends on (RmlUi and ImGui before FreeType — both rasterize with it — then Lua; bgfx
   before bimg and bx). The lists in
-  `GanymedEditor`, `GanymedRuntime` and `Sandbox` must stay in step; a divergence links fine on
+  `GanymedEditor` and `GanymedRuntime` must stay in step; a divergence links fine on
   Windows and fails on Linux with symbols that are plainly present in the archive list. This is not
   hypothetical: `enkiTS` and `TextureEncode` were added to the engine's own `links` and to nothing
   else, so every Windows build kept working on project references while the first Linux link failed
   on `enki::TaskScheduler::Initialize` and friends. A list that is only exercised on one platform
   goes stale silently, which is the argument for building the others at all.
+- **`ar` never removes a member, so deleting a source file does not empty it out of the
+  archive.** premake's gmake rule links static libraries with `ar -rcs`, which adds and
+  replaces the objects it is given and leaves every other member in place. Delete a `.cpp`
+  and its `.o` stays in `lib<Project>.a` indefinitely, still exporting its symbols and still
+  dragging in whatever *it* referenced. The failure arrives as undefined references naming
+  a file that is no longer in the repository, which is why it reads as impossible. The fix
+  is to delete the build tree for that configuration (`bin/<cfg>-linux-x86_64` and
+  `temp/<cfg>-linux-x86_64`); `make clean` does the same. MSBuild does not have this
+  behaviour — its `Lib` task rebuilds the archive from the project's current object list —
+  so this is a Linux/macOS-only trap, and one Windows cannot warn you about.
 - **Angled includes on the xcode4 exporter.** premake maps `includedirs` to
   `USER_HEADER_SEARCH_PATHS` and emits `ALWAYS_SEARCH_USER_PATHS = NO`, and clang searches user
   paths for *quoted* includes only — so on Xcode, a dependency that reaches for its own public
@@ -248,7 +258,7 @@ x64 Debug engine build). Its link surface is per-OS and easy to get wrong:
   dependency on either. `dl` and `pthread` are already in every app's link list. If a linker ever
   asks for `m`, add it there too.
 - **macOS** — `CoreAudio.framework` and `AudioToolbox.framework` must be in the `macosx` links block
-  of **every app** (Sandbox, GanymedEditor, GanymedRuntime), not just the engine: static libraries
+  of **every app** (GanymedEditor, GanymedRuntime), not just the engine: static libraries
   do not propagate their links off MSVC. Same rule as the bgfx frameworks beside them.
 
 **enkiTS** gets its own `StaticLib` project (`extern/enkiTS.lua`) compiling exactly
@@ -260,8 +270,8 @@ rather than sources folded into the engine because the engine project forces `ge
 (`<PrecompiledHeader>Use</PrecompiledHeader>`), and the only way to satisfy that is to edit the
 source to include it — which is what `extern/stb_image/stb_image.cpp` does, and which is not
 available for a submodule. `IncludeDir.enkiTS` is on the **engine project only**: `JobSystem.h` keeps
-enkiTS out of its own header (`void* Task` in the shared state), so the editor, the runtime and
-Sandbox hold a `Future<T>` without enkiTS on their include path.
+enkiTS out of its own header (`void* Task` in the shared state), so the editor and the runtime
+hold a `Future<T>` without enkiTS on their include path.
 
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
 `extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`, `extern/RmlUi.lua`, `extern/FreeType.lua`,
@@ -299,8 +309,8 @@ scripts\compile_shaders.bat       # every .sc in assets/shaders/src → dx11 / s
 ```
 
 The script carries a hard-coded `TARGETS` list — one entry per app that loads shaders at runtime,
-currently `GanymedEditor`, `Sandbox` and `GanymedRuntime` — because assets resolve relative to the
-working directory, so each app needs its own copy. **A new app means a fourth entry in both
+currently `GanymedEditor` and `GanymedRuntime` — because assets resolve relative to the
+working directory, so each app needs its own copy. **A new app means a third entry in both
 `compile_shaders.bat` and `compile_shaders.sh`;** forget it and that app loads no shaders and draws
 nothing but the clear colour.
 

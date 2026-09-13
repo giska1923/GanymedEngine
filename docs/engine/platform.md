@@ -44,8 +44,8 @@ macOS it sits under the menu bar rather than over it.
 ### Custom title bar
 
 `WindowProps::CustomTitleBar` (from `ApplicationSpecification::CustomTitleBar`, default **false**)
-creates an undecorated GLFW window so the editor can draw its own 40 px title bar. Sandbox and
-GanymedRuntime leave the flag off and keep a normal OS frame.
+creates an undecorated GLFW window so the editor can draw its own 40 px title bar.
+GanymedRuntime leaves the flag off and keeps a normal OS frame.
 
 Two platform paths, behind the same `Window` methods (`HasCustomTitleBar`, `SetTitleBarHitTest`,
 `Minimize`, `ToggleMaximize`, `IsMaximized`):

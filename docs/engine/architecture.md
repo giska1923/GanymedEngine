@@ -46,7 +46,7 @@ configuration, not compilation. `CreateApplication` returns an `Application` bui
 Anything that reads as editor-only behaviour inside the engine is a bug; the collider-gizmo gate on
 `PhysicsSettings::ShowColliderGizmos` is there because it *was* one. The same rule owns the look:
 `ImGuiLayer` ships `StyleColorsDark()` and the embedded font; Inter, Lucide and `EditorTheme` are
-applied from the editor after attach, so Sandbox never loads editor assets.
+applied from the editor after attach, so the runtime never loads editor assets.
 
 ## The frame, end to end
 

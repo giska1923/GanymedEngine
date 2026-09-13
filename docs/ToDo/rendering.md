@@ -291,3 +291,29 @@ Three things made the OpenGL bugs findable, and they generalise:
 From the same section, listed so they are not rediscovered as if they were new: multithreaded render
 (dropping the `renderFrame()` trick), compute-shader IBL bakes, `texturec`-preprocessed KTX textures
 with mips, and occlusion queries. None of these is blocking anything.
+
+## The 2D-era renderer types are now dead code
+
+Removing `Sandbox` took the last caller of the pre-3D 2D API with it. Checked across
+`GanymedEngine/source`, `GanymedEditor/source` and `GanymedRuntime/source`:
+
+- **`OrthographicCameraController`** (`.h`/`.cpp`) and **`SubTexture2D`** (`.h`/`.cpp`) are
+  referenced by nothing but their own definitions and the `GanymedE.h` umbrella header. Fully dead.
+- **`OrthographicCamera`** is *not* dead in the same way: `Renderer2D` and `Renderer3D` still carry
+  `BeginScene` overloads that take it, so deleting the class means deleting those overloads too.
+  No application calls them, but that is a wider cut than the two files above.
+
+Not folded into the Sandbox removal on purpose — deleting a project and deleting engine API are
+different changes, and the second one wants its own build. Three questions to answer before doing
+it, in order:
+
+1. Is a 2D path something the engine intends to keep? `Renderer2D` itself is *not* dead — the
+   editor uses it. Only the orthographic camera pairing is.
+2. If yes, the controller is still the wrong shape (it polls input directly and predates the
+   component camera), so the answer is probably "delete it and keep `Renderer2D`" rather than
+   "keep it for later".
+3. `SubTexture2D` is the one with a real future use — sprite atlases — and nothing equivalent
+   replaces it. Deleting it is the only part of this that loses a capability rather than removing
+   a corpse.
+
+Small, and worth doing once the game shakes out whether any 2D path is wanted at all.

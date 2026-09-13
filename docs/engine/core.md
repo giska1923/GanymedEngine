@@ -32,7 +32,7 @@ it wants anything other than the defaults:
 | `Name` | `"GanymedEngine"` | Window title |
 | `Width` / `Height` | `DEFAULT_WINDOW_WIDTH/HEIGHT` (1600×900 on Windows, 640×480 elsewhere) | Windowed size; ignored when `Fullscreen` |
 | `Fullscreen` | `false` | Borderless fullscreen — see [platform.md](platform.md#windows) |
-| `CustomTitleBar` | `false` | Undecorated host + ImGui-drawn title bar. The editor opts in; Sandbox and the runtime stay decorated. Wayland refuses it at `Window::Init` — see [platform.md](platform.md#custom-title-bar) |
+| `CustomTitleBar` | `false` | Undecorated host + ImGui-drawn title bar. The editor opts in; the runtime stays decorated. Wayland refuses it at `Window::Init` — see [platform.md](platform.md#custom-title-bar) |
 | `EnableImGui` | `true` | `false` builds no `ImGuiLayer` at all |
 
 `EnableImGui = false` is how a non-editor front-end (the standalone runtime) is hosted. It is a spec

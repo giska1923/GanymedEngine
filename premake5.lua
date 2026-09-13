@@ -104,6 +104,5 @@ group "Dependencies"
 group ""
 
 include "GanymedEngine"
-include "Sandbox"
 include "GanymedEditor"
 include "GanymedRuntime"

@@ -7,7 +7,6 @@ The repository contains four projects:
 | `GanymedEngine`  | The engine static library. All code under `GanymedEngine/source/`.                             |
 | `GanymedEditor`  | The editor application (scene editing, play mode, content browser).                            |
 | `GanymedRuntime` | The standalone game player: boots a scene into play mode, renders to the backbuffer, no ImGui. |
-| `Sandbox`        | A minimal test app (not covered by these docs).                                                |
 
 ## Documentation map
 

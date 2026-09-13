@@ -30,7 +30,7 @@ version bump.
 
 Editor chrome is Inter + Lucide, rasterized by FreeType. Colour, density and geometry come from
 `EditorTheme` / `ApplyTheme` — **not** from the engine. `ImGuiLayer` only calls `StyleColorsDark()`
-and ships the embedded font, so Sandbox does not depend on editor assets and the engine does not
+and ships the embedded font, so the runtime does not depend on editor assets and the engine does not
 hold a brand palette.
 
 `EditorFonts::Load` and `ApplyTheme(MakeDarkTheme())` run from `EditorLayer::OnAttach`, after

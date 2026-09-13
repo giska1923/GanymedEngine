@@ -128,7 +128,10 @@ automatically.
   viewport.
 - [`EditorCamera`](../../GanymedEngine/source/GanymedE/Renderer/EditorCamera.h) — the viewport
   camera: orbit (Alt+LMB rotate, MMB pan, scroll zoom) around a focal point; perspective.
-- `OrthographicCamera(+Controller)` — legacy 2D-era pair, still used by Sandbox.
+- `OrthographicCamera(+Controller)` — legacy 2D-era pair with **no application callers** since
+  Sandbox was removed. `Renderer2D`/`Renderer3D` still carry `BeginScene` overloads taking the
+  camera; `OrthographicCameraController` and `SubTexture2D` have no callers at all. See
+  [ToDo/rendering.md](../ToDo/rendering.md).
 
 ### Backend selection
 
