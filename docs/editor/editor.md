@@ -10,31 +10,42 @@ either order.
 
 ## Layout
 
-A dockable ImGui workspace. Host chrome is stacked in the dockspace window: menu bar, a **fixed
-41 px `SurfaceBg` toolbar child**, `DockSpace(size.y = -StatusBarHeight)`, then a **fixed 41 px
-`ChromeBg` status bar child**. Neither strip is a docked window: they cannot be resized,
-undocked, or given a tab. On first run, after **View → Reset Layout**, or when the dock-layout
-version in `imgui.ini` mismatches (`[GanymedEditor][Dock] Version`, currently 2), `EditorLayer`
-builds a default DockBuilder tree: Scene Hierarchy left, Properties below it, Viewport center,
-Stats right, Content Browser bottom. After that, panel layout persists in
-`GanymedEditor/imgui.ini`. Later chrome changes that alter the default tree bump that version
-so an existing ini does not keep a stale split. The status bar sits outside the dock tree, so
-it did not need a version bump.
+A dockable ImGui workspace. Host chrome is stacked in the dockspace window: a **fixed
+40 px `ChromeBg` title bar** (undecorated OS window; see below), a **fixed 41 px `SurfaceBg`
+toolbar child**, `DockSpace(size.y = -StatusBarHeight)`, then a **fixed 41 px `ChromeBg`
+status bar child**. Those four items are packed with `ItemSpacing (0,0)` — theme spacing is
+4 px, and between four host strips that overflows the window by a few pixels at every size
+and shows a host scrollbar. The host itself is `NoScrollbar`. None of those strips is a
+docked window: they cannot be resized, undocked, or given a tab. On Wayland the title bar is
+omitted and the ImGui menu bar stays, because an undecorated window cannot be moved. On first
+run, after **View → Reset Layout**, or when the dock-layout version in `imgui.ini` mismatches
+(`[GanymedEditor][Dock] Version`, currently 2), `EditorLayer` builds a default DockBuilder
+tree: Scene Hierarchy left, Properties below it, Viewport center, Stats right, Content
+Browser bottom. After that, panel layout persists in `GanymedEditor/imgui.ini`. Later chrome
+changes that alter the default tree bump that version so an existing ini does not keep a
+stale split. The title bar and status bar sit outside the dock tree, so they did not need a
+version bump.
 
 ## Look and feel
 
-Editor chrome is Inter + Lucide, rasterized by FreeType, on Cold War's neutral ramp with a
-Ganymed violet accent. Colour, density and geometry come from `EditorTheme` /
-`ApplyTheme` — **not** from the engine. `ImGuiLayer` only calls `StyleColorsDark()` and ships
-the embedded font, so Sandbox does not depend on editor assets and the engine does not hold a
-brand palette.
+Editor chrome is Inter + Lucide, rasterized by FreeType. Colour, density and geometry come from
+`EditorTheme` / `ApplyTheme` — **not** from the engine. `ImGuiLayer` only calls `StyleColorsDark()`
+and ships the embedded font, so Sandbox does not depend on editor assets and the engine does not
+hold a brand palette.
 
-`EditorFonts::Load` and `ApplyTheme(MakeGanymedTheme())` run from `EditorLayer::OnAttach`, after
+`EditorFonts::Load` and `ApplyTheme(MakeDarkTheme())` run from `EditorLayer::OnAttach`, after
 `ImGuiLayer` has created the context. `Load` `Clear()`s the atlas, so `io.FontDefault` is
 reassigned in the same call; `ImFont*` values held across a `Clear()` dangle.
 `ImGuiRendererBgfx::NewFrame` already rebuilds the bgfx font texture when `!io.Fonts->IsBuilt()`,
-which is why this needs no engine API. **View → Theme** switches the accent between Ganymed
-(lilac) and Cold War (sampled orange) without a theme editor.
+which is why this needs no engine API. **View → Theme** switches Dark (default, the shipping
+neutral ramp) and Light (the same roles inverted onto a light ramp). Both keep the lilac accent.
+The choice is a process-lifetime static, not written to `imgui.ini`.
+
+The menu lives inside the title-bar child, which has `ChildBg` pushed. `ApplyTheme` therefore
+patches ImGui's `ColorStack` backups after writing `ImGuiStyle`, so `PopStyleColor` cannot
+resurrect the previous ramp. Without that, `WindowBg` (Properties, Stats) updates and
+`ChildBg` does not — the outliner tree and the Content Browser folder/file panes are
+`BeginChild` with no local `ChildBg`, so they stayed on the old theme.
 
 ### Type
 
@@ -62,50 +73,55 @@ chrome.
 ### Colour tokens
 
 `EditorTheme` is a flat `ImU32` struct in `GanymedEditor/source/EditorTheme.h`. One `ApplyTheme`
-call writes the full `ImGuiStyle`. Two presets share the sampled Cold War ramp and differ only
-in accent:
+call writes the full `ImGuiStyle`. Two presets share the lilac accent and differ in the
+neutral ramp (and in the few semantic colours that have to sit *on* that ramp as text):
 
-| Token | Hex | Role |
-|---|---|---|
-| `ChromeBg` / `Border` | `#1A1A1A` | Title bar, tab strips, inspector headers, 1 px gutters. Same value — panels separate with chrome-coloured gaps, not lighter outlines |
-| `SurfaceSunken` | `#272727` | Recessed fills: inputs (`FrameBg`), column headers |
-| `SurfaceBg` | `#313131` | Panel content, active tab, window background |
-| `GrabBg` | `#4D4D4D` | Scrollbar grab, slider track hover |
-| `TextPrimary` | `#CCCCCC` | Body |
-| `TextDim` | `#878787` | Secondary / hint |
-| `TextDisabled` | `#717171` | Disabled, unselected tab labels |
-| `Accent` | `#B182ED` (Ganymed) / `#F7A356` (Cold War) | Selection fill, checkmarks, grabs |
-| `AccentHover` / `AccentActive` | `#C39BFF` / `#9152E0` (Ganymed); `#FFB56A` / `#E08A3C` (Cold War, derived not sampled) | Hover / pressed |
-| `AccentText` | `#B07BF4` / `#F7A356` | Accent-coloured text on a panel, no fill |
-| `TextOnAccent` | `#1A1A1A` | Glyphs on an accent fill (outliner primary selection) |
-| `Link` | `#589FFD` | Entity-name links in the outliner (phase 4). **Not** the accent |
-| `FieldMixed` | `#FFC759` | Multi-select fields that disagree |
-| `FieldOverride` | `#73B8FF` | Prefab instance fields that differ from the prototype |
-| `Warning` / `Error` | `#E6B450` / `#E5534B` | Ganymed-chosen; Cold War did not sample these |
-| `AxisX/Y/Z` | existing RGB | `DrawVec3Control` reset buttons |
-| `AssetTint[AssetType]` | per-type | Content Browser icon tints; directories stay white |
+| Token | Dark | Light | Role |
+|---|---|---|---|
+| `ChromeBg` / `Border` | `#1A1A1A` | `#DEDEDE` | Title bar, tab strips, inspector headers, 1 px gutters. Same value as each other — panels separate with chrome-coloured gaps, not lighter outlines |
+| `SurfaceSunken` | `#272727` | `#EBEBEB` | Recessed fills: inputs (`FrameBg`), column headers |
+| `SurfaceBg` | `#313131` | `#F5F5F5` | Panel content, active tab, window background |
+| `GrabBg` | `#4D4D4D` | `#C5C5C5` | Scrollbar grab, slider track hover |
+| `TextPrimary` | `#CCCCCC` | `#1A1A1A` | Body |
+| `TextDim` | `#878787` | `#5C5C5C` | Secondary / hint |
+| `TextDisabled` | `#717171` | `#9E9E9E` | Disabled, unselected tab labels |
+| `Accent` | `#B182ED` | `#B182ED` | Selection fill, checkmarks, grabs |
+| `AccentHover` / `AccentActive` | `#C39BFF` / `#9152E0` | same | Hover / pressed |
+| `AccentText` | `#B07BF4` | `#7B43C2` | Accent-coloured text on a panel, no fill. Light uses the icon violet; the lilac fails on `#F5F5F5` |
+| `TextOnAccent` | `#1A1A1A` | `#1A1A1A` | Glyphs on an accent fill (outliner primary selection) |
+| `Link` | `#589FFD` | `#1565C0` | Entity-name links in the outliner. **Not** the accent |
+| `FieldMixed` | `#FFC759` | `#B45309` | Multi-select fields that disagree |
+| `FieldOverride` | `#73B8FF` | `#185ABC` | Prefab instance fields that differ from the prototype |
+| `Warning` / `Error` | `#E6B450` / `#E5534B` | same | Status |
+| `AxisX/Y/Z` | existing RGB | same | `DrawVec3Control` reset buttons |
+| `AssetTint[AssetType]` | per-type | same | Content Browser icon tints; directories stay white |
 
-`FieldOverride` (`#73B8FF`) and `Link` (`#589FFD`) are both blue on purpose. They never share a
-panel — the outliner has no property rows and the inspector has no entity links — so collapsing
-them into one colour would only merge two independent signals later.
+`FieldOverride` and `Link` are both blue on purpose. They never share a panel — the outliner has
+no property rows and the inspector has no entity links — so collapsing them into one colour
+would only merge two independent signals later.
 
-The lilac fill (`#B182ED`) with dark glyphs is the shipping accent: a saturated copy of the app
-icon (`#7B43C2`) cannot reach Cold War orange's luminance, and keeping the dark fill with light
-glyphs would invert the treatment (selected row darker than the panel, which reads as
-collapsed/disabled).
+The lilac fill (`#B182ED`) with dark glyphs is the shipping accent on both presets: a saturated
+copy of the app icon (`#7B43C2`) is too dark as a selection fill, and keeping a dark fill with
+light glyphs would invert the treatment (selected row darker than the Dark panel, which reads as
+collapsed/disabled). On Light, `#7B43C2` is the `AccentText` stop instead.
+
+`NavWindowingDimBg` / `ModalWindowDimBg` are a fixed `#1A1A1A` veil, not `ChromeBg`. Light's
+chrome is pale; using it as the dim overlay would wash the editor out.
 
 ### Geometry and the two inversions
 
 `ApplyTheme` sets rounding to 0 everywhere, `FramePadding` to `(6, 3)` (18 px text + 6 = the
 measured 24 px row), `WindowMenuButtonPosition = ImGuiDir_None` (kills the dock-tab `▼`), tab
 overlines to 0 (active tab is a background change only), and `DockingSeparatorSize = 1`.
+Host chrome heights sit on the theme struct, not ImGuiStyle: `TitleBarHeight` 40,
+`ToolbarHeight` 41, `StatusBarHeight` 41.
 
 Two mappings invert ImGui's defaults, and they are not bugs:
 
 | ImGui colour | Token | Why |
 |---|---|---|
-| `FrameBg` | `SurfaceSunken` | Inputs are **recessed** — darker than the window, not lighter |
-| `Header` / `HeaderHovered` | `ChromeBg` / `SurfaceSunken` | Inspector section headers (`Attr::Section` CollapsingHeaders) are `#1A1A1A` on `#313131`. ImGui's default is a *lighter* fill |
+| `FrameBg` | `SurfaceSunken` | Inputs are **recessed** — darker than the window, not lighter. Holds on Light (`#EBEBEB` on `#F5F5F5`) as well as Dark (`#272727` on `#313131`) |
+| `Header` / `HeaderHovered` | `ChromeBg` / `SurfaceSunken` | Inspector section headers (`Attr::Section` CollapsingHeaders) are chrome on the panel (`#1A1A1A` on `#313131` in Dark, `#DEDEDE` on `#F5F5F5` in Light). ImGui's default is a *lighter* fill |
 
 `HeaderActive` is `Accent`, but that colour is only used while the mouse is **held**. An idle selected `TreeNode` / `Selectable` uses `Header`. Do not raise theme `Header` to Accent — inspector sections would go lilac. Selected rows that paint `TextOnAccent` must push `Header` / `HeaderHovered` / `HeaderActive` locally (outliner, Content Browser folder tree and list). Grid cells draw the fill themselves.
 
@@ -124,9 +140,24 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-The outliner, Properties, Content Browser, and Viewport are wrapped (`BeginPanel`). Remaining
-chrome is the custom window title bar (phase 9 of
-[editor-visual-parity.md](../ToDo/editor-visual-parity.md)).
+The outliner, Properties, Content Browser, and Viewport are wrapped (`BeginPanel`). The host
+title bar is `EditorTitleBar.cpp`, not a furniture helper — it has to talk to `Window` hit-testing.
+
+### Title bar
+
+The editor sets `ApplicationSpecification::CustomTitleBar`. Windows then runs undecorated with
+a Win32 subclass so drag, snap, edge resize and maximize-without-covering-the-taskbar stay
+native; Linux (X11) and macOS drag with `glfwSetWindowPos`. Wayland keeps OS decorations and
+this strip is not drawn.
+
+The strip is 40 px `ChromeBg`: app icon (`resources/icon.png`), a **Menu** button whose popup
+holds File / Edit / View (the same items the old `BeginMenuBar` had), one document tab (scene
+filename + dirty `*`, `SurfaceBg` fill — Ganymed has one open scene, so a strip of fake tabs
+would be a lie), then min / restore-or-max / close. Close hovers `Error`. The title-bar child
+zeros `WindowPadding` / `ItemSpacing` so chrome reaches the edges; the Menu popup pushes the
+pre-zero values back on before `BeginPopup`, or File/Edit/View inherit padding 0. Interactive
+rects are excluded from `HTCAPTION` so those clicks reach ImGui instead of moving the window.
+The engine side is documented in [platform.md](../engine/platform.md#custom-title-bar).
 
 ## EditorLayer
 
@@ -211,7 +242,7 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 | Ctrl (held while dragging gizmo) | Snapping |
 | Ctrl+U | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only) |
 | View → Reset Layout | Rebuild the default dock tree. Existing `imgui.ini` otherwise hides layout work |
-| View → Theme | Ganymed (lilac accent) or Cold War (sampled orange) — screenshot verification, not a theme editor |
+| View → Theme | Dark (default) or Light — same lilac accent, inverted chrome. Not persisted |
 | F1 | bgfx stats overlay |
 
 **Two shortcut layers, on purpose.** Q/W/E/R and Ctrl+U go through the engine event path
@@ -350,7 +381,7 @@ Two limitations worth knowing:
 
 ### Play / Stop (toolbar)
 
-The main toolbar is a 41 px `SurfaceBg` child (`Theme().ToolbarHeight`) between the menu bar and
+The main toolbar is a 41 px `SurfaceBg` child (`Theme().ToolbarHeight`) between the title bar and
 the dockspace. Left cluster: select / translate / rotate / scale (`ICON_LC_MOUSE_POINTER`,
 `MOVE`, `ROTATE_3D`, `SCALING`) via `EditorUI::IconButton` — 24×24, accent-filled when that
 mode is `m_GizmoType`. Centre: `ICON_LC_PLAY` + "Play" in `Success` (edit) or
@@ -386,7 +417,7 @@ present, procedural fallback otherwise), so imported meshes are lit immediately.
 A 41 px `ChromeBg` child (`Theme().StatusBarHeight`) below the dockspace. Phase 2 deliberately
 did not reserve the strip — `DockSpace(..., ImVec2(0, -StatusBarHeight))` would have been a
 41 px hole until this existed. `EditorUI::StatusBarItem` draws each chip. The scene name +
-dirty `*` used to live in the menu bar; it moved here rather than being duplicated.
+dirty `*` also appears on the title-bar document tab; the chip here keeps the full-path tooltip.
 
 Left, middot-separated:
 
@@ -861,6 +892,7 @@ so the first call always wins the delivery and the second type would never fire.
 | New panel | Create under `Panels/`, own it in `EditorLayer`, call `OnImGuiRender`, dock it in the DockBuilder block |
 | New chrome colour | Add a token on `EditorTheme`, map it in `ApplyTheme` if it is an ImGui style colour, consume `Theme().X` — never a new literal |
 | Panel furniture | `EditorUI::BeginPanel`, `PanelToolbarRow`, `SearchField`, `ColumnHeaderRow`, `IconButton`, `ToolbarSeparator`, `OverflowMenuButton`, `RowActionIcons`, `StatusBarItem` — do not hand-roll chrome |
+| Host title bar | `EditorTitleBar.cpp`; File/Edit/View stay in `EditorLayer::UI_Menus` |
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
 | Custom canvas widget | `EditorWidgets.cpp`; one `InvisibleButton` spanning the canvas so `ActiveId` holds for the drag; return true only on a real value change |
 | New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |

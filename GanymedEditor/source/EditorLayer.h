@@ -46,6 +46,8 @@ namespace GanymedE {
 
 		// UI
 		void UI_Toolbar();
+		void UI_TitleBar();
+		void UI_Menus();
 		void UI_StatusBar();
 		void UI_Viewport();
 	private:

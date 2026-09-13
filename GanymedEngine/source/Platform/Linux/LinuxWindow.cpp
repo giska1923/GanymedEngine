@@ -86,6 +86,20 @@ namespace GanymedE {
 					GE_CORE_WARN("Fullscreen requested but no video mode is available; staying windowed");
 				}
 			}
+			else if (props.CustomTitleBar)
+			{
+				// Wayland clients cannot move or resize themselves. An undecorated
+				// window there is stuck. Keep the OS frame rather than ship that.
+				if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
+				{
+					GE_CORE_WARN("CustomTitleBar is not supported on Wayland; keeping OS decorations");
+				}
+				else
+				{
+					glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+					m_CustomTitleBar = true;
+				}
+			}
 
 			m_Window = glfwCreateWindow((int)m_Data.Width, (int)m_Data.Height, m_Data.Title.c_str(), nullptr, nullptr);
 			++s_GLFWWindowCount;
@@ -215,6 +229,9 @@ namespace GanymedE {
 
 		glfwPollEvents();
 
+		if (m_CustomTitleBar)
+			TitleBarManualUpdate(m_Window, m_HitTest, m_TitleBarDrag);
+
 		// The GLFW callback only records the new size; the swapchain is reset
 		// here so it happens on a frame boundary. No-ops when nothing changed.
 		m_Context->Resize(m_Data.Width, m_Data.Height);
@@ -234,6 +251,30 @@ namespace GanymedE {
 	bool LinuxWindow::IsVSync() const
 	{
 		return m_Data.VSync;
+	}
+
+	bool LinuxWindow::IsMaximized() const
+	{
+		return glfwGetWindowAttrib(m_Window, GLFW_MAXIMIZED) == GLFW_TRUE;
+	}
+
+	void LinuxWindow::Minimize()
+	{
+		glfwIconifyWindow(m_Window);
+	}
+
+	void LinuxWindow::ToggleMaximize()
+	{
+		if (IsMaximized())
+			glfwRestoreWindow(m_Window);
+		else
+			glfwMaximizeWindow(m_Window);
+	}
+
+	void LinuxWindow::SetTitleBarHitTest(const WindowHitRect& caption,
+		const WindowHitRect* exclusions, uint32_t exclusionCount)
+	{
+		m_HitTest.Assign(caption, exclusions, exclusionCount);
 	}
 
 }

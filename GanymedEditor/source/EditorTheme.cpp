@@ -1,6 +1,7 @@
 #include "EditorTheme.h"
 
 #include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
 
 #include <cstdint>
 
@@ -17,21 +18,14 @@ namespace GanymedE::EditorUI {
 
 		void FillShared(EditorTheme& t)
 		{
-			t.ChromeBg      = Hex(0x1A1A1A);
-			t.SurfaceSunken = Hex(0x272727);
-			t.SurfaceBg     = Hex(0x313131);
-			t.Border        = Hex(0x1A1A1A);
-			t.GrabBg        = Hex(0x4D4D4D);
-			t.TextPrimary   = Hex(0xCCCCCC);
-			t.TextDim       = Hex(0x878787);
-			t.TextDisabled  = Hex(0x717171);
+			t.Accent       = Hex(0xB182ED);
+			t.AccentHover  = Hex(0xC39BFF);
+			t.AccentActive = Hex(0x9152E0);
+			t.TextOnAccent = Hex(0x1A1A1A);
 
-			t.Link          = Hex(0x589FFD);
-			t.Success       = Hex(0x65CC6B);
-			t.Warning       = Hex(0xE6B450); // Ganymed-chosen; Cold War did not sample these
-			t.Error         = Hex(0xE5534B);
-			t.FieldMixed    = Hex(0xFFC759); // (1.00, 0.78, 0.35)
-			t.FieldOverride = Hex(0x73B8FF); // (0.45, 0.72, 1.00)
+			t.Success = Hex(0x65CC6B);
+			t.Warning = Hex(0xE6B450);
+			t.Error   = Hex(0xE5534B);
 
 			t.AxisX = IM_COL32(204, 26, 38, 255);
 			t.AxisY = IM_COL32(51, 179, 51, 255);
@@ -49,9 +43,48 @@ namespace GanymedE::EditorUI {
 
 			t.RowHeight           = 26.0f;
 			t.ToolbarHeight       = 41.0f;
+			t.TitleBarHeight      = 40.0f;
 			t.TabBarHeight        = 35.0f;
 			t.StatusBarHeight     = 41.0f;
 			t.ColumnHeaderHeight  = 26.0f;
+		}
+
+		void FillDarkRamp(EditorTheme& t)
+		{
+			t.ChromeBg      = Hex(0x1A1A1A);
+			t.SurfaceSunken = Hex(0x272727);
+			t.SurfaceBg     = Hex(0x313131);
+			t.Border        = Hex(0x1A1A1A);
+			t.GrabBg        = Hex(0x4D4D4D);
+			t.TextPrimary   = Hex(0xCCCCCC);
+			t.TextDim       = Hex(0x878787);
+			t.TextDisabled  = Hex(0x717171);
+
+			t.AccentText    = Hex(0xB07BF4);
+			t.Link          = Hex(0x589FFD);
+			t.FieldMixed    = Hex(0xFFC759);
+			t.FieldOverride = Hex(0x73B8FF);
+		}
+
+		void FillLightRamp(EditorTheme& t)
+		{
+			// Same three-stop roles as Dark (chrome darkest, surface lightest, inputs
+			// recessed), stepped by about the same 23-level span so gutters still read.
+			t.ChromeBg      = Hex(0xDEDEDE);
+			t.SurfaceSunken = Hex(0xEBEBEB);
+			t.SurfaceBg     = Hex(0xF5F5F5);
+			t.Border        = Hex(0xDEDEDE);
+			t.GrabBg        = Hex(0xC5C5C5);
+			t.TextPrimary   = Hex(0x1A1A1A);
+			t.TextDim       = Hex(0x5C5C5C);
+			t.TextDisabled  = Hex(0x9E9E9E);
+
+			// Lilac/cyan/gold that sit on Dark panels fail as text on Light. Same hue,
+			// darker stop — Accent fill itself stays #B182ED.
+			t.AccentText    = Hex(0x7B43C2);
+			t.Link          = Hex(0x1565C0);
+			t.FieldMixed    = Hex(0xB45309);
+			t.FieldOverride = Hex(0x185ABC);
 		}
 
 		void SetCol(ImGuiStyle& style, ImGuiCol idx, ImU32 c, float alpha = 1.0f)
@@ -68,28 +101,19 @@ namespace GanymedE::EditorUI {
 		return s_Theme;
 	}
 
-	EditorTheme MakeGanymedTheme()
+	EditorTheme MakeDarkTheme()
 	{
 		EditorTheme t{};
 		FillShared(t);
-		t.Accent       = Hex(0xB182ED);
-		t.AccentHover  = Hex(0xC39BFF);
-		t.AccentActive = Hex(0x9152E0);
-		t.AccentText   = Hex(0xB07BF4);
-		t.TextOnAccent = Hex(0x1A1A1A);
+		FillDarkRamp(t);
 		return t;
 	}
 
-	EditorTheme MakeColdwarTheme()
+	EditorTheme MakeLightTheme()
 	{
 		EditorTheme t{};
 		FillShared(t);
-		// Hover/active oranges are derived (lighten/darken of the sampled fill), not sampled.
-		t.Accent       = Hex(0xF7A356);
-		t.AccentHover  = Hex(0xFFB56A);
-		t.AccentActive = Hex(0xE08A3C);
-		t.AccentText   = Hex(0xF7A356);
-		t.TextOnAccent = Hex(0x1A1A1A);
+		FillLightRamp(t);
 		return t;
 	}
 
@@ -153,8 +177,8 @@ namespace GanymedE::EditorUI {
 		SetCol(style, ImGuiCol_ButtonHovered, theme.GrabBg);
 		SetCol(style, ImGuiCol_ButtonActive, theme.ChromeBg);
 
-		// Headers are also darker than the window — Cold War's inspector section
-		// headers are #1A1A1A on #313131. ImGui's default is a *lighter* fill.
+		// Headers are also darker than the window — inspector section headers are
+		// ChromeBg on SurfaceBg. ImGui's default is a *lighter* fill.
 		// HeaderActive = Accent is the *held* colour only. Idle selected TreeNodes
 		// use Header, so rows that overlay TextOnAccent must push Header locally
 		// (outliner, Content Browser). Do not set theme Header to Accent — inspector
@@ -198,8 +222,23 @@ namespace GanymedE::EditorUI {
 		SetCol(style, ImGuiCol_DragDropTarget, theme.Accent);
 		SetCol(style, ImGuiCol_NavCursor, theme.Accent);
 		SetCol(style, ImGuiCol_NavWindowingHighlight, theme.TextPrimary, 0.70f);
-		SetCol(style, ImGuiCol_NavWindowingDimBg, theme.ChromeBg, 0.60f);
-		SetCol(style, ImGuiCol_ModalWindowDimBg, theme.ChromeBg, 0.70f);
+		// Veil is always dark. ChromeBg is light under Light, so using it here would
+		// wash the editor out instead of dimming it.
+		SetCol(style, ImGuiCol_NavWindowingDimBg, Hex(0x1A1A1A), 0.60f);
+		SetCol(style, ImGuiCol_ModalWindowDimBg, Hex(0x1A1A1A), 0.70f);
+
+		// View → Theme runs from the Menu popup, while the title bar still has
+		// ChildBg pushed. PushStyleColor snapshots the *old* ramp; PopStyleColor
+		// would write it back over this Apply() and leave every BeginChild that
+		// does not push its own ChildBg on the previous theme (outliner tree,
+		// Content Browser folder/file panes). WindowBg is not on that stack, which
+		// is why Properties/Stats switched and those three wells did not.
+		ImGuiContext* ctx = ImGui::GetCurrentContext();
+		if (ctx)
+		{
+			for (ImGuiColorMod& mod : ctx->ColorStack)
+				mod.BackupValue = style.Colors[mod.Col];
+		}
 	}
 
 }

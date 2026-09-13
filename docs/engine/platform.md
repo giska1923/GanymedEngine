@@ -20,7 +20,8 @@ the other platforms):
 - **Resize is applied in `OnUpdate`, not in the GLFW callback** — the callback only updates the
   cached size (and emits the event); `BgfxContext::Resize` runs at the frame boundary so
   `bgfx::reset` never lands mid-frame.
-- `OnUpdate` = `glfwPollEvents()` + `BgfxContext::Frame()`.
+- `OnUpdate` = `glfwPollEvents()` + `BgfxContext::Frame()`. Custom title bars on Linux/macOS
+  also run the manual caption drag here, after poll.
 - VSync forwards to the context (a `bgfx::reset` flag, not `glfwSwapInterval`).
 - Shutdown order matters: the context (i.e. bgfx) is destroyed **before** `glfwDestroyWindow`,
   because bgfx holds the native window handle.
@@ -39,6 +40,34 @@ drive and which costs alt-tab friendliness for nothing at this scale. Exclusive 
 scope (see the roadmap's "not doing" list). Verified on Windows; Linux and macOS carry the same code
 best-effort — an undecorated window is a hint a window manager may override on X11/Wayland, and on
 macOS it sits under the menu bar rather than over it.
+
+### Custom title bar
+
+`WindowProps::CustomTitleBar` (from `ApplicationSpecification::CustomTitleBar`, default **false**)
+creates an undecorated GLFW window so the editor can draw its own 40 px title bar. Sandbox and
+GanymedRuntime leave the flag off and keep a normal OS frame.
+
+Two platform paths, behind the same `Window` methods (`HasCustomTitleBar`, `SetTitleBarHitTest`,
+`Minimize`, `ToggleMaximize`, `IsMaximized`):
+
+- **Windows** subclasses the GLFW HWND (`SetWindowLongPtr(GWLP_WNDPROC)`). `WM_NCCALCSIZE`
+  makes the client area cover the frame; when maximized it is clamped to the monitor work area
+  (plus a 1 px top inset if the taskbar auto-hides, so Windows does not treat the window as
+  fullscreen). `WM_NCHITTEST` returns `HTCAPTION` over the title strip except where the editor
+  reported an interactive rect (Menu, min/max/close), and `HTLEFT`/`HTTOPLEFT`/… in a 6 DIP
+  border. The OS then provides drag, Aero Snap, Win+Arrow, edge resize, double-click-maximize,
+  and the DWM drop shadow (`DwmExtendFrameIntoClientArea`). Win11 rounded corners are turned
+  off (`DWMWCP_DONOTROUND`) to match the rest of the square chrome.
+- **Linux / macOS** use a manual `glfwSetWindowPos` drag from the same hit-test rects, plus
+  double-click to maximize. That path does **not** get compositor snap or a native shadow.
+- **Wayland** cannot move an undecorated window (`glfwSetWindowPos` is a no-op). If the flag is
+  set, `LinuxWindow::Init` logs a warning, leaves `GLFW_DECORATED` on, and
+  `HasCustomTitleBar()` returns false so the editor keeps the ImGui menu bar rather than
+  shipping a window that cannot be moved.
+
+`HasCustomTitleBar()` is the *realized* flag, not the spec request. Hit-test rects are client
+pixels, reported every frame from the title bar after it draws; `WM_NCHITTEST` cannot ask ImGui,
+so the exclusions are geometric rather than `IsAnyItemHovered()`.
 
 ## BgfxContext
 

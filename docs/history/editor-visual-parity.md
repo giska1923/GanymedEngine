@@ -99,7 +99,7 @@ signals ("this is selected" and "this is an entity reference") into one colour.
 
 | # | Gap | Impact | Effort | Phase |
 |---|---|---|---|---|
-| 1 | White OS title bar against a dark app | very high | high | 9 |
+| 1 | White OS title bar against a dark app | very high | high | 9 **done** |
 | 2 | Icon font in the atlas; most panels still unlabeled | very high | medium | 0 **done** (chrome icons consumed through 6) |
 | 3 | Montserrat (geometric display face) instead of a UI grotesque | high | low | 0 **done** (Inter; Montserrat remains for RmlUi HUD) |
 | 4 | Noisy near-identical greys; rounding on | high | low | 1 **done** |
@@ -594,7 +594,20 @@ top edge of the viewport after the change.
 
 ---
 
-### Phase 9 — Custom window chrome
+### Phase 9 — Custom window chrome — **done**
+
+`ApplicationSpecification::CustomTitleBar` (editor true, Sandbox/runtime false). Windows
+subclasses the GLFW HWND for `WM_NCCALCSIZE` / `WM_NCHITTEST` so snap, edge resize, DWM
+shadow and maximize-to-work-area stay native. Linux (X11) and macOS drag with
+`glfwSetWindowPos`; Wayland keeps OS decorations. `EditorTitleBar` draws the 40 px strip
+(app icon, Menu popup with File/Edit/View, one honest document tab, window buttons).
+Hit-test exclusions are client rects, not `IsAnyItemHovered()` — `WM_NCHITTEST` cannot ask
+ImGui. Editor Debug x64 compiles. Interactive snap / taskbar / DPI still need a run on the
+machine — this change did not exercise the HWND subclass live. Live description:
+[editor.md](../editor/editor.md#title-bar),
+[platform.md](../engine/platform.md#custom-title-bar).
+
+The spec that was executed:
 
 Last, deliberately. This is roughly a quarter of the milestone's effort for one 40 px strip, and it
 is where every platform bug in this plan lives. It is also the single loudest mismatch, so it is
@@ -672,13 +685,12 @@ menu buttons that move the window instead of opening.
 | 6 — asset browser | **done** |
 | 7 — status bar | **done** |
 | 8 — viewport bars | **done** |
-| 9 — custom chrome | 2–3 days |
-| | **~11–13 days** |
+| 9 — custom chrome | **done** |
+| | **done** |
 
-**Phases 0–2 are ~2 days and close most of the perceived gap** — the neutral ramp, zero rounding, a
-grotesque at the right density, icons, and a real toolbar. If the milestone has to be cut, cut from
-the back: 9 is the most expensive, 6 is the second, and neither changes the first impression as much
-as phase 1 does.
+**Phases 0–2 close most of the perceived gap** — the neutral ramp, zero rounding, a
+grotesque at the right density, icons, and a real toolbar. Phase 9 is the remaining loud
+mismatch (the white OS title bar) and is the most expensive strip in the milestone.
 
 ## Two things this plan cannot fix
 

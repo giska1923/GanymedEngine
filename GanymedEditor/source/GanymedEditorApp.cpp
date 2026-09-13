@@ -6,14 +6,26 @@
 #include "EditorLayer.h"
 
 namespace GanymedE {
+
+	namespace {
+
+		ApplicationSpecification MakeEditorSpec()
+		{
+			ApplicationSpecification spec;
+			spec.Name = "GanymedEditor";
+			spec.CustomTitleBar = true;
+			return spec;
+		}
+
+	}
+
 	class GanymedEditor : public Application {
 	public:
-		GanymedEditor() : Application("GanymedEditor")
+		GanymedEditor() : Application(MakeEditorSpec())
 		{
 			PushLayer(new EditorLayer());
 		}
 		~GanymedEditor() {}
-
 	};
 
 	Application* CreateApplication() {

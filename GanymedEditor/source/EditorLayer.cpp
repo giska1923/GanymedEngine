@@ -4,6 +4,7 @@
 #include "EditorIcons.h"
 #include "EditorInspector.h"
 #include "EditorTheme.h"
+#include "EditorTitleBar.h"
 #include "EditorWidgets.h"
 
 #include <imgui/imgui.h>
@@ -114,7 +115,8 @@ namespace GanymedE {
 		// first): the context exists, the default atlas is already uploaded, and
 		// Clear() here makes NewFrame rebuild it with Inter + Lucide.
 		EditorUI::EditorFonts::Load();
-		EditorUI::ApplyTheme(EditorUI::MakeGanymedTheme());
+		EditorUI::ApplyTheme(EditorUI::MakeDarkTheme());
+		EditorUI::InitTitleBar();
 		RegisterDockLayoutSettingsHandler();
 
 		// After Reflection::Init (Application's constructor), because a drawer is keyed on a
@@ -152,6 +154,7 @@ namespace GanymedE {
 	void EditorLayer::OnDetach()
 	{
 		GE_PROFILE_FUNCTION();
+		EditorUI::ShutdownTitleBar();
 		AssetManager::Shutdown();
 	}
 
@@ -282,7 +285,11 @@ namespace GanymedE {
 
 		// We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not dockable into,
 		// because it would be confusing to have two docking targets within each others.
-		ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+		const bool customChrome = Application::Get().GetWindow().HasCustomTitleBar();
+		ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking;
+		if (!customChrome)
+			window_flags |= ImGuiWindowFlags_MenuBar;
+		window_flags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 		if (opt_fullscreen)
 		{
 			ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -311,86 +318,15 @@ namespace GanymedE {
 		if (opt_fullscreen)
 			ImGui::PopStyleVar(2);
 
-		if (ImGui::BeginMenuBar())
+		// Theme ItemSpacing.y is 4. Between title, toolbar, DockSpace and status that
+		// accumulates into a few pixels of overflow and a host scrollbar at every size.
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+
+		if (customChrome)
+			UI_TitleBar();
+		else if (ImGui::BeginMenuBar())
 		{
-			if (ImGui::BeginMenu("File"))
-			{
-				// Disabling fullscreen would allow the window to be moved to the front of other windows,
-				// which we can't undo at the moment without finer window depth/z control.
-				//ImGui::MenuItem("Fullscreen", NULL, &opt_fullscreen_persistant);
-
-				if (ImGui::MenuItem("New", "Ctrl+N"))
-					NewScene();
-
-				if (ImGui::MenuItem("Open...", "Ctrl+O"))
-					OpenScene();
-
-				if (ImGui::MenuItem("Save", "Ctrl+S"))
-					SaveScene();
-
-				if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
-					SaveSceneAs();
-
-				if (ImGui::MenuItem("Exit")) Application::Get().Close();
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("Edit"))
-			{
-				const bool editing = m_SceneState == SceneState::Edit;
-				if (ImGui::MenuItem("Undo", "Ctrl+Z", false, editing && m_UndoStack.CanUndo()))
-					m_UndoStack.Undo(*m_EditorScene);
-
-				if (ImGui::MenuItem("Redo", "Ctrl+Y", false, editing && m_UndoStack.CanRedo()))
-					m_UndoStack.Redo(*m_EditorScene);
-
-				ImGui::Separator();
-
-				const bool hasSelection = editing && m_SceneHierarchyPanel.GetSelectedEntity();
-				if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection))
-					m_SceneHierarchyPanel.DuplicateSelectedEntity();
-
-				if (ImGui::MenuItem("Delete", "Del", false, hasSelection))
-					m_SceneHierarchyPanel.DeleteSelectedEntity();
-
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("View"))
-			{
-				// RmlUi's own inspector: element tree, computed RCSS, event log.
-				// Debug builds only - the Debugger sources are not compiled otherwise.
-				bool debuggerVisible = UIEngine::IsDebuggerVisible();
-				if (ImGui::MenuItem("Game UI Debugger", "Ctrl+U", &debuggerVisible))
-					UIEngine::SetDebuggerVisible(debuggerVisible);
-
-				if (ImGui::MenuItem("Reset Layout"))
-					m_ResetDockLayout = true;
-
-				ImGui::Separator();
-
-				// 0 = Ganymed (OnAttach default), 1 = Cold War. Two menu items, not a
-				// theme editor — the Cold War preset exists so a screenshot can match
-				// the sampled ramp without swapping the shipping accent.
-				static int s_ThemePreset = 0;
-				if (ImGui::BeginMenu("Theme"))
-				{
-					if (ImGui::MenuItem("Ganymed", nullptr, s_ThemePreset == 0))
-					{
-						s_ThemePreset = 0;
-						EditorUI::ApplyTheme(EditorUI::MakeGanymedTheme());
-					}
-					if (ImGui::MenuItem("Cold War", nullptr, s_ThemePreset == 1))
-					{
-						s_ThemePreset = 1;
-						EditorUI::ApplyTheme(EditorUI::MakeColdwarTheme());
-					}
-					ImGui::EndMenu();
-				}
-
-				ImGui::EndMenu();
-			}
-
+			UI_Menus();
 			ImGui::EndMenuBar();
 		}
 
@@ -425,6 +361,7 @@ namespace GanymedE {
 		}
 
 		UI_StatusBar();
+		ImGui::PopStyleVar();
 
 		m_SceneHierarchyPanel.OnImGuiRender();
 		m_ContentBrowserPanel.OnImGuiRender();
@@ -532,6 +469,92 @@ namespace GanymedE {
 	//
 	// WantTextInput is the one gate: while a text field is focused, Ctrl+Z belongs to ImGui's
 	// own text undo, which is what every editor does.
+	void EditorLayer::UI_TitleBar()
+	{
+		EditorUI::TitleBarState state;
+		state.DocumentName = m_EditorScenePath.empty()
+			? std::string("Untitled") : m_EditorScenePath.filename().string();
+		state.Dirty = m_UndoStack.IsDirtySinceSave();
+		EditorUI::DrawTitleBar(state, [this] { UI_Menus(); });
+	}
+
+	void EditorLayer::UI_Menus()
+	{
+		if (ImGui::BeginMenu("File"))
+		{
+			if (ImGui::MenuItem("New", "Ctrl+N"))
+				NewScene();
+
+			if (ImGui::MenuItem("Open...", "Ctrl+O"))
+				OpenScene();
+
+			if (ImGui::MenuItem("Save", "Ctrl+S"))
+				SaveScene();
+
+			if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
+				SaveSceneAs();
+
+			if (ImGui::MenuItem("Exit"))
+				Application::Get().Close();
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("Edit"))
+		{
+			const bool editing = m_SceneState == SceneState::Edit;
+			if (ImGui::MenuItem("Undo", "Ctrl+Z", false, editing && m_UndoStack.CanUndo()))
+				m_UndoStack.Undo(*m_EditorScene);
+
+			if (ImGui::MenuItem("Redo", "Ctrl+Y", false, editing && m_UndoStack.CanRedo()))
+				m_UndoStack.Redo(*m_EditorScene);
+
+			ImGui::Separator();
+
+			const bool hasSelection = editing && m_SceneHierarchyPanel.GetSelectedEntity();
+			if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection))
+				m_SceneHierarchyPanel.DuplicateSelectedEntity();
+
+			if (ImGui::MenuItem("Delete", "Del", false, hasSelection))
+				m_SceneHierarchyPanel.DeleteSelectedEntity();
+
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("View"))
+		{
+			// RmlUi's own inspector: element tree, computed RCSS, event log.
+			// Debug builds only - the Debugger sources are not compiled otherwise.
+			bool debuggerVisible = UIEngine::IsDebuggerVisible();
+			if (ImGui::MenuItem("Game UI Debugger", "Ctrl+U", &debuggerVisible))
+				UIEngine::SetDebuggerVisible(debuggerVisible);
+
+			if (ImGui::MenuItem("Reset Layout"))
+				m_ResetDockLayout = true;
+
+			ImGui::Separator();
+
+			// 0 = Dark (OnAttach default), 1 = Light. Same violet accent; the
+			// ramps swap. Not persisted — imgui.ini has no theme key.
+			static int s_ThemePreset = 0;
+			if (ImGui::BeginMenu("Theme"))
+			{
+				if (ImGui::MenuItem("Dark", nullptr, s_ThemePreset == 0))
+				{
+					s_ThemePreset = 0;
+					EditorUI::ApplyTheme(EditorUI::MakeDarkTheme());
+				}
+				if (ImGui::MenuItem("Light", nullptr, s_ThemePreset == 1))
+				{
+					s_ThemePreset = 1;
+					EditorUI::ApplyTheme(EditorUI::MakeLightTheme());
+				}
+				ImGui::EndMenu();
+			}
+
+			ImGui::EndMenu();
+		}
+	}
+
 	void EditorLayer::HandleShortcuts()
 	{
 		if (ImGui::GetIO().WantTextInput)

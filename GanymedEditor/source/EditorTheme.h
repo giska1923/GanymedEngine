@@ -24,12 +24,12 @@ namespace GanymedE::EditorUI {
 		ImU32 AxisX, AxisY, AxisZ;
 		ImU32 AssetTint[kAssetTintCount];
 		// Metrics (consumed by later phases; ApplyTheme writes the ImGuiStyle equivalents)
-		float RowHeight, ToolbarHeight, TabBarHeight, StatusBarHeight, ColumnHeaderHeight;
+		float RowHeight, ToolbarHeight, TitleBarHeight, TabBarHeight, StatusBarHeight, ColumnHeaderHeight;
 	};
 
 	const EditorTheme& Theme();
-	EditorTheme MakeGanymedTheme();
-	EditorTheme MakeColdwarTheme();
+	EditorTheme MakeDarkTheme();
+	EditorTheme MakeLightTheme();
 	void ApplyTheme(const EditorTheme& theme);
 
 	inline ImVec4 Color(ImU32 c)

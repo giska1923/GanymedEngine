@@ -87,6 +87,11 @@ namespace GanymedE {
 					GE_CORE_WARN("Fullscreen requested but no video mode is available; staying windowed");
 				}
 			}
+			else if (props.CustomTitleBar)
+			{
+				glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+				m_CustomTitleBar = true;
+			}
 
 			m_Window = glfwCreateWindow((int)m_Data.Width, (int)m_Data.Height, m_Data.Title.c_str(), nullptr, nullptr);
 			++s_GLFWWindowCount;
@@ -216,6 +221,9 @@ namespace GanymedE {
 
 		glfwPollEvents();
 
+		if (m_CustomTitleBar)
+			TitleBarManualUpdate(m_Window, m_HitTest, m_TitleBarDrag);
+
 		// The GLFW callback only records the new size; the swapchain is reset
 		// here so it happens on a frame boundary. No-ops when nothing changed.
 		m_Context->Resize(m_Data.Width, m_Data.Height);
@@ -235,6 +243,30 @@ namespace GanymedE {
 	bool macOSWindow::IsVSync() const
 	{
 		return m_Data.VSync;
+	}
+
+	bool macOSWindow::IsMaximized() const
+	{
+		return glfwGetWindowAttrib(m_Window, GLFW_MAXIMIZED) == GLFW_TRUE;
+	}
+
+	void macOSWindow::Minimize()
+	{
+		glfwIconifyWindow(m_Window);
+	}
+
+	void macOSWindow::ToggleMaximize()
+	{
+		if (IsMaximized())
+			glfwRestoreWindow(m_Window);
+		else
+			glfwMaximizeWindow(m_Window);
+	}
+
+	void macOSWindow::SetTitleBarHitTest(const WindowHitRect& caption,
+		const WindowHitRect* exclusions, uint32_t exclusionCount)
+	{
+		m_HitTest.Assign(caption, exclusions, exclusionCount);
 	}
 
 }
