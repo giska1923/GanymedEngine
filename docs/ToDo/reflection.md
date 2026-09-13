@@ -11,6 +11,13 @@ What is left is a short tail, roughly in descending order of value.
 Prefab* beside *Revert to Prefab*, writing that one field into the asset and nothing else. See
 [editor.md](../editor/editor.md#per-property-overrides).
 
+**The prefab template cache is done** — it is dropped on scene change, after a whole-instance
+apply, and now on a `.gprefab` edited on disk. That last one was recorded as blocked on prefabs
+having no asset manager; it was not. The watcher had always detected the edit, settled it and
+resolved the handle, and `OnAssetModified` dropped it because no manager owned the type. A change
+listener forwards it in about fifteen lines, and no `Prefab` asset class had to be invented. See
+[assets.md](../engine/assets.md#change-listeners-for-state-the-asset-layer-does-not-own).
+
 **The three multi-entity editing gaps are done too**: shift-range selection, the gizmo driving the
 whole selection, and the no-active-phase undo path — which was not a gap but a correctness bug, and
 lost data (toggle a checkbox across four entities, Ctrl+Z, and one came back). See
@@ -24,19 +31,6 @@ instantiate, so it was a crash rather than diff noise. Both are described in
 [scene.md](../engine/scene.md).
 
 ---
-
-## The prefab template cache cannot see a `.gprefab` edited on disk
-
-Hooking `AssetWatcher` would fix it — except prefabs are path-resolved and have no asset manager, so
-`AssetManager::OnAssetModified` returns false for them. That is the real blocker and it is an asset
-layer question, not an editor one. See [assets.md](../engine/assets.md).
-
-The *other* half of this entry is now closed, and it was worse than recorded: this used to say the
-cache "is dropped on scene change", but `InvalidatePrefabTemplates()` had **no call sites at all** —
-it was declared, defined and never called. So a template was cached the first time it was asked for
-and never dropped, and a whole-instance apply left every field of that instance marked as overridden
-until the editor restarted. It is now called on scene change and after a whole-instance apply; only
-the on-disk-edit case above is still open.
 
 ## Per-field override marking never fully closes
 

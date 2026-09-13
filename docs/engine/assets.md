@@ -809,8 +809,28 @@ recovers on the following save rather than needing a manual Reload.
 - It **does not reach down into an asset's own textures.** `Reload` evicts a material's maps so a
   reimport re-reads them; here the texture did not change, so dropping it would only cost a re-upload.
 - It **does reach outward**, to whatever captured the changed asset — see below.
-- It returns false for a type with no manager, so saving a `.ganymede` from the editor is silent
-  rather than logging a reload of something nothing caches.
+- It returns false when **nothing acted on the change**, so saving a `.ganymede` from the editor is
+  silent rather than logging a reload of something nothing caches.
+
+#### Change listeners, for state the asset layer does not own
+
+`AddAssetChangedListener(fn)` registers a `bool(AssetHandle, AssetType)` called for **every**
+changed asset, managed or not, after any eviction — so a listener always sees a state where the
+manager has already let go of the old object. Returning true means "I acted on this", which is what
+the watcher counts and logs as a reload; a listener that does not care about a type must return
+false, or a scene save would report itself as a hot reload every time.
+
+This exists because a type with no manager used to end the story. The watcher had already detected
+the change, settled it and resolved the handle, and `OnAssetModified` then dropped the event on the
+floor — which made "a `.gprefab` edited on disk is not noticed" look like it was blocked on building
+a Prefab asset manager. It was not: nothing was forwarding the event. The editor's prefab-override
+template cache is the first listener, and script and audio hot reload are the obvious next two —
+which is why it is a list rather than one slot that three subscribers would silently overwrite.
+
+A listener is *not* a way to give a path-resolved type a cache by the back door. Script, Audio,
+Prefab and Scene stay manager-less for the reasons under
+[Path-resolved types](#path-resolved-types) — this only says that having nothing to evict is
+not the same as nobody caring.
 
 ### Dependency propagation, by scanning rather than by a map
 

@@ -233,11 +233,12 @@ Two limitations worth knowing:
   *Revert Instance* does, since it rebuilds the subtree from the file.
 - The template cache is keyed on the prefab handle and dropped on every scene change (from
   `EditorLayer::RetargetPanels`, which new / open / play / stop all pass through) and after a
-  whole-instance apply, which rewrites the file underneath it. Editing a `.gprefab` **on disk**
-  while a scene is open still will not refresh it until the scene is reopened; the cache has no way
-  to notice a file edit on its own, and hooking the watcher is blocked on prefabs being
-  path-resolved with no asset manager. Per-field apply needs no invalidation at all — it edits the
-  template itself, so the two agree by construction and the blue tint clears on the next frame.
+  whole-instance apply, which rewrites the file underneath it, and **on a `.gprefab` edited on
+  disk** — an external editor, a git checkout, a branch switch. That last one arrives through
+  `AssetManager::AddAssetChangedListener`: the watcher had always detected the edit, but nothing
+  forwarded it for a type with no asset manager. Per-field apply needs no invalidation at all — it
+  edits the template itself, so the two agree by construction and the blue tint clears on the next
+  frame.
 
 ### Play / Stop (toolbar)
 

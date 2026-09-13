@@ -49,6 +49,11 @@ namespace GanymedE {
 		// Reset at the top of every Update, so the figure the editor shows is "last frame".
 		uint32_t LoadsDeferredThisFrame = 0;
 
+		// A list rather than one slot: the editor wants prefab-template invalidation today, and
+		// script and audio hot reload are the obvious next two - all three would otherwise be
+		// overwriting each other's single callback silently.
+		std::vector<AssetManager::AssetChangedFn> ChangedListeners;
+
 		// `.meta` sidecars found by the last scan whose asset is gone. Collected rather than
 		// acted on: a sidecar is the only link between a file and every scene handle naming it,
 		// so an asset that is merely *absent right now* - a partial checkout, a branch without
@@ -295,6 +300,7 @@ namespace GanymedE {
 		s_Data.LegacyHandles.clear();
 		s_Data.LegacyRegistryPresent = false;
 		s_Data.WarnedUnknownHandles.clear();
+		s_Data.ChangedListeners.clear();
 		AssetWatcher::Shutdown();
 
 		// Cancel first, then destroy. Every manager's in-flight parses are asked to stop before
@@ -801,6 +807,12 @@ namespace GanymedE {
 
 	}
 
+	void AssetManager::AddAssetChangedListener(AssetChangedFn listener)
+	{
+		if (listener)
+			s_Data.ChangedListeners.push_back(std::move(listener));
+	}
+
 	bool AssetManager::OnAssetModified(AssetHandle handle)
 	{
 		const AssetMetadata* metadata = GetMetadata(handle);
@@ -808,18 +820,29 @@ namespace GanymedE {
 			return false;
 
 		// Scene, Script, Audio and Prefab have no manager and nothing cached here: Lua owns its
-		// chunks and miniaudio owns decoded audio. Saving a `.ganymede` from the editor lands
-		// here every time, so this is also what keeps the log quiet.
+		// chunks and miniaudio owns decoded audio. They still reach the listeners below - having
+		// no manager means the asset layer has nothing to evict, not that nobody cares.
 		IAssetManager* manager = AssetManagerRegistry::Find(metadata->Type);
-		if (!manager)
+		bool acted = manager != nullptr;
+
+		if (manager)
+		{
+			manager->Evict(handle);
+
+			// Nothing re-resolves between these two calls - Evict only drops cache entries and
+			// bumps the epoch - so the whole set is evicted before any Get() can hand back a
+			// stale object.
+			if (metadata->Type == AssetType::Texture)
+				EvictTextureDependents(handle);
+		}
+
+		// After the eviction, so a listener never sees a state where the manager is still
+		// holding the old object.
+		for (const AssetChangedFn& listener : s_Data.ChangedListeners)
+			acted |= listener(handle, metadata->Type);
+
+		if (!acted)
 			return false;
-
-		manager->Evict(handle);
-
-		// Nothing re-resolves between these two calls - Evict only drops cache entries and bumps
-		// the epoch - so the whole set is evicted before any Get() can hand back a stale object.
-		if (metadata->Type == AssetType::Texture)
-			EvictTextureDependents(handle);
 
 		// Deliberately **no** CompiledCache::Invalidate. Reload calls it because it means
 		// "reimport now"; a file event does not. The epoch record already distinguishes an edit

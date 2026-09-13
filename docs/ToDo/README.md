@@ -30,7 +30,7 @@ documented.** A file here is a promise, not a description.
 | Document | Covers | Items |
 |---|---|---|
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred | 1 (parked) |
-| [reflection.md](reflection.md) | Prefab template cache vs. on-disk edits | 2 |
+| [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
 | [assets.md](assets.md) | Dependency hashing; the Apply budget cannot subdivide one apply | 2 |
 | [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, whether to adopt Tracy | 3 |
 

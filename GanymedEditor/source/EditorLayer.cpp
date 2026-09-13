@@ -118,6 +118,23 @@ namespace GanymedE {
 
 		AssetManager::Init();
 
+		// A `.gprefab` rewritten on disk - by an external editor, a git checkout, a branch switch
+		// - invalidates the prefab-override template cache, which is the only thing in the editor
+		// keyed on a prefab's contents. The watcher has always detected this; nothing forwarded
+		// it, because Prefab has no asset manager to evict from.
+		//
+		// Drops every template rather than the one that changed. They rebuild lazily on the next
+		// query, one Instantiate each, and only for prefabs an instance is actually being
+		// inspected against - which is a smaller cost than keeping a second index to be precise.
+		AssetManager::AddAssetChangedListener([](AssetHandle, AssetType type)
+		{
+			if (type != AssetType::Prefab)
+				return false;
+
+			EditorUI::InvalidatePrefabTemplates();
+			return true;
+		});
+
 		// After Reflection::Init (Application's constructor), because a drawer is keyed on a
 		// meta_type that has to exist first.
 		EditorUI::InitPropertyDrawers();
