@@ -73,9 +73,33 @@ to watch, since the runtime's registry is tracked on purpose (a shipped game nee
 These are known *now*. Doing them first collapses most of the branch-juggling that would otherwise
 happen three separate times mid-game.
 
-### P0.1 — Give the engine a concept of a project
+### P0.1 — Give the engine a concept of a project — **DONE**
 
-*(The heading is the fix. The problem is that it has none.)*
+Built: `SetAssetRoot`/`GetAssetRoot` in
+[`AssetPaths.cpp`](../../GanymedEngine/source/GanymedE/Assets/AssetPaths.cpp) (a new file — project
+regeneration required), a root parameter on `AssetManager::Init`, `--project=<path>` on the editor,
+and an `AssetRoot` key in `runtime.yaml` with `StartScene`/`UIDocument` made project-relative. See
+[assets.md](../engine/assets.md#the-project-root). Verified: the editor opened an out-of-tree
+project and scanned 19 assets adopted from sidecars with 0 minted; the default path and the runtime
+both boot unchanged, zero errors and zero warnings.
+
+**Two things this plan got wrong, kept visible rather than edited away:**
+
+- **The size.** Decision 4 called this the largest Phase 0 item, most likely to be underestimated,
+  and predicted leaks into the `.compiled/` cache location, the watcher's directory and the content
+  browser's home. All three **already derived from a single accessor** — `AssetPaths.h` had
+  centralised the root before this milestone was written. The change was small.
+- **The blocker.** The paragraph below argued the cheap escape fails because `EditorLayer` loads
+  its checkerboard and HUD from disk. That is only true of moving the *working directory*, which
+  the actual fix does not do. It moves the project root and leaves engine- and editor-owned assets
+  resolving against CWD, so the chrome was never at risk.
+
+What it did turn up was a real latent bug: `ContentBrowserPanel.cpp` defined
+`extern const std::filesystem::path g_AssetPath = GetAssetRoot();` at namespace scope, a
+static-initialisation-time snapshot taken before `main`. It would have frozen the default root
+forever. Removed, and the reason recorded in `AssetPaths.cpp` so it is not reintroduced.
+
+*Original text follows.*
 
 `AssetManager::Init(bool writableAssets)` takes no asset root. The root is hard-coded `assets/`
 relative to each app's working directory, so the editor can only ever open `GanymedEditor/assets/`
@@ -220,9 +244,13 @@ Recorded now so that when this moves to `docs/history/` we can see which held.
    is a test instrument and feel is not the deliverable.
 3. **Buildings from box colliders, no mesh colliders.** Cheap, standard, and it keeps a large
    physics feature out of Phase 0.
-4. **⚠ P0.1 described as "an asset root parameter".** Said as though it were small. Asset roots
-   leak: relative paths inside scenes, the `.compiled/` cache location, the content browser's
-   notion of home, the watcher's directory. It may be the largest single item in this milestone.
+4. **⚠ P0.1 described as "an asset root parameter" — WRONG, and in the safe direction.** I said
+   it was understated and would be the largest item, because asset roots leak into scene-relative
+   paths, the `.compiled/` cache, the content browser's home and the watcher's directory. Every
+   one of those already went through `GetAssetRoot()`; `AssetPaths.h` had centralised the root
+   long before. The change was small and landed in one sitting. The lesson is not "estimates are
+   pessimistic" — it is that **I estimated without reading `AssetPaths.h`**, and one grep would
+   have answered it.
 5. **No cover AI.** Argued above. The risk is that enemies charging in the open makes the buildings
    pointless and the map read as flat — in which case the answer is more enemies and tighter sight
    lines before it is pathfinding.

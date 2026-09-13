@@ -3,6 +3,42 @@
 `GanymedEngine/source/GanymedE/Assets/` — handle-based asset identity in committed per-asset `.meta`
 sidecars, a scan-derived in-memory index, and the mesh import pipeline (cgltf + a binary cache).
 
+## The project root
+
+Every path stored in a scene, a `.meta` sidecar or the registry is **relative to the project root**,
+and [`AssetPaths.h`](../../GanymedEngine/source/GanymedE/Assets/AssetPaths.h) is the one place that
+turns such a path back into a real one: `GetAssetRoot()` to compose, `MakeAssetRelative()` to store.
+Everything downstream is built on those two — the scan, the watcher, the `.compiled/` cache
+location, the material sidecar writer, the mesh importer's texture resolution and the content
+browser's home directory.
+
+The root is **not** the process working directory, and the distinction is what makes a project
+relocatable:
+
+| Owned by | Examples | Resolves against |
+|---|---|---|
+| the engine | `assets/shaders/*.glsl`, the Montserrat UI font | the **working directory** — they ship with the executable |
+| the editor | Inter and Lucide, `Checkerboard.png`, the editor's own `hud.rml` | the **working directory** — same reason |
+| the project | scenes, prefabs, models, scripts, materials, audio | **`GetAssetRoot()`** |
+
+So pointing an app at another project moves the content and leaves the application's own assets
+alone. The editor takes `--project=<path>` ([editor.md](../editor/editor.md)); the runtime reads
+`AssetRoot` from `runtime.yaml` ([runtime.md](../runtime/runtime.md)). The default is `assets`,
+which is what both apps have always used, so neither changes behaviour when the switch is absent.
+
+**Set once, before `AssetManager::Init`, never after.** `SetAssetRoot` exists for that one call and
+`Init` takes the root as a parameter precisely so the ordering cannot be got wrong: the parse stage
+reads the root from worker threads — `MeshImporter`, `CompiledCache` and `MaterialSerializer` all
+compose paths off it — so a write after startup is a data race with no lock to take. A second call
+with a different root logs an error and asserts rather than silently repointing paths that have
+already been handed out.
+
+One consequence worth stating because it bit once already: **do not copy the root into a
+namespace-scope object.** The editor had `extern const std::filesystem::path g_AssetPath =
+GetAssetRoot();` in `ContentBrowserPanel.cpp`, which runs at static-initialisation time — before
+`main`, and therefore before any root could be set. It would have frozen the default forever. Call
+the accessor; do not cache it.
+
 ## Handles & metadata
 
 [`AssetTypes.h`](../../GanymedEngine/source/GanymedE/Assets/AssetTypes.h):
@@ -33,8 +69,8 @@ one derived index plus a registry of per-type managers (see *Managers and cachin
 
 | API | Behavior |
 |---|---|
-| `Init(writableAssets = true)` / `Shutdown()` | Read the legacy registry if present, then `ScanAssets()`; `false` makes every write into `assets/` a no-op. The editor calls these in `EditorLayer::OnAttach/OnDetach`, the runtime in `RuntimeLayer::OnAttach/OnDetach` |
-| `ScanAssets()` | Walk `assets/` and rebuild the index from the `.meta` sidecars found there, minting and writing one where a recognized asset has none. Called by `Init`; safe to call again to pick up files added outside the editor |
+| `Init(writableAssets = true, assetRoot = "assets")` / `Shutdown()` | Set the [project root](#the-project-root), read the legacy registry if present, then `ScanAssets()`; `writableAssets = false` makes every write into the project a no-op. The editor calls these in `EditorLayer::OnAttach/OnDetach`, the runtime in `RuntimeLayer::OnAttach/OnDetach` |
+| `ScanAssets()` | Walk the project root and rebuild the index from the `.meta` sidecars found there, minting and writing one where a recognized asset has none. Called by `Init`; safe to call again to pick up files added outside the editor |
 | `ImportAsset(relativePath)` | "Ensure this file has a sidecar, and tell me its handle." Idempotent: an indexed path returns its handle. Unsupported extensions log a warning and return the invalid handle |
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
 | `GetAsset<T>(handle)` | Cached load through the type’s manager. Available for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those, enforced by an `IsAssetType<T>` `static_assert`. Prefer an [`AssetRef<T>`](#assetreft) member; this is for one-shot lookups |

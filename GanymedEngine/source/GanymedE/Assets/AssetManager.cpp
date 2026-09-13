@@ -257,10 +257,14 @@ namespace GanymedE {
 
 	}
 
-	void AssetManager::Init(bool writableAssets)
+	void AssetManager::Init(bool writableAssets, const std::filesystem::path& assetRoot)
 	{
 		if (s_Data.Initialized)
 			return;
+
+		// Before RegisterManagers, before the scan, and before anything can start a parse job:
+		// every path below is composed off this, and the workers read it without a lock.
+		SetAssetRoot(assetRoot);
 
 		s_Data.AssetsWritable = writableAssets;
 
@@ -280,8 +284,9 @@ namespace GanymedE {
 		AssetWatcher::Init(writableAssets);
 
 		s_Data.Initialized = true;
-		GE_CORE_INFO("AssetManager initialized ({0} assets indexed, assets/ {1})",
-			s_Data.Registry.size(), writableAssets ? "writable" : "read-only");
+		GE_CORE_INFO("AssetManager initialized ({0} assets indexed, {1} {2})",
+			s_Data.Registry.size(), GetAssetRoot().generic_string(),
+			writableAssets ? "writable" : "read-only");
 
 		if (s_Data.LegacyRegistryPresent && writableAssets)
 		{

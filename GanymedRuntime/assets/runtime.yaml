@@ -5,11 +5,22 @@
 # on the command line (GanymedRuntime <path/to/scene.ganymede>); nothing else can,
 # because window geometry and the HUD belong to the build rather than to the launch.
 
-StartScene: assets/scenes/Demo.ganymede
+# The project: the directory StartScene and UIDocument are relative to, and the root the
+# asset scan walks. Relative to the working directory, so the default keeps a shipped
+# game's content beside its executable. Point it elsewhere ("../Game/assets") to run a
+# project in place instead of copying it here first.
+#
+# This file is not inside the project - it is read from assets/runtime.yaml before any
+# root is known - so it stays put when the root moves.
+AssetRoot: assets
+
+# Relative to AssetRoot, not to the working directory. An absolute path is honoured as
+# given, which is what makes `GanymedRuntime /abs/path/to/scene.ganymede` behave.
+StartScene: scenes/Demo.ganymede
 
 # Empty string means "no HUD". Loaded after the scene starts, so a document whose data
 # bindings a script writes on OnCreate has its model populated before first layout.
-UIDocument: assets/ui/hud.rml
+UIDocument: ui/hud.rml
 
 Title: Ganymed Runtime Demo
 

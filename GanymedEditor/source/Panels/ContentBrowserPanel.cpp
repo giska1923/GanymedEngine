@@ -23,9 +23,6 @@
 
 namespace GanymedE {
 
-	// Kept for editor code that still references g_AssetPath
-	extern const std::filesystem::path g_AssetPath = GetAssetRoot();
-
 	namespace {
 
 		constexpr float kThumbnail = 96.0f;
@@ -145,7 +142,7 @@ namespace GanymedE {
 	}
 
 	ContentBrowserPanel::ContentBrowserPanel()
-		: m_BaseDirectory(g_AssetPath), m_CurrentDirectory(m_BaseDirectory)
+		: m_BaseDirectory(GetAssetRoot()), m_CurrentDirectory(m_BaseDirectory)
 	{
 		m_DirectoryIcon = Texture2D::Create("resources/icons/ContentBrowser/DirectoryIcon.png");
 		m_FileIcon = Texture2D::Create("resources/icons/ContentBrowser/FileIcon.png");

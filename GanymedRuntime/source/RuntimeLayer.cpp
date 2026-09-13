@@ -1,6 +1,7 @@
 #include "RuntimeLayer.h"
 
 #include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Scene/SceneSerializer.h"
 #include "GanymedE/UI/UIEngine.h"
 
@@ -29,7 +30,20 @@ namespace GanymedE {
 		// shipped game must not touch its own install directory, which is why every shipped
 		// asset needs its `.meta` sidecar committed - a read-only scan can only adopt the
 		// identity it finds, never persist one. See assets.md.
-		AssetManager::Init(/*writableAssets=*/false);
+		AssetManager::Init(/*writableAssets=*/false, m_Config.AssetRoot);
+
+		// Both config paths are project-relative, so they have to be resolved now that the
+		// root is set. Absolute is honoured as-is - that is the escape hatch for a scene
+		// passed on the command line from a shell, where a project-relative path would be
+		// surprising.
+		const auto resolve = [](const std::string& p)
+		{
+			std::filesystem::path path = p;
+			return path.is_absolute() ? path : GetAssetRoot() / path;
+		};
+		const std::string scenePath = resolve(m_Config.StartScene).generic_string();
+		const std::string uiPath = m_Config.UIDocument.empty()
+			? std::string() : resolve(m_Config.UIDocument).generic_string();
 
 		m_SceneRenderer = CreateRef<SceneRenderer>(width, height);
 
@@ -48,13 +62,13 @@ namespace GanymedE {
 		m_Scene = CreateRef<Scene>();
 
 		SceneSerializer serializer(m_Scene);
-		if (serializer.Deserialize(m_Config.StartScene))
+		if (serializer.Deserialize(scenePath))
 		{
 			// Counted through TagComponent rather than the entity storage: every entity
 			// the serializer creates gets one, and a single-component view's size() is
 			// stable across entt versions in a way the storage API is not.
 			const size_t entityCount = m_Scene->Reg().view<TagComponent>().size();
-			GE_INFO("Scene '{0}' loaded ({1} entities)", m_Config.StartScene, entityCount);
+			GE_INFO("Scene '{0}' loaded ({1} entities)", scenePath, entityCount);
 
 			Entity camera = m_Scene->GetPrimaryCameraEntity();
 			if (camera)
@@ -70,16 +84,15 @@ namespace GanymedE {
 		}
 		else
 		{
-			GE_ERROR("Failed to load scene '{0}' - nothing will be simulated",
-				m_Config.StartScene);
+			GE_ERROR("Failed to load scene '{0}' - nothing will be simulated", scenePath);
 		}
 
-		if (!m_Config.UIDocument.empty())
+		if (!uiPath.empty())
 		{
-			if (UIEngine::LoadDocument(m_Config.UIDocument))
-				GE_INFO("UI document '{0}' loaded", m_Config.UIDocument);
+			if (UIEngine::LoadDocument(uiPath))
+				GE_INFO("UI document '{0}' loaded", uiPath);
 			else
-				GE_ERROR("UI document '{0}' failed to load", m_Config.UIDocument);
+				GE_ERROR("UI document '{0}' failed to load", uiPath);
 		}
 
 		GE_INFO("--- Boot complete ---");

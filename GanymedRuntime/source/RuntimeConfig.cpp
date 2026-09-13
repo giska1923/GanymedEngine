@@ -34,6 +34,7 @@ namespace GanymedE {
 		{
 			YAML::Node root = YAML::LoadFile(path.string());
 
+			ReadInto(root, "AssetRoot", config.AssetRoot);
 			ReadInto(root, "StartScene", config.StartScene);
 			ReadInto(root, "UIDocument", config.UIDocument);
 			ReadInto(root, "Title", config.Title);
@@ -97,8 +98,8 @@ namespace GanymedE {
 
 	void RuntimeConfig::Log() const
 	{
-		GE_INFO("Runtime config: scene='{0}' ui='{1}' title='{2}' {3}x{4} fullscreen={5}",
-			StartScene, UIDocument.empty() ? "<none>" : UIDocument, Title,
+		GE_INFO("Runtime config: root='{0}' scene='{1}' ui='{2}' title='{3}' {4}x{5} fullscreen={6}",
+			AssetRoot, StartScene, UIDocument.empty() ? "<none>" : UIDocument, Title,
 			Width, Height, Fullscreen);
 	}
 

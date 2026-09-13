@@ -49,7 +49,13 @@ namespace GanymedE {
 		//
 		// Handles minted for an asset with no sidecar still work for the session; they just do
 		// not outlive it, which is the correct lifetime for something nobody authored.
-		static void Init(bool writableAssets = true);
+		//
+		// assetRoot is the project: the directory every scene-, sidecar- and registry-stored
+		// path is relative to. It is a parameter here rather than a separate SetAssetRoot call
+		// because the root must be fixed before the first parse job composes a path off it, and
+		// taking it on Init makes that ordering impossible to get wrong. See AssetPaths.h.
+		static void Init(bool writableAssets = true,
+			const std::filesystem::path& assetRoot = "assets");
 		static void Shutdown();
 
 		// Rebuild the in-memory index by walking assets/: read each asset's `.meta` sidecar,

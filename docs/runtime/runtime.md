@@ -31,7 +31,7 @@ one logs, because the failure mode for getting this order wrong is a black windo
 
 | Step | Why here |
 |---|---|
-| `AssetManager::Init(/*writableAssets=*/false)` | Must precede any deserialize: scenes store bare asset handles and the serializer resolves them through the index this scan builds. Read-only because a shipped game must not write into its install directory — which is why every shipped asset needs its `.meta` sidecar shipped too ([assets.md](../engine/assets.md)) |
+| `AssetManager::Init(/*writableAssets=*/false, config.AssetRoot)` | Must precede any deserialize: scenes store bare asset handles and the serializer resolves them through the index this scan builds. Read-only because a shipped game must not write into its install directory — which is why every shipped asset needs its `.meta` sidecar shipped too ([assets.md](../engine/assets.md)). `AssetRoot` is [the project root](../engine/assets.md#the-project-root), and setting it here fixes it before any parse job composes a path off it |
 | `SceneRenderer(windowW, windowH)` | Owns the HDR target and the post stack |
 | `SetOutputToBackbuffer(true)` | Retargets the post stack's final pass (FXAA, or tonemap when FXAA is off) at the backbuffer ([rendering.md](../engine/rendering.md)) |
 | `UIEngine::SetTarget(nullptr)` + `SetViewport(w, h)` | Sends the UI view to the backbuffer too. `SetViewportOrigin` stays at its (0,0) default — the game owns the whole window, so window-relative mouse positions are already UI-relative |
@@ -84,22 +84,30 @@ text works without ImGui.
 
 ## Config
 
-`assets/runtime.yaml`, parsed by `RuntimeConfig` with the yaml-cpp the engine already links. Six
+`assets/runtime.yaml`, parsed by `RuntimeConfig` with the yaml-cpp the engine already links. Seven
 keys, every one optional; a missing or malformed file logs and boots with all defaults, because an
 exe that starts and tells you what is wrong beats one that refuses to start.
 
 | Key | Default | Notes |
 |---|---|---|
-| `StartScene` | `assets/scenes/Demo.ganymede` | The only field the command line can override |
+| `AssetRoot` | `assets` | [The project root](../engine/assets.md#the-project-root): what the scan walks, and what the two paths below are relative to. Point it elsewhere (`../Game/assets`) to run a project in place instead of copying it here first |
+| `StartScene` | `scenes/Demo.ganymede` | Relative to `AssetRoot`. The only field the command line can override |
+| `UIDocument` | `ui/hud.rml` | Relative to `AssetRoot`. Empty string = no HUD |
+| `Title` | `GanymedEngine Runtime` | Window title |
+| `Width` / `Height` | 1600 / 900 | Ignored when `Fullscreen`; a zero is rejected with a warning |
+| `Fullscreen` | `false` (the shipped demo sets **`true`**) | Borderless — an undecorated window at the primary monitor's video mode ([platform.md](../engine/platform.md)). Escape quits, which is the only way out |
+
+**The file itself is not inside the project.** It is read from `assets/runtime.yaml` relative to the
+working directory, before any root is known — the same bootstrap role the editor's `imgui.ini`
+plays — so it stays put when `AssetRoot` moves. The two paths in it are project-relative because a
+scene that names its own location cannot be opened from anywhere else; an **absolute** path is
+honoured as given, which is what makes `GanymedRuntime /abs/path/to/scene.ganymede` behave when it
+is typed at a shell.
 
 The runtime also accepts `--renderer=<backend>`, which is engine-wide rather than runtime config —
 see [rendering.md](../engine/rendering.md#backend-selection). It is not a `runtime.yaml` key because
 the backend to run on belongs to the launch, not to the build. Options and the scene override may
 appear in either order.
-| `UIDocument` | `assets/ui/hud.rml` | Empty string = no HUD |
-| `Title` | `GanymedEngine Runtime` | Window title |
-| `Width` / `Height` | 1600 / 900 | Ignored when `Fullscreen`; a zero is rejected with a warning |
-| `Fullscreen` | `false` (the shipped demo sets **`true`**) | Borderless — an undecorated window at the primary monitor's video mode ([platform.md](../engine/platform.md)). Escape quits, which is the only way out |
 
 Why a file at all, when there is exactly one scene? Because hard-coding `assets/ui/hud.rml` is
 precisely the editor-ism this app exists to shed (`EditorLayer::OnScenePlay` still does it), and a

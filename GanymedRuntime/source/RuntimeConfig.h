@@ -15,11 +15,24 @@ namespace GanymedE {
 	// document, six keys - so it stays a file the app parses, not an asset type.
 	struct RuntimeConfig
 	{
-		std::string StartScene = "assets/scenes/Demo.ganymede";
+		// The project: the directory the two paths below are relative to, and the root handed
+		// to AssetManager::Init. Relative to the working directory, so the default keeps a
+		// shipped game's content beside its executable. Point it elsewhere ("../Game/assets")
+		// to run the editor's project without copying it first. See docs/engine/assets.md.
+		//
+		// This file itself is *not* project content - it is read from assets/runtime.yaml
+		// before any root is known, the same bootstrap role the editor's imgui.ini plays - so
+		// it does not move when the root does.
+		std::string AssetRoot = "assets";
+
+		// Both are relative to AssetRoot, not to the working directory. That is what makes a
+		// project relocatable: a scene that names its own location cannot be opened from
+		// anywhere else.
+		std::string StartScene = "scenes/Demo.ganymede";
 
 		// Empty means "no HUD". The editor hard-codes assets/ui/hud.rml at play; that
 		// hard-coding is precisely the editor-ism this app exists to shed.
-		std::string UIDocument = "assets/ui/hud.rml";
+		std::string UIDocument = "ui/hud.rml";
 
 		std::string Title = "GanymedEngine Runtime";
 		uint32_t Width = 1600;

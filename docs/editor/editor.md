@@ -3,10 +3,18 @@
 The editor application (`GanymedEditor/source/`). It is a thin client of the engine: one
 `Application` subclass ([`GanymedEditorApp.cpp`](../../GanymedEditor/source/GanymedEditorApp.cpp))
 pushing a single [`EditorLayer`](../../GanymedEditor/source/EditorLayer.h), plus two panels.
-Run it with `GanymedEditor/` as the working directory (assets resolve relative to CWD); a scene
-path may be passed positionally, and `--renderer=<backend>` selects the graphics backend (see
+Run it with `GanymedEditor/` as the working directory — the editor's *own* assets (Inter, Lucide,
+the checkerboard, its HUD document) resolve relative to CWD. A scene path may be passed
+positionally, and `--renderer=<backend>` selects the graphics backend (see
 [rendering.md](../engine/rendering.md#backend-selection)). Options and the scene path may appear in
 either order.
+
+`--project=<path>` opens a project other than `GanymedEditor/assets/`. Only the **project** moves:
+the editor's own assets above still come from the working directory, because they ship with the
+editor rather than with the content — see [the project root](../engine/assets.md#the-project-root).
+The path is logged at boot, and a path that is not a directory is opened anyway with a warning,
+because an empty content browser looks like data loss rather than a typo. Without the switch the
+root is `assets`, exactly as before.
 
 ## Layout
 

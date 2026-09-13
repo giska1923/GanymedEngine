@@ -43,7 +43,6 @@
 
 namespace GanymedE {
 
-	extern const std::filesystem::path g_AssetPath;
 
 	namespace {
 
@@ -176,11 +175,55 @@ namespace GanymedE {
 	{
 	}
 
+	namespace {
+
+		// Parsed here rather than in an editor-wide settings object because it is the only
+		// command-line switch the editor has, and one switch does not need a parser.
+		std::filesystem::path ProjectRootFromCommandLine()
+		{
+			const auto& args = Application::GetCommandLineArgs();
+			const std::string prefix = "--project=";
+			for (int i = 1; i < args.Count; i++)
+			{
+				if (!args.Args[i])
+					continue;
+
+				const std::string arg = args.Args[i];
+				if (arg.rfind(prefix, 0) != 0)
+					continue;
+
+				std::filesystem::path root = arg.substr(prefix.size());
+				if (root.empty())
+				{
+					GE_WARN("--project= with no path; opening the editor's own assets/");
+					break;
+				}
+
+				// A project that is not there yields an empty content browser and a scan that
+				// indexes nothing, which looks like data loss rather than a typo. Say so.
+				std::error_code ec;
+				if (!std::filesystem::is_directory(root, ec))
+					GE_WARN("--project='{0}' is not a directory; opening it anyway, but the "
+						"asset scan will find nothing", root.generic_string());
+
+				GE_INFO("Opening project '{0}'", root.generic_string());
+				return root;
+			}
+
+			return "assets";
+		}
+
+	}
+
 	void EditorLayer::OnAttach()
 	{
 		GE_PROFILE_FUNCTION();
 
-		AssetManager::Init();
+		// --project=<path> opens a project other than the editor's own assets/ tree. Only the
+		// project moves: the editor's fonts, its checkerboard and its HUD document are loaded
+		// relative to the working directory because they ship with the editor, not with the
+		// content. Without the switch this is exactly what it always was.
+		AssetManager::Init(/*writableAssets=*/true, ProjectRootFromCommandLine());
 
 		// After ImGuiLayer::OnAttach (Application's constructor pushed that overlay
 		// first): the context exists, the default atlas is already uploaded, and
@@ -1020,7 +1063,7 @@ namespace GanymedE {
 
 		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh, AssetType::Prefab }))
 		{
-			std::filesystem::path fullPath = g_AssetPath / drop.Path;
+			std::filesystem::path fullPath = GetAssetRoot() / drop.Path;
 
 			if (drop.Type == AssetType::Scene)
 			{
