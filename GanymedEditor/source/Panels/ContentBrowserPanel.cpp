@@ -519,7 +519,10 @@ namespace GanymedE {
 			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorUI::Color(theme.AccentHover));
 			ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorUI::Color(theme.AccentActive));
 		}
-		const bool open = ImGui::TreeNodeEx("##folder", flags, "");
+		// "%s" with an empty argument rather than an empty format: the blank label is
+		// deliberate - the row draws its own icon and text - but a zero-length format string is
+		// a GCC warning (-Wformat-zero-length).
+		const bool open = ImGui::TreeNodeEx("##folder", flags, "%s", "");
 		if (selected)
 			ImGui::PopStyleColor(3);
 		const bool clicked = ImGui::IsItemClicked();
