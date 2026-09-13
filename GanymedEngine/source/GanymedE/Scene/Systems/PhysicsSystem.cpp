@@ -75,6 +75,11 @@ namespace GanymedE {
 		if (!m_PhysicsScene || !m_PhysicsScene->IsActive())
 			return;
 
+		// Before anything else this frame: the command queue flushed at the top of FrameBegin,
+		// so a prefab a script spawned last frame exists now and should simulate from this step
+		// rather than the next one.
+		m_PhysicsScene->SyncBodies(&m_Scene);
+
 		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
 		const PhysicsSettings& settings = *settingsView.Get();
 		const float fixedTimestep = settings.FixedTimestep;

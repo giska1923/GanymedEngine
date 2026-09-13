@@ -7,6 +7,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace GanymedE {
@@ -44,6 +45,15 @@ namespace GanymedE {
 		void Stop();
 		bool IsActive() const { return m_Active; }
 
+		// Reconcile Jolt's bodies with the registry: create one for anything that has a
+		// RigidBodyComponent and no body, destroy any whose entity or component is gone.
+		//
+		// **Once per frame, before stepping.** Body creation used to happen only in Start, which
+		// was fine while nothing could create an entity mid-run; a prefab spawned by a script
+		// would otherwise render and never simulate. Costs one hash lookup per rigid body when
+		// nothing has changed.
+		void SyncBodies(Scene* scene);
+
 		void Step(float fixedDeltaTime);
 
 		// alpha in [0,1]: blend previous→current physics poses into TransformComponents
@@ -80,6 +90,7 @@ namespace GanymedE {
 		};
 
 		void CreateBodies(Scene* scene);
+		void RemoveDeadBodies(Scene* scene);
 		void DestroyBodies();
 		void CapturePoses(std::unordered_map<UUID, BodyPose>& out);
 
@@ -90,6 +101,10 @@ namespace GanymedE {
 		Scene* m_Scene = nullptr;
 		bool m_Active = false;
 		std::vector<PhysicsCollisionEvent> m_CollisionEvents;
+
+		// Entities warned about for having a RigidBody and no collider. CreateBodies runs every
+		// frame now, so without this the warning would scroll.
+		std::unordered_set<UUID> m_WarnedNoCollider;
 
 		std::unordered_map<UUID, BodyPose> m_PreviousPoses;
 		std::unordered_map<UUID, BodyPose> m_CurrentPoses;

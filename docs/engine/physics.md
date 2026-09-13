@@ -25,8 +25,36 @@ map 1:1 from the components: motion type, friction/restitution, damping, gravity
 Identity: `body.mUserData = UUID`, plus `UUID → BodyID` and `BodyID → UUID` maps. Everything
 crossing the physics/ECS boundary is keyed by UUID, so it survives the play-mode scene copy.
 
-Bodies are created **once at Start** — entities added mid-play do not get bodies (an
-`EntityChangedView`-based incremental path is the documented future fix in the ECS guide).
+### Reconciling bodies with the registry
+
+Bodies used to be created **once at Start**, so an entity that gained a `RigidBodyComponent` during
+play never simulated. That was invisible for as long as nothing could create an entity mid-run;
+runtime prefab spawning made it reachable, and it was in fact a latent bug for *any* path that adds
+a rigid body during play, not only for spawning.
+
+`PhysicsScene::SyncBodies` now runs **once per frame from the top of `PhysicsSystem::OnUpdate`** —
+after the command queue flushed in `FrameBegin`, and before the step, so a prefab spawned last frame
+simulates from this one rather than the next. It is two passes:
+
+- **`CreateBodies` became idempotent.** It skips entities already in the `UUID → BodyID` map, which
+  turns "build the initial set" and "pick up whatever appeared" into one function with no second
+  code path to keep in step. `Start` still calls it; so does every frame.
+- **`RemoveDeadBodies`** destroys any body whose entity is gone or has lost its component, and drops
+  the interpolation poses keyed on the same UUID. Nothing could destroy an entity mid-run before, so
+  this had no counterpart — without it a despawned projectile keeps colliding invisibly and the body
+  count grows for the session.
+
+**Cost when nothing has changed: ~150 ns per rigid body per frame** (measured, x64 Release: 30 us
+for 200 bodies, averaged over 120 frames). A 20-body scene pays ~3 us. It is linear in body count,
+so a scene with thousands would want the dirty set the milestone plan originally sketched — the
+queue knows what it created, so it could hand over a list instead of being searched. The scan was
+chosen instead for the reason the asset layer sums `PendingCount` rather than keeping a counter: a
+second structure to keep in step can drift, and drift here looks like an entity that silently never
+simulates.
+
+One consequence worth knowing: `CreateBodies` warns about a `RigidBodyComponent` with no collider,
+and it now runs every frame, so that warning is **once per entity** rather than once per run. The
+same loud-but-not-scrolling posture the asset layer takes for unknown handles.
 
 ## The step
 

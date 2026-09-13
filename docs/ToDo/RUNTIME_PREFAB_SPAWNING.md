@@ -181,9 +181,21 @@ The signature ended up `Spawn(path, position?, rotation?)`. A path rather than a
 is the currency scripts already use for audio; rotation because a projectile needs a direction and
 adding it later would have meant a second overload.
 
-**P4 — physics bodies for spawned entities.** Decision 3. Gate: a spawned prefab with a rigid body
-falls under gravity and collides, and a scene with no spawning pays nothing per frame for the
-mechanism.
+**P4 — physics bodies for spawned entities — done.** Gate met: a prefab spawned at y=10 fell to
+y=-8.98 under gravity (before this it would have sat at 10 forever), exists on the next frame, and
+its body is destroyed when it despawns. See
+[physics.md](../engine/physics.md#reconciling-bodies-with-the-registry).
+
+Settled against Decision 3's lean: **a scan, not a dirty set.** `CreateBodies` became idempotent -
+it skips entities already in the body map - so "build the initial set" and "pick up whatever
+appeared" are one function rather than two to keep in step. Measured cost when nothing has changed
+is ~150 ns per rigid body per frame (30 us for 200 bodies, x64 Release), so "pays nothing" is not
+literally true and the docs say so; a scene with thousands of bodies would want the dirty set after
+all.
+
+`RemoveDeadBodies` was not in the plan and is half the work: nothing could destroy an entity mid-run
+before, so a despawned projectile would have kept colliding invisibly with the body count growing
+for the session.
 
 **P5 — despawn and the spawn cap.** Decision 4. Gate: a script that spawns in an unguarded loop is
 refused with a named warning rather than exhausting memory.

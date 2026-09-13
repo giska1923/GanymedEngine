@@ -544,6 +544,11 @@ namespace GanymedE {
 		m_Scene = nullptr;
 	}
 
+	// **Idempotent**, which is what lets it double as the per-frame reconcile. It used to run
+	// once from Start and never again, so an entity that gained a RigidBodyComponent during play
+	// - the whole point of runtime prefab spawning - rendered and never simulated. Skipping
+	// entities that already have a body turns "build the initial set" and "pick up whatever
+	// appeared" into the same function, with no second code path to keep in step.
 	void PhysicsScene::CreateBodies(Scene* scene)
 	{
 		auto& registry = scene->Reg();
@@ -554,6 +559,13 @@ namespace GanymedE {
 		{
 			Entity entity{ entityHandle, scene };
 			UUID uuid = entity.GetUUID();
+
+			// Already simulating. This is the guard that makes the function idempotent, and it
+			// is also the whole per-frame cost when nothing has spawned: one hash lookup per
+			// rigid body.
+			if (m_Impl->EntityToBody.count(uuid) != 0)
+				continue;
+
 			auto& rb = entity.GetComponent<RigidBodyComponent>();
 
 			const bool hasBox = entity.HasComponent<BoxColliderComponent>();
@@ -561,7 +573,14 @@ namespace GanymedE {
 			const bool hasCapsule = entity.HasComponent<CapsuleColliderComponent>();
 			if (!hasBox && !hasSphere && !hasCapsule)
 			{
-				GE_CORE_WARN("Entity '{0}' has RigidBody but no collider — skipped", entity.GetName());
+				// Once per entity, not once per frame. This function now runs every frame, and
+				// an unfixable authoring mistake must not turn into a scrolling log - the
+				// once-per-handle posture the asset layer takes for unknown handles.
+				if (m_WarnedNoCollider.insert(uuid).second)
+				{
+					GE_CORE_WARN("Entity '{0}' has RigidBody but no collider — skipped",
+						entity.GetName());
+				}
 				continue;
 			}
 
@@ -671,6 +690,53 @@ namespace GanymedE {
 			m_Impl->EntityToBody[uuid] = bodyID;
 			m_Impl->BodyToEntity[bodyID.GetIndexAndSequenceNumber()] = uuid;
 		}
+	}
+
+	// The other half of the reconcile: a body whose entity is gone, or which lost its
+	// RigidBodyComponent, has to leave Jolt or it keeps colliding with things invisibly and the
+	// body count grows for the rest of the session. Nothing could destroy an entity mid-run
+	// before spawning existed, which is why this had no counterpart.
+	void PhysicsScene::RemoveDeadBodies(Scene* scene)
+	{
+		auto& registry = scene->Reg();
+		auto& bodyInterface = m_Impl->System.GetBodyInterface();
+
+		for (auto it = m_Impl->EntityToBody.begin(); it != m_Impl->EntityToBody.end(); )
+		{
+			Entity entity = scene->FindEntityByUUID(it->first);
+			const bool alive = entity && entity.HasComponent<RigidBodyComponent>();
+			if (alive)
+			{
+				++it;
+				continue;
+			}
+
+			if (!it->second.IsInvalid())
+			{
+				m_Impl->BodyToEntity.erase(it->second.GetIndexAndSequenceNumber());
+				bodyInterface.RemoveBody(it->second);
+				bodyInterface.DestroyBody(it->second);
+			}
+
+			// The interpolation poses are keyed on the same UUID and would otherwise pin a dead
+			// entity's last transform forever.
+			m_PreviousPoses.erase(it->first);
+			m_CurrentPoses.erase(it->first);
+			m_WarnedNoCollider.erase(it->first);
+
+			it = m_Impl->EntityToBody.erase(it);
+		}
+	}
+
+	// Called once per frame from PhysicsSystem, before stepping - so a prefab spawned by a
+	// script simulates from the frame it appears in rather than the one after.
+	void PhysicsScene::SyncBodies(Scene* scene)
+	{
+		if (!m_Impl || !scene)
+			return;
+
+		RemoveDeadBodies(scene);
+		CreateBodies(scene);
 	}
 
 	void PhysicsScene::DestroyBodies()
