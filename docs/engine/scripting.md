@@ -138,7 +138,7 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 `Get/SetScale`, `HasRigidBody`, the physics, animation, audio and particle calls below), `Input`,
 `Key`, `Mouse`, `Log`
 (routed to the **client** logger — script output is game output),
-`Scene.FindEntityByName` / `Scene.FindEntityByUUID`,
+`Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.Spawn`,
 `Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
 
 > **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
@@ -157,6 +157,24 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 >
 > The general rule this is an instance of: **any engine handle wider than 53 bits needs its Lua
 > representation chosen deliberately.** Asset handles are `UUID` too.
+
+> **`Scene.Spawn` returns an id, and the entity appears on the *next* frame.** That is the contract,
+> not an implementation detail. Scripts run inside the scene update, where `Entity::AddComponent`
+> asserts, so a spawn is queued onto `ECS::CommandQueue` and performed by the flush at the top of
+> the next `Scene::FrameBegin` — the same rule every structural change made from inside a system
+> follows ([ecs.md](ecs.md#commandqueue)).
+>
+> The root's UUID is **minted at the call** and pinned onto the instantiated root through
+> `InstantiateOptions::RootUUID`, which is what gives a script something to hold across that
+> boundary. The alternatives were worse: an `Entity` cannot be returned for something that does not
+> exist, and `PendingEntity` is meaningful only within the frame it was made in — a handle whose
+> validity expires at a frame boundary is a lifetime problem the engine would then have to police.
+> An id that does not resolve *yet* is indistinguishable from one whose entity has since been
+> destroyed, and a script has to handle the second case anyway.
+>
+> A path that is not an indexed asset, or is indexed as something other than a prefab, is refused
+> with a named warning and `nil` — a script spawning a texture is a typo, and letting it fail a
+> frame later would put the diagnostic nowhere near the call that caused it.
 
 > **The `Log` global collides with RmlUi's.** RmlUi's Lua plugin registers its own `Log` usertype,
 > and it loads after `ScriptEngine::Init`, so it shadowed ours until `UIEngine` started calling

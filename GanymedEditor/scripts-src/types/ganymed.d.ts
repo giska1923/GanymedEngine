@@ -306,6 +306,27 @@ declare namespace Scene {
 	 * meaningless. Store it and pass it back, nothing else.
 	 */
 	function FindEntityByUUID(id: number): Entity | undefined;
+
+	/**
+	 * Instantiate a prefab, returning the root's id — or `undefined` if the path is not an
+	 * indexed prefab.
+	 *
+	 * **The entity appears on the NEXT frame.** Scripts run inside the scene update, where
+	 * structural changes are illegal, so the spawn is queued and performed by the flush at the
+	 * start of the following frame. That is why an id comes back instead of an `Entity`: it is
+	 * something to hold across the boundary.
+	 *
+	 * ```ts
+	 * const id = Scene.Spawn("prefabs/SparkBurst.gprefab", this.entity.GetTranslation());
+	 * // ... a later frame:
+	 * const e = Scene.FindEntityByUUID(id);
+	 * if (e) e.SetTranslation(somewhere);
+	 * ```
+	 *
+	 * Omitting both `position` and `rotation` places the root where the `.gprefab` says.
+	 * Rotation is Euler angles in radians, matching `Entity.SetRotation`.
+	 */
+	function Spawn(path: string, position?: Vec3, rotation?: Vec3): number | undefined;
 }
 
 /**

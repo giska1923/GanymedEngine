@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "GanymedE/Assets/AssetTypes.h"
+#include "GanymedE/Core/UUID.h"
 #include "GanymedE/Scene/Entity.h"
 
 // Deferred structural changes.
@@ -18,6 +20,8 @@
 // Consequence to accept consciously: a structural change made by a system becomes visible on the
 // *next* frame. Editor and tooling code runs outside the update loop and keeps using the immediate
 // Entity API.
+
+namespace GanymedE { struct TransformComponent; }
 
 namespace GanymedE::ECS {
 
@@ -84,6 +88,27 @@ namespace GanymedE::ECS {
 					std::make_index_sequence<sizeof...(Args)>{});
 			});
 		}
+
+		// Instantiate a prefab at the next flush, and hand back the root's UUID **now**.
+		//
+		// ---- Why it returns a UUID rather than an entity or a PendingEntity ----
+		//
+		// The entity does not exist yet and will not until `Scene::FrameBegin` runs the queue, so
+		// there is nothing to return. `PendingEntity` is the queue's own answer to that, but it
+		// is meaningful only within the frame it was made in, and a script holding a handle whose
+		// validity expires at a frame boundary is a lifetime problem the engine would then have
+		// to police - the argument ScriptBindings already makes for not exposing audio voices.
+		//
+		// A UUID has none of those problems: it is minted here, pinned onto the root through
+		// `InstantiateOptions::RootUUID`, and resolves through `Scene::FindEntityByUUID` from the
+		// next frame onwards. One that does not resolve *yet* is indistinguishable from one whose
+		// entity has since been destroyed, and a caller has to handle the second case anyway.
+		//
+		// **The subtree appears next frame**, like every other structural change made from inside
+		// an update. See the note at the top of this header.
+		// `rootTransform` null places the root where the `.gprefab` says, which is what a
+		// pre-placed decoration wants; a caller that has somewhere to put it passes one.
+		UUID InstantiatePrefab(AssetHandle source, const TransformComponent* rootTransform = nullptr);
 
 		void DestroyEntity(Entity entity);
 

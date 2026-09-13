@@ -162,10 +162,24 @@ stale until the watcher noticed (~0.45 s). Anything rebuilding a template in tha
 change, entering play — would have shown the applied field as overridden again. The apply now evicts
 the asset, which closes the window without disturbing the template.
 
-**P3 — `CommandQueue::InstantiatePrefab` + `Scene.Spawn` in Lua.** The spawn command runs the
-existing `Instantiate` at flush time, where `IsUpdating` is false and it is legal unchanged. Returns
-the pre-minted UUID. Gate: a script spawns a prefab, finds it by UUID next frame, and the entity is
-identical to a drag-drop instantiation of the same prefab.
+**P3 — `CommandQueue::InstantiatePrefab` + `Scene.Spawn` in Lua — done.** The spawn command runs
+`InstantiateFromAsset` at flush time, where `IsUpdating` is false and it is legal unchanged, and
+returns the pre-minted UUID. Gate met, driven from Lua exactly as a gameplay script would:
+
+| | |
+|---|---|
+| `Scene.Spawn(path, Vec3(3,4,5))` returns an id | PASS |
+| the entity does **not** exist in the spawning frame | PASS |
+| next frame it resolves, named `Sparks`, at (3,4,5) | PASS |
+| identical to a drag-drop instantiation, component for component | PASS |
+| the root's own UUID is the id that was returned | PASS |
+| an unindexed path is refused with a named warning | PASS |
+| a non-prefab asset is refused with a named warning | PASS |
+| no position at all uses the prefab's stored transform | PASS |
+
+The signature ended up `Spawn(path, position?, rotation?)`. A path rather than a handle because that
+is the currency scripts already use for audio; rotation because a projectile needs a direction and
+adding it later would have meant a second overload.
 
 **P4 — physics bodies for spawned entities.** Decision 3. Gate: a spawned prefab with a rigid body
 falls under gravity and collides, and a scene with no spawning pays nothing per frame for the

@@ -1,4 +1,8 @@
 #include "gepch.h"
+
+#include <optional>
+#include "GanymedE/Scene/Components.h"
+#include "GanymedE/Scene/PrefabSerializer.h"
 #include "CommandQueue.h"
 
 #include "GanymedE/Scene/Scene.h"
@@ -23,6 +27,38 @@ namespace GanymedE::ECS {
 			if (scene.Reg().valid((entt::entity)entity))
 				scene.DestroyEntity(entity);
 		});
+	}
+
+	UUID CommandQueue::InstantiatePrefab(AssetHandle source, const TransformComponent* rootTransform)
+	{
+		// Minted here so the caller has something to hold before the entity exists. The
+		// instantiate below pins it rather than generating its own.
+		const UUID rootID;
+
+		// Captured **by value**: the op runs next frame, long after the caller's locals are gone
+		// - the same rule AddComponent's arguments follow, and the reason this is an optional
+		// rather than the pointer the parameter arrives as.
+		std::optional<TransformComponent> transform;
+		if (rootTransform)
+			transform = *rootTransform;
+
+		m_CreateOps.emplace_back([source, rootID, transform](Scene& scene)
+		{
+			PrefabSerializer::InstantiateOptions options;
+			options.RootUUID = rootID;
+			options.RootTransform = transform ? &(*transform) : nullptr;
+
+			// Legal here and nowhere else on this path: the flush runs from FrameBegin with
+			// IsUpdating false, so Instantiate's immediate Entity API is allowed. Called from a
+			// script directly it would trip Entity::AddComponent's assert.
+			if (!PrefabSerializer::InstantiateFromAsset(source, scene, options))
+			{
+				GE_CORE_WARN("Spawn: prefab {0} could not be instantiated",
+					static_cast<uint64_t>(source));
+			}
+		});
+
+		return rootID;
 	}
 
 	void CommandQueue::Flush(Scene& scene)

@@ -1,4 +1,6 @@
 #include "gepch.h"
+#include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/ECS/CommandQueue.h"
 #include "GanymedE/Scripting/ScriptBindings.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 
@@ -580,6 +582,57 @@ namespace GanymedE {
 
 				return entity;
 			};
+
+			// Spawn a prefab. Returns the root's id, or nil if the path is not a prefab.
+			//
+			// **The entity appears on the NEXT frame**, and that is the contract rather than an
+			// implementation detail. Scripts run inside the scene update, where the immediate
+			// Entity API asserts, so this queues the instantiate onto the command queue and the
+			// flush at the top of the next FrameBegin performs it. The id comes back now
+			// precisely so a script has something to hold across that boundary:
+			//
+			//     local id = Scene.Spawn("prefabs/SparkBurst.gprefab", self.entity:GetTranslation())
+			//     -- next frame, or any frame after:
+			//     local e = Scene.FindEntityByUUID(id)
+			//     if e then e:SetTranslation(...) end
+			//
+			// Position and rotation are optional; omitting both places the root where the
+			// `.gprefab` says, which is what a pre-placed decoration wants.
+			scene["Spawn"] = [](const std::string& path, sol::optional<glm::vec3> position,
+				sol::optional<glm::vec3> rotation) -> sol::optional<int64_t>
+			{
+				Scene* context = Context();
+				if (!context)
+					return sol::nullopt;
+
+				const AssetHandle handle = AssetManager::GetHandle(path);
+				if (!IsAssetHandleValid(handle))
+				{
+					GE_WARN("Scene.Spawn: '{0}' is not an indexed asset", path);
+					return sol::nullopt;
+				}
+
+				// Checked rather than trusted: spawning a texture is a script typo, and the
+				// instantiate would otherwise fail a frame later with nothing pointing at the
+				// call that caused it.
+				if (AssetManager::GetAssetType(handle) != AssetType::Prefab)
+				{
+					GE_WARN("Scene.Spawn: '{0}' is a {1}, not a prefab", path,
+						AssetTypeToString(AssetManager::GetAssetType(handle)));
+					return sol::nullopt;
+				}
+
+				TransformComponent transform;
+				const bool placed = position.has_value() || rotation.has_value();
+				if (position) transform.Translation = *position;
+				if (rotation) transform.Rotation = *rotation;
+
+				const UUID id = context->Commands().InstantiatePrefab(
+					handle, placed ? &transform : nullptr);
+
+				// int64, for the reason GetUUID returns int64 - see the comment there.
+				return static_cast<int64_t>(static_cast<uint64_t>(id));
+			};
 		}
 
 		void RegisterAudio(sol::state& lua)
@@ -660,5 +713,6 @@ namespace GanymedE {
 		RegisterEntity(lua);
 		RegisterScriptGlobals(lua);
 	}
+
 
 }
