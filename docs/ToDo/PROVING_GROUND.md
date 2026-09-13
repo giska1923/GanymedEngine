@@ -1,0 +1,239 @@
+# Milestone — Proving Ground (the test game)
+
+**Status: planned, not started.** This is a roadmap. Nothing here is built.
+
+A small third-person shooter, built to find out what is wrong with the engine. The game is the
+instrument, not the goal: every phase below is chosen for the engine surface it puts under load,
+and a phase that would be fun but tests nothing already built is cut.
+
+The premise is that this engine has never had a *consumer* that runs for more than a minute. Every
+subsystem was verified by a probe written for that change and deleted afterwards, so what is
+untested is not any one function but the **interaction** of the pieces over time: spawning while
+audio plays while assets stream while physics runs.
+
+---
+
+## What it is
+
+Flat ground. A handful of buildings composed from box colliders, enterable. A capsule player who
+walks, looks, and shoots. Enemies who patrol, notice the player by line of sight, and charge.
+Projectile weapons that can be picked up. Health, healing spots, and an upgrade station. A HUD.
+Sound. It runs in `GanymedRuntime`, not only in the editor.
+
+## What it deliberately is not
+
+- **No cover-seeking AI, no navmesh, no pathfinding.** This was in the original sketch and is cut
+  on purpose. It is the largest item by effort and the smallest by engine coverage — it is Lua
+  logic sitting on the ECS, and it would teach us nothing about the renderer, the asset pipeline,
+  physics or audio. Buildings still matter because they **break line of sight**, so cover
+  behaviour emerges from the geometry instead of being authored. If the enemies feel too stupid
+  later, cover is a Lua change, not an engine change.
+- **No mesh colliders.** Only box, sphere and capsule exist. Buildings are box-composed. That is
+  normal practice and cheap, but it constrains how the art is authored, so it is said here rather
+  than discovered by whoever models the first building.
+- **No hitscan.** See Decision 2.
+- **No multiplayer, no save system, no inventory beyond "which weapon".**
+
+---
+
+## Branch policy
+
+The game lives on a branch; engine work does not.
+
+| Where | What | Rule |
+|---|---|---|
+| `master` | Everything under `GanymedEngine/source/`, `GanymedEditor/source/`, `GanymedRuntime/source/`, premake, scripts | Engine features the game needs are built, verified and merged **here first** |
+| `game/proving-ground` | The game's assets, scenes, prefabs and Lua | **No change under `GanymedEngine/source/`**, ever |
+
+Checkable, which is the point:
+
+```
+git diff --stat master.. -- GanymedEngine/source
+```
+
+Anything it prints is a rule violation and belongs on master instead. The temptation will be real —
+"just this one small engine tweak" is how long-lived branches rot — so the check is mechanical
+rather than cultural.
+
+**Merge direction is master → game, often.** After every engine change lands on master, merge it
+into the game branch rather than batching. Batching means the game is exercising an engine that is
+no longer the tip, which defeats the reason for building it.
+
+**On `AssetRegistry.gr`:** a tracked registry churns whenever an asset is added, which would make
+it the branch's worst merge conflict — except that P0.1 puts the game in `Game/assets/`, a tree
+that does not exist on master. Nothing upstream to conflict with. If the game is ever authored
+directly into `GanymedRuntime/assets/` instead, that protection is gone and this becomes the file
+to watch, since the runtime's registry is tracked on purpose (a shipped game needs it — see
+[assets.md](../engine/assets.md)).
+
+---
+
+## Phase 0 — engine prerequisites, on `master`, before the branch exists
+
+These are known *now*. Doing them first collapses most of the branch-juggling that would otherwise
+happen three separate times mid-game.
+
+### P0.1 — Give the engine a concept of a project
+
+*(The heading is the fix. The problem is that it has none.)*
+
+`AssetManager::Init(bool writableAssets)` takes no asset root. The root is hard-coded `assets/`
+relative to each app's working directory, so the editor can only ever open `GanymedEditor/assets/`
+and the runtime only `GanymedRuntime/assets/`. The documented workflow is to author in the first
+and copy a snapshot to the second.
+
+For a demo that is fine. For a game iterated on daily it means the content exists **twice on the
+branch** and is hand-synced every session.
+
+Changing the working directory almost works, and then does not: `EditorLayer` loads
+`assets/textures/Checkerboard.png` and `assets/ui/hud.rml` from disk, so the editor's own chrome
+breaks when pointed at a tree that has no editor assets.
+
+**What gets built:** an asset-root parameter on `AssetManager::Init`, plus the editor's own few
+disk-loaded assets resolved against the *editor's* install location rather than the project's.
+Every other engine has this concept — Unity's project folder, UE's `.uproject` — and this one
+skipped it because it only ever had one project.
+
+**Where the game's content then lives: a new top-level `Game/assets/` tree**, opened by both apps
+through that parameter. The folder name is arbitrary — it is a parameter, not a constant — but one
+named tree that both apps point at is the whole point of the change.
+
+Two consequences worth stating, because they change the branch policy above:
+
+- **`Game/` does not exist on `master` at all.** It is created on the game branch. So merges from
+  master can never touch it, and the game's `AssetRegistry.gr` has no counterpart upstream to
+  conflict with. This is strictly better than authoring into `GanymedRuntime/assets/`, where the
+  game would be overwriting tracked demo content that master still owns.
+- **The copy-to-runtime step does not disappear — it moves.** A shipped game's working directory
+  is its install folder, so P7 still copies `Game/assets/` next to the runtime executable. What
+  P0.1 buys is that the copy stops being a *per-iteration* step and becomes a *packaging* step.
+  That is the actual win; it is not "no more copying".
+
+**This is the largest Phase 0 item and the one most likely to be underestimated.** See Decision 4.
+
+### P0.2 — A character that does not fall over
+
+`RigidBodyComponent` is `{Type, Mass, LinearDamping, AngularDamping, UseGravity}`. **There is no
+rotation lock.** A dynamic capsule driven by `SetLinearVelocity` tips over the first time it
+touches anything, and then lies down.
+
+Two options, and they are not the same size:
+
+- **A `LockRotation` flag** (Jolt `EAllowedDOFs`, or zeroing the inertia tensor). Small. Gets a
+  capsule that stays upright. Does **not** get step-up over a kerb, slope limits, or
+  not-sticking-to-walls.
+- **`CharacterVirtual`** — Jolt's kinematic character controller. Medium. Gets all of the above,
+  and is what a production engine ships.
+
+Start with the flag, because it unblocks P1 in an afternoon and the game will say whether the rest
+is needed. See Decision 1 — this is the call I am least sure about.
+
+### P0.3 — Raycast
+
+There is not one raycast call in the engine. Jolt has `NarrowPhaseQuery::CastRay`; it needs
+wrapping and binding to Lua. Needed **twice**: enemy line-of-sight acquisition, and any weapon that
+is not a projectile. Small, and the highest value-per-line item in Phase 0.
+
+### P0.4 — Sensors (optional)
+
+No `IsSensor` anywhere, so a trigger volume is a solid body you bump into rather than walk through.
+`OnCollisionEnter` already reaches Lua, so pickups and heal spots **work without this** — they just
+feel wrong, because you stop when you touch them. Small. Do it if P5 feels bad, not before.
+
+---
+
+## Phases, on the game branch
+
+Each phase names what it is actually testing, because that is the reason it exists.
+
+### P1 — Ground, player, camera
+
+Flat ground plane, capsule player, WASD plus mouse look, camera follow.
+
+- **Tests:** the character controller from P0.2, the `Input` bindings under continuous use rather
+  than a probe, transform hierarchy, and the editor's authoring loop end to end.
+- **Gate:** walk the full extent of the map for two minutes without the capsule tipping, sinking
+  through the ground, or sticking to a wall.
+
+### P2 — The map
+
+Several buildings from box colliders, enterable, with interiors. Lighting.
+
+- **Tests:** static mesh rendering at scene scale, box colliders, the four light types, shadows,
+  and the asset pipeline under a real content load rather than the eight committed fixtures.
+- **Gate:** walk inside and out of every building; no tunnelling through a wall at full speed.
+
+### P3 — Shooting and dying
+
+Projectile weapon. Enemies with health that despawn on death.
+
+- **Tests:** `Scene.Spawn` and the 64-per-frame cap under sustained fire, `OnCollisionEnter`
+  dispatch, `Entity:Destroy` subtree despawn, and physics with many small dynamic bodies.
+- **Gate:** fire continuously for a minute; entity count returns to baseline; no leaked Jolt
+  bodies.
+
+### P4 — Enemies with eyes
+
+Waypoint patrol, line-of-sight acquisition via raycast, charge. Animation on the enemies.
+
+- **Tests:** P0.3's raycast, the animator under many simultaneous instances, and whether buildings
+  actually occlude.
+- **Gate:** an enemy behind a building does not acquire the player; stepping into the doorway does.
+
+### P5 — Pickups, health, upgrades
+
+Weapon pickups, heal spots, an upgrade station.
+
+- **Tests:** `OnCollisionEnter` as a trigger mechanism, and the existing `UI.SetHealth` /
+  `UI.SetScore` data model, which is bound but has never been driven by real gameplay.
+
+### P6 — It looks and sounds like something
+
+RmlUi HUD, footsteps, weapon sound, a music bed, muzzle flash and impact particles.
+
+- **Tests:** the RmlUi document under live data binding, the audio pipeline and 3D listener driven
+  by a *moving* player for the first time, and `EmitBurst` under load.
+
+### P7 — Ship it
+
+Run the whole thing in `GanymedRuntime`, Dist configuration, from a copied asset tree.
+
+- **Tests:** the read-only asset path, `.meta` sidecar completeness, registry portability, the
+  `WindowedApp` / `mainCRTStartup` Dist configuration, and boot with no editor present.
+- **This phase is where I expect the most bugs.** It is the least-exercised code in the engine, and
+  its failure mode — a shipped game that cannot find its own assets — is invisible from the editor.
+
+---
+
+## Decisions, with the ones most likely wrong marked
+
+Recorded now so that when this moves to `docs/history/` we can see which held.
+
+1. **⚠ `LockRotation` before `CharacterVirtual`.** Betting that a rotation-locked dynamic capsule
+   is good enough to build on, and that step-up and slope handling can wait. **This is the decision
+   most likely to be wrong.** The usual outcome is that velocity-driven dynamic capsules feel bad
+   in a way that is hard to attribute, and the fix turns out to be the controller that was skipped.
+   If P1's gate needs more than one attempt, stop and do `CharacterVirtual`.
+2. **⚠ Projectiles, not hitscan.** Chosen because projectiles exercise spawning, the spawn cap,
+   physics and collision dispatch — all landed recently, none under load. The costs are that
+   projectiles feel worse to shoot than hitscan, and that at some speed they tunnel. Accepted: this
+   is a test instrument and feel is not the deliverable.
+3. **Buildings from box colliders, no mesh colliders.** Cheap, standard, and it keeps a large
+   physics feature out of Phase 0.
+4. **⚠ P0.1 described as "an asset root parameter".** Said as though it were small. Asset roots
+   leak: relative paths inside scenes, the `.compiled/` cache location, the content browser's
+   notion of home, the watcher's directory. It may be the largest single item in this milestone.
+5. **No cover AI.** Argued above. The risk is that enemies charging in the open makes the buildings
+   pointless and the map read as flat — in which case the answer is more enemies and tighter sight
+   lines before it is pathfinding.
+
+## How we will know it worked
+
+Not "the game is fun". The milestone succeeds if it produces a list of **engine** defects that the
+probe-per-change method never found — and the prediction, recorded now so it can be checked later,
+is that they cluster in three places: P7's read-only asset path, the animator under many
+simultaneous instances, and memory or handle growth over a session longer than any probe has ever
+run.
+
+If the game ships and finds nothing, that is also a result, and it means the probes were better
+than I think they are.

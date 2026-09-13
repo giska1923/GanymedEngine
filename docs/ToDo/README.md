@@ -29,6 +29,7 @@ documented.** A file here is a promise, not a description.
 
 | Document | Covers | Items |
 |---|---|---|
+| [PROVING_GROUND.md](PROVING_GROUND.md) | **Milestone plan** — the test game, and the engine work that must land first | Phase 0 + P1-P7 |
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types | 2 |
 | [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
 | [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
