@@ -31,7 +31,7 @@ documented.** A file here is a promise, not a description.
 |---|---|---|
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred | 1 (parked) |
 | [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
-| [assets.md](assets.md) | Dependency hashing; the Apply budget cannot subdivide one apply | 2 |
+| [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
 | [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, whether to adopt Tracy | 3 |
 
 **Priority, as a recommendation rather than a schedule:** **Linux is now built and run** — all

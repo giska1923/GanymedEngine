@@ -18,6 +18,8 @@ namespace GanymedE {
 		Ref<Texture2D> ResolveMap(const std::string& path, const DecodedImage& decoded,
 			AssetHandle& outHandle)
 		{
+			GE_PROFILE_FUNCTION();
+
 			outHandle = InvalidAssetHandle;
 
 			if (!path.empty())
@@ -77,6 +79,8 @@ namespace GanymedE {
 
 		Ref<Shader> shader = MeshShader::Get();
 
+		GE_PROFILE_SCOPE("BuildMesh: materials and maps");
+
 		std::vector<Ref<Material>> materials;
 		materials.reserve(source.Materials.size());
 
@@ -120,8 +124,12 @@ namespace GanymedE {
 		if (materials.empty())
 			materials.push_back(Material::Create(shader));
 
-		Ref<Mesh> mesh = Mesh::Create(source.Vertices, source.Indices, source.Submeshes, materials,
-			source.SkinVertices, source.Skeleton, source.Clips);
+		Ref<Mesh> mesh;
+		{
+			GE_PROFILE_SCOPE("BuildMesh: vertex and index buffers");
+			mesh = Mesh::Create(source.Vertices, source.Indices, source.Submeshes, materials,
+				source.SkinVertices, source.Skeleton, source.Clips);
+		}
 
 		mesh->SetPath(source.RelativePath);
 		return mesh;

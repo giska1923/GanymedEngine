@@ -564,6 +564,8 @@ namespace GanymedE {
 
 		Ref<Mesh> ApplyMesh(const AssetMetadata& metadata, Scope<AssetParseResult> parsed)
 		{
+			GE_PROFILE_FUNCTION();
+
 			const std::filesystem::path relativePath = metadata.FilePath;
 
 			Ref<Mesh> mesh = BuildMesh(static_cast<MeshParse&>(*parsed).Source);
@@ -577,7 +579,11 @@ namespace GanymedE {
 			// It now runs *before* the manager caches the mesh, where the old code ran after.
 			// Safe because GenerateSidecars only ever reaches ImportAsset, never GetAsset<Mesh>:
 			// it writes files and registers handles, so nothing in it can re-enter this load.
-			MaterialSerializer::GenerateSidecars(mesh, relativePath);
+			{
+				GE_PROFILE_SCOPE("ApplyMesh: GenerateSidecars");
+				MaterialSerializer::GenerateSidecars(mesh, relativePath);
+			}
+
 			return mesh;
 		}
 

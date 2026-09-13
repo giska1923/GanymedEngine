@@ -575,6 +575,59 @@ Two properties are deliberate:
   interrupted half way, so a budget allowed to refuse everything would stall loading permanently the
   moment one asset costs more than the whole allowance — and one does. Guaranteed forward progress
   beats a ceiling that cannot be honoured anyway.
+- **Past the first, it asks whether the work will fit, not whether the clock has run out.** The test
+  is `ElapsedMs() + estimate <= budget`, where the estimate is an exponential moving average of what
+  an apply of *that manager's* type has been costing. Per manager because they are not comparable,
+  and a moving average so one unusually expensive asset raises the estimate without pinning it
+  there. Until the first apply of a run completes there is no estimate, and "no data" is read as
+  *assume it will not fit* — the optimistic reading let the opening frame of a burst run several
+  applies before any measurement existed, which was then the peak frame.
+
+This is what the budget failing to subdivide one apply actually costs, and it is worth being precise
+about because the obvious reading is wrong. The old test was `ElapsedMs() < budget`: an apply
+starting at 3.9 ms of a 4 ms budget ran to completion regardless of costing another 2.4, so a frame
+routinely did about **twice** the stated budget's work. Measured on 24 skinned meshes, x64 Release,
+warm, three runs each:
+
+| | Peak Apply frame | Frames to drain |
+|---|---|---|
+| `ElapsedMs() < budget` *(old)* | 6.21 / 6.67 / 8.06 ms | 17 / 16 / 16 |
+| `ElapsedMs() + estimate <= budget` | 6.56 / 4.01 / 5.26 ms | 26 / 28 / 26 |
+
+**The trade is explicit: a 24% lower peak for 70% more frames to drain**, because honouring a 4 ms
+budget does about half the work per frame that overshooting it did. For 24 meshes that is 0.45 s
+instead of 0.27 s, and assets appear progressively either way. If the old throughput is wanted, the
+honest way to get it is to raise `kApplyBudgetMs` to about 6 ms — which the estimator then holds to,
+where the old rule could not: its worst frame was 8.06 ms against a nominal 4.
+
+**It does not help a cold first import, and cannot.** There one apply exceeds the whole budget on its
+own, so the always-allow-the-first rule means the frame costs whatever that apply costs. Measured
+cold, the apply is 6–9 ms of which `MaterialSerializer::GenerateSidecars` is the larger half — see
+[the cost of a mesh apply](#the-cost-of-a-mesh-apply).
+
+### The cost of a mesh apply
+
+Measured with the frame profiler, 24 skinned meshes, x64 Release, mean per apply:
+
+| | Cold (sidecars being written) | Warm |
+|---|---|---|
+| **`ApplyMesh` total** | **5.50 ms** | **2.43 ms** |
+| `GenerateSidecars` | 3.66 ms | 0.13 ms |
+| `BuildMesh` — materials and maps | 1.65 ms | 2.24 ms |
+| &nbsp;&nbsp;of which `Texture2D::SetData` | 1.33 ms | 1.93 ms |
+| `BuildMesh` — vertex and index buffers | 0.27 ms | 0.25 ms |
+
+Two things in that table are worth keeping, because both contradict the obvious guess:
+
+- **Creating the vertex and index buffers is 5–10% of it.** The expensive part of a mesh apply is
+  its textures, not its geometry.
+- **A cold apply is dominated by file I/O, not by the GPU.** `GenerateSidecars` writes a `.gmat`,
+  extracts embedded images to real files, and registers each one — roughly five small files per
+  material, at about 1 ms each, split fairly evenly between `ExtractEmbedded` (1.16 ms), `Save`
+  (1.32 ms), and the two `ImportAsset` calls (2.20 ms combined). None of it is GPU work and none of
+  it needs the main thread except the registry mutation inside `ImportAsset`. Moving the writes to
+  the parse stage is the change that would actually shrink the cold frame; it is not done, and is
+  recorded in [ToDo/assets.md](../ToDo/assets.md).
 
 Measured on a burst of 22 assets reloading at once, same build, same burst:
 

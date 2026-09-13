@@ -7,6 +7,7 @@
 
 #include <array>
 #include <chrono>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -176,14 +177,30 @@ namespace GanymedE {
 		{
 		}
 
-		// "Is there room for one more?"
+		// "Is there room for one more that costs about `estimateMs`?"
 		//
 		// **The first apply of a frame always says yes**, whatever the clock reads. An apply cannot
 		// be interrupted half way, so a budget allowed to refuse everything would stall loading
 		// permanently the moment one asset costs more than the whole allowance - and a single large
 		// mesh does. Guaranteed forward progress is worth more than a hard ceiling that cannot be
 		// honoured anyway.
-		bool HasRoom() const { return m_Applied == 0 || ElapsedMs() < m_Milliseconds; }
+		//
+		// **Past that, it asks whether the work will fit rather than whether the clock has run
+		// out**, which is the difference between a budget and a tripwire. The old test was
+		// `ElapsedMs() < m_Milliseconds`: an apply starting at 3.9 ms of a 4 ms budget ran to
+		// completion regardless of costing another 2.4, so the frame overshot by almost a whole
+		// apply every time the arithmetic happened to line up that way. Measured on 24 meshes in
+		// Release, that was a 7.2 ms frame against a 4 ms budget with a 2.4 ms mean apply.
+		//
+		// It cannot subdivide one apply and does not try - a texture upload is one bgfx call. It
+		// only declines to *start* one it already knows will not fit.
+		bool HasRoomFor(double estimateMs) const
+		{
+			if (m_Applied == 0)
+				return true;
+
+			return ElapsedMs() + estimateMs <= m_Milliseconds;
+		}
 
 		double ElapsedMs() const
 		{
@@ -412,8 +429,15 @@ namespace GanymedE {
 					// Out of budget: the rest keep their finished results and land on a later
 					// frame. Nothing is lost and no work is repeated - the parse is already done,
 					// only the GPU-side half is deferred.
-					if (!budget.HasRoom())
+					// No data yet means "assume it will not fit", not "assume it is free". The
+					// optimistic reading let the first frame of a burst run several applies
+					// before the first measurement existed, which is precisely the frame that
+					// then showed up as the peak.
+					if (!budget.HasRoomFor(m_ApplyEstimateMs > 0.0
+						? m_ApplyEstimateMs : std::numeric_limits<double>::max()))
+					{
 						break;
+					}
 
 					// Re-found rather than trusted: an Apply above may have evicted this very
 					// handle, which erases it from underneath the list collected a moment ago.
@@ -424,7 +448,20 @@ namespace GanymedE {
 					PendingLoad pending = std::move(it->second);
 					m_Pending.erase(it);
 
+					const auto started = std::chrono::steady_clock::now();
 					Finish(handle, pending);
+					const double cost = std::chrono::duration<double, std::milli>(
+						std::chrono::steady_clock::now() - started).count();
+
+					// An exponential moving average, per manager, because managers are not
+					// comparable: a Material apply is a few uniforms and a Mesh is buffers plus
+					// every texture it pulls. A mean lets one unusually expensive asset raise the
+					// estimate without pinning it there, and it decays back within a few applies -
+					// which matters because an estimate that stays too high just defers work the
+					// frame could have done.
+					m_ApplyEstimateMs = m_ApplyEstimateMs == 0.0
+						? cost : m_ApplyEstimateMs * 0.75 + cost * 0.25;
+
 					budget.RecordApplied();
 					++applied;
 				}
@@ -637,6 +674,11 @@ namespace GanymedE {
 		// In flight. Keyed by handle so a second Load for the same asset joins the first rather
 		// than queueing a duplicate parse - the race decision 5's "two Load calls racing to
 		// insert" warns about, made impossible by Load being main-thread-only.
+		// What one apply of this type has been costing lately, in milliseconds. Zero until the
+		// first one completes, which makes the very first apply of a run optimistic - it would
+		// have run anyway under the always-allow-the-first rule.
+		double m_ApplyEstimateMs = 0.0;
+
 		std::unordered_map<AssetHandle, PendingLoad> m_Pending;
 
 		// Handles whose load will not be retried. See the note in Load.
