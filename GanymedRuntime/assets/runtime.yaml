@@ -12,20 +12,20 @@
 #
 # This file is not inside the project - it is read from assets/runtime.yaml before any
 # root is known - so it stays put when the root moves.
-AssetRoot: assets
+AssetRoot: ../Game/assets
 
 # Relative to AssetRoot, not to the working directory. An absolute path is honoured as
 # given, which is what makes `GanymedRuntime /abs/path/to/scene.ganymede` behave.
-StartScene: scenes/Demo.ganymede
+StartScene: scenes/ProvingGround.ganymede
 
 # Empty string means "no HUD". Loaded after the scene starts, so a document whose data
 # bindings a script writes on OnCreate has its model populated before first layout.
-UIDocument: ui/hud.rml
+UIDocument: ""
 
-Title: Ganymed Runtime Demo
+Title: Proving Ground
 
 # Ignored when Fullscreen is true: borderless fullscreen takes the primary monitor's
 # video mode. See docs/engine/platform.md.
 Width: 1600
 Height: 900
-Fullscreen: true
+Fullscreen: false

@@ -193,6 +193,27 @@ There is not one raycast call in the engine. Jolt has `NarrowPhaseQuery::CastRay
 wrapping and binding to Lua. Needed **twice**: enemy line-of-sight acquisition, and any weapon that
 is not a projectile. Small, and the highest value-per-line item in Phase 0.
 
+### P0.5 — Cursor capture — **found during P1, not planned**
+
+There is no cursor capture in the engine. `glfwSetInputMode(GLFW_CURSOR, GLFW_CURSOR_DISABLED)`
+appears nowhere, `Window` exposes no cursor mode, and `Input` offers only `IsKeyPressed`,
+`IsMouseButtonPressed` and `GetMousePosition`.
+
+Mouse look is therefore impossible, not merely awkward: an uncaptured cursor leaves the window,
+and its delta goes to zero the moment it reaches a screen edge, so looking right stops working
+when you have looked right enough.
+
+Needed: a cursor mode on `Window` (normal / hidden / disabled), plumbed through the platform
+layer for all three backends, plus `Input.SetCursorMode` and a raw mouse **delta** in Lua rather
+than an absolute position - a captured cursor has no meaningful absolute position.
+
+It belongs on `master` under the branch rule. P1 is built with keyboard turning meanwhile, because
+P1's gate is about whether the capsule walks without tipping, and that does not depend on how the
+player aims.
+
+**This is the milestone working as intended** - Phase 0 was an attempt to name the engine gaps in
+advance, and it missed one. Expect more.
+
 ### P0.4 — Sensors (optional)
 
 No `IsSensor` anywhere, so a trigger volume is a solid body you bump into rather than walk through.
@@ -212,7 +233,37 @@ Flat ground plane, capsule player, WASD plus mouse look, camera follow.
 - **Tests:** the character controller from P0.2, the `Input` bindings under continuous use rather
   than a probe, transform hierarchy, and the editor's authoring loop end to end.
 - **Gate:** walk the full extent of the map for two minutes without the capsule tipping, sinking
-  through the ground, or sticking to a wall.
+  through the ground, or sticking to a wall. **Result: two of three pass; sticking fails.**
+
+**Gate run - 130 s of autopilot across a flat plane with three obstacles:**
+
+| Failure mode | Result |
+|---|---|
+| tipping | **PASS** - `maxTilt = 0.0000` for the whole run; the rotation lock never slipped |
+| sinking | **PASS** - y range 0.940-1.380 against a settled 0.950. The low is 12 mm of solver penetration, the high is the capsule climbing the step. No downward drift |
+| sticking | **FAIL** - jams on Block B's corner at `(-8.0, 7.0)` on **every lap**, ten times in 130 s, always the same spot |
+
+Two useful answers fell out of it:
+
+- **A rotation-locked capsule does climb a 0.2 m kerb.** Logged y of 1.06, then 1.30, then 1.38
+  while crossing the step: the hemisphere at the capsule's base rides it. Step-up is not the
+  missing piece at this height.
+- **It does not slide along walls, and that is the entirety of the sticking failure.** Drive a
+  velocity-set capsule straight at a surface and Jolt cancels the velocity; nothing tangential is
+  left to carry it sideways, so it stops dead and stays. Deterministic - same corner, every lap.
+
+The route's stuck-escape (skip to the next waypoint after 1.5 s pinned) keeps the run going, but it
+is a **workaround in the game**, not a fix in the engine, and it is the only reason `worstStuck`
+reads 1.51 s instead of 124 s.
+
+**This fires Decision 1's own trigger.** The plan said: *if P1's gate needs more than one attempt,
+stop and do `CharacterVirtual`.* It took three. Two of those were route bugs of mine - an arc that
+drifted off the map, then waypoints authored inside solid blocks - but the third failure belongs to
+the engine, and it is precisely the one Decision 1 named as most likely to bite.
+
+Wall sliding is the one thing `CharacterVirtual` gives that this needs. Recommended: build it on
+`master` before P2, rather than letting every later phase inherit a controller that stops dead on
+contact.
 
 ### P2 — The map
 
