@@ -47,7 +47,13 @@ project "GanymedEditor"
 
 	filter "system:windows"
 		systemversion "latest"
-		buildoptions { "/utf-8" }
+
+		-- /bigobj raises the COFF section limit, the same reason GanymedEngine sets it. The
+		-- inspector is the cause here: DrawComponent<T> and TrackCommitBoundary<T> instantiate
+		-- per component type, and SceneHierarchyPanel.cpp draws all of them in one TU. Adding
+		-- the multi-entity before-snapshot crossed the limit (C1128). It changes the object
+		-- file format only - no codegen, no runtime cost.
+		buildoptions { "/utf-8", "/bigobj" }
 
 		-- /SUBSYSTEM:WINDOWS so no console window sits behind the editor;
 		-- mainCRTStartup keeps the entry point at main() rather than WinMain
@@ -74,6 +80,9 @@ project "GanymedEditor"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			-- Before bimg and bx, which it calls into. enkiTS is a leaf and only needs pthread.
+			"TextureEncode",
+			"enkiTS",
 			"bgfx",
 			"bimg",
 			"bx",
@@ -95,6 +104,9 @@ project "GanymedEditor"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			-- Before bimg and bx, which it calls into. enkiTS is a leaf and only needs pthread.
+			"TextureEncode",
+			"enkiTS",
 			"bgfx",
 			"bimg",
 			"bx",

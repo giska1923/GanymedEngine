@@ -29,15 +29,31 @@ documented.** A file here is a promise, not a description.
 
 | Document | Covers | Items |
 |---|---|---|
-| [rendering.md](rendering.md) | bgfx Phase 7: Vulkan untested, per-backend checks | 1 + matrix |
-| [reflection.md](reflection.md) | Apply-to-prefab, template cache, multi-entity editing gaps | 4 |
-| [assets.md](assets.md) | Dependency hashing, parse backpressure, naming and cleanup chores | 6 |
-| [cross-cutting.md](cross-cutting.md) | Platform coverage, verification gaps | 2 |
+| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred | 1 (parked) |
+| [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
+| [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
+| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, whether to adopt Tracy | 3 |
 
-**Priority, as a recommendation rather than a schedule:** [cross-cutting.md](cross-cutting.md)'s
-platform coverage is now the interesting one — D3D11, D3D12 and **OpenGL 3.3** all render correctly
-on Windows, and a Linux build defaults to the GL backend, so the thing that used to block it is
-gone. Otherwise the [assets.md](assets.md) entries are one-liners worth batching.
+**Priority, as a recommendation rather than a schedule:** **Linux is now built and run** — all
+three configurations, editor and runtime, with the status table in
+[build-and-tooling.md](../engine/build-and-tooling.md#platform-status). What is left in
+[cross-cutting.md](cross-cutting.md) is macOS (never compiled) and the gap between "runs in WSL2"
+and "runs on Linux" — chiefly Vulkan, which WSL cannot load.
+
+[assets.md](assets.md)'s entries were **measured**, and one of them is now **done**: parse
+backpressure was real and was a memory bound — 24 meshes loaded at once held 127 MB of decoded data
+waiting for Apply, 18x what the finished assets retain — and an in-flight cap of 8 roughly halves
+the peak at no cost in drain time. What remains is dependency hashing (smaller than written up; the
+answer is a two-level check rather than content hashing) and a third problem the backpressure entry
+was hiding: a 24 ms Apply frame in Release is the budget's inability to subdivide one apply, which
+backpressure does not fix and did not. [rendering.md](rendering.md) is effectively closed — all four backends
+render, pick and agree on colour. Its one remaining entry, **MSAA, is parked on purpose**: the abort
+is diagnosed and the fix is one line, but whether MSAA is wanted at all is the open question, and
+FXAA already ships. Nothing there blocks anything else.
+
+The frame loop is instrumented and the profiler backend was rewritten to make that affordable, so
+what is left of that item is only the Tracy question — worth having, blocking nothing. macOS is the
+largest genuinely open item.
 
 Threading is **done**: T1–T4 and decision 4 have all landed, so there is no threading file here any
 more. Jolt now runs on `Core/JobSystem` — see [physics.md](../engine/physics.md#the-job-system).
@@ -52,5 +68,12 @@ describe problems that were fixed later. Verified stale, recorded here so nobody
 - `REFLECTION_ROADMAP.md` R2 note "`Attr::Section` is unread by the generic path" — it is read, at
   `EditorInspector.cpp`'s section grouping.
 - `ASSET_PIPELINE_ROADMAP.md` Phase 3 note "a canonical entity order would fix it" — canonical order
-  landed; only the per-run UUID churn survives, tracked in [assets.md](assets.md).
+  landed, and the per-run UUID churn it left is gone too: the duplicate handles in `3DExample` and
+  `Example` were re-minted by a one-off re-save of all seven fixtures, verified idempotent (a second
+  load+save pass remaps nothing and produces byte-identical files).
+- `ASSET_PIPELINE_ROADMAP.md` Phase 1 note "orphaned `.meta` cleanup is cheap insurance, not built" —
+  built: detected at every scan, reaped only by an explicit editor action
+  ([assets.md](../engine/assets.md#orphaned-sidecars)).
+- `ASSET_PIPELINE_ROADMAP.md` Phase 1 note on `IsRegistryWritable` being misnamed — renamed to
+  `IsAssetsWritable`.
 - `THREADING_ROADMAP.md` "T4 remains open" — history inside T3's notes; T4 is done.

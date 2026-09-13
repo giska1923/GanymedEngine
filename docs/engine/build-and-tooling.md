@@ -9,6 +9,47 @@
   `make -j$(nproc) config=debug`.
 - macOS: `scripts/macOS_GenerateProjects.sh` → Xcode workspace.
 
+`Linux_GenerateProjects.sh` wants a native `vendor/premake/bin/premake5`, and only the Windows
+`premake5.exe` is committed. `setup_premake.sh` downloads one; **premake also cross-generates**,
+which needs no download and no Wine:
+
+```
+vendor/premake/bin/premake5.exe --os=linux gmake2
+```
+
+The emitted makefiles carry only relative paths, so the generated tree builds unchanged on a Linux
+box or in WSL. Generated makefiles are gitignored (`Makefile`, `*.make`), so this does not dirty
+the tree, and it does not disturb the `.sln`.
+
+## Platform status
+
+Claims about a platform are only worth what was actually compiled and run on it, so:
+
+| Platform | Toolchain | Builds | Runs | Backend used |
+|---|---|---|---|---|
+| Windows x64 | MSVC 2022 | Debug, Release, Dist | yes | D3D11, D3D12, Vulkan, OpenGL 3.3 |
+| Linux x64 | gcc 11.4 (Ubuntu 22.04, WSL2) | Debug, Release, Dist | yes | OpenGL 3.3 (Mesa, EGL) |
+| macOS | clang / Xcode | **never attempted** | — | — |
+
+The Linux run was the editor: window, scene load, viewport, ImGui panels and content browser, with
+**zero errors and zero warnings** in the log, and an asset scan reading `19 files, 19 adopted from
+sidecars, 0 minted, 0 written` — byte-for-byte the Windows numbers, which is the check that says
+the `.meta` identity scheme is portable rather than merely present. Audio came up on miniaudio's
+Null device (WSL exposes none) and degraded without complaint.
+
+Two caveats on that row, because "it ran in WSL2" is not "it runs on Linux":
+
+- **Vulkan was not exercised** — WSL has no Vulkan loader, so bgfx fell through to OpenGL. On a
+  real Linux box Vulkan is the backend bgfx would pick first.
+- **GL came from Mesa's d3d12 gallium driver** (it reports `D3D12 (Intel(R) UHD Graphics)`), which
+  is hardware-accelerated but is not the driver stack a native Linux user has.
+
+Requesting a backend the machine cannot start is handled and says so rather than failing quietly:
+`--renderer=d3d11` on Linux logs *"OpenGL 3.3 - bgfx substituted it for the requested Direct3D 11,
+which could not be started on this machine"*. bgfx compiles its D3D renderers on Linux (they run
+over vkd3d), so they appear in the supported list on that platform; the substitution notice is what
+makes that harmless.
+
 Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor`, `GanymedRuntime`
 and `Sandbox` (executables linking the engine), plus the dependency group built from source via their own
 premake scripts in `GanymedEngine/extern/*.lua`: GLFW, ImGui (+ImGuizmo), yaml-cpp, Jolt,
@@ -57,6 +98,11 @@ Other build facts that have bitten before (details in
   in the engine decodes video.
 - The `JPH_*` instruction-set defines in the engine's premake **must match `Jolt.lua`**, or Jolt
   types change layout across the boundary.
+- **`miniaudio_impl.cpp` is excluded from the PCH** (`flags { "NoPCH" }`). With GCC's `.gch`
+  loaded, `_mm_alignr_epi8` in dr_FLAC's SSE4.1 residual decoder stops being recognised as taking a
+  compile-time immediate and the TU fails to compile. It is the precompiled header specifically —
+  the same file builds clean under identical flags and defines without it, at every optimisation
+  level, in both C and C++. The TU includes one header and wanted nothing from the PCH anyway.
 - **AVX2 is assumed, and the flags must be repeated on every platform.** `/arch:AVX2` on MSVC,
   `-mavx2 -mbmi -mpopcnt -mlzcnt -mf16c -mfma` on gcc/clang — Linux *and* macOS. The `JPH_USE_*`
   defines only tell Jolt's headers to reach for the intrinsics; clang independently refuses to
@@ -97,7 +143,11 @@ Other build facts that have bitten before (details in
   ones it depends on (RmlUi and ImGui before FreeType — both rasterize with it — then Lua; bgfx
   before bimg and bx). The lists in
   `GanymedEditor`, `GanymedRuntime` and `Sandbox` must stay in step; a divergence links fine on
-  Windows and fails on Linux with symbols that are plainly present in the archive list.
+  Windows and fails on Linux with symbols that are plainly present in the archive list. This is not
+  hypothetical: `enkiTS` and `TextureEncode` were added to the engine's own `links` and to nothing
+  else, so every Windows build kept working on project references while the first Linux link failed
+  on `enki::TaskScheduler::Initialize` and friends. A list that is only exercised on one platform
+  goes stale silently, which is the argument for building the others at all.
 - **Angled includes on the xcode4 exporter.** premake maps `includedirs` to
   `USER_HEADER_SEARCH_PATHS` and emits `ALWAYS_SEARCH_USER_PATHS = NO`, and clang searches user
   paths for *quoted* includes only — so on Xcode, a dependency that reaches for its own public
@@ -123,6 +173,48 @@ Other build facts that have bitten before (details in
   `simd128_selb` is inline and uses `_mm_blendv_ps`; MSVC allows intrinsics regardless of `/arch`,
   gcc refuses to inline it without SSE4.1. The flag must be identical across the three or the
   `BX_SIMD_*` selection inside those inline headers diverges between the static libs.
+
+## What MSVC accepts and GCC does not
+
+MSVC's default mode (this workspace does not set `/permissive-`) resolves several things later, or
+more loosely, than the standard allows. None of it is exotic, and all of it compiled for years on
+Windows; the first GCC build found it in an afternoon. Recorded as a category because the next
+platform will find the same kinds:
+
+- **Two-phase name lookup.** A call inside a template is resolved by ordinary lookup at the
+  template's *definition* point plus ADL at instantiation. MSVC defers the whole thing to
+  instantiation, so a helper declared *below* a template that uses it still resolves. The scene
+  dialect's `operator<<(YAML::Emitter&, const glm::vec3&)` overloads sat at the bottom of
+  `namespace GanymedE` while `Detail::RegisterReflectedCodec<T>` called them from above; ADL
+  searches `YAML` and `glm`, neither of which declares them, so GCC had no candidate at all. They
+  now sit above every template that uses them — which is the order the R3 comment already claimed.
+- **The `template` disambiguator.** `x.f<T>()` where `x` has dependent type needs
+  `x.template f<T>()`, or `<` parses as less-than. MSVC does not require it. Hit at
+  `self->Primary.HasComponent<T>()` (`self` is `MultiBinding<T>*`) and at
+  `field.traits<Reflection::Trait>()` (`field` comes from `entt::resolve<T>()`). Note the
+  neighbouring `other.HasComponent<T>()` needs nothing, because `other` is declared `Entity`
+  outright — the rule is about the *object's* type being dependent, not the member template.
+- **A name means one thing per class scope** ([basic.scope.class]). `Skeleton Skeleton;` makes
+  `Skeleton` the type above the member and the member below it; GCC rejects it outright. The fix is
+  to qualify the type (`GanymedE::Skeleton Skeleton;`), which `Components.h` was already doing for
+  `Mesh`, `Material` and `Environment`.
+- **Binding a temporary to a non-const lvalue reference** — an MSVC extension (C4239).
+  `entt::meta_data::get` takes `Instance&&` and builds a `meta_handle` from it, which binds
+  `Type&`, so `field.get(entt::forward_as_meta(...))` cannot compile conformingly. Name the
+  `meta_any` first.
+- **`return nullptr;` from a `bool` function.** Converting `std::nullptr_t` to `bool` needs
+  direct-initialization, so a `return` statement cannot do it. It yielded `false`, which was the
+  intent, but it was a leftover from when the function returned a `Ref<>`.
+
+Two portability bugs came from warnings rather than errors, and both were real:
+
+- **`ImGui::Text(str.c_str())` treats `str` as a printf format.** `-Wformat-security` flagged two
+  sites, one of them reached by entity and component display names. An entity named `%s` would have
+  ImGui read an argument nobody passed. `TextUnformatted`, or `"%s"` as the format, fixes it.
+- **`%llu` does not spell `uint64_t`.** It is `unsigned long` on LP64 and `unsigned long long` on
+  Windows. `UUID`'s conversion operator is `explicit`, which in direct-initialization only yields
+  `uint64_t` exactly, so casting to `unsigned long long` does not compile either — `PRIu64` from
+  `<cinttypes>` is the portable spelling.
 
 ## Dependencies (vendored under `GanymedEngine/extern/`)
 
@@ -333,14 +425,26 @@ everything. Packaging that tree is the distribution milestone's job.
   (Startup/Runtime/Shutdown), written to `GanymedEProfile-<phase>.json` beside the executable and
   gitignored by the blanket `*.json` rule. Enable by setting `GE_PROFILE` to 1 in
   [`Instrumentor.h`](../../GanymedEngine/source/GanymedE/Debug/Instrumentor.h); it is **0** by
-  default, so the ~90 `GE_PROFILE_FUNCTION` scopes in the engine compile to nothing.
-  - The job system's threads appear as named lanes (`GE Main`, `GE Worker N`) whether or not
-    profiling is on, and contribute idle/wait/worker-lifetime spans when it is — see
-    [core.md](core.md#thread-naming-and-profiler-callbacks), including why those wait spans are
-    expensive enough to distort what they measure.
-  - Note what the phase split means in practice: the frame loop itself carries almost no
-    `GE_PROFILE_FUNCTION` scopes today, so `-Runtime.json` is mostly asset and job activity rather
-    than a frame breakdown. A trace that looks empty is usually that, not a broken session.
+  default, so every scope compiles to nothing.
+  - `-Runtime.json` **is** a frame breakdown: `RunLoop` per frame, one span per ECS system (named
+    from `ISystem::Name()` at the single `SystemManager` dispatch), the scene renderer's passes,
+    ImGui begin/end, and the present. A representative editor capture — 1,567 frames, 68,713
+    spans — read: median frame 6.63 ms, and within it `WindowsWindow::OnUpdate` (the bgfx submit
+    and present, i.e. mostly vsync) 4.16 ms, ImGui 1.17 ms, `Scene::OnUpdateEditor` 0.49 ms, of
+    which `RenderSystem` was 0.28 ms and every other system under 36 us.
+  - Threads appear as **named lanes** (`GE Main`, `GE Worker N`). This needs
+    `GE_PROFILE_THREAD`, which `JobSystem` calls beside `SetCurrentThreadName`: a chrome trace
+    carries no OS thread names, so the OS-level name a debugger shows is invisible here. Workers
+    also contribute idle/wait/lifetime spans — see
+    [core.md](core.md#thread-naming-and-profiler-callbacks).
+  - **The trace is written at `EndSession`, not as it goes.** Close the app normally to get one;
+    a process killed outright (taskkill, a `timeout` wrapper, stopping the debugger) leaves an
+    empty `-Runtime.json`, because its records are still in memory. That is the cost of the
+    buffering below, and it is the usual bargain for a buffered profiler.
+  - Per-thread buffers are capped at `kProfileRecordsPerThread` (1<<18 records, 6 MB). Overflow
+    is **counted and logged by name** at `EndSession` rather than silently truncating; raise the
+    constant if you hit it. At a few hundred scopes a frame the main thread holds roughly fifteen
+    seconds at 60 fps.
 - **F1** in any app toggles bgfx's stats/debug-text overlay (draw counts, GPU/CPU timings).
 - The editor Stats panel shows Renderer2D/3D counters (draws, quads, meshes, frustum-culled,
   instanced, transparent) plus live post-processing and physics-debug toggles.

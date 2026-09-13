@@ -4,61 +4,100 @@ All six phases and five follow-ups of
 [`ASSET_PIPELINE_ROADMAP.md`](../history/ASSET_PIPELINE_ROADMAP.md) are done. See
 [assets.md](../engine/assets.md) for the pipeline as it stands.
 
-What remains is hygiene. Several of these are one-liners and are worth batching into a single pass.
+What remains is hygiene. The one-liner batch is **done** — the `IsAssetsWritable` rename, orphaned
+`.meta` detection plus an explicit clean action, deleting the abandoned `assets/.assets/` trees, and
+a one-off re-save of all seven committed fixtures (which fixed the duplicate entity UUIDs in
+`3DExample` and `Example`, so `git diff` is a valid byte-identity check against them again).
+
+**Both were measured**, which was the thing standing in front of them, and the numbers changed the
+shape of both. **Parse backpressure is now done** — it was real, it was a *memory* bound rather than
+the frame bound it had been written up as, and the cap that fixed it is in
+[assets.md](../engine/assets.md#backpressure-the-in-flight-cap), and the Apply budget now declines
+work it cannot fit rather than overshooting by a whole apply. What is left is the dependency hashing
+question (smaller than it looked, and now a known small change) and the two halves of the mesh apply
+that profiling turned up - neither of which the budget can do anything about.
+
+A note on method, because it constrains what the numbers mean: **the committed tree cannot reproduce
+either case.** It indexes 8 compilable assets, and `Phase5Test`'s 40 `StaticMeshComponent`s all
+reference one handle. The burst figures below come from 24 generated copies of `CesiumMan.glb`
+(skinned, with an embedded texture) loaded in a single frame — 24 to match the "23 assets" figure
+Phase 6 recorded — measured in **x64 Release**, then deleted.
 
 ---
 
-## `HashDependency` is size+mtime, not content
+## `HashDependency` is size+mtime, not content — smaller than it looked
 
-A deliberate Phase 4 asymmetry — it is checked on every load of every dependent, so content-hashing
-it meant a full read per dependency. The consequence is that **touching** a texture recompiles every
-mesh that references it, even when the bytes are identical.
+The Phase 4 comment argues that "hashing a 4K normal map's bytes to answer *did it change* costs
+more than the recompile it is trying to avoid". **Measured, that is true at 4K and false by more
+than an order of magnitude at this project's scale.** FNV-1a (`HashBytes`) runs at 830–1030 MB/s:
 
-The tradeoff still holds on its own terms; what changed is that Phase 6's hot reload made the case
-reachable during ordinary editing rather than only on a branch switch. Worth revisiting with the
-cost measured rather than assumed.
+| Dependency | Size | `stat` (what it does now) | read + content hash |
+|---|---|---|---|
+| `BoxTextured` albedo | 4.2 KB | 7.4 us | 61 us |
+| `CesiumMan` albedo | 153 KB | 7.4 us | 314 us |
+| `studio_small_08_1k.hdr` | 1.47 MB | 6.1 us | 2.9 ms |
+| synthetic 4K normal map | 32 MB | 50 us | **71.6 ms** |
 
-## Parse results in flight are unbounded
+Against a **measured mesh recompile of 6.5 ms** (24 cold compiles, 156.2 ms total). So content
+hashing a real dependency here is ~20x *cheaper* than the recompile it prevents, and hashing a 32 MB
+one is ~11x more expensive. Crossover is around 5 MB of dependency.
 
-Every accepted change queues a parse that holds its compiled bytes until Apply. The Apply budget
-(4 ms/frame) bounds how fast they drain but not how many can accumulate, so a cold open or a large
-branch switch can queue far more decoded image data than the budget will retire in reasonable time.
+**But the framing was wrong, and that matters more than the numbers.** The choice is not "cheap hash
+always" versus "content hash always". `Open` already uses the right pattern for the *source*: mtime
+and size are a cheap pre-filter, and the content hash runs **only when that pre-filter trips**.
+Applying the same two-level shape to dependencies costs nothing in the common case:
 
-Phase 6's measured worst case was 23 assets rewritten at once: the watcher itself stayed under
-1.5 ms/poll, but one Apply frame hit 110 ms in Debug. Backpressure — a cap on parses in flight, with
-the watcher deferring rather than queueing past it — is the fix.
+- nothing changed → one `stat` per dependency, exactly as today (7 us)
+- dependency touched, bytes identical → +314 us to confirm, saving a 6.5 ms recompile
+- dependency genuinely changed → +314 us on top of a recompile that was going to happen anyway
 
-## `IsRegistryWritable()` is misnamed
+The 4K case stays safe with a size cap on the confirm step: above some threshold, decline to
+content-hash and keep today's behaviour, since that is the regime where the recompile really is
+cheaper than the read.
 
-It gates **all** writes into `assets/`, not writes to a registry. Flagged in Phase 1, still true.
-The rename was skipped twice because it touched the then-live roadmap doc; that objection is gone now
-that the record is in [`docs/history/`](../history/ASSET_PIPELINE_ROADMAP.md) and is not rewritten.
+This is now a small, bounded change with a known payoff rather than an open question. What it needs
+is a second hash stored per dependency in the epoch record, which is a format change.
 
-## No orphaned `.meta` cleanup
+## Get the mesh apply's file I/O off the main thread
 
-The editor's file operations are the likely source of orphaned sidecars, and nothing reaps them. A
-"clean orphaned `.meta`" maintenance action was called cheap insurance in Phase 1 and never built.
+*(What is left of the old "parse results in flight" entry. Backpressure landed; so did making the
+Apply budget decline work it cannot fit — see
+[assets.md](../engine/assets.md#the-apply-budget). Neither helps the case below.)*
 
-Related and even smaller: the abandoned `assets/.assets/` trees from the pre-`.compiled` layout are
-still on disk and can simply be deleted.
+A **cold** mesh apply is 5.50 ms, and `MaterialSerializer::GenerateSidecars` is 3.66 ms of it —
+two thirds, and **none of it GPU work**. It writes a `.gmat`, extracts embedded images to real
+files, and registers each result: roughly five small files per material at about 1 ms each, split
+evenly between `ExtractEmbedded` (1.16 ms), `Save` (1.32 ms) and two `ImportAsset` calls
+(2.20 ms combined). Warm, the same call is 0.13 ms, so this is entirely a first-import cost.
 
-## Per-run UUID churn in `3DExample` and `Example`
+The budget cannot help. One cold apply exceeds the whole 4 ms allowance, so the
+always-allow-the-first rule means the frame costs whatever that apply costs — measured at 6–9 ms,
+and swinging to 20–26 ms when the disk is uncooperative, since it is ~120 small file writes for a
+24-mesh import.
 
-Those two scenes carry duplicate or zero entity UUIDs, so `SceneSerializer` remaps them on every
-load and the entity order in the file changes between runs. Real diff noise for committed scenes,
-and it predates the whole asset milestone.
+What blocks the obvious fix: `ImportAsset` mutates the asset registry, which is main-thread state,
+so `GenerateSidecars` cannot simply move to the parse stage wholesale. The split that would work is
+to do the *writing* on the worker (extract the images, emit the `.gmat` — both are pure functions of
+the `MeshSource` the parse already holds) and leave only the registration in Apply. That is roughly
+2.5 ms of the 3.66 moved off the frame.
 
-Hit again during R5's byte-identity verification, where it was the only reason two of seven fixtures
-did not compare byte-identical. Fixing the two scenes once is enough — the serializer's canonical
-order is already correct.
+Worth doing when first-import hitches start mattering; today they are one gesture per mesh, since a
+mesh is imported by drag-drop.
 
-## The committed scene and prefab fixtures are stale
+## Texture uploads are the other half, and they are genuinely indivisible
 
-**Both** the old and the new serializer reformat all seven committed `.ganymede`/`.gprefab` files,
-because the curve emitters changed style after those files were last saved. So `git diff` is not a
-valid byte-identity test against them, which is why R5's verification diffed two *runs* instead.
+A **warm** mesh apply is 2.43 ms, of which `Texture2D::SetData` is 1.93 ms — one bgfx upload, which
+no budget can subdivide. `BuildMesh`'s vertex and index buffers are 0.25 ms, i.e. the part everyone
+assumes is expensive is 10% of it.
 
-A one-off re-save commit fixes it and makes `git diff` a meaningful check again.
+Embedded maps bypass the texture manager entirely (`TextureImporter::Upload`, no handle, never
+pending), so a mesh with several materials uploads all of them inside one indivisible apply. A mesh
+with 3 materials x 3 maps would be ~17 ms in one frame, and nothing currently bounds that. Routing
+embedded maps through the texture manager would make each one separately budgeted — but they have no
+handle by design, so it is a real change rather than a rewiring.
+
+Not scheduled: the project has no such mesh, and inventing one to justify the work would be
+backwards. Recorded so the shape of the limit is known before something hits it.
 
 ---
 

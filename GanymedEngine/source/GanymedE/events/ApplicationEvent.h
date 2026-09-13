@@ -3,6 +3,8 @@
 #include "gepch.h"
 #include "Event.h"
 
+#include <sstream>
+
 namespace GanymedE {
 	class GE_API WindowResizeEvent : public Event {
 	public:

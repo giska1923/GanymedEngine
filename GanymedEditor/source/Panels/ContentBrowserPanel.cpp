@@ -59,6 +59,36 @@ namespace GanymedE {
 			return AssetMetaSerializer::IsSidecarPath(path);
 		}
 
+		// Asset-tree maintenance, on the panel's background rather than on a file. It acts on
+		// what the last scan found, so it is deliberately not enabled when there is nothing to
+		// reap - the disabled item with a count is the report.
+		void DrawAssetTreeContextMenu()
+		{
+			if (!ImGui::BeginPopupContextWindow("##ContentBrowserContext", ImGuiPopupFlags_MouseButtonRight
+				| ImGuiPopupFlags_NoOpenOverItems))
+				return;
+
+			const std::size_t orphans = AssetManager::OrphanedMetaCount();
+			const std::string label = orphans == 0
+				? std::string("No orphaned `.meta` sidecars")
+				: "Clean " + std::to_string(orphans) + " orphaned `.meta` sidecar(s)";
+
+			if (ImGui::MenuItem(label.c_str(), nullptr, false, orphans != 0))
+				GE_CORE_INFO("Cleaned {0} orphaned sidecar(s)", AssetManager::CleanOrphanedMeta());
+
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			{
+				ImGui::SetTooltip("Deletes `.meta` files whose asset is missing. Each sidecar "
+					"holds the handle scenes use to name its asset, so only do this once you "
+					"know the assets are gone rather than not checked out.");
+			}
+
+			if (ImGui::MenuItem("Rescan assets/"))
+				AssetManager::ScanAssets();
+
+			ImGui::EndPopup();
+		}
+
 		ImVec4 GetAssetIconTint(AssetType type, bool isDirectory)
 		{
 			if (isDirectory)
@@ -521,6 +551,7 @@ namespace GanymedE {
 	void ContentBrowserPanel::DrawFolderTree()
 	{
 		ImGui::BeginChild("##folders", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+		DrawAssetTreeContextMenu();
 		DrawFolderNode(m_Tree);
 		ImGui::EndChild();
 	}
@@ -662,6 +693,7 @@ namespace GanymedE {
 	void ContentBrowserPanel::DrawFilePane()
 	{
 		ImGui::BeginChild("##files", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+		DrawAssetTreeContextMenu();
 
 		if (m_View == ViewMode::Grid)
 			DrawGrid();
@@ -719,6 +751,7 @@ namespace GanymedE {
 
 		if (BeginPanel("Content Browser"))
 		{
+			DrawAssetTreeContextMenu();
 			DrawToolbar();
 			CollectVisible();
 			DrawBreadcrumb();

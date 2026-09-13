@@ -265,7 +265,9 @@ Naming is installed through enkiTS's `threadStart` profiler callback rather than
 enkiTS never calls `threadStart` for the thread it did not create. Per platform: `SetThreadDescription`
 on Windows (resolved dynamically, so a binary built against a current SDK still starts on a pre-1607
 Windows), `pthread_setname_np` elsewhere — truncated to 15 characters on Linux, which rejects longer
-names outright rather than truncating for you.
+names outright (`ERANGE`) rather than truncating for you. Verified on Linux: every name the pool
+actually produces fits, since `GE Main` is 7 characters and `GE Worker 31` is 12, so the truncation
+is a guard rather than something the debugger ever sees.
 
 **Naming is unconditional; the profiler bridge is not.** `threadStart`/`threadStop` are always
 installed, so an unnamed pool never happens — fifteen identical `Worker Thread` rows in a debugger is
@@ -280,11 +282,18 @@ lane to hang the rest off. Because `GE_PROFILE_SCOPE` is an RAII scope and canno
 callback functions, the bridge keeps a start timestamp per thread per category and writes the span on
 the matching stop. Three categories rather than one slot, because they nest.
 
-That cost is real and worth knowing before you turn it on: these fire on **every** spin-to-suspend
-transition on every worker, and `Instrumentor::WriteProfile` takes a process-wide mutex and flushes
-per record. An idle pool produces a trace dominated by its own idleness, and contention the scheduler
-would not otherwise have. It is wired anyway rather than left as a retrofit; "is a real frame profiler
-worth adopting" is a separate question, kept separate on purpose.
+These fire on **every** spin-to-suspend transition on every worker, so an idle pool still produces a
+trace dominated by its own idleness — that part is inherent to what the callbacks mean, and is worth
+knowing before turning `GE_PROFILE` on.
+
+What is no longer true is the cost. This used to feed a writer that took a process-wide mutex and
+flushed to disk per record, adding contention the scheduler would not otherwise have had; a wait span
+cost several microseconds. Records now go to a per-thread buffer with no lock and no I/O, measured at
+about 72 ns on a worker
+([build-and-tooling.md](build-and-tooling.md#profiling--debug-tooling)). The naming half also feeds
+the trace directly now: `NameSchedulerThread` calls `GE_PROFILE_THREAD` alongside
+`SetCurrentThreadName`, because a chrome trace carries no OS thread names and would otherwise show a
+wall of numeric ids.
 
 ## Logging
 

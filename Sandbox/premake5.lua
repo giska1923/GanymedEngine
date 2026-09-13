@@ -51,6 +51,9 @@ project "Sandbox"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			-- Before bimg and bx, which it calls into. enkiTS is a leaf and only needs pthread.
+			"TextureEncode",
+			"enkiTS",
 			"bgfx",
 			"bimg",
 			"bx",
@@ -74,6 +77,9 @@ project "Sandbox"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
+			-- Before bimg and bx, which it calls into. enkiTS is a leaf and only needs pthread.
+			"TextureEncode",
+			"enkiTS",
 			"bgfx",
 			"bimg",
 			"bx",

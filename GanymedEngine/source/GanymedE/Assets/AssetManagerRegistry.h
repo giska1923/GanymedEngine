@@ -7,6 +7,7 @@
 
 #include <array>
 #include <chrono>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -94,9 +95,43 @@ namespace GanymedE {
 		const AssetMetadata* FindAssetMetadata(AssetHandle handle);
 		void WarnUnknownAssetHandle(AssetHandle handle, const char* expectedTypeName);
 
+		// Parses submitted and not yet applied, summed across **every** manager. Summed rather
+		// than counted into a variable on purpose: a separate counter would have to be kept in
+		// step with Load, Finish, Evict, WaitFor and CancelPending, and a drift there would show
+		// up as loading that quietly stops. This cannot drift - it asks the managers.
+		std::size_t ParsesInFlight();
+
+		// A load that was refused because the cap below was full. Per frame, editor-facing.
+		void RecordBackpressureDefer();
+
 		std::array<Scope<IAssetManager>, MaxAssetManagers>& AssetManagerSlots();
 
 	}
+
+	// **How many parses may be in flight at once, across all managers.**
+	//
+	// A parse holds its decoded bytes from the moment it finishes until Apply turns them into GPU
+	// resources, and Apply is main-thread-only and budgeted - so results accumulate whenever
+	// parses complete faster than a frame can retire them. Nothing used to bound that.
+	//
+	// Measured before this existed (x64 Release, 24 skinned meshes requested in one frame): all
+	// 24 parsed concurrently, working set went 196 -> 330 MB, and settled at 203 MB once drained
+	// with all 24 still loaded. So the finished meshes retain ~7 MB between them while the
+	// results waiting for Apply held ~127 MB - about **5.3 MB per pending asset, 18x what the
+	// asset itself keeps**. It scales linearly with how many loads are accepted at once, so a
+	// 200-asset cold open extrapolates to roughly 1.1 GB of transient footprint.
+	//
+	// **Eight, and why that costs nothing.** Apply is the bottleneck, not Parse: one mesh apply
+	// runs 5-30 ms against a 4 ms budget, so a frame retires about one of them. Eight in flight
+	// is already several frames of lookahead. For cheap types the cap refills every frame - a
+	// frame applies many materials inside the budget and eight more can be queued next frame -
+	// so this throttles the memory, not the throughput.
+	//
+	// A byte budget would be the better control, for the reason `ApplyBudget` prefers time to a
+	// count: parse results are not comparable to each other. It is not used here because the size
+	// is not known until the parse has finished, and by then the memory is already held - the
+	// count is what limits the initial surge, which is the part that matters.
+	inline constexpr std::size_t kMaxParsesInFlight = 8;
 
 	// A dense id assigned on first use, so resolving a manager is an array index rather than a
 	// `std::type_index` hash - `RenderSystem` resolves assets by handle per entity per frame and
@@ -142,14 +177,30 @@ namespace GanymedE {
 		{
 		}
 
-		// "Is there room for one more?"
+		// "Is there room for one more that costs about `estimateMs`?"
 		//
 		// **The first apply of a frame always says yes**, whatever the clock reads. An apply cannot
 		// be interrupted half way, so a budget allowed to refuse everything would stall loading
 		// permanently the moment one asset costs more than the whole allowance - and a single large
 		// mesh does. Guaranteed forward progress is worth more than a hard ceiling that cannot be
 		// honoured anyway.
-		bool HasRoom() const { return m_Applied == 0 || ElapsedMs() < m_Milliseconds; }
+		//
+		// **Past that, it asks whether the work will fit rather than whether the clock has run
+		// out**, which is the difference between a budget and a tripwire. The old test was
+		// `ElapsedMs() < m_Milliseconds`: an apply starting at 3.9 ms of a 4 ms budget ran to
+		// completion regardless of costing another 2.4, so the frame overshot by almost a whole
+		// apply every time the arithmetic happened to line up that way. Measured on 24 meshes in
+		// Release, that was a 7.2 ms frame against a 4 ms budget with a 2.4 ms mean apply.
+		//
+		// It cannot subdivide one apply and does not try - a texture upload is one bgfx call. It
+		// only declines to *start* one it already knows will not fit.
+		bool HasRoomFor(double estimateMs) const
+		{
+			if (m_Applied == 0)
+				return true;
+
+			return ElapsedMs() + estimateMs <= m_Milliseconds;
+		}
 
 		double ElapsedMs() const
 		{
@@ -239,7 +290,17 @@ namespace GanymedE {
 		// slot that is not ready falls back to the mesh's own material, and an entity whose mesh
 		// is not ready draws nothing. A unit cube at the wrong scale is more confusing than
 		// nothing, and an error material would break instancing batches on Ref identity.
+		// Demand loads go through here and are subject to backpressure: when the in-flight cap
+		// is full this returns null **without recording anything**, so the caller simply asks
+		// again next frame. That is already how a pending load behaves - `AssetRef::Get()`
+		// re-asks every frame by design - which is what makes deferring safe rather than lossy.
 		Ref<T> Load(AssetHandle handle)
+		{
+			return Load(handle, /*mayDefer*/ true);
+		}
+
+	private:
+		Ref<T> Load(AssetHandle handle, bool mayDefer)
 		{
 			// Load is main-thread-only, which is stronger than the roadmap's "assert on Apply"
 			// and cheaper to reason about: m_Cache, m_Pending and m_Failed are then plain
@@ -307,6 +368,17 @@ namespace GanymedE {
 				return asset;
 			}
 
+			// **The backpressure gate**, and it sits here on purpose: after every check that
+			// would have refused this load anyway (bad handle, wrong type, already failed,
+			// already pending, no index entry) and after the no-Parse path above, which applies
+			// inline and therefore holds nothing in flight. Refusing earlier would have deferred
+			// loads that were never going to cost anything.
+			if (mayDefer && Detail::ParsesInFlight() >= kMaxParsesInFlight)
+			{
+				Detail::RecordBackpressureDefer();
+				return nullptr;
+			}
+
 			PendingLoad pending;
 
 			// The metadata is **copied**, not pointed at. The registry's nodes are stable, so a
@@ -326,6 +398,7 @@ namespace GanymedE {
 			return nullptr;
 		}
 
+	public:
 		void Update(ApplyBudget& budget) override
 		{
 			GE_CORE_ASSERT(JobSystem::IsMainThread(), "Apply creates GPU resources - main thread only");
@@ -356,8 +429,15 @@ namespace GanymedE {
 					// Out of budget: the rest keep their finished results and land on a later
 					// frame. Nothing is lost and no work is repeated - the parse is already done,
 					// only the GPU-side half is deferred.
-					if (!budget.HasRoom())
+					// No data yet means "assume it will not fit", not "assume it is free". The
+					// optimistic reading let the first frame of a burst run several applies
+					// before the first measurement existed, which is precisely the frame that
+					// then showed up as the peak.
+					if (!budget.HasRoomFor(m_ApplyEstimateMs > 0.0
+						? m_ApplyEstimateMs : std::numeric_limits<double>::max()))
+					{
 						break;
+					}
 
 					// Re-found rather than trusted: an Apply above may have evicted this very
 					// handle, which erases it from underneath the list collected a moment ago.
@@ -368,7 +448,20 @@ namespace GanymedE {
 					PendingLoad pending = std::move(it->second);
 					m_Pending.erase(it);
 
+					const auto started = std::chrono::steady_clock::now();
 					Finish(handle, pending);
+					const double cost = std::chrono::duration<double, std::milli>(
+						std::chrono::steady_clock::now() - started).count();
+
+					// An exponential moving average, per manager, because managers are not
+					// comparable: a Material apply is a few uniforms and a Mesh is buffers plus
+					// every texture it pulls. A mean lets one unusually expensive asset raise the
+					// estimate without pinning it there, and it decays back within a few applies -
+					// which matters because an estimate that stays too high just defers work the
+					// frame could have done.
+					m_ApplyEstimateMs = m_ApplyEstimateMs == 0.0
+						? cost : m_ApplyEstimateMs * 0.75 + cost * 0.25;
+
 					budget.RecordApplied();
 					++applied;
 				}
@@ -390,7 +483,21 @@ namespace GanymedE {
 
 			auto it = m_Pending.find(handle);
 			if (it == m_Pending.end())
-				return;
+			{
+				// **Exempt from backpressure**, and it has to be. The only caller is
+				// MeshImporter::Instantiate, whose whole reason for blocking is that "not loaded
+				// yet" is not an answer it can act on. Its sequence is Get -> WaitFor -> Get, so
+				// if the first Get had been deferred by the cap this would find nothing pending,
+				// no-op, and the instantiate would silently produce an entity with no material
+				// slots. Forcing the load past the cap costs one extra parse in flight and
+				// removes a rare silent failure.
+				if (Load(handle, /*mayDefer*/ false))
+					return;   // already resident - nothing to wait for
+
+				it = m_Pending.find(handle);
+				if (it == m_Pending.end())
+					return;   // failed, unknown, or wrong type - Load has already said so
+			}
 
 			// Future::Wait pumps other queued jobs while it blocks, so waiting here cannot
 			// deadlock the pool even though this is called from inside a frame.
@@ -567,6 +674,11 @@ namespace GanymedE {
 		// In flight. Keyed by handle so a second Load for the same asset joins the first rather
 		// than queueing a duplicate parse - the race decision 5's "two Load calls racing to
 		// insert" warns about, made impossible by Load being main-thread-only.
+		// What one apply of this type has been costing lately, in milliseconds. Zero until the
+		// first one completes, which makes the very first apply of a run optimistic - it would
+		// have run anyway under the always-allow-the-first rule.
+		double m_ApplyEstimateMs = 0.0;
+
 		std::unordered_map<AssetHandle, PendingLoad> m_Pending;
 
 		// Handles whose load will not be retried. See the note in Load.

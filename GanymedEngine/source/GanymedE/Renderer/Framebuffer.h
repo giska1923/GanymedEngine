@@ -47,6 +47,21 @@ namespace GanymedE {
 		uint32_t Width = 0, Height = 0;
 
 		FramebufferAttachmentSpecification Attachments;
+
+		// **Nothing sets this, and raising it aborts as the code stands.** MSAA is deferred, not
+		// broken: the cause is known and the fix is one line, but enabling it is a decision
+		// nobody has taken. See docs/ToDo/rendering.md before touching it.
+		//
+		// Raising it makes bgfx assert while building the framebuffer, through BX_ASSERT rather
+		// than the bgfx callback - so the process dies with nothing in GanymedE.log:
+		//
+		//     Frame buffer depth MSAA texture cannot be resolved. It must be created with
+		//     either `BGFX_TEXTURE_RT_WRITE_ONLY` or `BGFX_TEXTURE_MSAA_SAMPLE` flag.
+		//
+		// It is the DEPTH attachment. Giving it BGFX_TEXTURE_RT_WRITE_ONLY when Samples > 1 was
+		// verified to fix construction on D3D11, with picking still correct - RT_WRITE_ONLY
+		// because nothing samples the scene depth, and the guard because the shadow cascades do
+		// sample theirs and are single-sample.
 		uint32_t Samples = 1;
 
 		bool SwapChainTarget = false;

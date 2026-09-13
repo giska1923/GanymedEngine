@@ -216,9 +216,19 @@ namespace GanymedE {
 		uint64_t HashDependency(const std::string& relativePath)
 		{
 			// Size and mtime rather than content: a dependency hash is checked on every load of
-			// every dependent, and hashing a 4K normal map's bytes to answer "did it change"
-			// costs more than the recompile it is trying to avoid. The source itself is content
-			// hashed; its dependencies are not, and that asymmetry is deliberate.
+			// every dependent. The source itself is content hashed; its dependencies are not, and
+			// that asymmetry is deliberate.
+			//
+			// Measured since, because the argument for it was an estimate (x64 Release, FNV-1a at
+			// 830-1030 MB/s, against a 6.5 ms mesh recompile): content hashing a 153 KB texture
+			// costs 314 us and a 4.2 KB one 61 us - both far cheaper than the recompile a false
+			// positive triggers - while a 32 MB 4K normal map costs 71.6 ms, which is not. So the
+			// "costs more than the recompile" claim holds only above roughly 5 MB per dependency.
+			//
+			// What that argues for is not content hashing here, but the two-level shape `Open`
+			// already uses for the source: keep this as the cheap pre-filter, and content-hash to
+			// *confirm* only when it trips. See docs/ToDo/assets.md - it needs a second hash in
+			// the epoch record, so it is a format change rather than a local edit.
 			const std::filesystem::path full = GetAssetRoot() / relativePath;
 
 			uint64_t hash = HashString(relativePath);
@@ -525,7 +535,7 @@ namespace GanymedE {
 		// still works - that is what the fallback above is for - but every boot pays for it, and
 		// on a first run of a large project that is minutes. Said once, because a whole project
 		// missing its outputs would otherwise say it per asset.
-		if (!AssetManager::IsRegistryWritable() && !s_Data.WarnedAboutReadOnlyCompile.test_and_set())
+		if (!AssetManager::IsAssetsWritable() && !s_Data.WarnedAboutReadOnlyCompile.test_and_set())
 		{
 			GE_CORE_WARN("This install treats assets/ as read-only but had to compile "
 				"'{0}' - the assets/.compiled tree was not shipped with it. Compiled output is "

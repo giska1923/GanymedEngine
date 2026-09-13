@@ -11,6 +11,8 @@
 #include <fstream>
 #include <yaml-cpp/yaml.h>
 
+#include <sstream>
+
 namespace GanymedE {
 
 	namespace {
@@ -302,7 +304,7 @@ namespace GanymedE {
 		{
 			// The runtime never writes into assets/. One flag, one meaning, shared with the
 			// registry writer - see docs/engine/assets.md.
-			if (!mesh || !AssetManager::IsRegistryWritable())
+			if (!mesh || !AssetManager::IsAssetsWritable())
 				return;
 
 			const auto& materials = mesh->GetMaterials();
@@ -327,13 +329,17 @@ namespace GanymedE {
 					// Extracting is what makes the .gmat self-describing: a material that
 					// referenced bytes living inside another asset's blob could be neither
 					// hand-edited nor re-pointed at a different image.
-					const std::string albedo = ExtractEmbedded(material->GetAlbedoMapEmbeddedData(),
-						meshRelativePath, "albedo", i);
-					const std::string normal = ExtractEmbedded(material->GetNormalMapEmbeddedData(),
-						meshRelativePath, "normal", i);
-					const std::string metallicRoughness = ExtractEmbedded(
-						material->GetMetallicRoughnessMapEmbeddedData(),
-						meshRelativePath, "metallicRoughness", i);
+					std::string albedo, normal, metallicRoughness;
+					{
+						GE_PROFILE_SCOPE("Sidecars: ExtractEmbedded");
+						albedo = ExtractEmbedded(material->GetAlbedoMapEmbeddedData(),
+							meshRelativePath, "albedo", i);
+						normal = ExtractEmbedded(material->GetNormalMapEmbeddedData(),
+							meshRelativePath, "normal", i);
+						metallicRoughness = ExtractEmbedded(
+							material->GetMetallicRoughnessMapEmbeddedData(),
+							meshRelativePath, "metallicRoughness", i);
+					}
 
 					// The sidecar is a *copy* of the imported material with its embedded maps
 					// swapped for the files just written. The mesh's own material is left
@@ -350,18 +356,27 @@ namespace GanymedE {
 					sidecar->SetMetallicRoughnessMapPath(metallicRoughness.empty()
 						? material->GetMetallicRoughnessMapPath() : metallicRoughness);
 
-					if (Save(sidecar, fullPath))
-						GE_CORE_INFO("Generated material sidecar '{0}'", relativePath.generic_string());
+					{
+						GE_PROFILE_SCOPE("Sidecars: Save .gmat");
+						if (Save(sidecar, fullPath))
+							GE_CORE_INFO("Generated material sidecar '{0}'", relativePath.generic_string());
+					}
 
 					// Extracted images are assets like any other.
-					for (const std::string* path : { &albedo, &normal, &metallicRoughness })
 					{
-						if (!path->empty())
-							AssetManager::ImportAsset(*path);
+						GE_PROFILE_SCOPE("Sidecars: ImportAsset extracted");
+						for (const std::string* path : { &albedo, &normal, &metallicRoughness })
+						{
+							if (!path->empty())
+								AssetManager::ImportAsset(*path);
+						}
 					}
 				}
 
-				AssetManager::ImportAsset(relativePath);
+				{
+					GE_PROFILE_SCOPE("Sidecars: ImportAsset gmat");
+					AssetManager::ImportAsset(relativePath);
+				}
 			}
 		}
 

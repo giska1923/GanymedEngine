@@ -18,6 +18,8 @@
 #include <fstream>
 #include <yaml-cpp/yaml.h>
 
+#include <sstream>
+
 namespace GanymedE {
 
 	struct AssetManagerData
@@ -26,7 +28,7 @@ namespace GanymedE {
 		std::unordered_map<std::string, AssetHandle> PathToHandle;
 
 		bool Initialized = false;
-		bool WritableRegistry = true;
+		bool AssetsWritable = true;
 
 		// path -> handle read out of the legacy assets/AssetRegistry.gr, kept for the whole
 		// session rather than just for the scan. Files created *after* the scan need it too: a
@@ -43,6 +45,21 @@ namespace GanymedE {
 		std::unordered_set<AssetHandle> WarnedUnknownHandles;
 
 		AssetApplyStats LastApply;
+
+		// Reset at the top of every Update, so the figure the editor shows is "last frame".
+		uint32_t LoadsDeferredThisFrame = 0;
+
+		// A list rather than one slot: the editor wants prefab-template invalidation today, and
+		// script and audio hot reload are the obvious next two - all three would otherwise be
+		// overwriting each other's single callback silently.
+		std::vector<AssetManager::AssetChangedFn> ChangedListeners;
+
+		// `.meta` sidecars found by the last scan whose asset is gone. Collected rather than
+		// acted on: a sidecar is the only link between a file and every scene handle naming it,
+		// so an asset that is merely *absent right now* - a partial checkout, a branch without
+		// it, a file mid-move - must not lose its identity to a boot-time sweep. Reaped only by
+		// CleanOrphanedMeta, which is a person pressing a button.
+		std::vector<std::filesystem::path> OrphanedSidecars;
 	};
 
 	static AssetManagerData s_Data;
@@ -62,6 +79,19 @@ namespace GanymedE {
 		// with its asset. Worth saying out loud: the consequence is an entity that renders
 		// nothing, which is indistinguishable from a bad transform or an unlit material
 		// until you know.
+		std::size_t ParsesInFlight()
+		{
+			std::size_t count = 0;
+			AssetManagerRegistry::ForEach(
+				[&count](IAssetManager& manager) { count += manager.PendingCount(); });
+			return count;
+		}
+
+		void RecordBackpressureDefer()
+		{
+			++s_Data.LoadsDeferredThisFrame;
+		}
+
 		void WarnUnknownAssetHandle(AssetHandle handle, const char* expectedTypeName)
 		{
 			if (!s_Data.WarnedUnknownHandles.insert(handle).second)
@@ -118,7 +148,7 @@ namespace GanymedE {
 					// Quarantine rather than overwrite: one unreadable sidecar must not take
 					// down a project scan, and the handle a hand-repair could recover is the
 					// only link between this file and every scene referencing it.
-					bool moved = s_Data.WritableRegistry && AssetMetaSerializer::Quarantine(fullPath);
+					bool moved = s_Data.AssetsWritable && AssetMetaSerializer::Quarantine(fullPath);
 					GE_CORE_ERROR("Asset sidecar for '{0}' failed to parse - the asset keeps "
 						"working, but with a different handle unless the legacy registry still "
 						"names it. The unreadable file was {1}.", pathKey,
@@ -202,7 +232,7 @@ namespace GanymedE {
 			// still gets an in-memory handle (unchanged behaviour, and its load path already
 			// warns), but writing `foo.glb.meta` next to a missing `foo.glb` would leave an
 			// orphan nothing ever cleans up.
-			if (needsWrite && s_Data.WritableRegistry && std::filesystem::exists(fullPath))
+			if (needsWrite && s_Data.AssetsWritable && std::filesystem::exists(fullPath))
 			{
 				if (AssetMetaSerializer::Write(fullPath, meta) && stats)
 					++stats->Written;
@@ -230,7 +260,7 @@ namespace GanymedE {
 		if (s_Data.Initialized)
 			return;
 
-		s_Data.WritableRegistry = writableAssets;
+		s_Data.AssetsWritable = writableAssets;
 
 		// Before anything can load. Nothing in the scan does, but a manager slot that is empty
 		// when GetAsset<T> reaches it asserts, and doing this first also makes the dense type
@@ -270,6 +300,7 @@ namespace GanymedE {
 		s_Data.LegacyHandles.clear();
 		s_Data.LegacyRegistryPresent = false;
 		s_Data.WarnedUnknownHandles.clear();
+		s_Data.ChangedListeners.clear();
 		AssetWatcher::Shutdown();
 
 		// Cancel first, then destroy. Every manager's in-flight parses are asked to stop before
@@ -304,6 +335,7 @@ namespace GanymedE {
 		// copy-pasted `.meta` would see different assets break. Sorting makes the outcome
 		// reproducible, which is the only thing that makes the warning actionable.
 		std::vector<std::filesystem::path> assetFiles;
+		std::vector<std::filesystem::path> sidecarOrphans;
 
 		auto it = std::filesystem::recursive_directory_iterator(root,
 			std::filesystem::directory_options::skip_permission_denied, ec);
@@ -325,7 +357,20 @@ namespace GanymedE {
 			}
 
 			if (AssetMetaSerializer::IsSidecarPath(path))
+			{
+				// `.meta` only - never a quarantined `.bad`, which is kept precisely so the
+				// handle inside it can be recovered by hand. An orphan is a sidecar whose asset
+				// does not exist; a sidecar beside an *unindexed* file (`notes.txt.meta`) is
+				// not one, and reaping it would be the sweep deciding which extensions matter.
+				if (path.extension() == ".meta")
+				{
+					std::filesystem::path asset = path;
+					asset.replace_extension();
+					if (!std::filesystem::exists(asset))
+						sidecarOrphans.push_back(path);
+				}
 				continue;
+			}
 
 			if (AssetTypeFromExtension(path.extension().string()) == AssetType::None)
 				continue;
@@ -357,6 +402,65 @@ namespace GanymedE {
 			"collisions, {7} types corrected",
 			assetFiles.size(), stats.Adopted, stats.AdoptedLegacy, stats.Minted, stats.Written,
 			stats.Quarantined, stats.Collisions, stats.TypeCorrected);
+
+		// Named individually rather than counted. An orphan is either debris from a delete that
+		// went around the editor, or the first visible symptom of an asset that failed to
+		// arrive - and those two want opposite responses, which only the path can tell you.
+		s_Data.OrphanedSidecars = std::move(sidecarOrphans);
+		if (!s_Data.OrphanedSidecars.empty())
+		{
+			std::sort(s_Data.OrphanedSidecars.begin(), s_Data.OrphanedSidecars.end());
+			GE_CORE_WARN("{0} orphaned `.meta` sidecar(s) - the asset each one names is not on "
+				"disk. Nothing is deleted automatically; use Content Browser > Clean orphaned "
+				"`.meta` once you have confirmed the assets are gone rather than missing.",
+				s_Data.OrphanedSidecars.size());
+
+			for (const std::filesystem::path& orphan : s_Data.OrphanedSidecars)
+				GE_CORE_WARN("  orphaned sidecar: {0}", MakeAssetRelative(orphan).generic_string());
+		}
+	}
+
+	std::size_t AssetManager::OrphanedMetaCount()
+	{
+		return s_Data.OrphanedSidecars.size();
+	}
+
+	std::size_t AssetManager::CleanOrphanedMeta()
+	{
+		if (!s_Data.AssetsWritable)
+		{
+			GE_CORE_WARN("Cannot clean orphaned `.meta` sidecars - assets/ is read-only this "
+				"session.");
+			return 0;
+		}
+
+		std::size_t removed = 0;
+		for (const std::filesystem::path& orphan : s_Data.OrphanedSidecars)
+		{
+			// Re-checked, not trusted. The list is as old as the last scan, and the asset may
+			// have arrived since - in which case the sidecar is doing its job and the delete
+			// would throw away a live handle.
+			std::filesystem::path asset = orphan;
+			asset.replace_extension();
+			if (std::filesystem::exists(asset))
+				continue;
+
+			std::error_code ec;
+			if (std::filesystem::remove(orphan, ec))
+			{
+				GE_CORE_INFO("Removed orphaned sidecar '{0}'",
+					MakeAssetRelative(orphan).generic_string());
+				++removed;
+			}
+			else
+			{
+				GE_CORE_ERROR("Could not remove orphaned sidecar '{0}': {1}",
+					MakeAssetRelative(orphan).generic_string(), ec.message());
+			}
+		}
+
+		s_Data.OrphanedSidecars.clear();
+		return removed;
 	}
 
 	AssetHandle AssetManager::ImportAsset(const std::filesystem::path& relativePath)
@@ -460,6 +564,8 @@ namespace GanymedE {
 
 		Ref<Mesh> ApplyMesh(const AssetMetadata& metadata, Scope<AssetParseResult> parsed)
 		{
+			GE_PROFILE_FUNCTION();
+
 			const std::filesystem::path relativePath = metadata.FilePath;
 
 			Ref<Mesh> mesh = BuildMesh(static_cast<MeshParse&>(*parsed).Source);
@@ -468,12 +574,16 @@ namespace GanymedE {
 
 			// Here rather than inside MeshImporter, because this is the one point both the cold
 			// import and the cache replay pass through - a cached mesh must still get its
-			// sidecars, or deleting .meshcache would be the only way to regenerate them.
+			// sidecars, or clearing the compiled cache would be the only way to regenerate them.
 			//
 			// It now runs *before* the manager caches the mesh, where the old code ran after.
 			// Safe because GenerateSidecars only ever reaches ImportAsset, never GetAsset<Mesh>:
 			// it writes files and registers handles, so nothing in it can re-enter this load.
-			MaterialSerializer::GenerateSidecars(mesh, relativePath);
+			{
+				GE_PROFILE_SCOPE("ApplyMesh: GenerateSidecars");
+				MaterialSerializer::GenerateSidecars(mesh, relativePath);
+			}
+
 			return mesh;
 		}
 
@@ -703,6 +813,12 @@ namespace GanymedE {
 
 	}
 
+	void AssetManager::AddAssetChangedListener(AssetChangedFn listener)
+	{
+		if (listener)
+			s_Data.ChangedListeners.push_back(std::move(listener));
+	}
+
 	bool AssetManager::OnAssetModified(AssetHandle handle)
 	{
 		const AssetMetadata* metadata = GetMetadata(handle);
@@ -710,18 +826,29 @@ namespace GanymedE {
 			return false;
 
 		// Scene, Script, Audio and Prefab have no manager and nothing cached here: Lua owns its
-		// chunks and miniaudio owns decoded audio. Saving a `.ganymede` from the editor lands
-		// here every time, so this is also what keeps the log quiet.
+		// chunks and miniaudio owns decoded audio. They still reach the listeners below - having
+		// no manager means the asset layer has nothing to evict, not that nobody cares.
 		IAssetManager* manager = AssetManagerRegistry::Find(metadata->Type);
-		if (!manager)
+		bool acted = manager != nullptr;
+
+		if (manager)
+		{
+			manager->Evict(handle);
+
+			// Nothing re-resolves between these two calls - Evict only drops cache entries and
+			// bumps the epoch - so the whole set is evicted before any Get() can hand back a
+			// stale object.
+			if (metadata->Type == AssetType::Texture)
+				EvictTextureDependents(handle);
+		}
+
+		// After the eviction, so a listener never sees a state where the manager is still
+		// holding the old object.
+		for (const AssetChangedFn& listener : s_Data.ChangedListeners)
+			acted |= listener(handle, metadata->Type);
+
+		if (!acted)
 			return false;
-
-		manager->Evict(handle);
-
-		// Nothing re-resolves between these two calls - Evict only drops cache entries and bumps
-		// the epoch - so the whole set is evicted before any Get() can hand back a stale object.
-		if (metadata->Type == AssetType::Texture)
-			EvictTextureDependents(handle);
 
 		// Deliberately **no** CompiledCache::Invalidate. Reload calls it because it means
 		// "reimport now"; a file event does not. The epoch record already distinguishes an edit
@@ -767,6 +894,12 @@ namespace GanymedE {
 		s_Data.LastApply.Deferred = budget.Deferred();
 		s_Data.LastApply.Milliseconds = budget.ElapsedMs();
 		s_Data.LastApply.BudgetMs = kApplyBudgetMs;
+		s_Data.LastApply.LoadsDeferred = s_Data.LoadsDeferredThisFrame;
+		s_Data.LastApply.InFlight = (uint32_t)Detail::ParsesInFlight();
+
+		// After the applies, so the count reported is what the frame just finished refusing
+		// rather than what it is about to.
+		s_Data.LoadsDeferredThisFrame = 0;
 	}
 
 	AssetApplyStats AssetManager::GetApplyStats()
@@ -838,7 +971,7 @@ namespace GanymedE {
 			// permanently breaking every scene that referenced the old one. So the session goes
 			// read-only: handles still work in memory, nothing is persisted, and fixing the file
 			// and restarting recovers completely.
-			s_Data.WritableRegistry = false;
+			s_Data.AssetsWritable = false;
 
 			GE_CORE_ERROR("Legacy asset registry '{0}' failed to parse: {1}. assets/ is "
 				"read-only for this session so no `.meta` sidecar can be written from a broken "
@@ -878,9 +1011,9 @@ namespace GanymedE {
 			s_Data.LegacyHandles.size());
 	}
 
-	bool AssetManager::IsRegistryWritable()
+	bool AssetManager::IsAssetsWritable()
 	{
-		return s_Data.WritableRegistry;
+		return s_Data.AssetsWritable;
 	}
 
 }

@@ -135,6 +135,8 @@ namespace GanymedE {
 
 	void Scene::FrameBegin()
 	{
+		GE_PROFILE_FUNCTION();
+
 		m_FrameEpoch++;
 
 		for (auto& entry : m_ChangeBuffers)
@@ -147,6 +149,8 @@ namespace GanymedE {
 
 	void Scene::FrameEnd()
 	{
+		GE_PROFILE_FUNCTION();
+
 		for (auto& entry : m_Reactive)
 		{
 			entry.second.InitSinceLastUpdate.clear();
@@ -469,6 +473,8 @@ namespace GanymedE {
 
 	void Scene::OnUpdateRuntime(Timestep ts, EditorCamera* fallbackCamera)
 	{
+		GE_PROFILE_FUNCTION();
+
 		FrameBegin();
 
 		// Used by RenderSystem only when the scene has no primary camera.
@@ -483,6 +489,8 @@ namespace GanymedE {
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
+		GE_PROFILE_FUNCTION();
+
 		FrameBegin();
 
 		GetSingleton<RenderContext>().EditorViewCamera = &camera;

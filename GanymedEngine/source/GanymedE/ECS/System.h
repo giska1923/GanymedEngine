@@ -9,6 +9,7 @@
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Log.h"
 #include "GanymedE/Core/Timestep.h"
+#include "GanymedE/Debug/Instrumentor.h"
 
 namespace GanymedE {
 
@@ -84,8 +85,32 @@ namespace GanymedE {
 				return it != m_Lookup.end() ? static_cast<S*>(it->second) : nullptr;
 			}
 
-			void OnUpdate(Timestep ts) { for (auto& system : m_Systems) system->OnUpdate(ts); }
-			void OnUpdateEditor(Timestep ts) { for (auto& system : m_Systems) system->OnUpdateEditor(ts); }
+			// Instrumented here rather than in each system: one scope per system per frame is
+			// the frame breakdown, and Name() already exists for diagnostics. Systems stay free
+			// of profiling boilerplate, and a system added later is covered without remembering
+			// to add anything. The names are literals, which is what GE_PROFILE_SCOPE_DYNAMIC
+			// requires - the record borrows the pointer.
+			void OnUpdate(Timestep ts)
+			{
+				GE_PROFILE_FUNCTION();
+
+				for (auto& system : m_Systems)
+				{
+					GE_PROFILE_SCOPE_DYNAMIC(system->Name());
+					system->OnUpdate(ts);
+				}
+			}
+
+			void OnUpdateEditor(Timestep ts)
+			{
+				GE_PROFILE_FUNCTION();
+
+				for (auto& system : m_Systems)
+				{
+					GE_PROFILE_SCOPE_DYNAMIC(system->Name());
+					system->OnUpdateEditor(ts);
+				}
+			}
 
 			// Lifecycle deliberately runs opposite to update order.
 			//

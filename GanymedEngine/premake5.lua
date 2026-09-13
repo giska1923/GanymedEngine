@@ -97,6 +97,18 @@ project "GanymedEngine"
 		"TextureEncode"
 	}
 
+	-- miniaudio's implementation TU is ~84k lines of third-party C compiled once. It includes
+	-- exactly one header and gains nothing from the engine PCH, and forcing gepch.h on it
+	-- actively breaks GCC: with the .gch loaded, `_mm_alignr_epi8` in dr_FLAC's SSE4.1 residual
+	-- decoder stops being recognised as taking a compile-time immediate ("the last argument must
+	-- be an 8-bit immediate", 13 times). The same file compiles clean under the identical flags
+	-- and defines with no PCH - it is the precompiled header specifically, not the flags, not
+	-- the optimisation level and not C++ vs C. Dropping the PCH here is the honest fix; defining
+	-- MA_DR_FLAC_NO_SSE41 would also compile but would silently cost the FLAC fast path on
+	-- every platform to work around a header this file should not be using.
+	filter "files:source/GanymedE/Audio/miniaudio_impl.cpp"
+		flags { "NoPCH" }
+
 	filter "system:windows"
 		systemversion "latest"
 		-- /bigobj raises the COFF section limit. sol2 instantiates enough templates per

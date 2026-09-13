@@ -29,6 +29,13 @@ namespace GanymedE {
 		uint32_t Deferred = 0;   // finished parsing but over budget - they land on a later frame
 		double Milliseconds = 0.0;
 		double BudgetMs = 0.0;
+
+		// Loads refused last frame because kMaxParsesInFlight was full, and how many parses were
+		// in flight when the frame's Apply pass ran. Distinct from `Deferred` above: that is work
+		// that finished parsing and did not fit the Apply budget, this is work that was never
+		// started so its decoded bytes were never held. See AssetManagerRegistry.h.
+		uint32_t LoadsDeferred = 0;
+		uint32_t InFlight = 0;
 	};
 
 	class AssetManager
@@ -51,6 +58,16 @@ namespace GanymedE {
 		// Entries whose file has since vanished are *not* dropped - a handle a scene still
 		// references is more useful stale than absent.
 		static void ScanAssets();
+
+		// `.meta` sidecars the last scan found with no asset beside them, and the action that
+		// deletes them. Split in two because the detection is safe and the delete is not: a
+		// sidecar holds the handle every scene uses to name that asset, so reaping one whose
+		// file is only *temporarily* absent - an incomplete checkout, a branch without it -
+		// permanently breaks every reference. Detection therefore runs at every scan and only
+		// warns; the delete is a person's decision. CleanOrphanedMeta re-checks each file
+		// before removing it and returns how many it took.
+		static std::size_t OrphanedMetaCount();
+		static std::size_t CleanOrphanedMeta();
 
 		// "Ensure this file has a sidecar, and tell me its handle" (idempotent). Returns
 		// InvalidAssetHandle for an unsupported extension. This is the entry point for a file
@@ -112,13 +129,29 @@ namespace GanymedE {
 		static std::size_t PendingCount();
 
 		// Evict a loaded asset so the next GetAsset re-reads it from disk. For a mesh
-		// this also drops its textures and the .meshcache file - "reimport now".
+		// this also drops its textures and its compiled blob - "reimport now".
 		// Safe to call mid-frame from editor UI; see docs/engine/assets.md for why.
 		static void Reload(AssetHandle handle);
 
+		// "Something outside the asset layer cares that this file changed."
+		//
+		// `OnAssetModified` evicts from the manager that owns a type, and for a type with no
+		// manager it used to do nothing at all - the watcher had already detected the change,
+		// settled it and resolved the handle, and the event was then dropped on the floor. That
+		// is what made "a `.gprefab` edited on disk is not noticed" look like it was blocked on
+		// building a Prefab asset manager. It was not: nothing was forwarding the event.
+		//
+		// Listeners run for **every** changed asset, managed or not, after any eviction - so a
+		// listener always sees a state where the asset layer has already let go of the old
+		// object. Return true from one to say "I acted on this", which is what the watcher
+		// counts and logs as a reload; a listener that ignores the type must return false, or a
+		// scene save would report itself as a hot reload every time.
+		using AssetChangedFn = std::function<bool(AssetHandle, AssetType)>;
+		static void AddAssetChangedListener(AssetChangedFn listener);
+
 		// "This file changed on disk." The hot-reload entry point, called from AssetWatcher.
-		// Returns false when there was nothing to do - a type with no manager, or a handle the
-		// index does not know.
+		// Returns false when nothing acted on it - no manager for the type and no listener that
+		// claimed it, or a handle the index does not know.
 		//
 		// **Narrower than Reload, in both directions, and both differences are deliberate.**
 		// Reload means *reimport now*: it deletes the compiled output and reaches down into an
@@ -135,7 +168,11 @@ namespace GanymedE {
 		// "This process may write into assets/." False in the shipped runtime, which treats
 		// assets/ as read-only content. The sidecar writer and every other asset-file writer
 		// share this one flag rather than each inventing a parallel one.
-		static bool IsRegistryWritable();
+		//
+		// Named IsRegistryWritable until it was renamed: it never gated the registry. The
+		// registry it referred to is the legacy assets/AssetRegistry.gr, which is read once for
+		// migration and never written at all.
+		static bool IsAssetsWritable();
 
 	private:
 		// Reads the legacy assets/AssetRegistry.gr, if it still exists, into a path -> handle

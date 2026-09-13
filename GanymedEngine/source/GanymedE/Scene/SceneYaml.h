@@ -191,6 +191,52 @@ namespace YAML {
 namespace GanymedE {
 
 	// ---------------------------------------------------------------------------------------
+	// Emitter overloads for the types the scene dialect writes as inline sequences.
+	//
+	// **These must stay above every template that uses them.** A dependent call like
+	// `out << value` inside a template is resolved by ordinary lookup at the template's
+	// DEFINITION point plus ADL at instantiation; ADL searches YAML and glm, and neither
+	// declares these, so a template defined above them has no candidate at all. MSVC accepts
+	// it regardless - it defers the whole lookup to instantiation - which is why the wrong
+	// order survived until the first GCC build.
+
+	inline YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec3& v)
+	{
+		out << YAML::Flow;
+		out << YAML::BeginSeq << v.x << v.y << v.z << YAML::EndSeq;
+		return out;
+	}
+
+	inline YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec4& v)
+	{
+		out << YAML::Flow;
+		out << YAML::BeginSeq << v.x << v.y << v.z << v.w << YAML::EndSeq;
+		return out;
+	}
+
+	inline YAML::Emitter& operator<<(YAML::Emitter& out, const FloatCurve& curve)
+	{
+		out << YAML::Flow << YAML::BeginSeq;
+		for (const FloatKey& key : curve.Keys())
+			out << YAML::Flow << YAML::BeginSeq << key.Time << key.Value << YAML::EndSeq;
+		out << YAML::EndSeq;
+		return out;
+	}
+
+	inline YAML::Emitter& operator<<(YAML::Emitter& out, const ColorGradient& gradient)
+	{
+		out << YAML::Flow << YAML::BeginSeq;
+		for (const ColorKey& key : gradient.Keys())
+		{
+			out << YAML::Flow << YAML::BeginSeq
+				<< key.Time << key.Value.x << key.Value.y << key.Value.z << key.Value.w
+				<< YAML::EndSeq;
+		}
+		out << YAML::EndSeq;
+		return out;
+	}
+
+	// ---------------------------------------------------------------------------------------
 	// Reflected read/write: a component's YAML from what `entt::meta` knows about it.
 	//
 	// REFLECTION_ROADMAP.md R3. The gate is **byte-identical output**, not merely a working
@@ -491,41 +537,5 @@ namespace GanymedE {
 		ReadReflected(node, instance.as_ref());
 	}
 
-
-	inline YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec3& v)
-	{
-		out << YAML::Flow;
-		out << YAML::BeginSeq << v.x << v.y << v.z << YAML::EndSeq;
-		return out;
-	}
-
-	inline YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec4& v)
-	{
-		out << YAML::Flow;
-		out << YAML::BeginSeq << v.x << v.y << v.z << v.w << YAML::EndSeq;
-		return out;
-	}
-
-	inline YAML::Emitter& operator<<(YAML::Emitter& out, const FloatCurve& curve)
-	{
-		out << YAML::Flow << YAML::BeginSeq;
-		for (const FloatKey& key : curve.Keys())
-			out << YAML::Flow << YAML::BeginSeq << key.Time << key.Value << YAML::EndSeq;
-		out << YAML::EndSeq;
-		return out;
-	}
-
-	inline YAML::Emitter& operator<<(YAML::Emitter& out, const ColorGradient& gradient)
-	{
-		out << YAML::Flow << YAML::BeginSeq;
-		for (const ColorKey& key : gradient.Keys())
-		{
-			out << YAML::Flow << YAML::BeginSeq
-				<< key.Time << key.Value.x << key.Value.y << key.Value.z << key.Value.w
-				<< YAML::EndSeq;
-		}
-		out << YAML::EndSeq;
-		return out;
-	}
 
 }

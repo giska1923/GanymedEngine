@@ -712,6 +712,8 @@ namespace GanymedE {
 
 	void PhysicsScene::Step(float fixedDeltaTime)
 	{
+		GE_PROFILE_FUNCTION();
+
 		if (!m_Active || !m_Scene || !m_Impl)
 			return;
 

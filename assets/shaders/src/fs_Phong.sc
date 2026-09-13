@@ -331,5 +331,17 @@ void main()
 	}
 
 	gl_FragData[0] = vec4(ambient + Lo, albedoSample.a);
-	gl_FragData[1] = vec4_splat(v_entityid);
+	// **Alpha must be 1, and the id must not be splatted.** The blend state a draw sets applies to
+	// EVERY colour attachment, so with alpha blending on (every sprite, every particle, any
+	// transparent mesh) this target is blended too:
+	//
+	//     result = src * src.a + dst * (1 - src.a)
+	//
+	// `vec4_splat(id)` puts the id in alpha as well, so the id blends itself against the -1 clear:
+	// id 1 happens to survive (alpha 1 takes the source), id 0 reads back as the clear, and
+	// anything else lands on id*id + (1-id)*-1. Picking therefore worked for exactly one entity
+	// handle and silently returned "nothing" or a wrong id for all the others.
+	//
+	// The attachment is R32F, so only .r is stored; alpha exists purely to make the blend a copy.
+	gl_FragData[1] = vec4(v_entityid, 0.0, 0.0, 1.0);
 }

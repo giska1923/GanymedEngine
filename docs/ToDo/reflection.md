@@ -7,36 +7,30 @@ run off that registration, and prefab per-property overrides work. See
 
 What is left is a short tail, roughly in descending order of value.
 
-Two entries are gone: `PrefabSerializer::ReadRootTransform` now uses `ReadReflectedComponent` (the
+**Per-property apply-to-prefab is done** — right-clicking an overridden field offers *Apply to
+Prefab* beside *Revert to Prefab*, writing that one field into the asset and nothing else. See
+[editor.md](../editor/editor.md#per-property-overrides).
+
+**The prefab template cache is done** — it is dropped on scene change, after a whole-instance
+apply, and now on a `.gprefab` edited on disk. That last one was recorded as blocked on prefabs
+having no asset manager; it was not. The watcher had always detected the edit, settled it and
+resolved the handle, and `OnAssetModified` dropped it because no manager owned the type. A change
+listener forwards it in about fifteen lines, and no `Prefab` asset class had to be invented. See
+[assets.md](../engine/assets.md#change-listeners-for-state-the-asset-layer-does-not-own).
+
+**The three multi-entity editing gaps are done too**: shift-range selection, the gizmo driving the
+whole selection, and the no-active-phase undo path — which was not a gap but a correctness bug, and
+lost data (toggle a checkbox across four entities, Ctrl+Z, and one came back). See
+[editor.md](../editor/editor.md#multi-entity-editing). Verified by driving the editor with
+synthesised input rather than by inspection.
+
+Two further entries are gone: `PrefabSerializer::ReadRootTransform` now uses `ReadReflectedComponent` (the
 last hand-written component read in the engine), and `PrefabSerializer::Save` no longer bakes a
 stale `PrefabMemberComponent` into the file it writes — that one turned out to assert on the next
 instantiate, so it was a crash rather than diff noise. Both are described in
 [scene.md](../engine/scene.md).
 
 ---
-
-## Per-property apply-to-prefab
-
-Revert-one-field exists. **Push-one-field-to-the-prefab does not** — apply still writes the whole
-instance. The roadmap calls this the natural next step now that the diff exists, and the diff
-(`EditorPrefabOverrides.h`) is what makes it cheap: the same comparison that decides whether to draw
-the revert affordance identifies exactly what a per-property apply would write.
-
-## The prefab template cache cannot see a `.gprefab` edited on disk
-
-It is dropped on scene change, so an edit is picked up eventually, but not by the file watcher.
-Hooking `AssetWatcher` would fix it — except prefabs are path-resolved and have no asset manager, so
-`AssetManager::OnAssetModified` returns false for them. That is the real blocker and it is an asset
-layer question, not an editor one. See [assets.md](../engine/assets.md).
-
-## Multi-entity editing gaps
-
-R4b landed multi-select with one-gesture-one-undo-command. Three things it did not cover:
-
-- **Shift-range selection** in the hierarchy panel. Ctrl-toggle works; shift-range does not.
-- **The gizmo moves the primary selection only**, not the whole selection.
-- **The no-active-phase edit path is single-entity for undo.** An edit that completes without ImGui
-  ever reporting an active ID — a checkbox, a combo — mints a command for the primary entity only.
 
 ## Per-field override marking never fully closes
 

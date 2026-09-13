@@ -44,7 +44,9 @@ namespace GanymedE {
 
 		struct ParticleRendererData
 		{
-			Ref<Shader> Shader;
+			// Qualified for the reason Components.h gives: the member name shadows the type
+			// name for the rest of this scope, which GCC rejects outright.
+			Ref<GanymedE::Shader> Shader;
 			Ref<Texture2D> WhiteTexture;
 			bgfx::VertexLayout Layout;
 

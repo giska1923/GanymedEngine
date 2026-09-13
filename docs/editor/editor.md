@@ -222,6 +222,15 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   so a name containing W does not switch tools), and the toolbar icon cluster writes the same
   int. The active tool is accent-filled. View/projection follow the camera dropdown;
   `SetOrthographic` follows a scene camera's projection type.
+
+  **It drives the whole selection.** The gizmo manipulates the primary, and the world-space change
+  it made — `after * inverse(before)` — is applied to every other selected entity through
+  `ApplyWorldDelta`. Composing in world space rather than adding a local offset is what makes a
+  group rotate and scale *about the primary* instead of each object spinning about its own origin;
+  verified by construction, a 90° yaw moves an entity at (2,0,0) to (0,0,-2). An entity whose
+  ancestor is also selected is skipped, or it would take the delta twice — once from its parent's
+  transform and once from its own. One drag is one undo entry: the falling edge folds every moved
+  entity into a single `CompositeCommand`, the same rule the inspector's multi-edit follows.
 - **Transform readout** (bottom-left of the image, `ImDrawList`, no layout): `X`/`Y`/`Z` of the
   primary selection in `AxisX/Y/Z`, values in `TextPrimary`. Local translation, or world
   translation when the gizmo is in World space, so the numbers match the handles. Nothing
@@ -349,8 +358,31 @@ are single-entity even though the selection no longer is.
 ### Per-property overrides
 
 A field of a prefab instance that differs from the prefab is **tinted blue in the inspector**, and
-right-clicking it offers **Revert to Prefab**. A component with any differing field gets a `*` on its
-section header.
+right-clicking it offers **Revert to Prefab** and **Apply to Prefab** — the two directions of the
+same diff. A component with any differing field gets a `*` on its section header.
+
+The two are opposites in consequence as well as direction, which is why they read differently:
+
+| | Revert to Prefab | Apply to Prefab (per field) |
+|---|---|---|
+| Writes | the scene | the `.gprefab` asset |
+| Undo | yes — reported as an edit, so the section's commit boundary turns it into one undo command | **no**, like every other asset edit; the undo stack is the scene's and no scene data changed |
+| Other instances | n/a | unchanged |
+
+**Per-field apply writes the field onto the cached template and saves the template**, rather than
+writing the instance. That is what makes it per-*property*: everything else in the prefab is still
+the object that was loaded from the file, so it round-trips untouched. Verified by applying one
+field of a particle emitter while a second field of the same component also differed — the
+`.gprefab` came back with exactly one line changed, and the second field stayed as the prefab had
+it. Whole-instance **Apply to Prefab** (the button on the prefab section, behind a confirmation
+modal) is the blunt counterpart: it overwrites the asset with the entire subtree, carrying every
+other difference with it.
+
+Saving the template also means no placement guard is needed here. Whole-instance apply passes the
+file's *existing* root transform to `PrefabSerializer::Save` so an instance's position is never
+baked into the asset; the template's root transform came from the file to begin with, so writing it
+back preserves placement by construction — and applying a root transform field does what it says
+rather than being silently dropped by a guard aimed at the other operation.
 
 **Overrides are computed, not stored.** Unity records an override list on the instance; Ganymed diffs
 the instance against the prefab instead. A recorded list is a second source of truth that goes stale
@@ -366,7 +398,7 @@ claim.
 | | |
 |---|---|
 | What makes it possible | `PrefabMemberComponent::CanonicalID` on every instantiated entity — see [scene.md](../engine/scene.md#prefab-member-links) |
-| Per-field affordance | Reflected sections only; the per-field hook lives in the property drawer |
+| Per-field affordance | Reflected sections only; the per-field hook lives in the property drawer (`OverrideHook`: `IsOverridden` / `Revert` / `Apply`) |
 | Hand-written sections | Section-level `*` marker only — "something in here differs", not which field |
 | Cost | **0.14 ms/frame** worst case (a selected prefab instance with a particle emitter: 46 fields, section marker plus every per-field query, Release). Zero when nothing selected is a prefab member |
 
@@ -375,9 +407,14 @@ Two limitations worth knowing:
 - **Prefab instances already in committed scenes have no canonical link**, because they were
   instantiated before it existed. They report no overrides until they are re-instantiated — which
   *Revert Instance* does, since it rebuilds the subtree from the file.
-- The template cache is keyed on the prefab handle and dropped when the scene changes. Editing a
-  `.gprefab` on disk while a scene is open will not refresh it until the scene is reopened; the
-  cache has no way to notice a file edit on its own.
+- The template cache is keyed on the prefab handle and dropped on every scene change (from
+  `EditorLayer::RetargetPanels`, which new / open / play / stop all pass through) and after a
+  whole-instance apply, which rewrites the file underneath it, and **on a `.gprefab` edited on
+  disk** — an external editor, a git checkout, a branch switch. That last one arrives through
+  `AssetManager::AddAssetChangedListener`: the watcher had always detected the edit, but nothing
+  forwarded it for a type with no asset manager. Per-field apply needs no invalidation at all — it
+  edits the template itself, so the two agree by construction and the blue tint clears on the next
+  frame.
 
 ### Play / Stop (toolbar)
 
@@ -690,6 +727,15 @@ vector is never written directly.
 The vendored `ImCurveEdit` / `ImGradient` under `extern/ImGuizmo/src` stay uncompiled: they bring
 an unverified ActiveId story, which is the one property this protocol cannot live without.
 
+**Labels are never passed as format strings.** `ImGui::Text`, `TextDisabled` and `TreeNodeEx`'s
+trailing argument are all printf formats, and the strings this panel feeds them are component
+display names, field labels and entity names — the last of which a user types. `ImGui::Text(name)`
+for an entity called `%s` reads an argument that was never pushed. Every such site uses
+`TextUnformatted`, or `"%s"` with the string as an argument; the entity tree node already did, and
+the component header and `DrawVec3Control` now match it. GCC's `-Wformat-security` is what surfaced
+the two that did not — MSVC has no equivalent diagnostic, so the editor had carried them since the
+widgets were written.
+
 Notable behaviors:
 
 - Transform edits go through `DrawVec3Control` (the X/Y/Z colored reset buttons, which returns
@@ -759,36 +805,45 @@ needs nothing: it is driven by `ComponentList`, so a new component type joins it
 
 ## Multi-entity editing
 
-**Ctrl+click** adds an entity to the selection or removes it; a plain click replaces the selection.
-Every selected entity is highlighted in the hierarchy (primary: solid accent; others: 40 %
-alpha).
+**Ctrl+click** adds an entity to the selection or removes it, **Shift+click** selects everything
+between the anchor and the clicked entity, and a plain click replaces the selection. Every selected
+entity is highlighted in the hierarchy (primary: solid accent; others: 40 % alpha).
+
+Shift-range works off `m_VisibleOrder`, the flattened tree the panel now records as it draws — the
+thing it used not to keep, since drawing recursively leaves the visible order existing only as the
+shape of the call stack. Children of a collapsed node are never drawn and so are never in it, which
+is what makes a range cover what the author can see rather than what the scene contains. Two details
+follow the convention every file browser has: the **anchor** is the last entity picked *without*
+shift, held apart from the primary so repeated shift-clicks re-extend from the same place rather
+than walking it along; and a range **replaces** the selection rather than adding to it, so a
+mis-aimed range is fixed by aiming again. The click is recorded and serviced after the walk
+completes, because mid-draw the flattened order only holds the nodes drawn so far.
 
 The design keeps a **primary** selection — the entity clicked last, `GetSelectedEntity()` — and adds
 the full set beside it as `GetSelection()`, primary first. That is why multi-select cost six call
-sites outside the panel instead of thirty: gizmos, the tag field and every prefab action still read
-the primary and did not change at all.
+sites outside the panel instead of thirty: the tag field and every prefab action still read
+the primary. The gizmo still *grabs* the primary, then applies the same world-space delta to the
+rest of the selection.
 
 | Behaviour | Rule |
 |---|---|
 | Which sections appear | Only components **every** selected entity has. Showing one that only some have would make an edit either silently skip entities or silently add the component to them |
 | Fields that disagree | Tinted **amber**. Mixed wins over the prefab-override blue when both apply — "these entities disagree" is the more urgent fact, because the widget is showing one of several values rather than the value |
 | Editing | The widgets drive the **primary**; the new value is copied to the rest *after* a widget reports an edit. Merely selecting several entities never flattens their differing values |
-| Undo | **One entry per gesture, spanning the whole selection.** Verified: a 3-entity drag produces `UndoDepth == 1`, and one Ctrl+Z restores all three to their *individual* prior values |
+| Undo | **One entry per gesture, spanning the whole selection** — including edits with no active phase (a checkbox, a combo, a drop). Verified by driving the editor: a 4-entity checkbox toggle produces `UndoDepth == 1` and one Ctrl+Z restores all four |
 | Delete | Deletes every selected entity |
 
 Propagating after the fact, rather than driving N widgets, is what keeps every property drawer
 single-entity and unaware that multi-edit exists — the same trick the prefab-override hook uses.
 
-Two gaps, deliberate in v1:
-
-- **Shift-range selection is not implemented.** It needs a flattened view of the tree that this panel
-  draws recursively and does not keep; Ctrl covers the case multi-edit exists for.
-- **The gizmo still moves the primary only.** Moving N entities is transform composition across a
-  selection, which is a viewport feature rather than an inspector one.
-- **A drop or popup edit with no active phase records undo for the primary only.** That path has no
-  gesture to wait for, so the other entities' before-values are already gone by the time it runs;
-  making it multi-entity means moving the pre-copy up into `DrawComponent`. Stated rather than
-  hidden.
+**The before-values are snapshotted in `DrawComponent`, before the widget runs.** They used to be
+read at the moment a gesture started, which was wrong twice over: the no-active-phase path (a
+checkbox, a combo, a drop) has no such moment at all, so those entities got no undo entry and their
+edit was unrecoverable — toggle a checkbox across four entities, press Ctrl+Z, and one came back;
+and even on the gesture path, a widget that became active *and* reported an edit in the same frame
+had already propagated to the rest, so their "before" was the new value. The snapshot is taken only
+when something else is selected, so single-entity editing — every frame of ordinary work — copies
+nothing.
 
 ## Content Browser panel
 
@@ -844,6 +899,14 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
   setting edited by hand, or simple doubt about what is in the cache. It **blocks**, and a large
   texture is seconds; the menu item's tooltip says so rather than letting the editor look hung.
   Making it non-blocking is asset Phase 5's job.
+- Right-click the **panel background** (`BeginPopupContextWindow` with `NoOpenOverItems`, so it
+  never competes with the per-file menu) → asset-tree maintenance: **Rescan `assets/`**, and
+  **Clean N orphaned `.meta` sidecar(s)**. The clean item carries its own count and is *disabled*
+  when the count is zero — the disabled item with "No orphaned `.meta` sidecars" on it is the
+  report, which is why it is drawn rather than hidden. Its tooltip says what a sidecar holds,
+  because the action is not undoable: see
+  [assets.md](../engine/assets.md#orphaned-sidecars) for why the editor asks a person rather than
+  reaping at boot.
 
 ## Typed drag-drop
 

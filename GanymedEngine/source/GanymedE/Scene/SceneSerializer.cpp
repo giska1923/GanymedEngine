@@ -11,6 +11,8 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <sstream>
+
 namespace GanymedE {
 
 	SceneSerializer::SceneSerializer(const Ref<Scene>& scene)

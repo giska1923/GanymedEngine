@@ -201,13 +201,19 @@ namespace GanymedE {
 			// worker finished last frame becomes usable by the systems that draw with it
 			// this frame instead of a frame later. Outside, because a minimised window has
 			// not stopped background loading, and a queue nobody drains grows without bound.
-			JobSystem::OnUpdate();
+			{
+				GE_PROFILE_SCOPE("JobSystem::OnUpdate");
+				JobSystem::OnUpdate();
+			}
 
 			// Immediately after, and for the same reason: a parse that finished on a worker
 			// becomes a usable GPU resource here, in time for the systems that draw with it this
 			// frame. This is the only place the asset layer creates bgfx resources off the
 			// synchronous path.
-			AssetManager::Update();
+			{
+				GE_PROFILE_SCOPE("AssetManager::Update");
+				AssetManager::Update();
+			}
 
 			// The dormancy gate is a leftover migration kill-switch and is
 			// hard-false now that the scene path runs fully on bgfx; it goes
@@ -222,21 +228,38 @@ namespace GanymedE {
 
 			// Outside the minimised gate on purpose: a window nobody is looking at has
 			// not stopped making noise, and finished one-shots still need reaping.
-			AudioEngine::OnUpdate();
+			{
+				GE_PROFILE_SCOPE("AudioEngine::OnUpdate");
+				AudioEngine::OnUpdate();
+			}
 
 			if (m_ImGuiLayer)
 			{
-				m_ImGuiLayer->Begin();
+				{
+					GE_PROFILE_SCOPE("ImGuiLayer::Begin");
+					m_ImGuiLayer->Begin();
+				}
 				{
 					GE_PROFILE_SCOPE("LayerStack OnImGuiRender");
 
 					for (Layer* layer : m_LayerStack)
 						layer->OnImGuiRender();
 				}
-				m_ImGuiLayer->End();
+				{
+					// Where ImGui's own draw lists are built and submitted, so this is usually
+					// the second-largest span in an editor frame after the scene render.
+					GE_PROFILE_SCOPE("ImGuiLayer::End");
+					m_ImGuiLayer->End();
+				}
 			}
 
-			m_Window->OnUpdate();
+			{
+				// Event poll plus the bgfx frame submit and swap. A large span here is the
+				// frame waiting on the GPU or on vsync, not CPU work - read it with the bgfx
+				// stats overlay (F1) beside it.
+				GE_PROFILE_SCOPE("Window::OnUpdate (poll + present)");
+				m_Window->OnUpdate();
+			}
 		}
 	}
 }

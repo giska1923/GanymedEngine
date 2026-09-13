@@ -1,4 +1,5 @@
 #include "EditorLayer.h"
+#include "EditorPrefabOverrides.h"
 #include "AssetDragDrop.h"
 #include "EditorFonts.h"
 #include "EditorIcons.h"
@@ -98,6 +99,76 @@ namespace GanymedE {
 			ImGui::DockBuilderFinish(dockspaceId);
 		}
 
+		// Is any ancestor of `entity` also in `selection`?
+		//
+		// A group gizmo drag applies one world-space delta per selected entity, and a child's
+		// world transform already carries its parent's. Moving both would apply the delta twice
+		// - the child drifts away at double speed - so a selected entity whose ancestor is also
+		// selected is left to move with its parent. Selecting a whole hierarchy and dragging it
+		// is the obvious way to hit this, so it is the default case rather than an edge one.
+		bool IsDescendantOfSelection(Scene& scene, Entity entity, const std::vector<Entity>& selection)
+		{
+			if (!entity.HasComponent<RelationshipComponent>())
+				return false;
+
+			UUID parentID = entity.GetComponent<RelationshipComponent>().Parent;
+			while (parentID != UUID{ 0 })
+			{
+				Entity parent = scene.FindEntityByUUID(parentID);
+				if (!parent)
+					return false;
+
+				for (Entity selected : selection)
+				{
+					if (selected == parent)
+						return true;
+				}
+
+				if (!parent.HasComponent<RelationshipComponent>())
+					return false;
+
+				parentID = parent.GetComponent<RelationshipComponent>().Parent;
+			}
+
+			return false;
+		}
+
+		// Move one entity by a world-space delta, writing the result back as a local transform.
+		//
+		// Factored out of the gizmo block so the arithmetic can be exercised on its own: a wrong
+		// delta compiles perfectly and simply puts things in the wrong place.
+		void ApplyWorldDelta(Scene& scene, Entity entity, const glm::mat4& worldDelta)
+		{
+			if (!entity || !entity.HasComponent<TransformComponent>())
+				return;
+
+			glm::mat4 world = worldDelta * scene.GetWorldSpaceTransform(entity);
+
+			const UUID parentID = entity.HasComponent<RelationshipComponent>()
+				? entity.GetComponent<RelationshipComponent>().Parent : UUID{ 0 };
+
+			if (parentID != UUID{ 0 })
+			{
+				Entity parent = scene.FindEntityByUUID(parentID);
+				if (parent)
+					world = glm::inverse(scene.GetWorldSpaceTransform(parent)) * world;
+			}
+
+			glm::vec3 translation, rotation, scale;
+			Math::DecomposeTransform(world, translation, rotation, scale);
+
+			auto& tc = entity.GetComponent<TransformComponent>();
+
+			// Rotation as a delta against the current value, matching what the primary does -
+			// DecomposeTransform picks one of several equivalent Euler triples, and jumping
+			// straight to it makes a continuous drag flip.
+			tc.Rotation += rotation - tc.Rotation;
+			tc.Translation = translation;
+			tc.Scale = scale;
+
+			scene.MarkChanged<TransformComponent>(entity);
+		}
+
 	}
 
 	EditorLayer::EditorLayer()
@@ -118,6 +189,23 @@ namespace GanymedE {
 		EditorUI::ApplyTheme(EditorUI::MakeDarkTheme());
 		EditorUI::InitTitleBar();
 		RegisterDockLayoutSettingsHandler();
+
+		// A `.gprefab` rewritten on disk - by an external editor, a git checkout, a branch switch
+		// - invalidates the prefab-override template cache, which is the only thing in the editor
+		// keyed on a prefab's contents. The watcher has always detected this; nothing forwarded
+		// it, because Prefab has no asset manager to evict from.
+		//
+		// Drops every template rather than the one that changed. They rebuild lazily on the next
+		// query, one Instantiate each, and only for prefabs an instance is actually being
+		// inspected against - which is a smaller cost than keeping a second index to be precise.
+		AssetManager::AddAssetChangedListener([](AssetHandle, AssetType type)
+		{
+			if (type != AssetType::Prefab)
+				return false;
+
+			EditorUI::InvalidatePrefabTemplates();
+			return true;
+		});
 
 		// After Reflection::Init (Application's constructor), because a drawer is keyed on a
 		// meta_type that has to exist first.
@@ -409,6 +497,13 @@ namespace GanymedE {
 		const AssetApplyStats apply = AssetManager::GetApplyStats();
 		ImGui::Text("Apply: %u done, %u deferred, %.2f / %.1f ms",
 			apply.Applied, apply.Deferred, apply.Milliseconds, apply.BudgetMs);
+
+		// The other throttle, and a different one: `deferred` above is work that finished
+		// parsing and did not fit the frame's Apply budget, `refused` here is work that was
+		// never started because the in-flight cap was full - so its decoded bytes were never
+		// held at all. A steady stream of refusals during a burst is the cap doing its job.
+		ImGui::Text("Parses: %u in flight / %u max, %u load(s) refused",
+			apply.InFlight, (uint32_t)kMaxParsesInFlight, apply.LoadsDeferred);
 
 		// Compiles vs cache hits is the number that says whether the compiled tree is doing its
 		// job: a second run over an unchanged project must read 0 compiled. The in-flight count
@@ -978,6 +1073,10 @@ namespace GanymedE {
 				snapValue = 45.0f;
 			float snapValues[3] = { snapValue, snapValue, snapValue };
 
+			// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
+			// kept: it is what the rest of the selection's delta is measured against.
+			const glm::mat4 worldBefore = transform;
+
 			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
 				(ImGuizmo::OPERATION)m_GizmoType,
 				m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
@@ -986,12 +1085,37 @@ namespace GanymedE {
 
 			if (ImGuizmo::IsUsing())
 			{
+				const std::vector<Entity>& selection = m_SceneHierarchyPanel.GetSelection();
+
+				// Rising edge. This is the last moment the pre-drag transforms still exist:
+				// rotation below is accumulated as a delta against the current value, so one
+				// frame later there is nothing left to reconstruct them from.
 				if (!m_GizmoUsing)
 				{
 					m_GizmoUsing = true;
-					m_GizmoEntity = gizmoEntity.GetUUID();
-					m_GizmoBefore = tc;
+					m_GizmoBefore.clear();
+					m_GizmoBefore.emplace_back(gizmoEntity.GetUUID(), tc);
+
+					for (Entity other : selection)
+					{
+						if (other == gizmoEntity || !other.HasComponent<TransformComponent>())
+							continue;
+
+						// Skip anything that already moves because an ancestor of it is selected
+						// too - it would otherwise take the delta twice, once from its parent's
+						// transform and once from its own.
+						if (IsDescendantOfSelection(*m_ActiveScene, other, selection))
+							continue;
+
+						m_GizmoBefore.emplace_back(other.GetUUID(),
+							other.GetComponent<TransformComponent>());
+					}
 				}
+
+				// The world-space change the gizmo just made. Applied to every other entity in
+				// the selection, which is what makes a group drag rotate and scale about the
+				// primary rather than each object about its own origin.
+				const glm::mat4 worldDelta = transform * glm::inverse(worldBefore);
 
 				UUID parentID = gizmoEntity.GetComponent<RelationshipComponent>().Parent;
 				if (parentID != UUID{ 0 })
@@ -1010,20 +1134,54 @@ namespace GanymedE {
 				tc.Scale = scale;
 
 				m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+
+				// The rest of the selection. Driven from m_GizmoBefore rather than from the live
+				// selection, so an entity that leaves the selection mid-drag is not left half
+				// moved, and the ancestor filter above is applied once rather than per frame.
+				for (std::size_t i = 1; i < m_GizmoBefore.size(); i++)
+				{
+					ApplyWorldDelta(*m_ActiveScene,
+						m_ActiveScene->FindEntityByUUID(m_GizmoBefore[i].first), worldDelta);
+				}
 			}
 		}
 
+		// Falling edge, checked outside the gizmo block so a drag that ends with the selection
+		// gone (or the gizmo hidden) still commits its one command.
 		if (m_GizmoUsing && !ImGuizmo::IsUsing())
 		{
 			m_GizmoUsing = false;
 
-			Entity dragged = m_EditorScene ? m_EditorScene->FindEntityByUUID(m_GizmoEntity) : Entity{};
-			if (dragged && editing && dragged.HasComponent<TransformComponent>())
+			if (m_EditorScene && editing)
 			{
-				m_UndoStack.Push(CreateScope<ComponentEditCommand<TransformComponent>>(
-					"Gizmo Transform", m_GizmoEntity, m_GizmoBefore,
-					dragged.GetComponent<TransformComponent>()));
+				std::vector<Scope<EditorCommand>> moved;
+				moved.reserve(m_GizmoBefore.size());
+
+				for (const auto& entry : m_GizmoBefore)
+				{
+					Entity dragged = m_EditorScene->FindEntityByUUID(entry.first);
+					if (!dragged || !dragged.HasComponent<TransformComponent>())
+						continue;
+
+					moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
+						"Gizmo Transform", entry.first, entry.second,
+						dragged.GetComponent<TransformComponent>()));
+				}
+
+				// One drag is one undo entry, the same rule the inspector's multi-edit follows.
+				if (moved.size() == 1)
+				{
+					m_UndoStack.Push(std::move(moved.front()));
+				}
+				else if (!moved.empty())
+				{
+					m_UndoStack.Push(CreateScope<CompositeCommand>(
+						"Gizmo Transform (" + std::to_string(moved.size()) + " entities)",
+						std::move(moved)));
+				}
 			}
+
+			m_GizmoBefore.clear();
 		}
 
 		if (selectedEntity && selectedEntity.HasComponent<TransformComponent>())
@@ -1135,6 +1293,13 @@ namespace GanymedE {
 
 	void EditorLayer::RetargetPanels()
 	{
+		// The prefab-override diff caches a template per source handle, and its own header says
+		// to drop them when the scene changes. Nothing was calling it - the function had no call
+		// sites at all - so a `.gprefab` rewritten between two scene loads went on being diffed
+		// against the version cached at first sight. This is the choke point every scene change
+		// goes through, including play and stop.
+		EditorUI::InvalidatePrefabTemplates();
+
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 
 		// Nothing to record into during play: the active scene is a throwaway copy, and a

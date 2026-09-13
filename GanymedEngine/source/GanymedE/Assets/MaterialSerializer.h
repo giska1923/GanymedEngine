@@ -70,7 +70,7 @@ namespace GanymedE {
 		//
 		// Both halves are idempotent and **never overwrite**: a re-import, or a cache rebuild,
 		// must not clobber a material a human has edited. No-op when the process may not write
-		// into assets/ (AssetManager::IsRegistryWritable).
+		// into assets/ (AssetManager::IsAssetsWritable).
 		void GenerateSidecars(const Ref<Mesh>& mesh, const std::filesystem::path& meshRelativePath);
 
 	}

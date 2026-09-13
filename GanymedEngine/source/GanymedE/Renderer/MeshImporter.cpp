@@ -750,7 +750,7 @@ namespace GanymedE {
 		if (vertices.empty() || indices.empty())
 		{
 			GE_CORE_ERROR("glTF '{0}' contained no triangle geometry", path.string());
-			return nullptr;
+			return false;
 		}
 
 		// A file can declare a skin that no primitive actually uses. Carrying a

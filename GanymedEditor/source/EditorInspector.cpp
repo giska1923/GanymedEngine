@@ -622,6 +622,22 @@ namespace GanymedE::EditorUI {
 				}
 			}
 
+			// The opposite direction, and deliberately NOT reported as an edit: this writes the
+			// `.gprefab`, not the scene, so there is nothing for the scene's undo stack to hold
+			// and returning true would mint an undo command that undoes nothing.
+			if (overrides.Apply && ImGui::MenuItem("Apply to Prefab"))
+			{
+				overrides.Apply(overrides.Owner, field);
+				ImGui::EndPopup();
+				return false;
+			}
+
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			{
+				ImGui::SetTooltip("Writes this one field into the prefab asset. Cannot be undone, "
+					"and does not change other instances already in the scene.");
+			}
+
 			ImGui::EndPopup();
 		}
 

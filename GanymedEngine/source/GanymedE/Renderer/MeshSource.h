@@ -71,7 +71,10 @@ namespace GanymedE {
 
 		// Empty, or exactly parallel to Vertices - see SkinVertex.
 		std::vector<SkinVertex> SkinVertices;
-		Skeleton Skeleton;
+		// Qualified because the member name shadows the type name for the rest of this scope,
+		// as in Components.h. Not a style choice: [basic.scope.class] requires a name to mean
+		// one thing throughout a class, and GCC enforces it as an error where MSVC does not.
+		GanymedE::Skeleton Skeleton;
 		std::vector<AnimationClip> Clips;
 
 		std::string RelativePath;

@@ -23,6 +23,8 @@ namespace GanymedE {
 
 	void RenderSystem::SubmitLightsAndSky()
 	{
+		GE_PROFILE_FUNCTION();
+
 		// Directional lights (the first shadow-caster claims the shadow map)
 		for (auto [entity, worldTransform, light] : View<DirLightView>())
 		{
@@ -77,6 +79,8 @@ namespace GanymedE {
 
 	void RenderSystem::SubmitMeshes()
 	{
+		GE_PROFILE_FUNCTION();
+
 		for (auto [entity, worldTransform, meshComponent, animator] : View<MeshView>())
 		{
 			if (IsEditorHidden(entity))
@@ -120,6 +124,8 @@ namespace GanymedE {
 	void RenderSystem::SubmitParticles(const glm::vec3& cameraPosition, const glm::vec3& cameraRight,
 		const glm::vec3& cameraUp)
 	{
+		GE_PROFILE_FUNCTION();
+
 		ParticleRenderer::SetView(cameraPosition, cameraRight, cameraUp);
 
 		for (auto [entity, worldTransform, emitter] : View<ParticleView>())
@@ -178,6 +184,8 @@ namespace GanymedE {
 
 	void RenderSystem::SubmitSprites()
 	{
+		GE_PROFILE_FUNCTION();
+
 		for (auto [entity, worldTransform, sprite] : View<SpriteView>())
 		{
 			if (IsEditorHidden(entity))
@@ -188,6 +196,8 @@ namespace GanymedE {
 
 	void RenderSystem::DrawColliderGizmos()
 	{
+		GE_PROFILE_FUNCTION();
+
 		const glm::vec4 boxColor{ 0.2f, 0.9f, 0.35f, 1.0f };
 		const glm::vec4 sphereColor{ 0.3f, 0.7f, 1.0f, 1.0f };
 		const glm::vec4 capsuleColor{ 1.0f, 0.75f, 0.2f, 1.0f };
@@ -242,6 +252,8 @@ namespace GanymedE {
 
 	void RenderSystem::DrawPhysicsDebugOrGizmos(const glm::vec3& cameraPosition)
 	{
+		GE_PROFILE_FUNCTION();
+
 		PhysicsScene* physics = nullptr;
 		if (PhysicsSystem* physicsSystem = m_Scene.Systems().Get<PhysicsSystem>())
 			physics = physicsSystem->GetPhysicsScene();

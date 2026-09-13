@@ -12,6 +12,12 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+// PRIu64. uint64_t is `unsigned long` on LP64 (Linux, macOS) and `unsigned long long` on
+// Windows, so no single printf conversion spells it on both - and UUID's conversion operator is
+// explicit, which in direct-initialization only yields uint64_t exactly. The macro is the
+// portable spelling; <cstdint>'s fixed-width types have no other one.
+#include <cinttypes>
+
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
@@ -272,6 +278,8 @@ namespace GanymedE {
 			ImGui::BeginChild("##OutlinerTree", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
 			if (m_Context)
 			{
+				m_VisibleOrder.clear();
+
 				auto view = m_Context->m_Registry.view<IDComponent, RelationshipComponent, TagComponent>();
 				for (auto entityID : view)
 				{
@@ -280,12 +288,25 @@ namespace GanymedE {
 						DrawEntityNode(entity);
 				}
 
+				// After the walk, when m_VisibleOrder is complete. See m_PendingRange.
+				if (m_PendingRange)
+				{
+					SelectRange(m_PendingRange);
+					m_PendingRange = {};
+				}
+
 				if (m_EntityToDelete != UUID{ 0 })
 				{
 					DeleteEntity(m_Context->FindEntityByUUID(m_EntityToDelete));
 					m_EntityToDelete = UUID{ 0 };
 				}
 
+				// Click empty space to deselect. `!IsAnyItemHovered()` is what makes it *empty*
+				// space: without it this fires on any held-mouse frame where no item happens to own
+				// ActiveId, which includes the frame after a tree node was clicked - so a selection
+				// made by that very click could be wiped by this line a moment later. Harmless for a
+				// plain click, which re-selects one entity anyway, and visibly wrong for a
+				// shift-range, which is how it was found.
 				if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
 					SelectSingle({});
 
@@ -337,10 +358,53 @@ namespace GanymedE {
 	void SceneHierarchyPanel::SelectSingle(Entity entity)
 	{
 		m_SelectionContext = entity;
+		m_RangeAnchor = entity;
 
 		m_Selection.clear();
 		if (entity)
 			m_Selection.push_back(entity);
+	}
+
+	// Shift+click: everything between the anchor and `to` in the order the tree is drawn.
+	//
+	// Replaces the selection rather than adding to it, so shift-clicking twice gives the second
+	// range and not the union of both - the behaviour a file browser has, and the one that makes
+	// a mis-aimed range recoverable by aiming again.
+	void SceneHierarchyPanel::SelectRange(Entity to)
+	{
+		if (!to || !m_RangeAnchor)
+			return;
+
+		const auto anchorIt = std::find(m_VisibleOrder.begin(), m_VisibleOrder.end(), m_RangeAnchor);
+		const auto toIt = std::find(m_VisibleOrder.begin(), m_VisibleOrder.end(), to);
+
+		// Either end can be missing: an ancestor of the anchor may have been collapsed since it
+		// was set, which takes it out of the drawn tree. Falling back to a plain single select is
+		// better than selecting a range measured from something the author cannot see.
+		if (anchorIt == m_VisibleOrder.end() || toIt == m_VisibleOrder.end())
+		{
+			SelectSingle(to);
+			return;
+		}
+
+		auto first = anchorIt;
+		auto last = toIt;
+		if (first > last)
+			std::swap(first, last);
+
+		m_Selection.clear();
+
+		// `to` first: the primary is what the author just clicked, which is what the gizmo grabs
+		// and what the inspector draws. The anchor keeps its value so the next shift-click
+		// re-measures from the same place.
+		m_Selection.push_back(to);
+		for (auto it = first; it <= last; ++it)
+		{
+			if (*it != to)
+				m_Selection.push_back(*it);
+		}
+
+		m_SelectionContext = to;
 	}
 
 	// Ctrl+click. The primary stays the entity clicked *last*, because everything single-entity
@@ -361,6 +425,7 @@ namespace GanymedE {
 
 		m_Selection.insert(m_Selection.begin(), entity);
 		m_SelectionContext = entity;
+		m_RangeAnchor = entity;
 	}
 
 	void SceneHierarchyPanel::DrawEntityNode(Entity entity)
@@ -409,6 +474,8 @@ namespace GanymedE {
 			flags |= ImGuiTreeNodeFlags_Selected;
 		if (!hasVisibleChild)
 			flags |= ImGuiTreeNodeFlags_Leaf;
+
+		m_VisibleOrder.push_back(entity);
 
 		if (primary)
 		{
@@ -462,7 +529,12 @@ namespace GanymedE {
 
 		if (rowClicked && ImGui::GetMousePos().x < ImGui::GetItemRectMax().x - 3.0f * kOutlinerActionCol)
 		{
-			if (ImGui::GetIO().KeyCtrl)
+			// Shift extends from the anchor, Ctrl adds to or removes from the selection, and a
+			// plain click replaces it. Shift wins over Ctrl when both are held, which is the
+			// convention everywhere else.
+			if (ImGui::GetIO().KeyShift && m_RangeAnchor)
+				m_PendingRange = entity;
+			else if (ImGui::GetIO().KeyCtrl)
 				ToggleSelection(entity);
 			else
 				SelectSingle(entity);
@@ -741,6 +813,22 @@ namespace GanymedE {
 				auto* self = static_cast<OverrideBinding*>(owner);
 				return EditorUI::RevertProperty<T>(self->Target, *self->Context, field);
 			}
+
+			static bool Apply(void* owner, const entt::meta_data& field)
+			{
+				auto* self = static_cast<OverrideBinding*>(owner);
+				const bool ok = EditorUI::ApplyProperty<T>(self->Target, *self->Context, field);
+
+				// Named in the log because it is an asset write with no undo behind it: "which
+				// field went into the prefab" is the only record of it afterwards.
+				const char* name = field.name() ? field.name() : "<field>";
+				if (ok)
+					GE_INFO("Applied '{0}' to the prefab", name);
+				else
+					GE_WARN("Could not apply '{0}' to the prefab", name);
+
+				return ok;
+			}
 		};
 
 		// Multi-edit binding. `Others` excludes the primary, which is the entity the widgets are
@@ -754,11 +842,15 @@ namespace GanymedE {
 			static bool IsMixed(void* owner, const entt::meta_data& field)
 			{
 				auto* self = static_cast<MultiBinding*>(owner);
-				if (!self->Primary.HasComponent<T>())
+
+				// `self` has dependent type, so every member template reached through it needs
+				// the `template` disambiguator - otherwise `<` is parsed as less-than. `other`
+				// below is declared `Entity` outright and so needs nothing.
+				if (!self->Primary.template HasComponent<T>())
 					return false;
 
 				const std::string primary = EmitReflectedValue(
-					entt::forward_as_meta(self->Primary.GetComponent<T>()), field);
+					entt::forward_as_meta(self->Primary.template GetComponent<T>()), field);
 
 				if (primary.empty())
 					return false;   // no codec: cannot tell, so do not claim a disagreement
@@ -781,11 +873,14 @@ namespace GanymedE {
 			static void Propagate(void* owner, const entt::meta_data& field)
 			{
 				auto* self = static_cast<MultiBinding*>(owner);
-				if (!self->Primary.HasComponent<T>())
+				if (!self->Primary.template HasComponent<T>())
 					return;
 
-				entt::meta_any value = field.get(
-					entt::forward_as_meta(self->Primary.GetComponent<T>()));
+				// Named: meta_data::get builds a meta_handle that binds a non-const lvalue ref,
+				// so the temporary cannot be passed inline. See EditorPrefabOverrides.h.
+				entt::meta_any primary =
+					entt::forward_as_meta(self->Primary.template GetComponent<T>());
+				entt::meta_any value = field.get(primary);
 
 				if (!value)
 					return;
@@ -812,6 +907,7 @@ namespace GanymedE {
 			{
 				hook.IsOverridden = &OverrideBinding<T>::IsOverridden;
 				hook.Revert = &OverrideBinding<T>::Revert;
+				hook.Apply = &OverrideBinding<T>::Apply;
 				hook.Owner = &binding;
 			}
 
@@ -859,7 +955,8 @@ namespace GanymedE {
 
 	template<typename T>
 	void SceneHierarchyPanel::TrackCommitBoundary(Entity entity, const std::string& name,
-		const T& before, uint32_t activeOnEntry, uint32_t activeOnExit, bool edited)
+		const T& before, const std::vector<std::pair<UUID, T>>& othersBefore,
+		uint32_t activeOnEntry, uint32_t activeOnExit, bool edited)
 	{
 		if (!Recording())
 			return;
@@ -889,18 +986,14 @@ namespace GanymedE {
 			m_Pending.Command = CreateScope<ComponentEditCommand<T>>(
 				"Edit " + name, entity.GetUUID(), before);
 
-			// The rest of the selection, captured in the same frame and from the same signal.
-			// Their before-values are read here rather than snapshotted alongside `before` in
-			// DrawComponent, because that copy happens every frame for every section and this
-			// one happens once per gesture.
+			// From the snapshot DrawComponent took before the widget ran, not from the live
+			// components: a widget that becomes active and edits in the same frame has already
+			// propagated to the rest of the selection by now.
 			m_Pending.Secondary.clear();
-			for (Entity other : m_Selection)
+			for (const auto& entry : othersBefore)
 			{
-				if (other == entity || !other.HasComponent<T>())
-					continue;
-
 				m_Pending.Secondary.push_back(CreateScope<ComponentEditCommand<T>>(
-					"Edit " + name, other.GetUUID(), other.GetComponent<T>()));
+					"Edit " + name, entry.first, entry.second));
 			}
 
 			m_Pending.ActiveId = activeOnExit;
@@ -909,16 +1002,39 @@ namespace GanymedE {
 			return;
 		}
 
-		// An edit with no active phase: a drop delivered onto this section, or a popup item
-		// that closed in the same frame. There is nothing to wait for.
+		// An edit with no active phase: a checkbox, a combo, a drop delivered onto this section,
+		// or a popup item that closed in the same frame. There is nothing to wait for, so the
+		// command is complete here - before and after both.
 		if (edited && entity.HasComponent<T>())
 		{
-			// No gesture to wait for, so the before-value for the others is already lost - they
-			// were propagated to in the same frame. Recording just the primary would be a lie, so
-			// this path stays single-entity and a multi-selection drop is not undoable across the
-			// rest. Stated rather than hidden; it needs the pre-copy to move into DrawComponent.
-			m_UndoStack->Push(CreateScope<ComponentEditCommand<T>>(
-				"Edit " + name, entity.GetUUID(), before, entity.GetComponent<T>()));
+			Scope<EditorCommand> primary = CreateScope<ComponentEditCommand<T>>(
+				"Edit " + name, entity.GetUUID(), before, entity.GetComponent<T>());
+
+			if (othersBefore.empty())
+			{
+				m_UndoStack->Push(std::move(primary));
+				return;
+			}
+
+			// The rest of the selection was propagated to during the widget, and their
+			// before-values survive because DrawComponent snapshotted them first. One composite,
+			// for the reason CommitPendingEdit gives: one gesture is one undo entry.
+			std::vector<Scope<EditorCommand>> children;
+			children.reserve(othersBefore.size() + 1);
+			children.push_back(std::move(primary));
+
+			for (const auto& entry : othersBefore)
+			{
+				Entity other = m_Context->FindEntityByUUID(entry.first);
+				if (!other || !other.HasComponent<T>())
+					continue;
+
+				children.push_back(CreateScope<ComponentEditCommand<T>>(
+					"Edit " + name, entry.first, entry.second, other.GetComponent<T>()));
+			}
+
+			const std::string label = "Edit " + std::to_string(children.size()) + " entities";
+			m_UndoStack->Push(CreateScope<CompositeCommand>(label, std::move(children)));
 		}
 	}
 
@@ -1211,9 +1327,33 @@ namespace GanymedE {
 			T before = component;
 			const ImGuiID activeOnEntry = ImGui::GetActiveID();
 
+			// The rest of the selection, at the same instant. This used to be read inside
+			// TrackCommitBoundary at the moment a gesture started, which was wrong in two
+			// ways: on the no-active-phase path (a checkbox, a combo, a drop) there is no
+			// such moment at all, so those entities got no undo entry and their edit was
+			// unrecoverable; and even on the gesture path, a widget that became active *and*
+			// reported an edit in the same frame had already propagated to them, so their
+			// "before" was the new value.
+			//
+			// Only when something else is selected: for a single selection this is an empty
+			// vector and costs nothing, which is every frame of ordinary editing.
+			std::vector<std::pair<UUID, T>> othersBefore;
+			if (m_Selection.size() > 1)
+			{
+				othersBefore.reserve(m_Selection.size() - 1);
+				for (Entity other : m_Selection)
+				{
+					if (other == entity || !other.HasComponent<T>())
+						continue;
+
+					othersBefore.emplace_back(other.GetUUID(), other.GetComponent<T>());
+				}
+			}
+
 			const bool edited = uiFunction(component);
 
-			TrackCommitBoundary<T>(entity, name, before, activeOnEntry, ImGui::GetActiveID(), edited);
+			TrackCommitBoundary<T>(entity, name, before, othersBefore,
+				activeOnEntry, ImGui::GetActiveID(), edited);
 
 			ImGui::Dummy(ImVec2(0.0f, 4.0f));
 			ImGui::Unindent(8.0f);
@@ -1439,6 +1579,12 @@ namespace GanymedE {
 		if (PrefabSerializer::Save(*m_Context, instanceRoot, fullPath,
 			hasStored ? &rootTransform : nullptr))
 		{
+			// The file just changed underneath the cached template, and the override diff is
+			// computed against that template - so without this every field stays marked as
+			// overridden until the editor restarts. Per-property apply needs no equivalent: it
+			// edits the template itself, so the two stay in agreement by construction.
+			EditorUI::InvalidatePrefabTemplates();
+
 			GE_INFO("Applied to prefab '{0}'", metadata->FilePath);
 		}
 	}
@@ -1547,7 +1693,7 @@ namespace GanymedE {
 		if (metadata)
 			ImGui::Text("Prefab instance: %s", metadata->FilePath.c_str());
 		else
-			ImGui::TextDisabled("Prefab instance: source %llu is not in the registry",
+			ImGui::TextDisabled("Prefab instance: source %" PRIu64 " is not in the registry",
 				static_cast<uint64_t>(source));
 
 		if (ImGui::Button("Apply to Prefab..."))
@@ -1692,7 +1838,9 @@ namespace GanymedE {
 				edited = true;
 			}
 
-			TrackCommitBoundary<TagComponent>(entity, "Name", before, activeOnEntry,
+			// Empty snapshot: a name is per-entity by definition, so the Tag field is the one
+			// place multi-edit deliberately does not apply.
+			TrackCommitBoundary<TagComponent>(entity, "Name", before, {}, activeOnEntry,
 				ImGui::GetActiveID(), edited);
 			ImGui::Unindent(8.0f);
 			ImGui::Dummy(ImVec2(0.0f, 8.0f));
@@ -1768,7 +1916,8 @@ namespace GanymedE {
 				if (metadata)
 					ImGui::Text("Mesh: %s", metadata->FilePath.c_str());
 				else
-					ImGui::Text("Mesh handle: %llu", static_cast<uint64_t>(component.Mesh.Handle()));
+					ImGui::Text("Mesh handle: %" PRIu64,
+						static_cast<uint64_t>(component.Mesh.Handle()));
 
 				const Ref<Mesh>& mesh = component.Mesh.Get();
 				if (mesh)
@@ -1797,7 +1946,8 @@ namespace GanymedE {
 						if (slotMetadata)
 							ImGui::Text("Slot %u: %s", i, slotMetadata->FilePath.c_str());
 						else if (IsAssetHandleValid(slot))
-							ImGui::Text("Slot %u: unknown material %llu", i, static_cast<uint64_t>(slot));
+							ImGui::Text("Slot %u: unknown material %" PRIu64, i,
+								static_cast<uint64_t>(slot));
 						else
 							ImGui::Text("Slot %u: (default: %s)", i, imported.c_str());
 
@@ -1935,7 +2085,8 @@ namespace GanymedE {
 				if (metadata)
 					ImGui::Text("Script: %s", metadata->FilePath.c_str());
 				else
-					ImGui::Text("Script handle: %llu", static_cast<uint64_t>(component.Script));
+					ImGui::Text("Script handle: %" PRIu64,
+						static_cast<uint64_t>(component.Script));
 
 				if (ImGui::Button("Clear"))
 				{
