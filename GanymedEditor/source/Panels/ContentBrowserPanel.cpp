@@ -480,7 +480,18 @@ namespace GanymedE {
 		if (isRoot)
 			ImGui::SetNextItemOpen(true, ImGuiCond_Once);
 
+		// Theme Header is ChromeBg (inspector CollapsingHeaders). Idle selected
+		// TreeNodes use Header, not HeaderActive — without this override, TextOnAccent
+		// (#1A1A1A) lands on ChromeBg (#1A1A1A).
+		if (selected)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Header, EditorUI::Color(theme.Accent));
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorUI::Color(theme.AccentHover));
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorUI::Color(theme.AccentActive));
+		}
 		const bool open = ImGui::TreeNodeEx("##folder", flags, "");
+		if (selected)
+			ImGui::PopStyleColor(3);
 		const bool clicked = ImGui::IsItemClicked();
 		const ImVec2 rmin = ImGui::GetItemRectMin();
 		const ImVec2 rmax = ImGui::GetItemRectMax();
@@ -517,7 +528,6 @@ namespace GanymedE {
 	void ContentBrowserPanel::DrawGrid()
 	{
 		using EditorUI::Theme;
-		using EditorUI::WithAlpha;
 		const EditorUI::EditorTheme& theme = Theme();
 		const bool searching = m_Search[0] != '\0';
 
@@ -544,9 +554,7 @@ namespace GanymedE {
 
 			if (selected || hovered)
 			{
-				const ImU32 fill = selected
-					? WithAlpha(theme.Accent, 0.40f)
-					: theme.SurfaceSunken;
+				const ImU32 fill = selected ? theme.Accent : theme.SurfaceSunken;
 				ImGui::GetWindowDrawList()->AddRectFilled(rmin, rmax, fill);
 			}
 

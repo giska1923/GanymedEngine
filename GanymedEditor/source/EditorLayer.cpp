@@ -740,13 +740,13 @@ namespace GanymedE {
 		else
 			ImGui::SameLine();
 
+		StatusBarItem(ICON_LC_GAUGE, fps);
+		ImGui::SameLine();
 		StatusBarItem(ICON_LC_BOXES, entities);
 		ImGui::SetItemTooltip("Entities");
 		ImGui::SameLine();
 		StatusBarItem(ICON_LC_LAYERS, draws);
 		ImGui::SetItemTooltip("Draw calls");
-		ImGui::SameLine();
-		StatusBarItem(ICON_LC_GAUGE, fps);
 		ImGui::SameLine();
 		StatusBarItem(playIcon, playText, playColour);
 

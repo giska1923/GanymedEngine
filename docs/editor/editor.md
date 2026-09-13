@@ -105,11 +105,11 @@ Two mappings invert ImGui's defaults, and they are not bugs:
 | ImGui colour | Token | Why |
 |---|---|---|
 | `FrameBg` | `SurfaceSunken` | Inputs are **recessed** — darker than the window, not lighter |
-| `Header` / `HeaderHovered` | `ChromeBg` / `SurfaceSunken` | Inspector component headers are `#1A1A1A` on `#313131`. ImGui's default is a *lighter* fill |
+| `Header` / `HeaderHovered` | `ChromeBg` / `SurfaceSunken` | Inspector section headers (`Attr::Section` CollapsingHeaders) are `#1A1A1A` on `#313131`. ImGui's default is a *lighter* fill |
 
-`HeaderActive` is `Accent`. The outliner paints `TextOnAccent` on the primary selected row
-(overlay glyphs) and `Accent` at 40 % alpha for other selected rows. Do not "fix" FrameBg or
-Header back toward ImGui defaults.
+`HeaderActive` is `Accent`, but that colour is only used while the mouse is **held**. An idle selected `TreeNode` / `Selectable` uses `Header`. Do not raise theme `Header` to Accent — inspector sections would go lilac. Selected rows that paint `TextOnAccent` must push `Header` / `HeaderHovered` / `HeaderActive` locally (outliner, Content Browser folder tree and list). Grid cells draw the fill themselves.
+
+Do not "fix" FrameBg or Header back toward ImGui defaults.
 
 ### Panel furniture
 
@@ -779,8 +779,12 @@ parent, home, crumbs, sidebar, double-click — goes through `TryNavigate`, whic
 path-normalized root-escape check the old `<-` button used to own alone.
 
 **Split.** A two-column `BeginTable` (`Resizable | BordersInnerV`); sidebar width persists in
-`imgui.ini`. Left: folder tree (directories only, Lucide folder glyphs). Right: grid or list of
-the current folder. The legacy `ImGui::Columns` grid is gone — no per-cell clip, no hover fill.
+`imgui.ini`. Left: folder tree (directories only, Lucide folder glyphs). The current folder
+pushes `Header`/`HeaderHovered`/`HeaderActive` to Accent so `TextOnAccent` glyphs stay on a
+lilac fill — theme `Header` is ChromeBg (inspector sections), and ImGui uses that colour for
+an idle selected TreeNode, not `HeaderActive`. Right: grid or list of the current folder.
+Grid selection is a solid `Accent` cell fill (same contrast contract). List already pushed
+those Header colours. The legacy `ImGui::Columns` grid is gone.
 
 **Footer.** Visible item count (after the search filter) on the left; grid / list toggle on the
 right. Grid keeps the PNG directory/file thumbnails with `AssetTint`. List uses Lucide type icons.

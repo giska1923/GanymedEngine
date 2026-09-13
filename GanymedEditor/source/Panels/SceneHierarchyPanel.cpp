@@ -410,12 +410,23 @@ namespace GanymedE {
 		if (!hasVisibleChild)
 			flags |= ImGuiTreeNodeFlags_Leaf;
 
-		if (selected && !primary)
-			ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorUI::Color(EditorUI::WithAlpha(theme.Accent, 0.40f)));
+		if (primary)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Header, EditorUI::Color(theme.Accent));
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorUI::Color(theme.AccentHover));
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorUI::Color(theme.AccentActive));
+		}
+		else if (selected)
+		{
+			const ImVec4 secondary = EditorUI::Color(EditorUI::WithAlpha(theme.Accent, 0.40f));
+			ImGui::PushStyleColor(ImGuiCol_Header, secondary);
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, secondary);
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive, secondary);
+		}
 
 		bool opened = ImGui::TreeNodeEx("Entity", flags, "");
-		if (selected && !primary)
-			ImGui::PopStyleColor();
+		if (selected)
+			ImGui::PopStyleColor(3);
 
 		const bool rowHovered = ImGui::IsItemHovered();
 		const bool rowClicked = ImGui::IsItemClicked();
