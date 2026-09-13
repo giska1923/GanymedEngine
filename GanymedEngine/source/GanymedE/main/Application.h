@@ -57,6 +57,11 @@ namespace GanymedE {
 		uint32_t Height = DEFAULT_WINDOW_HEIGHT;
 		bool Fullscreen = false;
 
+		// Undecorated GLFW window + ImGui-drawn title bar. Default false so Sandbox
+		// and the runtime keep a normal OS frame. The editor opts in. Wayland cannot
+		// move an undecorated window and falls back to OS decorations at Window::Init.
+		bool CustomTitleBar = false;
+
 		// False builds no ImGuiLayer at all. Consequence worth knowing: nothing installs
 		// the ImGui GLFW callbacks or blocks events, so every event reaches the game
 		// layers raw - which is what a shipped runtime wants.

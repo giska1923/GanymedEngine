@@ -1,7 +1,12 @@
 #include "EditorLayer.h"
 #include "EditorPrefabOverrides.h"
 #include "AssetDragDrop.h"
+#include "EditorFonts.h"
+#include "EditorIcons.h"
 #include "EditorInspector.h"
+#include "EditorTheme.h"
+#include "EditorTitleBar.h"
+#include "EditorWidgets.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -25,15 +30,74 @@
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/UI/UIEngine.h"
+#include "GanymedE/Scene/SceneSingletons.h"
+#include "GanymedE/Scene/SceneCamera.h"
 
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
 
 namespace GanymedE {
 
 	extern const std::filesystem::path g_AssetPath;
 
 	namespace {
+
+		// Bump when the DockBuilder default tree changes. Existing imgui.ini otherwise keeps
+		// the old splits — including the phase-1 6% toolbar node — and View → Reset Layout
+		// is easy to miss on the first launch after a chrome change.
+		constexpr int kDockLayoutVersion = 2;
+		int s_IniDockLayoutVersion = 0;
+
+		void* DockLayoutReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
+		{
+			return std::strcmp(name, "Dock") == 0 ? (void*)1 : nullptr;
+		}
+
+		void DockLayoutReadLine(ImGuiContext*, ImGuiSettingsHandler*, void*, const char* line)
+		{
+			if (std::strncmp(line, "Version=", 8) == 0)
+				s_IniDockLayoutVersion = std::atoi(line + 8);
+		}
+
+		void DockLayoutWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf)
+		{
+			buf->appendf("[%s][Dock]\nVersion=%d\n\n", handler->TypeName, kDockLayoutVersion);
+		}
+
+		void RegisterDockLayoutSettingsHandler()
+		{
+			ImGuiSettingsHandler handler;
+			handler.TypeName = "GanymedEditor";
+			handler.TypeHash = ImHashStr("GanymedEditor");
+			handler.ReadOpenFn = DockLayoutReadOpen;
+			handler.ReadLineFn = DockLayoutReadLine;
+			handler.WriteAllFn = DockLayoutWriteAll;
+			ImGui::AddSettingsHandler(&handler);
+		}
+
+		void BuildDefaultDockLayout(ImGuiID dockspaceId)
+		{
+			ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+			ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
+
+			ImGuiID dockMain = dockspaceId;
+			ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.28f, nullptr, &dockMain);
+			ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.24f, nullptr, &dockMain);
+			ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.22f, nullptr, &dockMain);
+			ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
+
+			ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
+			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
+			ImGui::DockBuilderDockWindow("Viewport", dockMain);
+			ImGui::DockBuilderDockWindow("Stats", dockRight);
+			ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
+			ImGui::DockBuilderFinish(dockspaceId);
+		}
 
 		// Is any ancestor of `entity` also in `selection`?
 		//
@@ -118,6 +182,14 @@ namespace GanymedE {
 
 		AssetManager::Init();
 
+		// After ImGuiLayer::OnAttach (Application's constructor pushed that overlay
+		// first): the context exists, the default atlas is already uploaded, and
+		// Clear() here makes NewFrame rebuild it with Inter + Lucide.
+		EditorUI::EditorFonts::Load();
+		EditorUI::ApplyTheme(EditorUI::MakeDarkTheme());
+		EditorUI::InitTitleBar();
+		RegisterDockLayoutSettingsHandler();
+
 		// A `.gprefab` rewritten on disk - by an external editor, a git checkout, a branch switch
 		// - invalidates the prefab-override template cache, which is the only thing in the editor
 		// keyed on a prefab's contents. The watcher has always detected this; nothing forwarded
@@ -140,8 +212,6 @@ namespace GanymedE {
 		EditorUI::InitPropertyDrawers();
 
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
-		m_IconPlay = Texture2D::Create("resources/icons/PlayButton.png");
-		m_IconStop = Texture2D::Create("resources/icons/StopButton.png");
 
 		m_SceneRenderer = CreateRef<SceneRenderer>(1280, 720);
 
@@ -172,12 +242,26 @@ namespace GanymedE {
 	void EditorLayer::OnDetach()
 	{
 		GE_PROFILE_FUNCTION();
+		EditorUI::ShutdownTitleBar();
 		AssetManager::Shutdown();
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		GE_PROFILE_FUNCTION();
+
+		// Status-bar FPS. Skip dt >= 1 s so a debugger pause does not pull the
+		// average to 1; skip tiny dt so a hitch-recovery spike cannot mint 10k FPS.
+		{
+			const float dt = ts.GetSeconds();
+			if (dt > 0.0001f && dt < 1.0f)
+			{
+				const float instant = 1.0f / dt;
+				m_SmoothedFps = (m_SmoothedFps <= 0.0f)
+					? instant
+					: m_SmoothedFps + (instant - m_SmoothedFps) * 0.1f;
+			}
+		}
 
 		// Resize
 		if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && // zero sized framebuffer is invalid
@@ -205,8 +289,12 @@ namespace GanymedE {
 		{
 			case SceneState::Edit:
 			{
-				m_EditorCamera.OnUpdate(ts);
+				if (m_ViewportCamera == UUID{ 0 })
+					m_EditorCamera.OnUpdate(ts);
 
+				m_ActiveScene->GetSingleton<EditorViewFilter>().HiddenEntities =
+					&m_SceneHierarchyPanel.HiddenEntities();
+				m_ActiveScene->GetSingleton<RenderContext>().PreviewCamera = m_ViewportCamera;
 				m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 				break;
 			}
@@ -270,7 +358,6 @@ namespace GanymedE {
 		m_SceneRenderer->EndFrame();
 	}
 
-
 	void EditorLayer::OnImGuiRender()
 	{
 		GE_PROFILE_FUNCTION();
@@ -286,7 +373,11 @@ namespace GanymedE {
 
 		// We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not dockable into,
 		// because it would be confusing to have two docking targets within each others.
-		ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+		const bool customChrome = Application::Get().GetWindow().HasCustomTitleBar();
+		ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking;
+		if (!customChrome)
+			window_flags |= ImGuiWindowFlags_MenuBar;
+		window_flags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 		if (opt_fullscreen)
 		{
 			ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -315,116 +406,50 @@ namespace GanymedE {
 		if (opt_fullscreen)
 			ImGui::PopStyleVar(2);
 
-		// DockSpace
+		// Theme ItemSpacing.y is 4. Between title, toolbar, DockSpace and status that
+		// accumulates into a few pixels of overflow and a host scrollbar at every size.
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+
+		if (customChrome)
+			UI_TitleBar();
+		else if (ImGui::BeginMenuBar())
+		{
+			UI_Menus();
+			ImGui::EndMenuBar();
+		}
+
+		UI_Toolbar();
+
 		ImGuiIO& io = ImGui::GetIO();
-		ImGuiStyle& style = ImGui::GetStyle();
-		float minWinSizeX = style.WindowMinSize.x;
-		style.WindowMinSize.x = 430.0f;
 		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
 		{
 			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
 
-			// Build a default layout the first time (no imgui.ini entry for the dockspace yet)
+			if (s_IniDockLayoutVersion != kDockLayoutVersion)
+			{
+				m_ResetDockLayout = true;
+				s_IniDockLayoutVersion = kDockLayoutVersion;
+				ImGui::MarkIniSettingsDirty();
+			}
+			static bool s_ClearedGhostToolbar = false;
+			if (!s_ClearedGhostToolbar)
+			{
+				ImGui::ClearWindowSettings("##toolbar");
+				s_ClearedGhostToolbar = true;
+			}
+			if (m_ResetDockLayout)
+			{
+				ImGui::DockBuilderRemoveNode(dockspace_id);
+				m_ResetDockLayout = false;
+			}
 			if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
-			{
-				ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-				ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
+				BuildDefaultDockLayout(dockspace_id);
 
-				ImGuiID dockMain = dockspace_id;
-				ImGuiID dockToolbar = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Up, 0.06f, nullptr, &dockMain);
-				ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.28f, nullptr, &dockMain);
-				ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.24f, nullptr, &dockMain);
-				ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.22f, nullptr, &dockMain);
-				ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
-
-				// The toolbar strip should not show a tab bar or be rearranged
-				ImGuiDockNode* toolbarNode = ImGui::DockBuilderGetNode(dockToolbar);
-				toolbarNode->SetLocalFlags(toolbarNode->LocalFlags | ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingOverMe);
-
-				ImGui::DockBuilderDockWindow("##toolbar", dockToolbar);
-				ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
-				ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
-				ImGui::DockBuilderDockWindow("Viewport", dockMain);
-				ImGui::DockBuilderDockWindow("Stats", dockRight);
-				ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
-				ImGui::DockBuilderFinish(dockspace_id);
-			}
-
-			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, -EditorUI::Theme().StatusBarHeight), dockspace_flags);
 		}
 
-		style.WindowMinSize.x = minWinSizeX;
-
-		if (ImGui::BeginMenuBar())
-		{
-			if (ImGui::BeginMenu("File"))
-			{
-				// Disabling fullscreen would allow the window to be moved to the front of other windows,
-				// which we can't undo at the moment without finer window depth/z control.
-				//ImGui::MenuItem("Fullscreen", NULL, &opt_fullscreen_persistant);
-
-				if (ImGui::MenuItem("New", "Ctrl+N"))
-					NewScene();
-
-				if (ImGui::MenuItem("Open...", "Ctrl+O"))
-					OpenScene();
-
-				if (ImGui::MenuItem("Save", "Ctrl+S"))
-					SaveScene();
-
-				if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
-					SaveSceneAs();
-
-				if (ImGui::MenuItem("Exit")) Application::Get().Close();
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("Edit"))
-			{
-				const bool editing = m_SceneState == SceneState::Edit;
-				if (ImGui::MenuItem("Undo", "Ctrl+Z", false, editing && m_UndoStack.CanUndo()))
-					m_UndoStack.Undo(*m_EditorScene);
-
-				if (ImGui::MenuItem("Redo", "Ctrl+Y", false, editing && m_UndoStack.CanRedo()))
-					m_UndoStack.Redo(*m_EditorScene);
-
-				ImGui::Separator();
-
-				const bool hasSelection = editing && m_SceneHierarchyPanel.GetSelectedEntity();
-				if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection))
-					m_SceneHierarchyPanel.DuplicateSelectedEntity();
-
-				if (ImGui::MenuItem("Delete", "Del", false, hasSelection))
-					m_SceneHierarchyPanel.DeleteSelectedEntity();
-
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("View"))
-			{
-				// RmlUi's own inspector: element tree, computed RCSS, event log.
-				// Debug builds only - the Debugger sources are not compiled otherwise.
-				bool debuggerVisible = UIEngine::IsDebuggerVisible();
-				if (ImGui::MenuItem("Game UI Debugger", "Ctrl+U", &debuggerVisible))
-					UIEngine::SetDebuggerVisible(debuggerVisible);
-
-				ImGui::EndMenu();
-			}
-
-			// Which scene is open, and whether it has unsaved changes.
-			//
-			// Dirtiness comes from the undo stack's *position* rather than a flag, so undoing
-			// back to the saved state correctly clears the asterisk - the property an ad-hoc
-			// dirty bool always gets wrong. Asset edits (.gmat fields, prefab Apply) do not
-			// touch the scene stack and deliberately do not set it: they are asset dirt, and the
-			// .gmat editor's own Save button is their indicator.
-			ImGui::Separator();
-			const std::string sceneName = m_EditorScenePath.empty()
-				? std::string("Untitled") : m_EditorScenePath.filename().string();
-			ImGui::TextUnformatted((sceneName + (m_UndoStack.IsDirtySinceSave() ? "*" : "")).c_str());
-
-			ImGui::EndMenuBar();
-		}
+		UI_StatusBar();
+		ImGui::PopStyleVar();
 
 		m_SceneHierarchyPanel.OnImGuiRender();
 		m_ContentBrowserPanel.OnImGuiRender();
@@ -518,217 +543,9 @@ namespace GanymedE {
 		ImGui::EndDisabled();
 		ImGui::Checkbox("FXAA", &rendererSettings.FXAAEnabled);
 
-		ImGui::Separator();
-		ImGui::Text("Physics Debug:");
-		ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
-		ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
-		ImGui::Checkbox("Wireframe Shapes", &m_PhysicsDebugDraw.Wireframe);
-		ImGui::Checkbox("Bounding Boxes", &m_PhysicsDebugDraw.BoundingBoxes);
-		ImGui::Checkbox("Velocities", &m_PhysicsDebugDraw.Velocities);
-		ImGui::Checkbox("Center of Mass", &m_PhysicsDebugDraw.CenterOfMass);
-		ImGui::Checkbox("Constraints", &m_PhysicsDebugDraw.Constraints);
-		ImGui::EndDisabled();
-		ImGui::TextDisabled("Visible during Play (uses Jolt body state)");
-
 		ImGui::End();
 
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-		ImGui::Begin("Viewport");
-
-		m_ViewportFocused = ImGui::IsWindowFocused();
-		m_ViewportHovered = ImGui::IsWindowHovered();
-		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
-
-		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
-		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
-
-		// Screen-space bounds of the rendered image, used for mouse picking and the gizmo rect
-		ImVec2 viewportScreenPos = ImGui::GetCursorScreenPos();
-		m_ViewportBounds[0] = { viewportScreenPos.x, viewportScreenPos.y };
-		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
-
-		// Same origin the picking code subtracts: RmlUi wants viewport-local pixels,
-		// while engine mouse events arrive in window coordinates.
-		UIEngine::SetViewportOrigin(m_ViewportBounds[0].x, m_ViewportBounds[0].y);
-
-		uint32_t textureID = m_SceneRenderer->GetFinalImageRendererID();
-		// Render targets are addressed bottom-up on OpenGL and top-down on
-		// D3D/Vulkan/Metal, so the V axis has to follow the backend. The old
-		// hard-coded {0,1}-{1,0} flip was a GL-only assumption.
-		const bool flipV = bgfx::getCaps()->originBottomLeft;
-		const ImVec2 uv0 = flipV ? ImVec2{ 0, 1 } : ImVec2{ 0, 0 };
-		const ImVec2 uv1 = flipV ? ImVec2{ 1, 0 } : ImVec2{ 1, 1 };
-
-		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
-			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
-
-		// Three types through one target. The initializer_list overload is mandatory here, not a
-		// convenience: ImGui clears the drag payload as soon as one BeginDragDropTarget delivers
-		// it, so calling AcceptAssetDrop once per type would let only the first type ever fire.
-		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh, AssetType::Prefab }))
-		{
-			std::filesystem::path fullPath = g_AssetPath / drop.Path;
-
-			if (drop.Type == AssetType::Scene)
-			{
-				OpenScene(fullPath);
-			}
-			else if (drop.Type == AssetType::Prefab && m_SceneState == SceneState::Edit)
-			{
-				m_SceneHierarchyPanel.InstantiatePrefab(drop.Path);
-			}
-			else if (drop.Type == AssetType::StaticMesh && m_SceneState == SceneState::Edit)
-			{
-				Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
-				if (entity)
-					m_SceneHierarchyPanel.SetSelectedEntity(entity);
-			}
-		}
-
-		// Gizmos
-		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-		if (selectedEntity && m_GizmoType != -1 && m_SceneState == SceneState::Edit)
-		{
-			ImGuizmo::SetOrthographic(false);
-			ImGuizmo::SetDrawlist();
-
-			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
-				m_ViewportBounds[1].x - m_ViewportBounds[0].x, m_ViewportBounds[1].y - m_ViewportBounds[0].y);
-
-			// Editor camera
-			const glm::mat4& cameraProjection = m_EditorCamera.GetProjection();
-			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
-
-			// Entity transform (world space so parented entities gizmo correctly)
-			auto& tc = selectedEntity.GetComponent<TransformComponent>();
-			glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(selectedEntity);
-
-			// Snapping
-			bool snap = Input::IsKeyPressed(Key::LeftControl);
-			float snapValue = 0.5f; // Snap to 0.5m for translation/scale
-			// Snap to 45 degrees for rotation
-			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
-				snapValue = 45.0f;
-
-			float snapValues[3] = { snapValue, snapValue, snapValue };
-
-			// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
-			// kept: it is what the rest of the selection's delta is measured against.
-			const glm::mat4 worldBefore = transform;
-
-			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-				(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform),
-				nullptr, snap ? snapValues : nullptr);
-
-			if (ImGuizmo::IsUsing())
-			{
-				const std::vector<Entity>& selection = m_SceneHierarchyPanel.GetSelection();
-
-				// Rising edge. This is the last moment the pre-drag transforms still exist:
-				// rotation below is accumulated as a delta against the current value, so one
-				// frame later there is nothing left to reconstruct them from.
-				if (!m_GizmoUsing)
-				{
-					m_GizmoUsing = true;
-					m_GizmoBefore.clear();
-					m_GizmoBefore.emplace_back(selectedEntity.GetUUID(), tc);
-
-					for (Entity other : selection)
-					{
-						if (other == selectedEntity || !other.HasComponent<TransformComponent>())
-							continue;
-
-						// Skip anything that already moves because an ancestor of it is selected
-						// too - it would otherwise take the delta twice, once from its parent's
-						// transform and once from its own.
-						if (IsDescendantOfSelection(*m_ActiveScene, other, selection))
-							continue;
-
-						m_GizmoBefore.emplace_back(other.GetUUID(),
-							other.GetComponent<TransformComponent>());
-					}
-				}
-
-				// The world-space change the gizmo just made. Applied to every other entity in
-				// the selection, which is what makes a group drag rotate and scale about the
-				// primary rather than each object about its own origin.
-				const glm::mat4 worldDelta = transform * glm::inverse(worldBefore);
-
-				// Convert manipulated world transform back to local
-				UUID parentID = selectedEntity.GetComponent<RelationshipComponent>().Parent;
-				if (parentID != UUID{ 0 })
-				{
-					Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
-					if (parent)
-						transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
-				}
-
-				glm::vec3 translation, rotation, scale;
-				Math::DecomposeTransform(transform, translation, rotation, scale);
-
-				// Apply the rotation as a delta to avoid gimbal-lock jumps from decompose
-				glm::vec3 deltaRotation = rotation - tc.Rotation;
-				tc.Translation = translation;
-				tc.Rotation += deltaRotation;
-				tc.Scale = scale;
-
-				// Gizmo edits write the component directly, so the world-transform cache has to be
-				// told; without this the entity would keep rendering at its pre-drag position.
-				m_ActiveScene->MarkChanged<TransformComponent>(selectedEntity);
-
-				// The rest of the selection. Driven from m_GizmoBefore rather than from the live
-				// selection, so an entity that leaves the selection mid-drag is not left half
-				// moved, and the ancestor filter above is applied once rather than per frame.
-				for (std::size_t i = 1; i < m_GizmoBefore.size(); i++)
-				{
-					ApplyWorldDelta(*m_ActiveScene,
-						m_ActiveScene->FindEntityByUUID(m_GizmoBefore[i].first), worldDelta);
-				}
-			}
-		}
-
-		// Falling edge, checked outside the gizmo block so a drag that ends with the selection
-		// gone (or the gizmo hidden) still commits its one command.
-		if (m_GizmoUsing && !ImGuizmo::IsUsing())
-		{
-			m_GizmoUsing = false;
-
-			if (m_EditorScene && m_SceneState == SceneState::Edit)
-			{
-				std::vector<Scope<EditorCommand>> moved;
-				moved.reserve(m_GizmoBefore.size());
-
-				for (const auto& entry : m_GizmoBefore)
-				{
-					Entity dragged = m_EditorScene->FindEntityByUUID(entry.first);
-					if (!dragged || !dragged.HasComponent<TransformComponent>())
-						continue;
-
-					moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
-						"Gizmo Transform", entry.first, entry.second,
-						dragged.GetComponent<TransformComponent>()));
-				}
-
-				// One drag is one undo entry, the same rule the inspector's multi-edit follows.
-				if (moved.size() == 1)
-				{
-					m_UndoStack.Push(std::move(moved.front()));
-				}
-				else if (!moved.empty())
-				{
-					m_UndoStack.Push(CreateScope<CompositeCommand>(
-						"Gizmo Transform (" + std::to_string(moved.size()) + " entities)",
-						std::move(moved)));
-				}
-			}
-
-			m_GizmoBefore.clear();
-		}
-
-		ImGui::End();
-		ImGui::PopStyleVar();
-
-		UI_Toolbar();
+		UI_Viewport();
 
 		HandleShortcuts();
 
@@ -747,6 +564,92 @@ namespace GanymedE {
 	//
 	// WantTextInput is the one gate: while a text field is focused, Ctrl+Z belongs to ImGui's
 	// own text undo, which is what every editor does.
+	void EditorLayer::UI_TitleBar()
+	{
+		EditorUI::TitleBarState state;
+		state.DocumentName = m_EditorScenePath.empty()
+			? std::string("Untitled") : m_EditorScenePath.filename().string();
+		state.Dirty = m_UndoStack.IsDirtySinceSave();
+		EditorUI::DrawTitleBar(state, [this] { UI_Menus(); });
+	}
+
+	void EditorLayer::UI_Menus()
+	{
+		if (ImGui::BeginMenu("File"))
+		{
+			if (ImGui::MenuItem("New", "Ctrl+N"))
+				NewScene();
+
+			if (ImGui::MenuItem("Open...", "Ctrl+O"))
+				OpenScene();
+
+			if (ImGui::MenuItem("Save", "Ctrl+S"))
+				SaveScene();
+
+			if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
+				SaveSceneAs();
+
+			if (ImGui::MenuItem("Exit"))
+				Application::Get().Close();
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("Edit"))
+		{
+			const bool editing = m_SceneState == SceneState::Edit;
+			if (ImGui::MenuItem("Undo", "Ctrl+Z", false, editing && m_UndoStack.CanUndo()))
+				m_UndoStack.Undo(*m_EditorScene);
+
+			if (ImGui::MenuItem("Redo", "Ctrl+Y", false, editing && m_UndoStack.CanRedo()))
+				m_UndoStack.Redo(*m_EditorScene);
+
+			ImGui::Separator();
+
+			const bool hasSelection = editing && m_SceneHierarchyPanel.GetSelectedEntity();
+			if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection))
+				m_SceneHierarchyPanel.DuplicateSelectedEntity();
+
+			if (ImGui::MenuItem("Delete", "Del", false, hasSelection))
+				m_SceneHierarchyPanel.DeleteSelectedEntity();
+
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("View"))
+		{
+			// RmlUi's own inspector: element tree, computed RCSS, event log.
+			// Debug builds only - the Debugger sources are not compiled otherwise.
+			bool debuggerVisible = UIEngine::IsDebuggerVisible();
+			if (ImGui::MenuItem("Game UI Debugger", "Ctrl+U", &debuggerVisible))
+				UIEngine::SetDebuggerVisible(debuggerVisible);
+
+			if (ImGui::MenuItem("Reset Layout"))
+				m_ResetDockLayout = true;
+
+			ImGui::Separator();
+
+			// 0 = Dark (OnAttach default), 1 = Light. Same violet accent; the
+			// ramps swap. Not persisted — imgui.ini has no theme key.
+			static int s_ThemePreset = 0;
+			if (ImGui::BeginMenu("Theme"))
+			{
+				if (ImGui::MenuItem("Dark", nullptr, s_ThemePreset == 0))
+				{
+					s_ThemePreset = 0;
+					EditorUI::ApplyTheme(EditorUI::MakeDarkTheme());
+				}
+				if (ImGui::MenuItem("Light", nullptr, s_ThemePreset == 1))
+				{
+					s_ThemePreset = 1;
+					EditorUI::ApplyTheme(EditorUI::MakeLightTheme());
+				}
+				ImGui::EndMenu();
+			}
+
+			ImGui::EndMenu();
+		}
+	}
+
 	void EditorLayer::HandleShortcuts()
 	{
 		if (ImGui::GetIO().WantTextInput)
@@ -786,42 +689,529 @@ namespace GanymedE {
 
 	void EditorLayer::UI_Toolbar()
 	{
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 2));
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-		auto& colors = ImGui::GetStyle().Colors;
-		const auto& buttonHovered = colors[ImGuiCol_ButtonHovered];
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(buttonHovered.x, buttonHovered.y, buttonHovered.z, 0.5f));
-		const auto& buttonActive = colors[ImGuiCol_ButtonActive];
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(buttonActive.x, buttonActive.y, buttonActive.z, 0.5f));
+		using EditorUI::Color;
+		using EditorUI::IconButton;
+		using EditorUI::Theme;
+		using EditorUI::WithAlpha;
 
-		ImGui::Begin("##toolbar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+		const EditorUI::EditorTheme& theme = Theme();
+		const float height = theme.ToolbarHeight;
 
-		float size = ImGui::GetWindowHeight() - 8.0f;
-		if (size < 16.0f)
-			size = 16.0f;
-		Ref<Texture2D> icon = m_SceneState == SceneState::Edit ? m_IconPlay : m_IconStop;
-		ImGui::SetCursorPosX((ImGui::GetWindowSize().x - size) * 0.5f);
-		// Plain textures need no flip: Texture2D loads them in bgfx's top-left
-		// origin already. The {0,1}-{1,0} UVs here were compensating for the GL
-		// loader's vertical flip, which is gone.
-		if (ImGui::ImageButton("##playstop", (ImTextureID)(uintptr_t)icon->GetRendererID(), ImVec2(size, size)))
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, Color(theme.SurfaceBg));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
+		ImGui::BeginChild("##MainToolbar", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+
+		constexpr float kBtn = 24.0f;
+		const float rowY = (ImGui::GetContentRegionAvail().y - kBtn) * 0.5f;
+		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + rowY);
+
+		const bool canSwitch = !ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight);
+		auto setGizmo = [&](int op)
 		{
-			if (m_SceneState == SceneState::Edit)
-				OnScenePlay();
-			else if (m_SceneState == SceneState::Play)
+			if (canSwitch)
+				m_GizmoType = op;
+		};
+
+		if (IconButton(ICON_LC_MOUSE_POINTER, "Select (Q)", m_GizmoType == -1))
+			setGizmo(-1);
+		ImGui::SameLine();
+		if (IconButton(ICON_LC_MOVE, "Translate (W)", m_GizmoType == ImGuizmo::OPERATION::TRANSLATE))
+			setGizmo(ImGuizmo::OPERATION::TRANSLATE);
+		ImGui::SameLine();
+		if (IconButton(ICON_LC_ROTATE_3D, "Rotate (E)", m_GizmoType == ImGuizmo::OPERATION::ROTATE))
+			setGizmo(ImGuizmo::OPERATION::ROTATE);
+		ImGui::SameLine();
+		if (IconButton(ICON_LC_SCALING, "Scale (R)", m_GizmoType == ImGuizmo::OPERATION::SCALE))
+			setGizmo(ImGuizmo::OPERATION::SCALE);
+
+		const bool playing = m_SceneState == SceneState::Play;
+		const char* playLabel = playing ? ICON_LC_SQUARE_STOP "  Stop" : ICON_LC_PLAY "  Play";
+		const ImVec2 playSize(
+			ImGui::CalcTextSize(playLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f,
+			kBtn);
+		ImGui::SetCursorPosX((ImGui::GetWindowSize().x - playSize.x) * 0.5f);
+		ImGui::SetCursorPosY(rowY);
+
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Color(WithAlpha(theme.AccentHover, 0.35f)));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, Color(WithAlpha(theme.Accent, 0.55f)));
+		ImGui::PushStyleColor(ImGuiCol_Text, Color(playing ? theme.TextPrimary : theme.Success));
+		ImGui::PushID("playstop");
+		if (ImGui::Button(playLabel, playSize))
+		{
+			if (playing)
 				OnSceneStop();
+			else
+				OnScenePlay();
+		}
+		ImGui::PopID();
+		ImGui::PopStyleColor(4);
+
+		const ImVec2 wp = ImGui::GetWindowPos();
+		const ImVec2 ws = ImGui::GetWindowSize();
+		ImGui::GetWindowDrawList()->AddLine(
+			ImVec2(wp.x, wp.y + ws.y - 1.0f),
+			ImVec2(wp.x + ws.x, wp.y + ws.y - 1.0f),
+			theme.Border);
+
+		ImGui::EndChild();
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor();
+	}
+
+	void EditorLayer::UI_StatusBar()
+	{
+		using EditorUI::Color;
+		using EditorUI::StatusBarItem;
+		using EditorUI::Theme;
+
+		const EditorUI::EditorTheme& theme = Theme();
+		const float height = theme.StatusBarHeight;
+
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, Color(theme.ChromeBg));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 0.0f));
+		ImGui::BeginChild("##StatusBar", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+
+		const float lineH = ImGui::GetTextLineHeight();
+		const float rowY = (ImGui::GetContentRegionAvail().y - lineH) * 0.5f;
+		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + rowY);
+		const ImVec2 lineStart = ImGui::GetCursorPos();
+		const float availX = ImGui::GetContentRegionAvail().x;
+
+		auto itemWidth = [](const char* icon, const char* text) -> float
+		{
+			float w = 0.0f;
+			if (icon && icon[0])
+				w += ImGui::CalcTextSize(icon).x;
+			if (icon && icon[0] && text && text[0])
+				w += 6.0f;
+			if (text && text[0])
+				w += ImGui::CalcTextSize(text).x;
+			return w;
+		};
+
+		auto sep = [&]()
+		{
+			ImGui::SameLine();
+			ImGui::PushStyleColor(ImGuiCol_Text, Color(theme.TextDim));
+			ImGui::TextUnformatted("·");
+			ImGui::PopStyleColor();
+			ImGui::SameLine();
+		};
+
+		const std::string sceneName = m_EditorScenePath.empty()
+			? std::string("Untitled") : m_EditorScenePath.filename().string();
+		const std::string sceneChip = sceneName + (m_UndoStack.IsDirtySinceSave() ? "*" : "");
+		StatusBarItem(ICON_LC_FILE_TEXT, sceneChip.c_str());
+		if (!m_EditorScenePath.empty())
+			ImGui::SetItemTooltip("%s", m_EditorScenePath.string().c_str());
+
+#if defined(GE_DEBUG)
+		constexpr const char* kConfig = "Debug";
+#elif defined(GE_RELEASE)
+		constexpr const char* kConfig = "Release";
+#elif defined(GE_DIST)
+		constexpr const char* kConfig = "Dist";
+#else
+		constexpr const char* kConfig = nullptr;
+#endif
+		if (kConfig)
+		{
+			sep();
+			StatusBarItem(ICON_LC_HAMMER, kConfig);
 		}
 
-		ImGui::End();
+		sep();
+		StatusBarItem(ICON_LC_MONITOR, bgfx::getRendererName(bgfx::getRendererType()));
 
-		ImGui::PopStyleColor(3);
+		const std::size_t entityCount = m_ActiveScene
+			? m_ActiveScene->Reg().storage<IDComponent>().size()
+			: 0;
+		char entities[32];
+		std::snprintf(entities, sizeof(entities), "%zu", entityCount);
+
+		char draws[32];
+		std::snprintf(draws, sizeof(draws), "%u", Renderer3D::GetStats().DrawCalls);
+
+		char fps[32];
+		std::snprintf(fps, sizeof(fps), "FPS %d", (int)(m_SmoothedFps + 0.5f));
+
+		const bool playing = m_SceneState == SceneState::Play;
+		const char* playIcon = playing ? ICON_LC_PLAY : ICON_LC_PENCIL;
+		const char* playText = playing ? "Play" : "Edit";
+		const ImU32 playColour = playing ? theme.Success : theme.TextDim;
+
+		const float gap = ImGui::GetStyle().ItemSpacing.x;
+		const float rightWidth =
+			itemWidth(ICON_LC_BOXES, entities) + gap +
+			itemWidth(ICON_LC_LAYERS, draws) + gap +
+			itemWidth(ICON_LC_GAUGE, fps) + gap +
+			itemWidth(playIcon, playText);
+
+		const float rightX = lineStart.x + availX - rightWidth;
+		if (rightX > ImGui::GetCursorPosX() + gap)
+			ImGui::SetCursorPos(ImVec2(rightX, lineStart.y));
+		else
+			ImGui::SameLine();
+
+		StatusBarItem(ICON_LC_GAUGE, fps);
+		ImGui::SameLine();
+		StatusBarItem(ICON_LC_BOXES, entities);
+		ImGui::SetItemTooltip("Entities");
+		ImGui::SameLine();
+		StatusBarItem(ICON_LC_LAYERS, draws);
+		ImGui::SetItemTooltip("Draw calls");
+		ImGui::SameLine();
+		StatusBarItem(playIcon, playText, playColour);
+
+		ImGui::EndChild();
 		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor();
+	}
+
+	void EditorLayer::UI_Viewport()
+	{
+		using EditorUI::BeginPanel;
+		using EditorUI::Color;
+		using EditorUI::EndPanel;
+		using EditorUI::EndPanelToolbarRow;
+		using EditorUI::IconButton;
+		using EditorUI::PanelToolbarRow;
+		using EditorUI::Theme;
+		using EditorUI::ToolbarSeparator;
+
+		if (!BeginPanel("Viewport"))
+		{
+			EndPanel();
+			return;
+		}
+
+		const EditorUI::EditorTheme& theme = Theme();
+		const bool editing = m_SceneState == SceneState::Edit;
+
+		if (PanelToolbarRow("##ViewportTB"))
+		{
+			const ImVec2 row = ImGui::GetCursorPos();
+			const float availX = ImGui::GetContentRegionAvail().x;
+
+			std::string cameraLabel = "Editor Camera";
+			if (editing && m_ViewportCamera != UUID{ 0 })
+			{
+				Entity preview = m_ActiveScene ? m_ActiveScene->FindEntityByUUID(m_ViewportCamera) : Entity{};
+				if (preview && preview.HasComponent<CameraComponent>())
+					cameraLabel = preview.GetComponent<TagComponent>().Tag;
+				else
+					m_ViewportCamera = UUID{ 0 };
+			}
+			else if (!editing && m_ActiveScene)
+			{
+				Entity primary = m_ActiveScene->GetPrimaryCameraEntity();
+				if (primary)
+					cameraLabel = primary.GetComponent<TagComponent>().Tag;
+			}
+
+			ImGui::BeginDisabled(!editing);
+			ImGui::SetNextItemWidth(200.0f);
+			if (ImGui::BeginCombo("##ViewportCam", cameraLabel.c_str()))
+			{
+				if (ImGui::Selectable("Editor Camera", m_ViewportCamera == UUID{ 0 }))
+					m_ViewportCamera = UUID{ 0 };
+
+				if (m_ActiveScene)
+				{
+					auto view = m_ActiveScene->Reg().view<CameraComponent, TagComponent, IDComponent>();
+					for (auto entityID : view)
+					{
+						Entity entity{ entityID, m_ActiveScene.get() };
+						const UUID id = entity.GetUUID();
+						const std::string item = entity.GetComponent<TagComponent>().Tag
+							+ "##" + std::to_string(static_cast<uint64_t>(id));
+						if (ImGui::Selectable(item.c_str(), m_ViewportCamera == id))
+							m_ViewportCamera = id;
+					}
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::EndDisabled();
+			if (!editing)
+				ImGui::SetItemTooltip("Play uses the scene's primary camera");
+
+			ImGui::SameLine();
+			ToolbarSeparator();
+			ImGui::SameLine();
+
+			char aspect[48];
+			std::snprintf(aspect, sizeof(aspect), "Free Aspect: %.0fx%.0f",
+				m_ViewportSize.x, m_ViewportSize.y);
+			ImGui::PushStyleColor(ImGuiCol_Text, Color(theme.TextDim));
+			ImGui::TextUnformatted(aspect);
+			ImGui::PopStyleColor();
+
+			const float gap = ImGui::GetStyle().ItemSpacing.x;
+			const char* spaceLabel = m_GizmoWorldSpace ? "World" : "Local";
+			const float rightWidth = 24.0f + gap + 9.0f + gap + 72.0f;
+			const float rightX = row.x + availX - rightWidth;
+			if (rightX > ImGui::GetCursorPosX() + gap)
+				ImGui::SetCursorPos(ImVec2(rightX, row.y));
+			else
+				ImGui::SameLine();
+
+			if (IconButton(ICON_LC_BOXES, "Visualizers", m_PhysicsDebugDraw.Enabled))
+				ImGui::OpenPopup("##Visualizers");
+			if (ImGui::BeginPopup("##Visualizers"))
+			{
+				ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
+				ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
+				ImGui::Checkbox("Wireframe Shapes", &m_PhysicsDebugDraw.Wireframe);
+				ImGui::Checkbox("Bounding Boxes", &m_PhysicsDebugDraw.BoundingBoxes);
+				ImGui::Checkbox("Velocities", &m_PhysicsDebugDraw.Velocities);
+				ImGui::Checkbox("Center of Mass", &m_PhysicsDebugDraw.CenterOfMass);
+				ImGui::Checkbox("Constraints", &m_PhysicsDebugDraw.Constraints);
+				ImGui::EndDisabled();
+				ImGui::TextDisabled("Visible during Play (Jolt body state)");
+				ImGui::EndPopup();
+			}
+
+			ImGui::SameLine();
+			ToolbarSeparator();
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(72.0f);
+			if (ImGui::BeginCombo("##GizmoSpace", spaceLabel))
+			{
+				if (ImGui::Selectable("Local", !m_GizmoWorldSpace))
+					m_GizmoWorldSpace = false;
+				if (ImGui::Selectable("World", m_GizmoWorldSpace))
+					m_GizmoWorldSpace = true;
+				ImGui::EndCombo();
+			}
+			ImGui::SetItemTooltip("Gizmo space");
+		}
+		EndPanelToolbarRow();
+
+		m_ViewportFocused = ImGui::IsWindowFocused();
+
+		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
+		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
+
+		// Image origin is below the header. Picking, ImGuizmo and RmlUi all
+		// read m_ViewportBounds[0] from this cursor, so they stay correct.
+		ImVec2 viewportScreenPos = ImGui::GetCursorScreenPos();
+		m_ViewportBounds[0] = { viewportScreenPos.x, viewportScreenPos.y };
+		m_ViewportBounds[1] = { viewportScreenPos.x + viewportPanelSize.x, viewportScreenPos.y + viewportPanelSize.y };
+
+		UIEngine::SetViewportOrigin(m_ViewportBounds[0].x, m_ViewportBounds[0].y);
+
+		uint32_t textureID = m_SceneRenderer->GetFinalImageRendererID();
+		const bool flipV = bgfx::getCaps()->originBottomLeft;
+		const ImVec2 uv0 = flipV ? ImVec2{ 0, 1 } : ImVec2{ 0, 0 };
+		const ImVec2 uv1 = flipV ? ImVec2{ 1, 0 } : ImVec2{ 1, 1 };
+
+		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
+			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
+
+		// Hover is the *image*, not the window: a click on the camera combo must
+		// not also click-select whatever the pick buffer last saw.
+		m_ViewportHovered = ImGui::IsItemHovered();
+		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
+
+		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh, AssetType::Prefab }))
+		{
+			std::filesystem::path fullPath = g_AssetPath / drop.Path;
+
+			if (drop.Type == AssetType::Scene)
+			{
+				OpenScene(fullPath);
+			}
+			else if (drop.Type == AssetType::Prefab && editing)
+			{
+				m_SceneHierarchyPanel.InstantiatePrefab(drop.Path);
+			}
+			else if (drop.Type == AssetType::StaticMesh && editing)
+			{
+				Entity entity = MeshImporter::Instantiate(m_ActiveScene.get(), fullPath);
+				if (entity)
+					m_SceneHierarchyPanel.SetSelectedEntity(entity);
+			}
+		}
+
+		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		Entity gizmoEntity = selectedEntity;
+		if (gizmoEntity && m_SceneHierarchyPanel.IsLocked(gizmoEntity))
+			gizmoEntity = {};
+		if (gizmoEntity && m_GizmoType != -1 && editing)
+		{
+			glm::mat4 cameraProjection = m_EditorCamera.GetProjection();
+			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
+			bool ortho = false;
+			if (m_ViewportCamera != UUID{ 0 })
+			{
+				Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+				if (preview && preview.HasComponent<CameraComponent>())
+				{
+					const auto& cc = preview.GetComponent<CameraComponent>();
+					cameraProjection = cc.Camera.GetProjection();
+					cameraView = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
+					ortho = cc.Camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic;
+				}
+			}
+
+			ImGuizmo::SetOrthographic(ortho);
+			ImGuizmo::SetDrawlist();
+			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
+				m_ViewportBounds[1].x - m_ViewportBounds[0].x, m_ViewportBounds[1].y - m_ViewportBounds[0].y);
+
+			auto& tc = gizmoEntity.GetComponent<TransformComponent>();
+			glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(gizmoEntity);
+
+			bool snap = Input::IsKeyPressed(Key::LeftControl);
+			float snapValue = 0.5f;
+			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
+				snapValue = 45.0f;
+			float snapValues[3] = { snapValue, snapValue, snapValue };
+
+			// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
+			// kept: it is what the rest of the selection's delta is measured against.
+			const glm::mat4 worldBefore = transform;
+
+			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+				(ImGuizmo::OPERATION)m_GizmoType,
+				m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
+				glm::value_ptr(transform),
+				nullptr, snap ? snapValues : nullptr);
+
+			if (ImGuizmo::IsUsing())
+			{
+				const std::vector<Entity>& selection = m_SceneHierarchyPanel.GetSelection();
+
+				// Rising edge. This is the last moment the pre-drag transforms still exist:
+				// rotation below is accumulated as a delta against the current value, so one
+				// frame later there is nothing left to reconstruct them from.
+				if (!m_GizmoUsing)
+				{
+					m_GizmoUsing = true;
+					m_GizmoBefore.clear();
+					m_GizmoBefore.emplace_back(gizmoEntity.GetUUID(), tc);
+
+					for (Entity other : selection)
+					{
+						if (other == gizmoEntity || !other.HasComponent<TransformComponent>())
+							continue;
+
+						// Skip anything that already moves because an ancestor of it is selected
+						// too - it would otherwise take the delta twice, once from its parent's
+						// transform and once from its own.
+						if (IsDescendantOfSelection(*m_ActiveScene, other, selection))
+							continue;
+
+						m_GizmoBefore.emplace_back(other.GetUUID(),
+							other.GetComponent<TransformComponent>());
+					}
+				}
+
+				// The world-space change the gizmo just made. Applied to every other entity in
+				// the selection, which is what makes a group drag rotate and scale about the
+				// primary rather than each object about its own origin.
+				const glm::mat4 worldDelta = transform * glm::inverse(worldBefore);
+
+				UUID parentID = gizmoEntity.GetComponent<RelationshipComponent>().Parent;
+				if (parentID != UUID{ 0 })
+				{
+					Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
+					if (parent)
+						transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
+				}
+
+				glm::vec3 translation, rotation, scale;
+				Math::DecomposeTransform(transform, translation, rotation, scale);
+
+				glm::vec3 deltaRotation = rotation - tc.Rotation;
+				tc.Translation = translation;
+				tc.Rotation += deltaRotation;
+				tc.Scale = scale;
+
+				m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+
+				// The rest of the selection. Driven from m_GizmoBefore rather than from the live
+				// selection, so an entity that leaves the selection mid-drag is not left half
+				// moved, and the ancestor filter above is applied once rather than per frame.
+				for (std::size_t i = 1; i < m_GizmoBefore.size(); i++)
+				{
+					ApplyWorldDelta(*m_ActiveScene,
+						m_ActiveScene->FindEntityByUUID(m_GizmoBefore[i].first), worldDelta);
+				}
+			}
+		}
+
+		// Falling edge, checked outside the gizmo block so a drag that ends with the selection
+		// gone (or the gizmo hidden) still commits its one command.
+		if (m_GizmoUsing && !ImGuizmo::IsUsing())
+		{
+			m_GizmoUsing = false;
+
+			if (m_EditorScene && editing)
+			{
+				std::vector<Scope<EditorCommand>> moved;
+				moved.reserve(m_GizmoBefore.size());
+
+				for (const auto& entry : m_GizmoBefore)
+				{
+					Entity dragged = m_EditorScene->FindEntityByUUID(entry.first);
+					if (!dragged || !dragged.HasComponent<TransformComponent>())
+						continue;
+
+					moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
+						"Gizmo Transform", entry.first, entry.second,
+						dragged.GetComponent<TransformComponent>()));
+				}
+
+				// One drag is one undo entry, the same rule the inspector's multi-edit follows.
+				if (moved.size() == 1)
+				{
+					m_UndoStack.Push(std::move(moved.front()));
+				}
+				else if (!moved.empty())
+				{
+					m_UndoStack.Push(CreateScope<CompositeCommand>(
+						"Gizmo Transform (" + std::to_string(moved.size()) + " entities)",
+						std::move(moved)));
+				}
+			}
+
+			m_GizmoBefore.clear();
+		}
+
+		if (selectedEntity && selectedEntity.HasComponent<TransformComponent>())
+		{
+			glm::vec3 t = selectedEntity.GetComponent<TransformComponent>().Translation;
+			if (m_GizmoWorldSpace)
+				t = glm::vec3(m_ActiveScene->GetWorldSpaceTransform(selectedEntity)[3]);
+
+			ImDrawList* draw = ImGui::GetWindowDrawList();
+			ImVec2 p{ m_ViewportBounds[0].x + 12.0f, m_ViewportBounds[1].y - 28.0f };
+			auto axis = [&](const char* label, ImU32 colour, float value)
+			{
+				draw->AddText(p, colour, label);
+				p.x += ImGui::CalcTextSize(label).x;
+				char buf[24];
+				std::snprintf(buf, sizeof(buf), " %.3f", value);
+				draw->AddText(p, theme.TextPrimary, buf);
+				p.x += ImGui::CalcTextSize(buf).x + 16.0f;
+			};
+			axis("X", theme.AxisX, t.x);
+			axis("Y", theme.AxisY, t.y);
+			axis("Z", theme.AxisZ, t.z);
+		}
+
+		EndPanel();
 	}
 
 	void EditorLayer::OnEvent(Event& e)
 	{
-		if (m_SceneState == SceneState::Edit)
+		if (m_SceneState == SceneState::Edit && m_ViewportCamera == UUID{ 0 })
 			m_EditorCamera.OnEvent(e);
 
 		// Game UI gets first refusal, but only while playing and only when the
@@ -892,7 +1282,11 @@ namespace GanymedE {
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
 			if (m_ViewportHovered && !ImGuizmo::IsOver() && !Input::IsKeyPressed(Key::LeftAlt))
-				m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
+			{
+				Entity hover = m_HoveredEntity;
+				if (!(hover && m_SceneHierarchyPanel.IsLocked(hover)))
+					m_SceneHierarchyPanel.SetSelectedEntity(hover);
+			}
 		}
 		return false;
 	}
@@ -925,6 +1319,8 @@ namespace GanymedE {
 		// Every UUID on the stack names an entity in a Scene object that no longer exists.
 		m_UndoStack.Clear();
 		RetargetPanels();
+		m_SceneHierarchyPanel.ClearEditorViewState();
+		m_ViewportCamera = UUID{ 0 };
 	}
 
 	void EditorLayer::SetupDefaultEnvironment(const Ref<Scene>& scene)
@@ -972,6 +1368,8 @@ namespace GanymedE {
 
 		m_UndoStack.Clear();
 		RetargetPanels();
+		m_SceneHierarchyPanel.ClearEditorViewState();
+		m_ViewportCamera = UUID{ 0 };
 
 		SceneSerializer serializer(m_ActiveScene);
 		serializer.Deserialize(path.string());

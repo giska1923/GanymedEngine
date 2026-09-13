@@ -2,6 +2,7 @@
 
 #include "GanymedE/Core/Window.h"
 #include "Platform/Bgfx/BgfxContext.h"
+#include "Platform/GLFW/TitleBarManualDrag.h"
 
 #include <GLFW/glfw3.h>
 
@@ -24,6 +25,13 @@ namespace GanymedE {
 		bool IsVSync() const override;
 
 		inline void* GetNativeWindow() const { return m_Window; }
+
+		bool HasCustomTitleBar() const override { return m_CustomTitleBar; }
+		bool IsMaximized() const override;
+		void Minimize() override;
+		void ToggleMaximize() override;
+		void SetTitleBarHitTest(const WindowHitRect& caption,
+			const WindowHitRect* exclusions, uint32_t exclusionCount) override;
 	private:
 		virtual void Init(const WindowProps& props);
 		virtual void Shutdown();
@@ -41,6 +49,9 @@ namespace GanymedE {
 		};
 
 		WindowData m_Data;
+		bool m_CustomTitleBar = false;
+		TitleBarHitTest m_HitTest;
+		TitleBarDragState m_TitleBarDrag;
 	};
 
 }

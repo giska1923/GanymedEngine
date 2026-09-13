@@ -46,6 +46,10 @@ namespace GanymedE {
 
 		// UI
 		void UI_Toolbar();
+		void UI_TitleBar();
+		void UI_Menus();
+		void UI_StatusBar();
+		void UI_Viewport();
 	private:
 		Ref<SceneRenderer> m_SceneRenderer; // owns the HDR target + post stack (bloom, tonemap, FXAA)
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
@@ -64,13 +68,17 @@ namespace GanymedE {
 		Entity m_HoveredEntity;
 
 		Ref<Texture2D> m_CheckerboardTexture;
-		Ref<Texture2D> m_IconPlay, m_IconStop;
 
 		bool m_ViewportFocused = false, m_ViewportHovered = false;
 		glm::vec2 m_ViewportSize = { 0.0f, 0.0f };
 		glm::vec2 m_ViewportBounds[2];
 
 		int m_GizmoType; // ImGuizmo::OPERATION; -1 = hidden, W/E/R switch, Q hides
+		bool m_GizmoWorldSpace = false; // ImGuizmo::WORLD when true; LOCAL is the previous default
+
+		// Viewport camera dropdown. UUID{0} = EditorCamera. Any other value is a scene
+		// CameraComponent looked through in edit mode (RenderContext::PreviewCamera).
+		UUID m_ViewportCamera{ 0 };
 
 		// A gizmo drag writes the transform every frame and accumulates rotation as a delta, so
 		// the pre-drag value cannot be reconstructed after the fact - it is snapshotted on the
@@ -92,5 +100,11 @@ namespace GanymedE {
 		// Panels
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
+
+		bool m_ResetDockLayout = false;
+
+		// Exponential moving average of 1/ts. Raw frame time flickers; this is the
+		// status-bar FPS chip. Seeded on the first sane timestep.
+		float m_SmoothedFps = 0.0f;
 	};
 }

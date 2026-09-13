@@ -1,4 +1,7 @@
 #include "EditorWidgets.h"
+#include "EditorFonts.h"
+#include "EditorIcons.h"
+#include "EditorTheme.h"
 
 #include <imgui/imgui_internal.h>
 
@@ -199,20 +202,21 @@ namespace GanymedE::EditorUI {
 
 		ImDrawList* draw = ImGui::GetWindowDrawList();
 		const ImVec2 canvasMax(canvas.x + size.x, canvas.y + size.y);
+		const EditorTheme& theme = Theme();
 		draw->PushClipRect(canvas, canvasMax, true);
-		draw->AddRectFilled(canvas, canvasMax, IM_COL32(24, 24, 28, 255), 3.0f);
-		draw->AddRect(canvas, canvasMax, IM_COL32(70, 70, 80, 255), 3.0f);
+		draw->AddRectFilled(canvas, canvasMax, theme.ChromeBg);
+		draw->AddRect(canvas, canvasMax, theme.GrabBg);
 
 		for (int i = 0; i <= 4; i++)
 		{
 			const float t = kTimeMin + (kTimeMax - kTimeMin) * (float)i / 4.0f;
 			const float x = CanvasToScreen(canvas, size, t, yMin, yMin, yMax).x;
-			draw->AddLine(ImVec2(x, canvas.y), ImVec2(x, canvasMax.y), IM_COL32(50, 50, 58, 255));
+			draw->AddLine(ImVec2(x, canvas.y), ImVec2(x, canvasMax.y), WithAlpha(theme.GrabBg, 0.55f));
 		}
 		if (0.0f >= yMin && 0.0f <= yMax)
 		{
 			const float y = CanvasToScreen(canvas, size, 0.0f, 0.0f, yMin, yMax).y;
-			draw->AddLine(ImVec2(canvas.x, y), ImVec2(canvasMax.x, y), IM_COL32(70, 70, 40, 255));
+			draw->AddLine(ImVec2(canvas.x, y), ImVec2(canvasMax.x, y), WithAlpha(theme.FieldMixed, 0.40f));
 		}
 
 		const auto& drawn = curve.Keys();
@@ -220,7 +224,7 @@ namespace GanymedE::EditorUI {
 		{
 			const ImVec2 a = CanvasToScreen(canvas, size, drawn[i - 1].Time, drawn[i - 1].Value, yMin, yMax);
 			const ImVec2 b = CanvasToScreen(canvas, size, drawn[i].Time, drawn[i].Value, yMin, yMax);
-			draw->AddLine(a, b, IM_COL32(220, 180, 70, 255), 1.5f);
+			draw->AddLine(a, b, theme.FieldMixed, 1.5f);
 		}
 
 		const int hoverIndex = hovered ? HitKey(canvas, size, mouse, yMin, yMax, drawn) : -1;
@@ -228,9 +232,11 @@ namespace GanymedE::EditorUI {
 		{
 			const ImVec2 p = CanvasToScreen(canvas, size, drawn[i].Time, drawn[i].Value, yMin, yMax);
 			const bool hot = i == dragIndex || i == hoverIndex;
-			draw->AddCircleFilled(p, hot ? kKeyRadius + 1.5f : kKeyRadius,
-				hot ? IM_COL32(255, 220, 90, 255) : IM_COL32(240, 200, 80, 255));
-			draw->AddCircle(p, hot ? kKeyRadius + 1.5f : kKeyRadius, IM_COL32(20, 20, 24, 255));
+			const ImU32 keyFill = hot
+				? ImGui::ColorConvertFloat4ToU32(ColorHover(theme.FieldMixed))
+				: theme.FieldMixed;
+			draw->AddCircleFilled(p, hot ? kKeyRadius + 1.5f : kKeyRadius, keyFill);
+			draw->AddCircle(p, hot ? kKeyRadius + 1.5f : kKeyRadius, theme.ChromeBg);
 		}
 		draw->PopClipRect();
 
@@ -346,7 +352,7 @@ namespace GanymedE::EditorUI {
 				ImVec2(canvas.x + t1 * width, canvasMax.y),
 				ColorU32(c));
 		}
-		draw->AddRect(canvas, canvasMax, IM_COL32(70, 70, 80, 255));
+		draw->AddRect(canvas, canvasMax, Theme().GrabBg);
 
 		const auto& drawn = gradient.Keys();
 		const int hoverIndex = hovered ? HitGradientKey(canvas, width, height, mouse, drawn) : -1;
@@ -357,7 +363,7 @@ namespace GanymedE::EditorUI {
 			const bool hot = i == dragIndex || i == hoverIndex || i == selected;
 			draw->AddCircleFilled(ImVec2(x, y), hot ? kKeyRadius + 1.5f : kKeyRadius, ColorU32(drawn[i].Value));
 			draw->AddCircle(ImVec2(x, y), hot ? kKeyRadius + 1.5f : kKeyRadius,
-				hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(20, 20, 24, 255));
+				hot ? Theme().TextPrimary : Theme().ChromeBg);
 		}
 		draw->PopClipRect();
 
@@ -386,8 +392,7 @@ namespace GanymedE::EditorUI {
 		float columnWidth, float speed)
 	{
 		bool edited = false;
-		ImGuiIO& io = ImGui::GetIO();
-		auto boldFont = io.Fonts->Fonts[0];
+		ImFont* headerFont = EditorFonts::Header();
 
 		ImGui::PushID(label.c_str());
 
@@ -405,17 +410,32 @@ namespace GanymedE::EditorUI {
 		float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
 		ImVec2 buttonSize = { lineHeight + 3.0f, lineHeight };
 
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.9f, 0.2f, 0.2f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
-		ImGui::PushFont(boldFont);
+		auto pushAxis = [](ImU32 c)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Button, Color(c));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ColorHover(c));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, Color(c));
+		};
+		auto pushHeader = [headerFont]()
+		{
+			if (headerFont)
+				ImGui::PushFont(headerFont);
+		};
+		auto popHeader = [headerFont]()
+		{
+			if (headerFont)
+				ImGui::PopFont();
+		};
+
+		pushAxis(Theme().AxisX);
+		pushHeader();
 		if (ImGui::Button("X", buttonSize))
 		{
 			values.x = resetValue;
 			edited = true;
 		}
 
-		ImGui::PopFont();
+		popHeader();
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
@@ -423,17 +443,15 @@ namespace GanymedE::EditorUI {
 		ImGui::PopItemWidth();
 		ImGui::SameLine();
 
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.3f, 0.8f, 0.3f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
-		ImGui::PushFont(boldFont);
+		pushAxis(Theme().AxisY);
+		pushHeader();
 		if (ImGui::Button("Y", buttonSize))
 		{
 			values.y = resetValue;
 			edited = true;
 		}
 
-		ImGui::PopFont();
+		popHeader();
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
@@ -441,17 +459,15 @@ namespace GanymedE::EditorUI {
 		ImGui::PopItemWidth();
 		ImGui::SameLine();
 
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.2f, 0.35f, 0.9f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
-		ImGui::PushFont(boldFont);
+		pushAxis(Theme().AxisZ);
+		pushHeader();
 		if (ImGui::Button("Z", buttonSize))
 		{
 			values.z = resetValue;
 			edited = true;
 		}
 
-		ImGui::PopFont();
+		popHeader();
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
@@ -464,6 +480,306 @@ namespace GanymedE::EditorUI {
 
 		ImGui::PopID();
 		return edited;
+	}
+
+	bool IconButton(const char* icon, const char* tooltip, bool active)
+	{
+		const ImVec2 size(24.0f, 24.0f);
+		ImGui::PushID(icon);
+		const bool clicked = ImGui::InvisibleButton("##ib", size);
+		const bool hovered = ImGui::IsItemHovered();
+		const bool held = ImGui::IsItemActive();
+
+		const EditorTheme& theme = Theme();
+		ImU32 fill = 0;
+		ImU32 glyph = theme.TextPrimary;
+		if (active || held)
+		{
+			fill = held ? theme.AccentActive : theme.Accent;
+			glyph = theme.TextOnAccent;
+		}
+		else if (hovered)
+		{
+			fill = theme.AccentHover;
+			glyph = theme.TextOnAccent;
+		}
+
+		const ImVec2 p0 = ImGui::GetItemRectMin();
+		const ImVec2 p1 = ImGui::GetItemRectMax();
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		if (fill)
+			draw->AddRectFilled(p0, p1, fill);
+
+		const ImVec2 textSize = ImGui::CalcTextSize(icon);
+		draw->AddText(
+			ImVec2(p0.x + (size.x - textSize.x) * 0.5f, p0.y + (size.y - textSize.y) * 0.5f),
+			glyph, icon);
+
+		if (tooltip)
+			ImGui::SetItemTooltip("%s", tooltip);
+
+		ImGui::PopID();
+		return clicked;
+	}
+
+	void ToolbarSeparator()
+	{
+		constexpr float kHeight = 24.0f;
+		constexpr float kMargin = 4.0f;
+		const ImVec2 p = ImGui::GetCursorScreenPos();
+		ImGui::Dummy(ImVec2(kMargin * 2.0f + 1.0f, kHeight));
+		ImGui::GetWindowDrawList()->AddRectFilled(
+			ImVec2(p.x + kMargin, p.y + kMargin),
+			ImVec2(p.x + kMargin + 1.0f, p.y + kHeight - kMargin),
+			Theme().Border);
+	}
+
+	bool BeginPanel(const char* name, bool* open, ImGuiWindowFlags flags)
+	{
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+		const bool visible = ImGui::Begin(name, open, flags);
+		ImGui::PopStyleVar();
+		return visible;
+	}
+
+	void EndPanel()
+	{
+		ImGui::End();
+	}
+
+	void BeginPanelBody()
+	{
+		// Parent BeginPanel captured WindowPadding 0. The child reads the live style
+		// (ImGui's 8,8 — ApplyTheme does not change it) and AlwaysUseWindowPadding
+		// applies it even without a child border.
+		ImGui::BeginChild("##PanelBody", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+	}
+
+	void EndPanelBody()
+	{
+		ImGui::EndChild();
+	}
+
+	bool PanelToolbarRow(const char* id, float height)
+	{
+		if (height <= 0.0f)
+			height = 44.0f;
+
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, Color(Theme().SurfaceBg));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 0.0f));
+		const bool open = ImGui::BeginChild(id, ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+
+		const float y = (ImGui::GetContentRegionAvail().y - 24.0f) * 0.5f;
+		if (y > 0.0f)
+			ImGui::SetCursorPosY(ImGui::GetCursorPosY() + y);
+		return open;
+	}
+
+	void EndPanelToolbarRow()
+	{
+		const ImVec2 wp = ImGui::GetWindowPos();
+		const ImVec2 ws = ImGui::GetWindowSize();
+		ImGui::GetWindowDrawList()->AddLine(
+			ImVec2(wp.x, wp.y + ws.y - 1.0f),
+			ImVec2(wp.x + ws.x, wp.y + ws.y - 1.0f),
+			Theme().Border);
+		ImGui::EndChild();
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor();
+	}
+
+	bool SearchField(const char* id, char* buf, size_t bufSize, const char* hint)
+	{
+		const EditorTheme& theme = Theme();
+		ImGui::PushID(id);
+
+		const float h = ImGui::GetFrameHeight();
+		ImGuiContext& g = *GImGui;
+		const float width = (g.NextItemData.HasFlags & ImGuiNextItemDataFlags_HasWidth)
+			? ImGui::CalcItemWidth()
+			: ImGui::GetContentRegionAvail().x;
+		const bool hasText = buf && buf[0] != '\0';
+		const ImVec2 p0 = ImGui::GetCursorScreenPos();
+		ImGui::Dummy(ImVec2(width, h));
+		const ImVec2 after = ImGui::GetCursorScreenPos();
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(p0, ImVec2(p0.x + width, p0.y + h), theme.SurfaceSunken);
+
+		const ImVec2 searchSize = ImGui::CalcTextSize(ICON_LC_SEARCH);
+		draw->AddText(
+			ImVec2(p0.x + 6.0f, p0.y + (h - searchSize.y) * 0.5f),
+			theme.TextDim, ICON_LC_SEARCH);
+
+		const float clearSlot = hasText ? h : 0.0f;
+		const float textX = p0.x + 6.0f + searchSize.x + 4.0f;
+		const float textW = ImMax(8.0f, width - (textX - p0.x) - clearSlot - 4.0f);
+
+		ImGui::SetCursorScreenPos(ImVec2(textX, p0.y));
+		ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_TextDisabled, Color(theme.TextDim));
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+		ImGui::SetNextItemWidth(textW);
+		bool changed = ImGui::InputTextWithHint("##s", hint ? hint : "Search...", buf, bufSize);
+		ImGui::PopStyleVar();
+		ImGui::PopStyleColor(4);
+
+		if (hasText)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(p0.x + width - h, p0.y));
+			if (ImGui::InvisibleButton("##clear", ImVec2(h, h)))
+			{
+				buf[0] = '\0';
+				changed = true;
+			}
+			const ImVec2 ts = ImGui::CalcTextSize(ICON_LC_X);
+			const ImVec2 r0 = ImGui::GetItemRectMin();
+			const ImU32 glyph = ImGui::IsItemHovered() ? theme.TextPrimary : theme.TextDim;
+			draw->AddText(
+				ImVec2(r0.x + (h - ts.x) * 0.5f, r0.y + (h - ts.y) * 0.5f),
+				glyph, ICON_LC_X);
+			ImGui::SetItemTooltip("Clear");
+		}
+
+		ImGui::SetCursorScreenPos(after);
+		ImGui::PopID();
+		return changed;
+	}
+
+	void ColumnHeaderRow(std::initializer_list<ColumnSpec> columns)
+	{
+		const EditorTheme& theme = Theme();
+		const float height = theme.ColumnHeaderHeight;
+		const ImVec2 p0 = ImGui::GetCursorScreenPos();
+		const float width = ImGui::GetContentRegionAvail().x;
+		ImGui::GetWindowDrawList()->AddRectFilled(
+			p0, ImVec2(p0.x + width, p0.y + height), theme.SurfaceSunken);
+		ImGui::Dummy(ImVec2(width, height));
+
+		float fixed = 0.0f;
+		int flex = 0;
+		for (const ColumnSpec& col : columns)
+		{
+			if (col.width > 0.0f)
+				fixed += col.width;
+			else
+				flex++;
+		}
+		const float flexW = flex > 0 ? ImMax(0.0f, width - fixed) / (float)flex : 0.0f;
+
+		if (ImFont* small = EditorFonts::Small())
+			ImGui::PushFont(small);
+
+		float x = p0.x;
+		const float textY = p0.y + (height - ImGui::GetFontSize()) * 0.5f;
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		for (const ColumnSpec& col : columns)
+		{
+			const float w = col.width > 0.0f ? col.width : flexW;
+			if (col.label && col.label[0])
+			{
+				const ImVec2 ts = ImGui::CalcTextSize(col.label);
+				const float tx = col.width > 0.0f
+					? x + w - ts.x - 6.0f
+					: x + 8.0f;
+				draw->AddText(ImVec2(tx, textY), theme.TextDim, col.label);
+			}
+			x += w;
+		}
+
+		if (EditorFonts::Small())
+			ImGui::PopFont();
+	}
+
+	bool OverflowMenuButton(const char* id)
+	{
+		ImGui::PushID(id);
+		const bool clicked = IconButton(ICON_LC_ELLIPSIS, "More");
+		ImGui::PopID();
+		return clicked;
+	}
+
+	int RowActionIcons(std::initializer_list<RowActionIcon> icons, bool rowHovered, float cellWidth)
+	{
+		const int count = (int)icons.size();
+		if (count <= 0)
+			return -1;
+
+		if (cellWidth <= 0.0f)
+			cellWidth = 26.0f;
+
+		const ImVec2 rowMin = ImGui::GetItemRectMin();
+		const ImVec2 rowMax = ImGui::GetItemRectMax();
+		const ImVec2 backup = ImGui::GetCursorScreenPos();
+		const EditorTheme& theme = Theme();
+
+		const float y = rowMin.y + (rowMax.y - rowMin.y - cellWidth) * 0.5f;
+		float x = rowMax.x - (float)count * cellWidth;
+
+		int clicked = -1;
+		int i = 0;
+		for (const RowActionIcon& action : icons)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(x, y));
+			ImGui::PushID(i);
+
+			const bool hasIcon = action.icon && action.icon[0];
+			if (hasIcon && action.interactive)
+			{
+				if (ImGui::InvisibleButton("##ra", ImVec2(cellWidth, cellWidth)))
+					clicked = i;
+			}
+			else
+			{
+				ImGui::Dummy(ImVec2(cellWidth, cellWidth));
+			}
+
+			if (hasIcon)
+			{
+				const bool hot = action.interactive && ImGui::IsItemHovered();
+				ImU32 glyph = theme.TextDim;
+				if (action.active || rowHovered || hot)
+					glyph = theme.TextPrimary;
+
+				const ImVec2 ts = ImGui::CalcTextSize(action.icon);
+				const ImVec2 p0 = ImGui::GetItemRectMin();
+				ImGui::GetWindowDrawList()->AddText(
+					ImVec2(p0.x + (cellWidth - ts.x) * 0.5f, p0.y + (cellWidth - ts.y) * 0.5f),
+					glyph, action.icon);
+
+				if (action.interactive && action.tooltip)
+					ImGui::SetItemTooltip("%s", action.tooltip);
+			}
+
+			ImGui::PopID();
+			x += cellWidth;
+			i++;
+		}
+
+		ImGui::SetCursorScreenPos(backup);
+		return clicked;
+	}
+
+	void StatusBarItem(const char* icon, const char* text, ImU32 colour)
+	{
+		const EditorTheme& theme = Theme();
+		if (colour == 0)
+			colour = theme.TextPrimary;
+
+		ImGui::PushStyleColor(ImGuiCol_Text, Color(colour));
+		if (icon && icon[0])
+		{
+			ImGui::TextUnformatted(icon);
+			if (text && text[0])
+				ImGui::SameLine(0.0f, 6.0f);
+		}
+		if (text && text[0])
+			ImGui::TextUnformatted(text);
+		ImGui::PopStyleColor();
 	}
 
 }

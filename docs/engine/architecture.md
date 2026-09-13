@@ -44,7 +44,9 @@ configuration, not compilation. `CreateApplication` returns an `Application` bui
 [`GanymedEditor`](../editor/editor.md) (ImGui chrome, scene rendered into a viewport panel) from
 [`GanymedRuntime`](../runtime/runtime.md) (no ImGui, scene rendered straight to the backbuffer).
 Anything that reads as editor-only behaviour inside the engine is a bug; the collider-gizmo gate on
-`PhysicsSettings::ShowColliderGizmos` is there because it *was* one.
+`PhysicsSettings::ShowColliderGizmos` is there because it *was* one. The same rule owns the look:
+`ImGuiLayer` ships `StyleColorsDark()` and the embedded font; Inter, Lucide and `EditorTheme` are
+applied from the editor after attach, so Sandbox never loads editor assets.
 
 ## The frame, end to end
 
@@ -109,7 +111,8 @@ Two ordering facts worth internalizing:
   post stack) and the active `Scene`. Neither the engine nor `Application` holds a scene.
 - `Scene` owns the entt registry, the `SystemManager` (nine built-in systems), the `CommandQueue`,
   per-component-type change buffers / graveyards / init-fini buffers, and the UUID→entity map.
-  Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`).
+  Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`,
+  `EditorViewFilter`).
 - `PhysicsSystem` owns the `PhysicsScene` (Jolt world) — it exists only between play and stop.
 - `AudioEngine` owns the miniaudio device and every live voice. It is static-lifetime and explicitly
   `Init()`/`Shutdown()` by `Application`; because that shutdown runs in the destructor *body*, before

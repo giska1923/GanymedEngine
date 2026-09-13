@@ -1,9 +1,11 @@
 #pragma once
 
+#include "GanymedE/Core/UUID.h"
 #include "GanymedE/ECS/System.h"
 #include "GanymedE/ECS/Views.h"
 #include "GanymedE/Scene/Components.h"
 
+#include <unordered_set>
 #include <vector>
 
 namespace GanymedE {
@@ -30,7 +32,7 @@ namespace GanymedE {
 		using DirLightView   = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<DirectionalLightComponent>>;
 		using PointLightView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<PointLightComponent>>;
 		using SpotLightView  = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<SpotLightComponent>>;
-		using SkyView        = ECS::IterView<ECS::RO<SkyLightComponent>>;
+		using SkyView        = ECS::IterView<ECS::EntityId, ECS::RO<SkyLightComponent>>;
 		using BoxColliderView     = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<BoxColliderComponent>>;
 		using SphereColliderView  = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<SphereColliderComponent>>;
 		using CapsuleColliderView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<CapsuleColliderComponent>>;
@@ -65,6 +67,9 @@ namespace GanymedE {
 		void SubmitSprites();
 		void DrawColliderGizmos();
 
+		void RebuildEditorHidden();
+		bool IsEditorHidden(entt::entity entity) const;
+
 		// Jolt's own debug view when physics is running and enabled, otherwise authored
 		// gizmos - and those only when PhysicsSettings::ShowColliderGizmos is set.
 		void DrawPhysicsDebugOrGizmos(const glm::vec3& cameraPosition);
@@ -72,6 +77,9 @@ namespace GanymedE {
 		// Reused across entities within one SubmitMeshes pass, so resolving material overrides
 		// costs no allocation after the first frame that needs it.
 		std::vector<Ref<Material>> m_ResolvedOverrides;
+
+		// Filled only for OnUpdateEditor from EditorViewFilter; empty during play/runtime.
+		std::unordered_set<UUID> m_EditorHidden;
 
 		// Throttle for the no-camera error. Primed above the interval so the very first
 		// cameraless frame reports immediately instead of after a five-second silence.

@@ -1,7 +1,10 @@
 #include "SceneHierarchyPanel.h"
 #include "../AssetDragDrop.h"
+#include "../EditorFonts.h"
+#include "../EditorIcons.h"
 #include "../EditorInspector.h"
 #include "../EditorPrefabOverrides.h"
+#include "../EditorTheme.h"
 #include "../EditorWidgets.h"
 
 #include <imgui/imgui.h>
@@ -27,8 +30,182 @@
 #include "GanymedE/Utils/PlatformUtils.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cfloat>
+#include <type_traits>
+#include <unordered_set>
 
 namespace GanymedE {
+
+	namespace {
+
+		constexpr float kOutlinerActionCol = 26.0f;
+
+		bool TagContainsI(const std::string& tag, const char* filter)
+		{
+			if (!filter || !filter[0])
+				return true;
+			const char* hay = tag.c_str();
+			for (; *hay; ++hay)
+			{
+				const char* h = hay;
+				const char* n = filter;
+				while (*h && *n &&
+					std::tolower(static_cast<unsigned char>(*h)) ==
+					std::tolower(static_cast<unsigned char>(*n)))
+				{
+					++h;
+					++n;
+				}
+				if (!*n)
+					return true;
+			}
+			return false;
+		}
+
+		void DominantIcon(const Entity& entity, const char*& icon, ImU32& tint)
+		{
+			using EditorUI::Theme;
+			const EditorUI::EditorTheme& theme = Theme();
+			icon = ICON_LC_BOX;
+			tint = theme.AssetTint[static_cast<int>(AssetType::None)];
+
+			if (entity.HasComponent<PrefabInstanceComponent>())
+			{
+				icon = ICON_LC_PACKAGE;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Prefab)];
+			}
+			else if (entity.HasComponent<CameraComponent>())
+			{
+				icon = ICON_LC_CAMERA;
+				tint = theme.TextPrimary;
+			}
+			else if (entity.HasComponent<DirectionalLightComponent>() ||
+				entity.HasComponent<PointLightComponent>() ||
+				entity.HasComponent<SpotLightComponent>())
+			{
+				icon = ICON_LC_LIGHTBULB;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Environment)];
+			}
+			else if (entity.HasComponent<SkyLightComponent>())
+			{
+				icon = ICON_LC_SUN;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Environment)];
+			}
+			else if (entity.HasComponent<AudioSourceComponent>() ||
+				entity.HasComponent<AudioListenerComponent>())
+			{
+				icon = ICON_LC_VOLUME_2;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Audio)];
+			}
+			else if (entity.HasComponent<ParticleEmitterComponent>())
+			{
+				icon = ICON_LC_SPARKLES;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Material)];
+			}
+			else if (entity.HasComponent<StaticMeshComponent>())
+			{
+				icon = ICON_LC_BOX;
+				tint = theme.AssetTint[static_cast<int>(AssetType::StaticMesh)];
+			}
+			else if (entity.HasComponent<SpriteRendererComponent>())
+			{
+				icon = ICON_LC_IMAGE;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Texture)];
+			}
+			else if (entity.HasComponent<ScriptComponent>() ||
+				entity.HasComponent<NativeScriptComponent>())
+			{
+				icon = ICON_LC_FILE_CODE;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Script)];
+			}
+		}
+
+		// Per-T, not the entity's dominant component: a mesh entity's Transform header
+		// still shows the move glyph. Tints reuse the Content Browser AssetTint map
+		// where the type has a matching asset class.
+		template<typename T>
+		void ComponentTypeChrome(const char*& icon, ImU32& tint)
+		{
+			using EditorUI::Theme;
+			const EditorUI::EditorTheme& theme = Theme();
+			icon = ICON_LC_BOX;
+			tint = theme.TextPrimary;
+
+			if constexpr (std::is_same_v<T, TransformComponent>)
+			{
+				icon = ICON_LC_MOVE;
+			}
+			else if constexpr (std::is_same_v<T, PrefabInstanceComponent>)
+			{
+				icon = ICON_LC_PACKAGE;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Prefab)];
+			}
+			else if constexpr (std::is_same_v<T, CameraComponent>)
+			{
+				icon = ICON_LC_CAMERA;
+			}
+			else if constexpr (std::is_same_v<T, SpriteRendererComponent>)
+			{
+				icon = ICON_LC_IMAGE;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Texture)];
+			}
+			else if constexpr (std::is_same_v<T, StaticMeshComponent>)
+			{
+				icon = ICON_LC_BOX;
+				tint = theme.AssetTint[static_cast<int>(AssetType::StaticMesh)];
+			}
+			else if constexpr (std::is_same_v<T, AnimatorComponent>)
+			{
+				icon = ICON_LC_BONE;
+			}
+			else if constexpr (std::is_same_v<T, ScriptComponent>)
+			{
+				icon = ICON_LC_FILE_CODE;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Script)];
+			}
+			else if constexpr (std::is_same_v<T, DirectionalLightComponent> ||
+				std::is_same_v<T, PointLightComponent> ||
+				std::is_same_v<T, SpotLightComponent>)
+			{
+				icon = ICON_LC_LIGHTBULB;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Environment)];
+			}
+			else if constexpr (std::is_same_v<T, SkyLightComponent>)
+			{
+				icon = ICON_LC_SUN;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Environment)];
+			}
+			else if constexpr (std::is_same_v<T, AudioSourceComponent> ||
+				std::is_same_v<T, AudioListenerComponent>)
+			{
+				icon = ICON_LC_VOLUME_2;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Audio)];
+			}
+			else if constexpr (std::is_same_v<T, ParticleEmitterComponent>)
+			{
+				icon = ICON_LC_SPARKLES;
+				tint = theme.AssetTint[static_cast<int>(AssetType::Material)];
+			}
+			else if constexpr (std::is_same_v<T, RigidBodyComponent>)
+			{
+				icon = ICON_LC_WEIGHT;
+			}
+			else if constexpr (std::is_same_v<T, BoxColliderComponent>)
+			{
+				icon = ICON_LC_CUBOID;
+			}
+			else if constexpr (std::is_same_v<T, SphereColliderComponent>)
+			{
+				icon = ICON_LC_CIRCLE;
+			}
+			else if constexpr (std::is_same_v<T, CapsuleColliderComponent>)
+			{
+				icon = ICON_LC_CYLINDER;
+			}
+		}
+
+	}
 
 	SceneHierarchyPanel::SceneHierarchyPanel(const Ref<Scene>& context)
 	{
@@ -39,6 +216,10 @@ namespace GanymedE {
 	{
 		m_Context = context;
 		SelectSingle({});
+
+		// Hidden/locked are UUID sets on this panel, not scene state. RetargetPanels
+		// (play/stop) must not clear them: the copied scene reuses the same IDs.
+		// New/Open call ClearEditorViewState.
 
 		// A pending edit names an entity in the scene we are leaving.
 		DiscardPendingEdit();
@@ -61,97 +242,111 @@ namespace GanymedE {
 	void SceneHierarchyPanel::OnImGuiRender()
 	{
 		ValidateSelection();
+		RebuildFilterVisibility();
 
-		ImGui::Begin("Scene Hierarchy");
+		using EditorUI::BeginPanel;
+		using EditorUI::EndPanel;
+		using EditorUI::PanelToolbarRow;
+		using EditorUI::EndPanelToolbarRow;
+		using EditorUI::SearchField;
+		using EditorUI::ColumnHeaderRow;
+		using EditorUI::IconButton;
 
-		if (m_Context)
+		if (BeginPanel("Scene Hierarchy"))
 		{
-			// Draw root entities only; children are drawn recursively
-			m_VisibleOrder.clear();
-
-			auto view = m_Context->m_Registry.view<IDComponent, RelationshipComponent, TagComponent>();
-			for (auto entityID : view)
+			if (PanelToolbarRow("##OutlinerTB"))
 			{
-				Entity entity{ entityID, m_Context.get() };
-				if (entity.GetComponent<RelationshipComponent>().Parent == UUID{ 0 })
-					DrawEntityNode(entity);
-			}
-
-			// After the walk, when m_VisibleOrder is complete. See m_PendingRange.
-			if (m_PendingRange)
-			{
-				SelectRange(m_PendingRange);
-				m_PendingRange = {};
-			}
-
-			// Serviced here rather than inside the walk: an editor delete now takes the whole
-			// subtree, and destroying entities the view above is still iterating invalidates it.
-			if (m_EntityToDelete != UUID{ 0 })
-			{
-				DeleteEntity(m_Context->FindEntityByUUID(m_EntityToDelete));
-				m_EntityToDelete = UUID{ 0 };
-			}
-
-			// Click empty space to deselect. `!IsAnyItemHovered()` is what makes it *empty*
-			// space: without it this fires on any held-mouse frame where no item happens to own
-			// ActiveId, which includes the frame after a tree node was clicked - so a selection
-			// made by that very click could be wiped by this line a moment later. Harmless for a
-			// plain click, which re-selects one entity anyway, and visibly wrong for a
-			// shift-range, which is how it was found.
-			if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
-			{
-				SelectSingle({});
-			}
-
-			// Drop onto empty space → unparent
-			if (ImGui::BeginDragDropTarget())
-			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_HIERARCHY_ENTITY"))
+				if (IconButton(ICON_LC_PLUS, "Create"))
+					ImGui::OpenPopup("##CreateEntity");
+				ImGui::SameLine();
+				SearchField("filter", m_Search, sizeof(m_Search), "Search...");
+				if (ImGui::BeginPopup("##CreateEntity"))
 				{
-					UUID droppedID = *(const UUID*)payload->Data;
-					Entity dropped = m_Context->FindEntityByUUID(droppedID);
-					if (dropped)
-						Reparent(dropped, {});
+					DrawCreateMenu();
+					ImGui::EndPopup();
 				}
-				ImGui::EndDragDropTarget();
 			}
+			EndPanelToolbarRow();
 
-			// Right-click on blank space
-			if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+			ColumnHeaderRow({
+				{ "Name", 0.0f },
+				{ ICON_LC_EYE, kOutlinerActionCol },
+				{ ICON_LC_LOCK, kOutlinerActionCol },
+				{ ICON_LC_LINK, kOutlinerActionCol }
+			});
+
+			ImGui::BeginChild("##OutlinerTree", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+			if (m_Context)
 			{
-				if (ImGui::MenuItem("Create Empty Entity"))
+				m_VisibleOrder.clear();
+
+				auto view = m_Context->m_Registry.view<IDComponent, RelationshipComponent, TagComponent>();
+				for (auto entityID : view)
 				{
-					Entity created = m_Context->CreateEntity("Empty Entity");
-					PushAddedEntities("Create Entity", created);
-					SelectSingle(created);
+					Entity entity{ entityID, m_Context.get() };
+					if (entity.GetComponent<RelationshipComponent>().Parent == UUID{ 0 })
+						DrawEntityNode(entity);
 				}
 
-				if (ImGui::MenuItem("Instantiate Prefab..."))
+				// After the walk, when m_VisibleOrder is complete. See m_PendingRange.
+				if (m_PendingRange)
 				{
-					const std::string chosen = FileDialogs::OpenFile("GanymedE Prefab (*.gprefab)\0*.gprefab\0");
-					if (!chosen.empty())
-						InstantiatePrefab(MakeAssetRelative(chosen));
+					SelectRange(m_PendingRange);
+					m_PendingRange = {};
 				}
 
-				ImGui::EndPopup();
+				if (m_EntityToDelete != UUID{ 0 })
+				{
+					DeleteEntity(m_Context->FindEntityByUUID(m_EntityToDelete));
+					m_EntityToDelete = UUID{ 0 };
+				}
+
+				// Click empty space to deselect. `!IsAnyItemHovered()` is what makes it *empty*
+				// space: without it this fires on any held-mouse frame where no item happens to own
+				// ActiveId, which includes the frame after a tree node was clicked - so a selection
+				// made by that very click could be wiped by this line a moment later. Harmless for a
+				// plain click, which re-selects one entity anyway, and visibly wrong for a
+				// shift-range, which is how it was found.
+				if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
+					SelectSingle({});
+
+				if (ImGui::BeginDragDropTarget())
+				{
+					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_HIERARCHY_ENTITY"))
+					{
+						UUID droppedID = *(const UUID*)payload->Data;
+						Entity dropped = m_Context->FindEntityByUUID(droppedID);
+						if (dropped)
+							Reparent(dropped, {});
+					}
+					ImGui::EndDragDropTarget();
+				}
+
+				if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+				{
+					DrawCreateMenu();
+					ImGui::EndPopup();
+				}
+			}
+			ImGui::EndChild();
+		}
+		EndPanel();
+
+		if (BeginPanel("Properties"))
+		{
+			if (m_SelectionContext)
+			{
+				ImGui::Dummy(ImVec2(0.0f, 6.0f));
+				ImGui::Indent(8.0f);
+				DrawPrefabControls(m_SelectionContext);
+				ImGui::Unindent(8.0f);
+				DrawComponents(m_SelectionContext);
 			}
 		}
-
-		ImGui::End();
-
-		ImGui::Begin("Properties");
-		if (m_SelectionContext)
-		{
-			DrawPrefabControls(m_SelectionContext);
-			DrawComponents(m_SelectionContext);
-		}
-
-		ImGui::End();
+		EndPanel();
 
 		DrawApplyPrefabModal();
 
-		// An inspector edit whose section stopped being drawn mid-gesture has nowhere else to
-		// be noticed.
 		FlushPendingEdit();
 	}
 
@@ -235,23 +430,104 @@ namespace GanymedE {
 
 	void SceneHierarchyPanel::DrawEntityNode(Entity entity)
 	{
+		const UUID id = entity.GetUUID();
+		if (m_Search[0] && m_FilterVisible.count(id) == 0)
+			return;
+
 		auto& tag = entity.GetComponent<TagComponent>().Tag;
 		auto& relationship = entity.GetComponent<RelationshipComponent>();
+		const EditorUI::EditorTheme& theme = EditorUI::Theme();
 
-		// Use the entt handle for ImGui IDs — always unique in-session.
-		// UUIDs can collide in older scene files that serialized a hardcoded ID.
+		const bool filtering = m_Search[0] != '\0';
+		const bool selfMatch = !filtering || TagContainsI(tag, m_Search);
+		bool hasVisibleChild = false;
+		if (!filtering)
+			hasVisibleChild = !relationship.Children.empty();
+		else
+		{
+			for (UUID childID : relationship.Children)
+			{
+				if (m_FilterVisible.count(childID))
+				{
+					hasVisibleChild = true;
+					break;
+				}
+			}
+		}
+
+		if (filtering && !selfMatch && hasVisibleChild)
+			ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+
 		ImGui::PushID((int32_t)(entt::entity)entity);
 
-		ImGuiTreeNodeFlags flags = (IsSelected(entity) ? ImGuiTreeNodeFlags_Selected : 0)
-			| ImGuiTreeNodeFlags_OpenOnArrow
-			| ImGuiTreeNodeFlags_SpanAvailWidth;
-		if (relationship.Children.empty())
+		const bool selected = IsSelected(entity);
+		const bool primary = selected && entity == m_SelectionContext;
+		const bool hidden = m_Hidden.count(id) != 0;
+		const bool locked = m_Locked.count(id) != 0;
+		const bool prefab = entity.HasComponent<PrefabInstanceComponent>();
+
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow
+			| ImGuiTreeNodeFlags_SpanAvailWidth
+			| ImGuiTreeNodeFlags_AllowOverlap
+			| ImGuiTreeNodeFlags_FramePadding;
+		if (selected)
+			flags |= ImGuiTreeNodeFlags_Selected;
+		if (!hasVisibleChild)
 			flags |= ImGuiTreeNodeFlags_Leaf;
 
 		m_VisibleOrder.push_back(entity);
 
-		bool opened = ImGui::TreeNodeEx("Entity", flags, "%s", tag.c_str());
-		if (ImGui::IsItemClicked())
+		if (primary)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Header, EditorUI::Color(theme.Accent));
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorUI::Color(theme.AccentHover));
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorUI::Color(theme.AccentActive));
+		}
+		else if (selected)
+		{
+			const ImVec4 secondary = EditorUI::Color(EditorUI::WithAlpha(theme.Accent, 0.40f));
+			ImGui::PushStyleColor(ImGuiCol_Header, secondary);
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, secondary);
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive, secondary);
+		}
+
+		bool opened = ImGui::TreeNodeEx("Entity", flags, "");
+		if (selected)
+			ImGui::PopStyleColor(3);
+
+		const bool rowHovered = ImGui::IsItemHovered();
+		const bool rowClicked = ImGui::IsItemClicked();
+
+		{
+			const char* typeIcon = ICON_LC_BOX;
+			ImU32 typeTint = theme.TextPrimary;
+			DominantIcon(entity, typeIcon, typeTint);
+
+			ImU32 nameCol = theme.TextPrimary;
+			if (primary)
+			{
+				nameCol = theme.TextOnAccent;
+				typeTint = theme.TextOnAccent;
+			}
+			else if (hidden)
+				nameCol = theme.TextDisabled;
+			else if (prefab)
+				nameCol = theme.Link;
+
+			const ImVec2 rmin = ImGui::GetItemRectMin();
+			const ImVec2 rmax = ImGui::GetItemRectMax();
+			const float clipRight = rmax.x - 3.0f * kOutlinerActionCol;
+			const float labelX = rmin.x + ImGui::GetTreeNodeToLabelSpacing();
+			const float textY = rmin.y + (rmax.y - rmin.y - ImGui::GetFontSize()) * 0.5f;
+			ImDrawList* draw = ImGui::GetWindowDrawList();
+			draw->PushClipRect(rmin, ImVec2(clipRight, rmax.y), true);
+			draw->AddText(ImVec2(labelX, textY), typeTint, typeIcon);
+			const float iconW = 18.0f;
+			draw->AddText(ImVec2(labelX + iconW, textY), nameCol, tag.c_str());
+			draw->PopClipRect();
+		}
+
+		if (rowClicked && ImGui::GetMousePos().x < ImGui::GetItemRectMax().x - 3.0f * kOutlinerActionCol)
 		{
 			// Shift extends from the anchor, Ctrl adds to or removes from the selection, and a
 			// plain click replaces it. Shift wins over Ctrl when both are held, which is the
@@ -266,7 +542,7 @@ namespace GanymedE {
 
 		if (ImGui::BeginDragDropSource())
 		{
-			UUID entityID = entity.GetUUID();
+			UUID entityID = id;
 			ImGui::SetDragDropPayload("SCENE_HIERARCHY_ENTITY", &entityID, sizeof(UUID));
 			ImGui::Text("%s", tag.c_str());
 			ImGui::EndDragDropSource();
@@ -290,20 +566,18 @@ namespace GanymedE {
 		if (ImGui::BeginPopupContextItem())
 		{
 			if (ImGui::MenuItem("Delete Entity"))
-			{
 				entityDeleted = true;
-			}
 
 			ImGui::Separator();
 
 			if (ImGui::MenuItem("Create Prefab..."))
 				createPrefab = true;
 
-			if (entity.HasComponent<PrefabInstanceComponent>())
+			if (prefab)
 			{
 				if (ImGui::MenuItem("Apply to Prefab..."))
 				{
-					m_PendingApply = entity.GetUUID();
+					m_PendingApply = id;
 					m_OpenApplyModal = true;
 				}
 
@@ -314,9 +588,29 @@ namespace GanymedE {
 			ImGui::EndPopup();
 		}
 
+		const int action = EditorUI::RowActionIcons({
+			{ hidden ? ICON_LC_EYE_OFF : ICON_LC_EYE, hidden ? "Show" : "Hide", hidden },
+			{ locked ? ICON_LC_LOCK : ICON_LC_LOCK_OPEN, locked ? "Unlock" : "Lock", locked },
+			{ prefab ? ICON_LC_LINK : "", nullptr, prefab, false }
+		}, rowHovered, kOutlinerActionCol);
+
+		if (action == 0)
+		{
+			if (hidden)
+				m_Hidden.erase(id);
+			else
+				m_Hidden.insert(id);
+		}
+		else if (action == 1)
+		{
+			if (locked)
+				m_Locked.erase(id);
+			else
+				m_Locked.insert(id);
+		}
+
 		if (opened)
 		{
-			// Copy children first — SetParent during drag can mutate the vector we're iterating
 			std::vector<UUID> children = relationship.Children;
 			for (UUID childID : children)
 			{
@@ -329,8 +623,6 @@ namespace GanymedE {
 
 		ImGui::PopID();
 
-		// Deferred past the tree walk for the same reason delete is: both restructure the scene
-		// the enclosing entt view is iterating.
 		if (createPrefab)
 			CreatePrefabFrom(entity);
 
@@ -338,7 +630,72 @@ namespace GanymedE {
 			RevertInstance(entity);
 
 		if (entityDeleted)
-			m_EntityToDelete = entity.GetUUID();
+			m_EntityToDelete = id;
+	}
+
+	void SceneHierarchyPanel::DrawCreateMenu()
+	{
+		if (!m_Context)
+			return;
+
+		if (ImGui::MenuItem("Create Empty Entity"))
+		{
+			Entity created = m_Context->CreateEntity("Empty Entity");
+			PushAddedEntities("Create Entity", created);
+			SelectSingle(created);
+		}
+
+		if (ImGui::MenuItem("Instantiate Prefab..."))
+		{
+			const std::string chosen = FileDialogs::OpenFile("GanymedE Prefab (*.gprefab)\0*.gprefab\0");
+			if (!chosen.empty())
+				InstantiatePrefab(MakeAssetRelative(chosen));
+		}
+	}
+
+	void SceneHierarchyPanel::RebuildFilterVisibility()
+	{
+		m_FilterVisible.clear();
+		if (!m_Context || m_Search[0] == '\0')
+			return;
+
+		auto view = m_Context->m_Registry.view<IDComponent, RelationshipComponent, TagComponent>();
+		for (auto entityID : view)
+		{
+			Entity entity{ entityID, m_Context.get() };
+			if (entity.GetComponent<RelationshipComponent>().Parent == UUID{ 0 })
+				MarkFilterVisible(entity);
+		}
+	}
+
+	bool SceneHierarchyPanel::MarkFilterVisible(Entity entity)
+	{
+		const bool self = TagContainsI(entity.GetComponent<TagComponent>().Tag, m_Search);
+		bool any = self;
+		for (UUID childID : entity.GetComponent<RelationshipComponent>().Children)
+		{
+			Entity child = m_Context->FindEntityByUUID(childID);
+			if (child && MarkFilterVisible(child))
+				any = true;
+		}
+		if (any)
+			m_FilterVisible.insert(entity.GetUUID());
+		return any;
+	}
+
+	bool SceneHierarchyPanel::IsLocked(Entity entity) const
+	{
+		if (!entity)
+			return false;
+		return m_Locked.count(entity.GetUUID()) != 0;
+	}
+
+	void SceneHierarchyPanel::ClearEditorViewState()
+	{
+		m_Hidden.clear();
+		m_Locked.clear();
+		m_Search[0] = '\0';
+		m_FilterVisible.clear();
 	}
 
 
@@ -842,7 +1199,6 @@ namespace GanymedE {
 	template<typename T, typename UIFunction>
 	void SceneHierarchyPanel::DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
 	{
-		const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
 		// "Components common to the selection": a section is drawn only when *every* selected
 		// entity has it. Showing a component only some of them have would make an edit either
 		// silently skip entities or silently add the component to them, and both are surprises.
@@ -852,108 +1208,176 @@ namespace GanymedE {
 				return;
 		}
 
-		if (entity.HasComponent<T>())
+		if (!entity.HasComponent<T>())
+			return;
+
+		const EditorUI::EditorTheme& theme = EditorUI::Theme();
+		const void* typeId = (void*)typeid(T).hash_code();
+
+		// Same storage key TreeNodeEx used, so imgui.ini open-state survives the restyle.
+		const ImGuiID openId = ImGui::GetID(typeId);
+		bool open = ImGui::GetStateStorage()->GetBool(openId, true);
+
+		ImGui::PushID(typeId);
+
+		constexpr float kOverflow = 24.0f;
+		const float height = theme.RowHeight;
+		const float width = ImGui::GetContentRegionAvail().x;
+		const ImVec2 p0 = ImGui::GetCursorScreenPos();
+
+		// Dummy owns the row in the layout; the hit targets are overlaid. SameLine after a
+		// short InvisibleButton leaves IsSameLine set, and SetCursorScreenPos does not
+		// clear it — the next header would then share the overflow's line.
+		ImGui::Dummy(ImVec2(width, height));
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(p0, ImVec2(p0.x + width, p0.y + height), theme.ChromeBg);
+		draw->AddLine(ImVec2(p0.x, p0.y + height - 1.0f),
+			ImVec2(p0.x + width, p0.y + height - 1.0f), theme.Border);
+
+		ImGui::SetCursorScreenPos(p0);
+		ImGui::InvisibleButton("##hdr", ImVec2(ImMax(1.0f, width - kOverflow), height));
+		const bool headerClicked = ImGui::IsItemClicked();
+
+		const char* typeIcon = ICON_LC_BOX;
+		ImU32 typeTint = theme.TextPrimary;
+		ComponentTypeChrome<T>(typeIcon, typeTint);
+
+		const float iconY = p0.y + (height - ImGui::GetFontSize()) * 0.5f;
+		float x = p0.x + 8.0f;
+		draw->AddText(ImVec2(x, iconY), theme.TextDim,
+			open ? ICON_LC_CHEVRON_DOWN : ICON_LC_CHEVRON_RIGHT);
+		x += 20.0f;
+		draw->AddText(ImVec2(x, iconY), typeTint, typeIcon);
+		x += 20.0f;
+
+		// The section-level marker is the only override affordance a *hand-written* section
+		// gets: the per-field one lives inside the reflected property drawer, so a component
+		// the panel still draws by hand can say "something in here differs from the prefab"
+		// but not which field.
+		const bool sectionOverridden = m_Context
+			&& EditorUI::IsComponentOverridden<T>(entity, *m_Context);
+
+		draw->PushClipRect(p0, ImVec2(p0.x + width - kOverflow, p0.y + height), true);
+		ImFont* headerFont = EditorUI::EditorFonts::Header();
+		if (headerFont)
 		{
-			ImVec2 contentRegionAvailable = ImGui::GetContentRegionAvail();
-
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
-			float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
-			ImGui::Separator();
-			// The section-level marker is the only override affordance a *hand-written* section
-			// gets: the per-field one lives inside the reflected property drawer, so a component
-			// the panel still draws by hand can say "something in here differs from the prefab"
-			// but not which field.
-			const bool sectionOverridden = m_Context
-				&& EditorUI::IsComponentOverridden<T>(entity, *m_Context);
-
-			const std::string header = sectionOverridden ? name + "  *" : name;
-			// "%s", not the string itself: TreeNodeEx's trailing argument is a printf format, and
-			// `header` carries a component display name. The entity node at DrawEntityNode does
-			// the same for the same reason.
-			bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags,
-				"%s", header.c_str());
-			ImGui::PopStyleVar();
-			ImGui::SameLine(contentRegionAvailable.x - lineHeight * 0.5f);
-			ImGui::PushID((int)typeid(T).hash_code());
-			if (ImGui::Button("+", ImVec2{ lineHeight, lineHeight }))
+			const float nameY = p0.y + (height - headerFont->FontSize) * 0.5f;
+			draw->AddText(headerFont, headerFont->FontSize, ImVec2(x, nameY),
+				theme.TextPrimary, name.c_str());
+			if (sectionOverridden)
 			{
-				ImGui::OpenPopup("ComponentSettings");
+				const ImVec2 ns = headerFont->CalcTextSizeA(headerFont->FontSize, FLT_MAX, 0.0f,
+					name.c_str());
+				draw->AddText(headerFont, headerFont->FontSize, ImVec2(x + ns.x, nameY),
+					theme.FieldOverride, "  *");
+			}
+		}
+		else
+		{
+			draw->AddText(ImVec2(x, iconY), theme.TextPrimary, name.c_str());
+			if (sectionOverridden)
+			{
+				const ImVec2 ns = ImGui::CalcTextSize(name.c_str());
+				draw->AddText(ImVec2(x + ns.x, iconY), theme.FieldOverride, "  *");
+			}
+		}
+		draw->PopClipRect();
+
+		ImGui::SetCursorScreenPos(ImVec2(p0.x + width - kOverflow,
+			p0.y + (height - kOverflow) * 0.5f));
+		if (EditorUI::OverflowMenuButton("menu"))
+			ImGui::OpenPopup("##CompMenu");
+
+		bool removeComponent = false;
+		if (ImGui::BeginPopup("##CompMenu"))
+		{
+			if (ImGui::MenuItem("Remove component"))
+				removeComponent = true;
+			ImGui::EndPopup();
+		}
+
+		if (headerClicked)
+		{
+			open = !open;
+			ImGui::GetStateStorage()->SetBool(openId, open);
+		}
+
+		// Flush against the next header; ItemSpacing would put a 4 px gutter in the stack.
+		ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + height));
+
+		if (open)
+		{
+			ImGui::Indent(8.0f);
+			ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+			auto& component = entity.GetComponent<T>();
+
+			// Taken every frame; only the copy from the frame a widget grabs the active
+			// item is kept, and one frame later that value is unrecoverable. This used
+			// to claim components were handle/POD/small-string sized. ParticleEmitter
+			// is not: an open section heap-copies two keyframe vectors *and* the live
+			// pool (up to MaxParticles) every frame. Measured cost is those allocs while
+			// that one section is open; acceptable. ComponentEditCommand<T> storing
+			// before/after by value doubles it per command — also fine, also noted.
+			//
+			// ActiveId is read *after* the header. Chevron / ••• sit outside this
+			// window; putting the read above them would mint a phantom ComponentEditCommand
+			// on collapse.
+			T before = component;
+			const ImGuiID activeOnEntry = ImGui::GetActiveID();
+
+			// The rest of the selection, at the same instant. This used to be read inside
+			// TrackCommitBoundary at the moment a gesture started, which was wrong in two
+			// ways: on the no-active-phase path (a checkbox, a combo, a drop) there is no
+			// such moment at all, so those entities got no undo entry and their edit was
+			// unrecoverable; and even on the gesture path, a widget that became active *and*
+			// reported an edit in the same frame had already propagated to them, so their
+			// "before" was the new value.
+			//
+			// Only when something else is selected: for a single selection this is an empty
+			// vector and costs nothing, which is every frame of ordinary editing.
+			std::vector<std::pair<UUID, T>> othersBefore;
+			if (m_Selection.size() > 1)
+			{
+				othersBefore.reserve(m_Selection.size() - 1);
+				for (Entity other : m_Selection)
+				{
+					if (other == entity || !other.HasComponent<T>())
+						continue;
+
+					othersBefore.emplace_back(other.GetUUID(), other.GetComponent<T>());
+				}
 			}
 
-			bool removeComponent = false;
-			if (ImGui::BeginPopup("ComponentSettings"))
+			const bool edited = uiFunction(component);
+
+			TrackCommitBoundary<T>(entity, name, before, othersBefore,
+				activeOnEntry, ImGui::GetActiveID(), edited);
+
+			ImGui::Dummy(ImVec2(0.0f, 4.0f));
+			ImGui::Unindent(8.0f);
+		}
+
+		ImGui::PopID();
+
+		if (removeComponent)
+		{
+			if (Recording())
 			{
-				if (ImGui::MenuItem("Remove component"))
-				{
-					removeComponent = true;
-				}
-
-				ImGui::EndPopup();
-			}
-			ImGui::PopID();
-
-			if (open)
-			{
-				auto& component = entity.GetComponent<T>();
-
-				// Taken every frame; only the copy from the frame a widget grabs the active
-				// item is kept, and one frame later that value is unrecoverable. This used
-				// to claim components were handle/POD/small-string sized. ParticleEmitter
-				// is not: an open section heap-copies two keyframe vectors *and* the live
-				// pool (up to MaxParticles) every frame. Measured cost is those allocs while
-				// that one section is open; acceptable. ComponentEditCommand<T> storing
-				// before/after by value doubles it per command — also fine, also noted.
-				T before = component;
-				const ImGuiID activeOnEntry = ImGui::GetActiveID();
-
-				// The rest of the selection, at the same instant. This used to be read inside
-				// TrackCommitBoundary at the moment a gesture started, which was wrong in two
-				// ways: on the no-active-phase path (a checkbox, a combo, a drop) there is no
-				// such moment at all, so those entities got no undo entry and their edit was
-				// unrecoverable; and even on the gesture path, a widget that became active *and*
-				// reported an edit in the same frame had already propagated to them, so their
-				// "before" was the new value.
-				//
-				// Only when something else is selected: for a single selection this is an empty
-				// vector and costs nothing, which is every frame of ordinary editing.
-				std::vector<std::pair<UUID, T>> othersBefore;
-				if (m_Selection.size() > 1)
-				{
-					othersBefore.reserve(m_Selection.size() - 1);
-					for (Entity other : m_Selection)
-					{
-						if (other == entity || !other.HasComponent<T>())
-							continue;
-
-						othersBefore.emplace_back(other.GetUUID(), other.GetComponent<T>());
-					}
-				}
-
-				const bool edited = uiFunction(component);
-
-				TrackCommitBoundary<T>(entity, name, before, othersBefore,
-					activeOnEntry, ImGui::GetActiveID(), edited);
-				ImGui::TreePop();
+				m_UndoStack->Push(CreateScope<RemoveComponentCommand<T>>(
+					"Remove " + name, entity.GetUUID(), entity.GetComponent<T>()));
 			}
 
-			if (removeComponent)
+			// A pending edit on the component about to be removed would commit against a
+			// component that no longer exists, pushing a before == after no-op.
+			if (m_Pending.Command && m_Pending.Command->GetEntity() == entity.GetUUID()
+				&& m_Pending.Command->GetComponentType() == entt::type_hash<T>::value())
 			{
-				if (Recording())
-				{
-					m_UndoStack->Push(CreateScope<RemoveComponentCommand<T>>(
-						"Remove " + name, entity.GetUUID(), entity.GetComponent<T>()));
-				}
-
-				// A pending edit on the component about to be removed would commit against a
-				// component that no longer exists, pushing a before == after no-op.
-				if (m_Pending.Command && m_Pending.Command->GetEntity() == entity.GetUUID()
-					&& m_Pending.Command->GetComponentType() == entt::type_hash<T>::value())
-				{
-					DiscardPendingEdit();
-				}
-
-				entity.RemoveComponent<T>();
+				DiscardPendingEdit();
 			}
+
+			entity.RemoveComponent<T>();
 		}
 	}
 
@@ -974,6 +1398,49 @@ namespace GanymedE {
 		}
 
 		ImGui::CloseCurrentPopup();
+	}
+
+	void SceneHierarchyPanel::DrawAddComponentButton()
+	{
+		const EditorUI::EditorTheme& theme = EditorUI::Theme();
+
+		ImGui::Dummy(ImVec2(0.0f, 8.0f));
+		ImGui::Indent(8.0f);
+		const float width = ImMax(1.0f, ImGui::GetContentRegionAvail().x - 8.0f);
+
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorUI::Color(EditorUI::WithAlpha(theme.Accent, 0.15f)));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorUI::Color(EditorUI::WithAlpha(theme.Accent, 0.30f)));
+		ImGui::PushStyleColor(ImGuiCol_Border, EditorUI::Color(theme.Accent));
+		ImGui::PushStyleColor(ImGuiCol_Text, EditorUI::Color(theme.AccentText));
+		if (ImGui::Button("Add Component", ImVec2(width, theme.RowHeight)))
+			ImGui::OpenPopup("AddComponent");
+		ImGui::PopStyleColor(5);
+		ImGui::PopStyleVar();
+
+		if (ImGui::BeginPopup("AddComponent"))
+		{
+			DrawAddComponentEntry<CameraComponent>("Camera");
+			DrawAddComponentEntry<SpriteRendererComponent>("Sprite Renderer");
+			DrawAddComponentEntry<DirectionalLightComponent>("Directional Light");
+			DrawAddComponentEntry<PointLightComponent>("Point Light");
+			DrawAddComponentEntry<SpotLightComponent>("Spot Light");
+			DrawAddComponentEntry<SkyLightComponent>("Sky Light");
+			DrawAddComponentEntry<AnimatorComponent>("Animator");
+			DrawAddComponentEntry<ScriptComponent>("Script");
+			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");
+			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
+			DrawAddComponentEntry<ParticleEmitterComponent>("Particle Emitter");
+			DrawAddComponentEntry<RigidBodyComponent>("Rigid Body");
+			DrawAddComponentEntry<BoxColliderComponent>("Box Collider");
+			DrawAddComponentEntry<SphereColliderComponent>("Sphere Collider");
+			DrawAddComponentEntry<CapsuleColliderComponent>("Capsule Collider");
+			ImGui::EndPopup();
+		}
+
+		ImGui::Unindent(8.0f);
+		ImGui::Dummy(ImVec2(0.0f, 8.0f));
 	}
 
 	// ---- Entity operations -----------------------------------------------------------------
@@ -1355,6 +1822,9 @@ namespace GanymedE {
 			memcpy(buffer, tagComponent.Tag.data(),
 				std::min(tagComponent.Tag.size(), sizeof(buffer) - 1));
 
+			ImGui::Indent(8.0f);
+			ImGui::SetNextItemWidth(ImMax(1.0f, ImGui::GetContentRegionAvail().x - 8.0f));
+
 			// The rename gets the same pending/commit treatment as a component section: one
 			// command for the whole typing session, not one per keystroke. While the field is
 			// focused ImGui's own Ctrl+Z is the text undo, which is what every editor does.
@@ -1372,38 +1842,9 @@ namespace GanymedE {
 			// place multi-edit deliberately does not apply.
 			TrackCommitBoundary<TagComponent>(entity, "Name", before, {}, activeOnEntry,
 				ImGui::GetActiveID(), edited);
+			ImGui::Unindent(8.0f);
+			ImGui::Dummy(ImVec2(0.0f, 8.0f));
 		}
-
-		ImGui::SameLine();
-		ImGui::PushItemWidth(-1);
-
-		if (ImGui::Button("Add Component"))
-		{
-			ImGui::OpenPopup("AddComponent");
-		}
-
-		if (ImGui::BeginPopup("AddComponent"))
-		{
-			DrawAddComponentEntry<CameraComponent>("Camera");
-			DrawAddComponentEntry<SpriteRendererComponent>("Sprite Renderer");
-			DrawAddComponentEntry<DirectionalLightComponent>("Directional Light");
-			DrawAddComponentEntry<PointLightComponent>("Point Light");
-			DrawAddComponentEntry<SpotLightComponent>("Spot Light");
-			DrawAddComponentEntry<SkyLightComponent>("Sky Light");
-			DrawAddComponentEntry<AnimatorComponent>("Animator");
-			DrawAddComponentEntry<ScriptComponent>("Script");
-			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");
-			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
-			DrawAddComponentEntry<ParticleEmitterComponent>("Particle Emitter");
-			DrawAddComponentEntry<RigidBodyComponent>("Rigid Body");
-			DrawAddComponentEntry<BoxColliderComponent>("Box Collider");
-			DrawAddComponentEntry<SphereColliderComponent>("Sphere Collider");
-			DrawAddComponentEntry<CapsuleColliderComponent>("Capsule Collider");
-
-			ImGui::EndPopup();
-		}
-
-		ImGui::PopItemWidth();
 
 		DrawComponent<TransformComponent>("Transform", entity, [&](auto& component)
 		{
@@ -1790,5 +2231,7 @@ namespace GanymedE {
 		{
 			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
+
+		DrawAddComponentButton();
 	}
 }

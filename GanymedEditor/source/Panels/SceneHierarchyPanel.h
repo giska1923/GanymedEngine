@@ -2,6 +2,7 @@
 
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Core/Log.h"
+#include "GanymedE/Core/UUID.h"
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/Entity.h"
 
@@ -9,6 +10,7 @@
 
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace GanymedE {
@@ -47,16 +49,30 @@ namespace GanymedE {
 		// Instantiates a .gprefab into the current scene (viewport drop, or the hierarchy's
 		// blank-space menu) and selects the new instance root.
 		Entity InstantiatePrefab(const std::filesystem::path& relativePath);
+
+		// Editor-only outliner flags. Keyed by UUID so they survive play/stop (same IDs on
+		// the copied scene) and are not cleared by RetargetPanels. New/Open must call
+		// ClearEditorViewState because those UUIDs belong to a different document.
+		bool IsLocked(Entity entity) const;
+		const std::unordered_set<UUID>& HiddenEntities() const { return m_Hidden; }
+		void ClearEditorViewState();
 	private:
 		// The one place the selection changes shape. `SelectSingle({})` clears.
 		void SelectSingle(Entity entity);
 		void ToggleSelection(Entity entity);
+		void SelectRange(Entity to);
 
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
+		void DrawAddComponentButton();
+		void DrawCreateMenu();
+		void RebuildFilterVisibility();
+		bool MarkFilterVisible(Entity entity);
 
-		// One inspector section. `uiFunction` returns whether any widget inside it edited the
-		// component this frame - see the commit-boundary protocol in the .cpp.
+		// One inspector section. The chrome header (chevron / icon / name / •••) is drawn
+		// *before* the ActiveId window; `uiFunction` is the only thing inside it.
+		// `uiFunction` returns whether any widget inside the body edited the component
+		// this frame - see the commit-boundary protocol in the .cpp.
 		template<typename T, typename UIFunction>
 		void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction);
 
@@ -129,6 +145,11 @@ namespace GanymedE {
 		// two are kept in step by SelectSingle/ToggleSelection/SelectRange and by nothing else.
 		std::vector<Entity> m_Selection;
 
+		char m_Search[128] = {};
+		std::unordered_set<UUID> m_Hidden;
+		std::unordered_set<UUID> m_Locked;
+		std::unordered_set<UUID> m_FilterVisible;
+
 		// The tree as drawn, top to bottom, rebuilt every frame by DrawEntityNode. This is what
 		// shift-range needs and what the panel used not to keep: it draws recursively, so the
 		// visible order exists only as the shape of the call stack. Children of a collapsed node
@@ -145,7 +166,5 @@ namespace GanymedE {
 		// the nodes drawn so far, so a range running *down* the tree would be half empty - so it
 		// is recorded and applied once the walk is complete.
 		Entity m_PendingRange;
-
-		void SelectRange(Entity to);
 	};
 }

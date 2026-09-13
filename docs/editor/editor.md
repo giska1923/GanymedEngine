@@ -10,10 +10,154 @@ either order.
 
 ## Layout
 
-A dockable ImGui workspace. On first run (no `imgui.ini` yet) `EditorLayer::OnImGuiRender` builds
-a default layout with DockBuilder: toolbar strip on top (no tab bar), Scene Hierarchy left,
-Properties below it, Viewport center, Stats right, Content Browser bottom. After that, layout
-changes persist in `GanymedEditor/imgui.ini`.
+A dockable ImGui workspace. Host chrome is stacked in the dockspace window: a **fixed
+40 px `ChromeBg` title bar** (undecorated OS window; see below), a **fixed 41 px `SurfaceBg`
+toolbar child**, `DockSpace(size.y = -StatusBarHeight)`, then a **fixed 41 px `ChromeBg`
+status bar child**. Those four items are packed with `ItemSpacing (0,0)` — theme spacing is
+4 px, and between four host strips that overflows the window by a few pixels at every size
+and shows a host scrollbar. The host itself is `NoScrollbar`. None of those strips is a
+docked window: they cannot be resized, undocked, or given a tab. On Wayland the title bar is
+omitted and the ImGui menu bar stays, because an undecorated window cannot be moved. On first
+run, after **View → Reset Layout**, or when the dock-layout version in `imgui.ini` mismatches
+(`[GanymedEditor][Dock] Version`, currently 2), `EditorLayer` builds a default DockBuilder
+tree: Scene Hierarchy left, Properties below it, Viewport center, Stats right, Content
+Browser bottom. After that, panel layout persists in `GanymedEditor/imgui.ini`. Later chrome
+changes that alter the default tree bump that version so an existing ini does not keep a
+stale split. The title bar and status bar sit outside the dock tree, so they did not need a
+version bump.
+
+## Look and feel
+
+Editor chrome is Inter + Lucide, rasterized by FreeType. Colour, density and geometry come from
+`EditorTheme` / `ApplyTheme` — **not** from the engine. `ImGuiLayer` only calls `StyleColorsDark()`
+and ships the embedded font, so Sandbox does not depend on editor assets and the engine does not
+hold a brand palette.
+
+`EditorFonts::Load` and `ApplyTheme(MakeDarkTheme())` run from `EditorLayer::OnAttach`, after
+`ImGuiLayer` has created the context. `Load` `Clear()`s the atlas, so `io.FontDefault` is
+reassigned in the same call; `ImFont*` values held across a `Clear()` dangle.
+`ImGuiRendererBgfx::NewFrame` already rebuilds the bgfx font texture when `!io.Fonts->IsBuilt()`,
+which is why this needs no engine API. **View → Theme** switches Dark (default, the shipping
+neutral ramp) and Light (the same roles inverted onto a light ramp). Both keep the lilac accent.
+The choice is a process-lifetime static, not written to `imgui.ini`.
+
+The menu lives inside the title-bar child, which has `ChildBg` pushed. `ApplyTheme` therefore
+patches ImGui's `ColorStack` backups after writing `ImGuiStyle`, so `PopStyleColor` cannot
+resurrect the previous ramp. Without that, `WindowBg` (Properties, Stats) updates and
+`ChildBg` does not — the outliner tree and the Content Browser folder/file panes are
+`BeginChild` with no local `ChildBg`, so they stayed on the old theme.
+
+### Type
+
+| Use | Face | Size |
+|---|---|---|
+| Body (`io.FontDefault`) | Inter Regular | 18 px |
+| Panel/section headers, XYZ reset labels | Inter Medium | 18 px |
+| Status bar, hints, column headers | Inter Regular | 16 px |
+
+Rasterizer flags: `ImGuiFreeTypeBuilderFlags_LightHinting` on the atlas. Do **not** use
+`io.FontGlobalScale` — it scales an already-rasterized atlas and smears glyphs. Each size is its
+own font.
+
+Icons are Lucide, merged into every editor face (`MergeMode`, 16 px, `GlyphMinAdvanceX = 18` so
+toolbar cells align). An `ICON_LC_*` string is just text: it scales with DPI, tints with
+`ImGuiCol_Text`, and needs no texture. Codepoints live in `EditorIcons.h`, which wraps the
+vendored `IconsLucide.h` (IconFontCppHeaders). Swap that one include to change icon sets. The
+TTF is `assets/fonts/lucide/lucide.ttf`; `VERSION` next to it is the `lucide-static` package the
+font was taken from.
+
+RmlUi game UI is a separate atlas and still uses Montserrat (`UIEngine` loads Regular/Bold/Italic
+from `assets/fonts/montserrat/`). Those three faces stay; they are the Play-mode HUD, not editor
+chrome.
+
+### Colour tokens
+
+`EditorTheme` is a flat `ImU32` struct in `GanymedEditor/source/EditorTheme.h`. One `ApplyTheme`
+call writes the full `ImGuiStyle`. Two presets share the lilac accent and differ in the
+neutral ramp (and in the few semantic colours that have to sit *on* that ramp as text):
+
+| Token | Dark | Light | Role |
+|---|---|---|---|
+| `ChromeBg` / `Border` | `#1A1A1A` | `#DEDEDE` | Title bar, tab strips, inspector headers, 1 px gutters. Same value as each other — panels separate with chrome-coloured gaps, not lighter outlines |
+| `SurfaceSunken` | `#272727` | `#EBEBEB` | Recessed fills: inputs (`FrameBg`), column headers |
+| `SurfaceBg` | `#313131` | `#F5F5F5` | Panel content, active tab, window background |
+| `GrabBg` | `#4D4D4D` | `#C5C5C5` | Scrollbar grab, slider track hover |
+| `TextPrimary` | `#CCCCCC` | `#1A1A1A` | Body |
+| `TextDim` | `#878787` | `#5C5C5C` | Secondary / hint |
+| `TextDisabled` | `#717171` | `#9E9E9E` | Disabled, unselected tab labels |
+| `Accent` | `#B182ED` | `#B182ED` | Selection fill, checkmarks, grabs |
+| `AccentHover` / `AccentActive` | `#C39BFF` / `#9152E0` | same | Hover / pressed |
+| `AccentText` | `#B07BF4` | `#7B43C2` | Accent-coloured text on a panel, no fill. Light uses the icon violet; the lilac fails on `#F5F5F5` |
+| `TextOnAccent` | `#1A1A1A` | `#1A1A1A` | Glyphs on an accent fill (outliner primary selection) |
+| `Link` | `#589FFD` | `#1565C0` | Entity-name links in the outliner. **Not** the accent |
+| `FieldMixed` | `#FFC759` | `#B45309` | Multi-select fields that disagree |
+| `FieldOverride` | `#73B8FF` | `#185ABC` | Prefab instance fields that differ from the prototype |
+| `Warning` / `Error` | `#E6B450` / `#E5534B` | same | Status |
+| `AxisX/Y/Z` | existing RGB | same | `DrawVec3Control` reset buttons |
+| `AssetTint[AssetType]` | per-type | same | Content Browser icon tints; directories stay white |
+
+`FieldOverride` and `Link` are both blue on purpose. They never share a panel — the outliner has
+no property rows and the inspector has no entity links — so collapsing them into one colour
+would only merge two independent signals later.
+
+The lilac fill (`#B182ED`) with dark glyphs is the shipping accent on both presets: a saturated
+copy of the app icon (`#7B43C2`) is too dark as a selection fill, and keeping a dark fill with
+light glyphs would invert the treatment (selected row darker than the Dark panel, which reads as
+collapsed/disabled). On Light, `#7B43C2` is the `AccentText` stop instead.
+
+`NavWindowingDimBg` / `ModalWindowDimBg` are a fixed `#1A1A1A` veil, not `ChromeBg`. Light's
+chrome is pale; using it as the dim overlay would wash the editor out.
+
+### Geometry and the two inversions
+
+`ApplyTheme` sets rounding to 0 everywhere, `FramePadding` to `(6, 3)` (18 px text + 6 = the
+measured 24 px row), `WindowMenuButtonPosition = ImGuiDir_None` (kills the dock-tab `▼`), tab
+overlines to 0 (active tab is a background change only), and `DockingSeparatorSize = 1`.
+Host chrome heights sit on the theme struct, not ImGuiStyle: `TitleBarHeight` 40,
+`ToolbarHeight` 41, `StatusBarHeight` 41.
+
+Two mappings invert ImGui's defaults, and they are not bugs:
+
+| ImGui colour | Token | Why |
+|---|---|---|
+| `FrameBg` | `SurfaceSunken` | Inputs are **recessed** — darker than the window, not lighter. Holds on Light (`#EBEBEB` on `#F5F5F5`) as well as Dark (`#272727` on `#313131`) |
+| `Header` / `HeaderHovered` | `ChromeBg` / `SurfaceSunken` | Inspector section headers (`Attr::Section` CollapsingHeaders) are chrome on the panel (`#1A1A1A` on `#313131` in Dark, `#DEDEDE` on `#F5F5F5` in Light). ImGui's default is a *lighter* fill |
+
+`HeaderActive` is `Accent`, but that colour is only used while the mouse is **held**. An idle selected `TreeNode` / `Selectable` uses `Header`. Do not raise theme `Header` to Accent — inspector sections would go lilac. Selected rows that paint `TextOnAccent` must push `Header` / `HeaderHovered` / `HeaderActive` locally (outliner, Content Browser folder tree and list). Grid cells draw the fill themselves.
+
+Do not "fix" FrameBg or Header back toward ImGui defaults.
+
+### Panel furniture
+
+Chrome helpers in `EditorWidgets.h` — not property editors. `BeginPanel` / `EndPanel` wrap
+`Begin` / `End` with `WindowPadding (0,0)` so toolbars and column headers reach the window
+edge; `BeginPanelBody` is a child with `AlwaysUseWindowPadding` so tree/inspector content is
+not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel toolbar; not
+`Theme().ToolbarHeight`, which is the main 41 px host strip). `SearchField` is one recessed
+`SurfaceSunken` bar (`InputTextWithHint` plus search/clear glyphs) — while it is focused,
+`HandleShortcuts` already bails on `WantTextInput`, so Ctrl+Z is ImGui's text undo.
+`ColumnHeaderRow` is a 26 px `SurfaceSunken` strip in the 16 px face. `IconButton` /
+`ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
+Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
+
+The outliner, Properties, Content Browser, and Viewport are wrapped (`BeginPanel`). The host
+title bar is `EditorTitleBar.cpp`, not a furniture helper — it has to talk to `Window` hit-testing.
+
+### Title bar
+
+The editor sets `ApplicationSpecification::CustomTitleBar`. Windows then runs undecorated with
+a Win32 subclass so drag, snap, edge resize and maximize-without-covering-the-taskbar stay
+native; Linux (X11) and macOS drag with `glfwSetWindowPos`. Wayland keeps OS decorations and
+this strip is not drawn.
+
+The strip is 40 px `ChromeBg`: app icon (`resources/icon.png`), a **Menu** button whose popup
+holds File / Edit / View (the same items the old `BeginMenuBar` had), one document tab (scene
+filename + dirty `*`, `SurfaceBg` fill — Ganymed has one open scene, so a strip of fake tabs
+would be a lie), then min / restore-or-max / close. Close hovers `Error`. The title-bar child
+zeros `WindowPadding` / `ItemSpacing` so chrome reaches the edges; the Menu popup pushes the
+pre-zero values back on before `BeginPopup`, or File/Edit/View inherit padding 0. Interactive
+rects are excluded from `HTCAPTION` so those clicks reach ImGui instead of moving the window.
+The engine side is documented in [platform.md](../engine/platform.md#custom-title-bar).
 
 ## EditorLayer
 
@@ -24,7 +168,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 1. Resize the scene renderer / editor camera / scene cameras when the viewport panel size changed.
 2. `SceneRenderer::BeginFrame` (bind + clear HDR target, entity IDs to −1).
-3. Update the scene: `OnUpdateEditor(ts, editorCamera)` in Edit,
+3. Update the scene: `OnUpdateEditor(ts, editorCamera)` in Edit (and
+   `RenderContext::PreviewCamera` from the viewport camera combo),
    `OnUpdateRuntime(ts, &editorCamera)` in Play (the editor camera is the fallback when the scene
    has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos = true`**
    are pushed into the scene's `PhysicsSettings` each frame). The gizmo flag is engine-default
@@ -39,11 +184,30 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 ### Viewport
 
+- `BeginPanel("Viewport")` so the header row reaches the window edges. A 44 px
+  `PanelToolbarRow` sits above the image.
+- **Header, left:** camera combo (Editor Camera, plus every `CameraComponent` in the scene).
+  Selecting a scene camera writes `RenderContext::PreviewCamera`; `RenderSystem::OnUpdateEditor`
+  then `BeginScene`s with that camera's projection and world transform. The editor camera is
+  not orbited while looking through a scene camera — switch back to move it. The combo is
+  disabled in Play and shows the primary camera's tag (the runtime path already uses that
+  camera, with the editor camera as fallback).
+- **Header, centre:** `Free Aspect: WxH` from `m_ViewportSize` (the *image* size, not the
+  panel — the 44 px header is excluded so the render target matches what picking and RmlUi
+  see). There is no aspect lock, so this is a readout, not a dropdown.
+- **Header, right:** Visualizers popup (the Jolt debug-draw toggles that used to live in
+  Stats — still Play-only, they read Jolt body state) and a Local / World combo wired to
+  `ImGuizmo::Manipulate`'s mode. Previously LOCAL was hard-coded.
+- **Omitted, no backing feature:** Quality tiers, selection filters, billboard-gizmo Icons
+  toggle. Lit / Unlit / Wireframe: Unlit needs shader variants that do not exist; a global
+  wireframe fill is not "one bgfx flag" — every `SubmitMesh` packs its own state from the
+  material. A dropdown whose only working item is Lit is dead furniture.
 - Shows the composite target via `ImGui::Image`; UVs flip vertically per
   `originBottomLeft` (a render target's orientation follows the backend — hard-coding either way
   is wrong on half of them).
-- **Event blocking**: `ImGuiLayer::BlockEvents(false)` while the viewport is hovered/focused, so
-  camera and shortcut input reaches the layer.
+- **`m_ViewportHovered` is the image**, not the window. A click on the camera combo must not
+  also click-select whatever the pick buffer last saw. `BlockEvents` still uses
+  focused-or-hovered, so Q/W/E/R keep working while the viewport window is focused.
 - **Drag-drop from the Content Browser** via `EditorUI::AcceptAssetDrop` (see
   [below](#typed-drag-drop)): a `Scene` drop opens the scene; a `StaticMesh` drop (edit mode only)
   instantiates it via `MeshImporter::Instantiate` and selects it.
@@ -53,7 +217,11 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   rotation as a delta to avoid gimbal jumps — and then calls
   **`Scene::MarkChanged<TransformComponent>`**, because a direct component write is invisible to
   change tracking and the world-transform cache would go stale (the entity would keep rendering at
-  its pre-drag position). Ctrl snaps (0.5 units, 45° for rotation).
+  its pre-drag position). Ctrl snaps (0.5 units, 45° for rotation). Mode is `m_GizmoType`
+  (select / translate / rotate / scale): Q/W/E/R still go through `OnKeyPressed` (viewport-gated
+  so a name containing W does not switch tools), and the toolbar icon cluster writes the same
+  int. The active tool is accent-filled. View/projection follow the camera dropdown;
+  `SetOrthographic` follows a scene camera's projection type.
 
   **It drives the whole selection.** The gizmo manipulates the primary, and the world-space change
   it made — `after * inverse(before)` — is applied to every other selected entity through
@@ -63,6 +231,11 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   ancestor is also selected is skipped, or it would take the delta twice — once from its parent's
   transform and once from its own. One drag is one undo entry: the falling edge folds every moved
   entity into a single `CompositeCommand`, the same rule the inspector's multi-edit follows.
+- **Transform readout** (bottom-left of the image, `ImDrawList`, no layout): `X`/`Y`/`Z` of the
+  primary selection in `AxisX/Y/Z`, values in `TextPrimary`. Local translation, or world
+  translation when the gizmo is in World space, so the numbers match the handles. Nothing
+  selected → nothing drawn. Entity/draw/FPS counters live on the status bar rather than being
+  duplicated here.
 
 ### Controls
 
@@ -70,12 +243,15 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 |---|---|
 | Alt+LMB drag / MMB drag / scroll | Orbit / pan / zoom the editor camera |
 | LMB in viewport | Select hovered entity (ignored over the gizmo or with Alt held) |
-| Q / W / E / R | Gizmo: hide / translate / rotate / scale (ignored while using the gizmo or RMB-flying) |
+| Q / W / E / R | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
+| Local / World combo (viewport header) | ImGuizmo LOCAL (default) / WORLD |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z | Undo / redo (Edit state only) |
 | Ctrl+D / Delete | Duplicate / delete the selected entity, subtree included (Edit state only) |
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene |
 | Ctrl (held while dragging gizmo) | Snapping |
 | Ctrl+U | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only) |
+| View → Reset Layout | Rebuild the default dock tree. Existing `imgui.ini` otherwise hides layout work |
+| View → Theme | Dark (default) or Light — same lilac accent, inverted chrome. Not persisted |
 | F1 | bgfx stats overlay |
 
 **Two shortcut layers, on purpose.** Q/W/E/R and Ctrl+U go through the engine event path
@@ -242,6 +418,13 @@ Two limitations worth knowing:
 
 ### Play / Stop (toolbar)
 
+The main toolbar is a 41 px `SurfaceBg` child (`Theme().ToolbarHeight`) between the title bar and
+the dockspace. Left cluster: select / translate / rotate / scale (`ICON_LC_MOUSE_POINTER`,
+`MOVE`, `ROTATE_3D`, `SCALING`) via `EditorUI::IconButton` — 24×24, accent-filled when that
+mode is `m_GizmoType`. Centre: `ICON_LC_PLAY` + "Play" in `Success` (edit) or
+`ICON_LC_SQUARE_STOP` + "Stop" (play). There is no settings/screenshot cluster: those have no
+backing feature, and a dead icon is worse than an absent one.
+
 ```
 Play: m_ActiveScene = Scene::Copy(m_EditorScene); OnRuntimeStart(); panels retarget the copy
       UIEngine::LoadDocument("assets/ui/hud.rml")
@@ -266,13 +449,36 @@ New scenes are seeded by `SetupDefaultEnvironment`: a "Sun" (directional light t
 shadow-casting) and a "Sky Light" (HDR environment `environments/studio_small_08_1k.hdr` when
 present, procedural fallback otherwise), so imported meshes are lit immediately.
 
+### Status bar
+
+A 41 px `ChromeBg` child (`Theme().StatusBarHeight`) below the dockspace. Phase 2 deliberately
+did not reserve the strip — `DockSpace(..., ImVec2(0, -StatusBarHeight))` would have been a
+41 px hole until this existed. `EditorUI::StatusBarItem` draws each chip. The scene name +
+dirty `*` also appears on the title-bar document tab; the chip here keeps the full-path tooltip.
+
+Left, middot-separated:
+
+| Chip | Source |
+|---|---|
+| Scene filename + `*` | `m_EditorScenePath` (or `Untitled`), `m_UndoStack.IsDirtySinceSave()`. Dirtiness is stack *position*, so undoing back to the saved state clears the asterisk. Hover shows the full path. Asset edits (`.gmat`, prefab Apply) do not set it |
+| Configuration | `GE_DEBUG` / `GE_RELEASE` / `GE_DIST` → Debug / Release / Dist |
+| Backend | `bgfx::getRendererName(bgfx::getRendererType())` |
+
+Right, live counters: entity count (`m_ActiveScene` `IDComponent` storage — the play copy while
+playing), `Renderer3D::GetStats().DrawCalls`, an exponential moving average of `1/ts` (raw
+frame time flickers; debugger pauses ≥ 1 s are ignored so they do not pull the average to 1),
+and play state (`Success` + `Play` while playing, `TextDim` + `Edit` otherwise).
+
+There is no engine-version chip. Nothing in the repo is a version string, and a hard-coded one
+would rot. Cold War's `Default` / `mainline` / `game` chips have no Ganymed source either and
+are omitted for the same reason.
+
 ### Stats panel
 
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
 transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
-live post-processing settings (exposure, bloom threshold/knee/intensity/radius,
-FXAA), and Jolt debug-draw toggles (visible during Play; draws Jolt's body state instead of the
-authored collider gizmos).
+and live post-processing settings (exposure, bloom threshold/knee/intensity/radius, FXAA).
+Jolt debug-draw toggles live on the viewport header's Visualizers popup, not here.
 
 A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
 many came out of `assets/.compiled/` instead. A second run over an unchanged project must read
@@ -308,17 +514,41 @@ disk rather than reloading it, so the switch does not defeat itself. Full detail
 
 ## Scene Hierarchy panel
 
-[`SceneHierarchyPanel`](../../GanymedEditor/source/Panels/SceneHierarchyPanel.h) — tree of root
-entities, children drawn recursively (child lists are copied before iterating: re-parenting during
-drag mutates the vector being walked). It is a `friend` of `Scene` and uses the immediate Entity
-API — legal because panels run outside the system update.
+[`SceneHierarchyPanel`](../../GanymedEditor/source/Panels/SceneHierarchyPanel.h) — World Outliner
+look, still docked as **Scene Hierarchy** (renaming the window would bust `imgui.ini`). Tree of
+root entities, children drawn recursively (child lists are copied before iterating: re-parenting
+during drag mutates the vector being walked). It is a `friend` of `Scene` and uses the immediate
+Entity API — legal because panels run outside the system update.
 
-- Select by click; click empty space to deselect.
+The panel uses `BeginPanel` (padding 0) so the toolbar and column header reach the edges. The tree
+itself is a zero-padding child under the header, so eye/lock/link cells line up with
+`ColumnHeaderRow`. Properties is a second `BeginPanel("Properties")` from this class — not split
+out, because the inspector undo protocol is load-bearing and lives in `DrawComponent`.
+
+- **Toolbar:** `+` create (Empty Entity / Instantiate Prefab — the same items as the blank-space
+  menu) and a `SearchField`. Sort / filter-dropdown / view-options are omitted: they have no
+  backing behaviour.
+- **Search** is a case-insensitive tag substring. A parent whose descendant matches stays visible
+  and is forced open while the filter is active; branches that match nothing are omitted (including
+  non-matching children of a matching parent).
+- **Column header:** `Name` | eye | lock | link.
+- **Type icon** by dominant component (prefab instance, camera, light, sky, audio, particle, mesh,
+  sprite, script, else empty), tinted with the Content Browser's `AssetTint` where the type maps.
+- **Prefab instance roots** use `Link` for the name and a non-interactive `ICON_LC_LINK` in the
+  link column. Selected primary overrides that with `TextOnAccent` on the accent fill.
+- **Selection fill** spans the row (`SpanAvailWidth`). Primary: solid `Accent` + `TextOnAccent`.
+  Other selected rows: `Accent` at 40 % alpha + `TextPrimary`.
+- **Eye / lock** are editor-side `std::unordered_set<UUID>` on the panel, not components. They
+  survive play/stop (`RetargetPanels` does not clear them; UUIDs are stable across `Scene::Copy`)
+  and are cleared on New/Open. Eye hides the entity **and its subtree** from `RenderSystem::
+  OnUpdateEditor` via the `EditorViewFilter` singleton (play/runtime still draw them). Lock blocks
+  viewport click-select and the gizmo; the hierarchy can still select so you can unlock.
+- Select by click; click empty space in the tree child to deselect.
 - **Drag-drop re-parenting**: drag an entity onto another → `Scene::SetParent` (cycle-safe); onto
   empty space → unparent. Both record a `ReparentCommand`, but only after confirming the parent
   actually changed: `SetParent` silently no-ops on a cycle, and recording a move that did not
   happen would corrupt sibling order on undo.
-- Right-click empty space → Create Empty Entity; right-click an entity → Delete.
+- Right-click empty space → Create Empty Entity / Instantiate Prefab; right-click an entity → Delete.
 - **Editor delete takes the whole subtree.** `Scene::DestroyEntity` keeps its orphan-the-children
   semantics as engine API, but no production editor deletes that way - Unity, Unreal and Godot all
   take the subtree - and the safety argument for orphaning ("you would lose the children")
@@ -329,10 +559,27 @@ API — legal because panels run outside the system update.
 
 ### Properties (drawn by the same panel)
 
-Tag edit; **Add Component** popup (every component type not already present — camera, sprite,
-lights, sky light, animator, script, audio source, audio listener, particle emitter, rigid body, colliders, one
-`DrawAddComponentEntry<T>` line each); one collapsible section per component
-(`DrawComponent<T>` helper with a remove-component menu).
+Also `BeginPanel` (padding 0) so component headers reach the window edges. Tag and prefab
+controls are indented 8 px; the header rows are not.
+
+Tag edit (full-width `InputText`, one undo command per typing session). One section per
+component type every selected entity has. **Add Component** is a full-width accent-outlined
+button at the **bottom** of the stack (every type not already present — camera, sprite, lights,
+sky light, animator, script, audio source, audio listener, particle emitter, rigid body,
+colliders; one `DrawAddComponentEntry<T>` line each).
+
+Each section is a 26 px `ChromeBg` row (`Theme().RowHeight`): chevron (`ICON_LC_CHEVRON_RIGHT` /
+`_DOWN`), a per-type Lucide icon (not the entity's dominant-component icon), the name in Inter
+Medium, a blue `*` when `IsComponentOverridden<T>`, and a right-aligned `OverflowMenuButton`
+whose menu is **Remove component**. There is no per-component eye: Ganymed has no
+component-enable flag, and a dead eye is worse than a missing one. Copy/Paste Component is
+also omitted — that is a new editing feature (type-erased clipboard, paste onto an entity that
+may already have the component, multi-select, undo), not chrome.
+
+Open state uses the same `ImGuiStorage` key `TreeNodeEx((void*)typeid(T).hash_code())` used to,
+so `imgui.ini` collapsed/expanded sections survive the restyle. Inner `Attr::Section`
+`CollapsingHeader`s in the reflected drawer are field groups inside the body; they already pick
+up `Header = ChromeBg` from `ApplyTheme` and were not restyled.
 
 **The section contract**: `uiFunction` is `bool(T&)` — "did any widget in this section edit the
 component this frame", the OR of the returns the widgets already produce. The rule it establishes,
@@ -353,6 +600,12 @@ after-value then. Widgets with no active phase — a drag-drop assignment landin
 report their edit and commit in the same frame. A pending edit no frame of which reported an edit
 is dropped, which is what makes a click-without-drag and an opened-then-closed combo free. If the
 section stops being drawn mid-gesture, an end-of-frame flush commits what was recorded.
+
+**Header items sit outside that window.** The chevron, type icon, name, and `OverflowMenuButton`
+are submitted *before* the `GetActiveID()` read. Clicking them cannot mint a `ComponentEditCommand`
+— `activeOnEntry` already equals the header item, so the body sees no ActiveId change. Inner
+`Attr::Section` `CollapsingHeader`s sit *inside* the window; a click that grabs ActiveId with
+`Edited` staying false is dropped at commit, same as any click-without-drag.
 
 ### The generic (reflected) inspector
 
@@ -554,7 +807,7 @@ needs nothing: it is driven by `ComponentList`, so a new component type joins it
 
 **Ctrl+click** adds an entity to the selection or removes it, **Shift+click** selects everything
 between the anchor and the clicked entity, and a plain click replaces the selection. Every selected
-entity is highlighted in the hierarchy.
+entity is highlighted in the hierarchy (primary: solid accent; others: 40 % alpha).
 
 Shift-range works off `m_VisibleOrder`, the flattened tree the panel now records as it draws — the
 thing it used not to keep, since drawing recursively leaves the visible order existing only as the
@@ -568,8 +821,9 @@ completes, because mid-draw the flattened order only holds the nodes drawn so fa
 
 The design keeps a **primary** selection — the entity clicked last, `GetSelectedEntity()` — and adds
 the full set beside it as `GetSelection()`, primary first. That is why multi-select cost six call
-sites outside the panel instead of thirty: gizmos, the tag field and every prefab action still read
-the primary and did not change at all.
+sites outside the panel instead of thirty: the tag field and every prefab action still read
+the primary. The gizmo still *grabs* the primary, then applies the same world-space delta to the
+rest of the selection.
 
 | Behaviour | Rule |
 |---|---|
@@ -593,16 +847,41 @@ nothing.
 
 ## Content Browser panel
 
-[`ContentBrowserPanel`](../../GanymedEditor/source/Panels/ContentBrowserPanel.h) — a grid view of
-`assets/`. Two classes of entry are hidden: anything whose name starts with `.` (`.compiled/`, the
-asset compiler's output) and `.meta`/`.meta.bad` sidecars.
-Hiding the sidecars is not cosmetic — one per asset would double every row in the grid and offer
-**Import** on a file that is not an asset. They are the `AssetManager`'s to write, never a human's
-(see [assets.md](../engine/assets.md#the-meta-sidecar)):
+[`ContentBrowserPanel`](../../GanymedEditor/source/Panels/ContentBrowserPanel.h) — a `BeginPanel`
+view of `assets/`. Window title stays **Content Browser** (renaming would bust `imgui.ini`). Two
+classes of entry are hidden: anything whose name starts with `.` (the `.compiled/` mesh cache
+today) and `.meta`/`.meta.bad` sidecars. Hiding the sidecars is not cosmetic — one per asset would
+double every row and offer **Import** on a file that is not an asset. They are the
+`AssetManager`'s to write, never a human's (see [assets.md](../engine/assets.md#the-meta-sidecar)).
 
-- Directory/file icons, tinted by asset type (mesh blue, environment orange, scene green, texture
-  pink, material purple, script yellow, audio cyan). Double-click enters directories; the `<-` button goes up but can never
-  escape the asset root (path-normalized check).
+**Toolbar.** `SearchField` (case-insensitive **filename** substring across the whole `assets/`
+tree) and a sort popup (Name / Type; directories always first). Empty query shows the current
+folder only. Cold War's `+` add and toolbar Import are omitted: there is no create-asset path,
+and Import already lives on the file context menu. A dead `+` is worse than a missing one.
+
+**Breadcrumb** (`SurfaceSunken`). `←` / `→` history (two `std::vector<path>` stacks), `↑` parent,
+`ICON_LC_HOME` for the asset root, then clickable path segments. Every navigation path — history,
+parent, home, crumbs, sidebar, double-click — goes through `TryNavigate`, which is the
+path-normalized root-escape check the old `<-` button used to own alone.
+
+**Split.** A two-column `BeginTable` (`Resizable | BordersInnerV`); sidebar width persists in
+`imgui.ini`. Left: folder tree (directories only, Lucide folder glyphs). The current folder
+pushes `Header`/`HeaderHovered`/`HeaderActive` to Accent so `TextOnAccent` glyphs stay on a
+lilac fill — theme `Header` is ChromeBg (inspector sections), and ImGui uses that colour for
+an idle selected TreeNode, not `HeaderActive`. Right: grid or list of the current folder.
+Grid selection is a solid `Accent` cell fill (same contrast contract). List already pushed
+those Header colours. The legacy `ImGui::Columns` grid is gone.
+
+**Footer.** Visible item count (after the search filter) on the left; grid / list toggle on the
+right. Grid keeps the PNG directory/file thumbnails with `AssetTint`. List uses Lucide type icons.
+
+**Cache.** One recursive walk fills a flat index of every visible file and folder *and* the
+sidebar tree. It rebuilds when a watched directory's `last_write_time` moves, when
+`AssetWatcher` reports a reload, or every 0.25 s — `AssetWatcher` only polls *indexed files*,
+so an empty folder created in Explorer would never dirty from Reloads alone. Search and the
+current-folder view are filters of that index (`std::string::find` on a lowercase name stored
+at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
+
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
 - Right-click on an importable file (mesh/environment/texture/material/script/audio/prefab) →
@@ -674,6 +953,9 @@ so the first call always wins the delivery and the second type would never fire.
 | Want to… | Touch |
 |---|---|
 | New panel | Create under `Panels/`, own it in `EditorLayer`, call `OnImGuiRender`, dock it in the DockBuilder block |
+| New chrome colour | Add a token on `EditorTheme`, map it in `ApplyTheme` if it is an ImGui style colour, consume `Theme().X` — never a new literal |
+| Panel furniture | `EditorUI::BeginPanel`, `PanelToolbarRow`, `SearchField`, `ColumnHeaderRow`, `IconButton`, `ToolbarSeparator`, `OverflowMenuButton`, `RowActionIcons`, `StatusBarItem` — do not hand-roll chrome |
+| Host title bar | `EditorTitleBar.cpp`; File/Edit/View stay in `EditorLayer::UI_Menus` |
 | New component UI | `SceneHierarchyPanel::DrawComponents` (+ Add-Component popup) |
 | Custom canvas widget | `EditorWidgets.cpp`; one `InvisibleButton` spanning the canvas so `ActiveId` holds for the drag; return true only on a real value change |
 | New asset type in the browser | `AssetTypeFromExtension`, icon tint map, `IsImportableAsset`, then `EditorUI::AcceptAssetDrop(<type>)` at the consumer |

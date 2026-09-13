@@ -44,7 +44,7 @@ verbatim by the `ForEachType(ComponentList)` loop. The copy is made in two passe
 parent's `Children` names entities created later in the walk.
 
 `Scene`'s constructor wires the entt signals for tracked/init/fini component types, creates the
-`RenderContext` and `PhysicsSettings` singletons, registers the nine built-in systems, and asserts
+`RenderContext`, `PhysicsSettings` and `EditorViewFilter` singletons, registers the nine built-in systems, and asserts
 `ValidateOrdering()` passes.
 
 ## Entity
@@ -283,7 +283,16 @@ begins Renderer3D with the main camera (or the editor fallback), submits lights,
 meshes, **particles** (billboards queued into `ParticleRenderer`, mesh particles as ordinary
 `SubmitMesh` opaques), collider gizmos (or Jolt debug draw when enabled during play), ends the
 scene, then does the 2D pass (sprites) in its own render view. The editor path additionally draws
-the grid. Its ten view declarations are live documentation of exactly what rendering reads.
+the grid, and looks through `RenderContext::PreviewCamera` when the viewport dropdown has selected
+a scene camera (otherwise `EditorViewCamera`). Its ten view declarations are live documentation of
+exactly what rendering reads.
+`SkyView` includes `EntityId` so the editor hide filter can skip a hidden sky light.
+
+The editor outliner eye is honoured only on the editor path: `EditorViewFilter::HiddenEntities`
+(a pointer into panel-owned UUID sets) is expanded to a subtree set at the start of
+`OnUpdateEditor`, and every submit loop skips those entities. `OnUpdate` clears the set so Play
+and the runtime draw everything. Hidden entities therefore vanish from the entity-ID buffer and
+cannot be picked. This is an editor filter, not a runtime visibility component.
 
 Two play-mode policies live in this system:
 
@@ -312,14 +321,21 @@ Scene-wide state that is genuinely singular lives in `registry.ctx()`
 ([`SceneSingletons.h`](../../GanymedEngine/source/GanymedE/Scene/SceneSingletons.h)), accessed via
 singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (tooling):
 
-- **`RenderContext`** — `MainCamera` + `CameraTransform` (resolved per update by CameraSystem) and
+- **`RenderContext`** — `MainCamera` + `CameraTransform` (resolved per update by CameraSystem),
   `EditorViewCamera` (the editor's camera: the view camera in edit mode, the fallback in play
-  mode). Change-tracked (`SingletonTraits<RenderContext>::TrackChanges`). *Known misnomer:* now that
-  a non-editor host exists, this field is really "fallback view camera" and is simply null there.
-  Flagged as debt rather than renamed — the rename ripples through docs and editor for zero behaviour
-  change.
+  mode), and `PreviewCamera` (UUID{0} = editor camera; any other value is a scene
+  `CameraComponent` the viewport dropdown is looking through, consumed only by
+  `RenderSystem::OnUpdateEditor`). Change-tracked (`SingletonTraits<RenderContext>::TrackChanges`).
+  *Known misnomer:* now that a non-editor host exists, `EditorViewCamera` is really "fallback view
+  camera" and is simply null there. Flagged as debt rather than renamed — the rename ripples
+  through docs and editor for zero behaviour change.
 - **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `FixedTimestep` (1/60),
   `MaxStepsPerFrame` (5).
+- **`EditorViewFilter`** — editor-only. A pointer to the outliner's hidden-UUID set, asserted each
+  edit frame by `EditorLayer`. Null means draw everything. `RenderSystem::OnUpdateEditor` expands
+  each hidden UUID to its subtree via `CollectSubtree` and skips those submits (meshes, sprites,
+  lights, sky, particles, collider gizmos). Play/runtime ignore it, so a hidden entity still
+  simulates and draws in Play. Not serialized; `Scene::Copy` does not carry it.
 
 **Singletons are not carried by `Scene::Copy`.** The copy constructs a fresh `Scene`, whose
 constructor default-constructs its own `ctx()` entries, and then copies entities and components only.

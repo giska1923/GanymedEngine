@@ -51,7 +51,7 @@ namespace GanymedE {
 
 		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(
 			WindowProps(m_Specification.Name, m_Specification.Width, m_Specification.Height,
-				m_Specification.Fullscreen)));
+				m_Specification.Fullscreen, m_Specification.CustomTitleBar)));
 		m_Window->SetEventCallback(BIND_CALLBACK_FN(Application::OnEvent, this));
 
 		Renderer::Init();
