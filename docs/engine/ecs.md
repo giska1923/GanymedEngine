@@ -289,7 +289,14 @@ the flush runs with `IsUpdating` false and the immediate `Entity` API is allowed
 caller the **root's UUID at the call**, minted up front and pinned through
 `InstantiateOptions::RootUUID`, because the entity does not exist yet and a `PendingEntity` is
 meaningful only inside the frame it was made in. This is what `Scene.Spawn` is built on — see
-[scripting.md](scripting.md).
+[scripting.md](scripting.md). It is capped at `MaxSpawnsPerFrame` (64) and refuses past that with
+one warning per frame, because the queue only drains at the next flush and an unguarded script loop
+would otherwise queue without bound.
+
+`DestroyEntityTree` is its counterpart and destroys the whole subtree, deepest first. It is named
+apart from `DestroyEntity` rather than replacing it because `Scene::DestroyEntity` deliberately
+*unparents* children instead of destroying them — correct for deleting one authored entity, and the
+wrong reach for despawning a prefab instance.
 
 ## Graveyard
 

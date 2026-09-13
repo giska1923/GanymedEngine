@@ -6,7 +6,19 @@ an editor action. For an engine at this stage that is the conspicuous gap: "spaw
 runtime" is the first capability any gameplay prototype reaches for — projectiles, pickups, enemy
 waves, impact effects.
 
-This document is a plan, not a description. Nothing in it is built.
+**Complete.** P1–P5 all landed; this is the record of how, and of the three things the plan got
+wrong. It was written as a plan before any of it was built, and the phase notes were added as each
+one landed — so where the two disagree, the phase note is what happened.
+
+The three corrections worth reading before trusting the decisions above:
+
+- **Decision 1 was invalid as written.** "The script gets a `uint64`" — sol2 throws for any
+  `uint64_t` above `INT64_MAX` under `SOL_ALL_SAFETIES_ON`, which is about half of all UUIDs. P1
+  found it, and found that `Entity:GetUUID()` already had the bug.
+- **The cached form is the parsed document, not a detached `Scene`** (P2), and the editor's template
+  cache did *not* become the manager's cache — they hold different things.
+- **P4 used a scan, not the dirty set Decision 3 leaned toward**, and "pays nothing per frame" is
+  not literally true: ~150 ns per rigid body.
 
 ---
 
@@ -197,8 +209,21 @@ all.
 before, so a despawned projectile would have kept colliding invisibly with the body count growing
 for the session.
 
-**P5 — despawn and the spawn cap.** Decision 4. Gate: a script that spawns in an unguarded loop is
-refused with a named warning rather than exhausting memory.
+**P5 — despawn and the spawn cap — done.** `Entity:Destroy()` in Lua, on
+`CommandQueue::DestroyEntityTree`, plus a 64-per-frame cap. Gate met:
+
+| | |
+|---|---|
+| a 4-entity prefab spawns: 2 → 6 entities | PASS |
+| `e:Destroy()` from Lua returns it to 2 — the **whole subtree** | PASS |
+| 200 requests in one frame → 64 accepted, 136 refused | PASS |
+| exactly one warning for the frame, naming the count | PASS |
+
+The subtree half was not in the plan and is the more important of the two. `Scene::DestroyEntity`
+*unparents* children rather than destroying them — right for deleting one hand-authored entity,
+wrong for a projectile going away, whose children would have accumulated for the session. P4's test
+missed it because `SparkBurst` is a single entity; this phase's test authors a prefab with children
+specifically to catch it.
 
 ---
 

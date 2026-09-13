@@ -112,6 +112,30 @@ namespace GanymedE::ECS {
 
 		void DestroyEntity(Entity entity);
 
+		// Destroy `root` **and everything under it**, which is what despawning a prefab instance
+		// means - an instance is a subtree, and `Scene::DestroyEntity` deliberately *unparents*
+		// children rather than destroying them, leaving them in the scene as roots. That is the
+		// right behaviour for deleting one hand-authored entity and the wrong one for a
+		// projectile going away: its children would accumulate for the rest of the session.
+		//
+		// Named apart from `DestroyEntity` rather than changing it, because two functions with
+		// the same name and different reach is exactly the trap this note exists to describe.
+		void DestroyEntityTree(Entity root);
+
+		// Prefab spawns accepted per frame.
+		//
+		// A guard against a script typo, not a design budget: `while true do Scene.Spawn(...) end`
+		// is one line and would otherwise queue until the machine gives out, because the queue
+		// only drains at the next flush. Anything past the cap is refused and `Scene.Spawn`
+		// returns nil, so a script can notice; the queue logs **once per frame** with the count
+		// rather than once per refusal, or a runaway loop would trade memory exhaustion for log
+		// exhaustion.
+		//
+		// 64 is chosen to sit well above deliberate use - a bullet-hell firing every frame is
+		// single digits, and 64/frame is ~3,800 subtrees a second - and well below anything that
+		// threatens the process.
+		static constexpr std::size_t MaxSpawnsPerFrame = 64;
+
 		bool Empty() const
 		{
 			return m_RemoveOps.empty() && m_AddOps.empty() && m_CreateOps.empty()
@@ -151,5 +175,9 @@ namespace GanymedE::ECS {
 
 		std::vector<Entity> m_CreatedEntities;   // index -> real entity, valid only during a flush
 		size_t m_PendingCount = 0;
+
+		// Reset by Flush, so the cap is per frame rather than per session.
+		std::size_t m_SpawnsThisFrame = 0;
+		std::size_t m_SpawnsRefused = 0;
 	};
 }

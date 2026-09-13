@@ -47,6 +47,15 @@ declare interface Entity {
 	GetChildByName(name: string): Entity | undefined;
 
 	/**
+	 * Despawn this entity **and everything under it**.
+	 *
+	 * Takes effect on the next frame, the mirror of `Scene.Spawn` and for the same reason:
+	 * structural changes from inside the update are queued. The entity stays usable for the
+	 * rest of this frame.
+	 */
+	Destroy(): void;
+
+	/**
 	 * Returns a COPY. Mutate it, then call the setter.
 	 *
 	 * The setter is not a style preference: it routes the write through the engine's change
@@ -325,6 +334,9 @@ declare namespace Scene {
 	 *
 	 * Omitting both `position` and `rotation` places the root where the `.gprefab` says.
 	 * Rotation is Euler angles in radians, matching `Entity.SetRotation`.
+	 *
+	 * Returns `undefined` if the per-frame spawn cap (64) is hit, so a loop that runs away is
+	 * refused rather than allowed to exhaust memory. Check the result if you spawn in bulk.
 	 */
 	function Spawn(path: string, position?: Vec3, rotation?: Vec3): number | undefined;
 }

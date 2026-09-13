@@ -138,7 +138,7 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 `Get/SetScale`, `HasRigidBody`, the physics, animation, audio and particle calls below), `Input`,
 `Key`, `Mouse`, `Log`
 (routed to the **client** logger — script output is game output),
-`Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.Spawn`,
+`Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.Spawn`, `Entity:Destroy`,
 `Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
 
 > **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
@@ -175,6 +175,18 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 > A path that is not an indexed asset, or is indexed as something other than a prefab, is refused
 > with a named warning and `nil` — a script spawning a texture is a typo, and letting it fail a
 > frame later would put the diagnostic nowhere near the call that caused it.
+>
+> **`Entity:Destroy()` is the mirror**, and takes the whole subtree. A prefab instance *is* a
+> subtree, and `Scene::DestroyEntity` deliberately unparents children rather than destroying them —
+> right for deleting one hand-authored entity, wrong for a projectile going away, whose children
+> would otherwise accumulate for the session. Same next-frame timing, for the same reason.
+>
+> **Spawns are capped at 64 per frame** (`ECS::CommandQueue::MaxSpawnsPerFrame`). That is a guard
+> against `while true do Scene.Spawn(...) end`, not a design budget: the queue only drains at the
+> next flush, so an unguarded loop would queue until the machine gave out. Past the cap `Spawn`
+> returns `nil` and the queue logs **once per frame** with the count — once per refusal would trade
+> memory exhaustion for log exhaustion. Deliberate use is nowhere near it; a bullet-hell firing
+> every frame is single digits.
 
 > **The `Log` global collides with RmlUi's.** RmlUi's Lua plugin registers its own `Log` usertype,
 > and it loads after `ScriptEngine::Init`, so it shadowed ours until `UIEngine` started calling

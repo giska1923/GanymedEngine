@@ -1,6 +1,7 @@
 #include "gepch.h"
 
 #include <optional>
+#include <unordered_set>
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/PrefabSerializer.h"
 #include "CommandQueue.h"
@@ -29,8 +30,39 @@ namespace GanymedE::ECS {
 		});
 	}
 
+	void CommandQueue::DestroyEntityTree(Entity root)
+	{
+		m_DestroyOps.emplace_back([root](Scene& scene)
+		{
+			if (!scene.Reg().valid((entt::entity)root))
+				return;
+
+			// Collected first, then destroyed: the walk reads RelationshipComponent, and
+			// destroying as it goes would be reading a hierarchy it is dismantling. The same
+			// shape the editor's delete uses.
+			std::vector<Entity> subtree;
+			std::unordered_set<UUID> visited;
+			scene.CollectSubtree(root, subtree, visited);
+
+			// Deepest first, so each entity still has a valid parent link to detach from.
+			for (auto it = subtree.rbegin(); it != subtree.rend(); ++it)
+			{
+				if (scene.Reg().valid((entt::entity)*it))
+					scene.DestroyEntity(*it);
+			}
+		});
+	}
+
 	UUID CommandQueue::InstantiatePrefab(AssetHandle source, const TransformComponent* rootTransform)
 	{
+		if (m_SpawnsThisFrame >= MaxSpawnsPerFrame)
+		{
+			++m_SpawnsRefused;
+			return UUID{ 0 };
+		}
+
+		++m_SpawnsThisFrame;
+
 		// Minted here so the caller has something to hold before the entity exists. The
 		// instantiate below pins it rather than generating its own.
 		const UUID rootID;
@@ -72,6 +104,17 @@ namespace GanymedE::ECS {
 		auto pendingOps = std::exchange(m_PendingComponentOps, {});
 		auto destroyOps = std::exchange(m_DestroyOps, {});
 		const size_t pendingCount = std::exchange(m_PendingCount, 0);
+
+		// Once per frame with the total, not once per refusal: a runaway loop would otherwise
+		// trade memory exhaustion for log exhaustion.
+		if (const std::size_t refused = std::exchange(m_SpawnsRefused, 0); refused > 0)
+		{
+			GE_CORE_WARN("Spawn cap: {0} prefab spawn(s) refused this frame - the cap is {1}. A "
+				"script spawning in an unguarded loop is the usual cause; Scene.Spawn returned "
+				"nil for each of them.", refused, MaxSpawnsPerFrame);
+		}
+
+		m_SpawnsThisFrame = 0;
 
 		// The order exists so that same-frame remove + re-add works, and so a newly created entity
 		// can have components attached in the same frame it is created.

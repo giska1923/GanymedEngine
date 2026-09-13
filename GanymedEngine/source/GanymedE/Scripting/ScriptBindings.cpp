@@ -213,6 +213,20 @@ namespace GanymedE {
 					MarkTransformChanged(e);
 				},
 
+				// Despawn. Queued like every structural change from inside an update, so the
+				// entity survives the rest of this frame and is gone from the next - the mirror
+				// of Scene.Spawn's delay, and for the same reason.
+				//
+				// Takes the **whole subtree**: a prefab instance is a subtree, and leaving its
+				// children behind as roots is the one outcome nobody wants. A script holding a
+				// child's id will find it gone too, which is the same as its parent going.
+				"Destroy", [](Entity& e)
+				{
+					Scene* scene = Context();
+					if (scene && e)
+						scene->Commands().DestroyEntityTree(e);
+				},
+
 				"HasRigidBody",      [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
 				"HasAnimator",       [](Entity& e) { return e.HasComponent<AnimatorComponent>(); },
 				"HasAudioSource",    [](Entity& e) { return e.HasComponent<AudioSourceComponent>(); },
@@ -630,8 +644,14 @@ namespace GanymedE {
 				const UUID id = context->Commands().InstantiatePrefab(
 					handle, placed ? &transform : nullptr);
 
+				// Refused by the per-frame spawn cap. Nil rather than a zero id, so a script
+				// that checks its return sees the same "did not happen" it gets from a bad path;
+				// the queue has already said why, once for the whole frame.
+				if (id == UUID{ 0 })
+					return sol::optional<int64_t>(sol::nullopt);
+
 				// int64, for the reason GetUUID returns int64 - see the comment there.
-				return static_cast<int64_t>(static_cast<uint64_t>(id));
+				return sol::optional<int64_t>(static_cast<int64_t>(static_cast<uint64_t>(id)));
 			};
 		}
 
@@ -713,6 +733,7 @@ namespace GanymedE {
 		RegisterEntity(lua);
 		RegisterScriptGlobals(lua);
 	}
+
 
 
 }

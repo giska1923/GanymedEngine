@@ -29,18 +29,17 @@ documented.** A file here is a promise, not a description.
 
 | Document | Covers | Items |
 |---|---|---|
-| [RUNTIME_PREFAB_SPAWNING.md](RUNTIME_PREFAB_SPAWNING.md) | Milestone plan: scripts cannot instantiate a prefab at all | 5 phases |
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred | 1 (parked) |
 | [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
 | [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
 | [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, whether to adopt Tracy | 3 |
 
-**The largest open item is a milestone rather than a fix:**
-[RUNTIME_PREFAB_SPAWNING.md](RUNTIME_PREFAB_SPAWNING.md). A script cannot instantiate a prefab —
-there is no binding, and every `PrefabSerializer::Instantiate` call site is an editor gesture. For
-an engine that has prefabs, scripting and physics side by side, that is the conspicuous gap, and
-planning it turned up a latent bug worth knowing about on its own: `PhysicsScene::CreateBodies` runs
-only from `Start()`, so **any entity that gains a rigid body during play never simulates**.
+**Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
+managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three
+things the plan got wrong, is in
+[`docs/history/RUNTIME_PREFAB_SPAWNING.md`](../history/RUNTIME_PREFAB_SPAWNING.md). It also fixed a
+latent bug that was never about spawning: `PhysicsScene::CreateBodies` ran only from `Start()`, so
+**any** entity that gained a rigid body during play never simulated.
 
 **Priority among the remaining fixes, as a recommendation rather than a schedule:** **Linux is now built and run** — all
 three configurations, editor and runtime, with the status table in
