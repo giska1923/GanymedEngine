@@ -1,4 +1,9 @@
 #include "gepch.h"
+
+// See the note in WindowsWindow.h: this TU is compiled on every platform and the guard is what
+// keeps that harmless. dwmapi, windowsx and GLFW's Win32 native header are all inside it.
+#ifdef GE_PLATFORM_WINDOWS
+
 #include "Platform/Windows/WindowsWindow.h"
 
 #include "GanymedE/events/ApplicationEvent.h"
@@ -408,3 +413,5 @@ namespace GanymedE {
 		return CallWindowProcW(prev, hwnd, msg, wParam, lParam);
 	}
 }
+
+#endif   // GE_PLATFORM_WINDOWS
