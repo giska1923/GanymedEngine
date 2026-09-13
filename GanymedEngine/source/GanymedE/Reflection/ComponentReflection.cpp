@@ -376,6 +376,17 @@ namespace GanymedE::Reflection {
 				.data<&RigidBodyComponent::LockRotation>("LockRotation")
 					.custom<Attr>(Attr{}.Label("Lock Rotation"));
 
+			GE_REFLECT_COMPONENT(CharacterControllerComponent)
+				.custom<Attr>(Attr{}.Label("Character Controller"))
+				.data<&CharacterControllerComponent::MaxSlopeAngle>("MaxSlopeAngle")
+					.custom<Attr>(Attr{}.Label("Max Slope Angle").Range(0.0f, 85.0f).Speed(0.5f))
+				.data<&CharacterControllerComponent::StepHeight>("StepHeight")
+					.custom<Attr>(Attr{}.Label("Step Height").Range(0.0f, 2.0f).Speed(0.01f))
+				.data<&CharacterControllerComponent::StickToFloor>("StickToFloor")
+					.custom<Attr>(Attr{}.Label("Stick To Floor"))
+				.data<&CharacterControllerComponent::Mass>("Mass")
+					.custom<Attr>(Attr{}.Range(0.001f, 100000.0f).Speed(0.05f));
+
 			// Flatten on Material is not cosmetic: SceneSerializer emits Friction and Restitution
 			// as SIBLINGS of HalfExtents, never under a "Material" sub-map. Without this flag a
 			// generic writer would nest them and invalidate every collider in every saved scene.

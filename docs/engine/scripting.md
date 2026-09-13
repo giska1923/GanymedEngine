@@ -353,6 +353,25 @@ if sparks then
 end
 ```
 
+### Characters
+
+`Entity:SetLinearVelocity`, `GetLinearVelocity` and the rest accept a character controller as well
+as a rigid body, so a script does not need to know which it is driving. `Entity:IsGrounded()`
+answers only for characters, and only for genuinely walkable ground — a steep slope reads false.
+`AddForce` is the one that does not carry over: a `CharacterVirtual` has no mass in the solver, so
+it warns once and does nothing. `AddImpulse` works, as a velocity change of `impulse / Mass`.
+
+```lua
+local v = self.entity:GetLinearVelocity()
+self.entity:SetLinearVelocity(Vec3(moveX, v.y, moveZ))   -- keep gravity's work
+if self.entity:IsGrounded() and Input.IsKeyPressed(Key.Space) then
+    self.entity:AddImpulse(Vec3(0, 350, 0))
+end
+```
+
+See [physics.md](physics.md#character-controllers) for why a character is its own component rather
+than a flag on `RigidBodyComponent`.
+
 ### Physics queries
 
 `Physics.Raycast(origin, direction, maxDistance [, ignoreEntity])` returns a table or **nil**:

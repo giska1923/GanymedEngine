@@ -22,6 +22,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
@@ -468,6 +469,11 @@ namespace GanymedE {
 
 		std::unordered_map<UUID, JPH::BodyID> EntityToBody;
 		std::unordered_map<uint32_t, UUID> BodyToEntity;
+
+		// Characters are not bodies and cannot live in the map above: they have no BodyID, the
+		// body interface knows nothing about them, and they are stepped by hand rather than by
+		// the solver. A second map is the honest representation of that.
+		std::unordered_map<UUID, JPH::Ref<JPH::CharacterVirtual>> EntityToCharacter;
 	};
 
 	static void EnsureJoltInitialized()
@@ -710,6 +716,123 @@ namespace GanymedE {
 		}
 	}
 
+	// Same contract as CreateBodies: idempotent, run every frame, and it skips anything that
+	// already has a controller.
+	void PhysicsScene::CreateCharacters(Scene* scene)
+	{
+		if (!scene || !m_Impl)
+			return;
+
+		auto& registry = scene->Reg();
+		auto view = registry.view<IDComponent, TransformComponent, CharacterControllerComponent>();
+		for (auto entityHandle : view)
+		{
+			Entity entity{ entityHandle, scene };
+			UUID uuid = entity.GetUUID();
+
+			if (m_Impl->EntityToCharacter.find(uuid) != m_Impl->EntityToCharacter.end())
+				continue;
+
+			if (!entity.HasComponent<CapsuleColliderComponent>())
+			{
+				if (m_WarnedNoCollider.insert(uuid).second)
+					GE_CORE_WARN("'{0}' has a CharacterControllerComponent but no capsule "
+						"collider; a character takes its shape from one, so it is skipped",
+						entity.GetName());
+				continue;
+			}
+
+			const auto& cc = entity.GetComponent<CharacterControllerComponent>();
+			const auto& col = entity.GetComponent<CapsuleColliderComponent>();
+
+			glm::mat4 world = scene->GetWorldSpaceTransform(entity);
+			glm::vec3 worldScale = GetTransformScale(world);
+			glm::vec3 worldPos = glm::vec3(world[3]);
+			glm::quat worldRot = GetTransformRotation(world);
+
+			// Same scale baking as the body path: Jolt shapes do not scale.
+			float radius = glm::max(col.Radius * glm::max(worldScale.x, worldScale.z), 0.001f);
+			float halfHeight = glm::max(col.HalfHeight * worldScale.y, 0.001f);
+
+			JPH::CapsuleShapeSettings capsuleSettings(halfHeight, radius);
+			auto shapeResult = capsuleSettings.Create();
+			if (shapeResult.HasError())
+			{
+				GE_CORE_ERROR("Character capsule create failed for '{0}': {1}",
+					entity.GetName(), shapeResult.GetError().c_str());
+				continue;
+			}
+
+			JPH::CharacterVirtualSettings settings;
+			settings.mShape = shapeResult.Get();
+			settings.mMass = cc.Mass;
+			settings.mMaxSlopeAngle = glm::radians(glm::clamp(cc.MaxSlopeAngle, 0.0f, 85.0f));
+
+			// Without a supporting plane at the capsule's base, Jolt lets the character's round
+			// bottom roll over ledges it should stop at. The offset is the radius, which puts
+			// the plane exactly at the bottom of the hemisphere.
+			settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -radius);
+
+			auto character = new JPH::CharacterVirtual(&settings,
+				JPH::RVec3(worldPos.x, worldPos.y, worldPos.z),
+				JPH::Quat(worldRot.x, worldRot.y, worldRot.z, worldRot.w),
+				static_cast<uint64_t>(uuid),
+				&m_Impl->System);
+
+			m_Impl->EntityToCharacter[uuid] = character;
+
+			if (entity.HasComponent<RigidBodyComponent>() && m_WarnedNoCollider.insert(uuid).second)
+			{
+				GE_CORE_WARN("'{0}' has both a CharacterControllerComponent and a "
+					"RigidBodyComponent. A character is not a body; the controller wins and the "
+					"body is ignored.", entity.GetName());
+			}
+		}
+	}
+
+	// Characters are stepped by hand, after the solver has moved everything they might stand on.
+	// ExtendedUpdate is Jolt's own combination of Update + StickToFloor + WalkStairs, and
+	// WalkStairs is the whole reason this exists: it is what lets a character walk up a ledge
+	// instead of stopping dead against it, and what makes it slide along a wall rather than
+	// cancelling its velocity into one.
+	void PhysicsScene::StepCharacters(float fixedDeltaTime)
+	{
+		if (!m_Impl)
+			return;
+
+		const JPH::Vec3 gravity = m_Impl->System.GetGravity();
+
+		for (auto& [uuid, character] : m_Impl->EntityToCharacter)
+		{
+			Entity entity = m_Scene ? m_Scene->FindEntityByUUID(uuid) : Entity{};
+			if (!entity || !entity.HasComponent<CharacterControllerComponent>())
+				continue;
+
+			const auto& cc = entity.GetComponent<CharacterControllerComponent>();
+
+			// Gravity is integrated here rather than by the solver, because nothing else will:
+			// a CharacterVirtual is not in the simulation. Only while airborne - accumulating it
+			// on the ground builds a downward velocity that fights StickToFloor and makes the
+			// character judder on slopes.
+			JPH::Vec3 velocity = character->GetLinearVelocity();
+			if (character->GetGroundState() != JPH::CharacterBase::EGroundState::OnGround)
+				velocity += gravity * fixedDeltaTime;
+			else
+				velocity.SetY(glm::max(velocity.GetY(), 0.0f));
+			character->SetLinearVelocity(velocity);
+
+			JPH::CharacterVirtual::ExtendedUpdateSettings update;
+			update.mWalkStairsStepUp = JPH::Vec3(0.0f, glm::max(cc.StepHeight, 0.0f), 0.0f);
+			if (!cc.StickToFloor)
+				update.mStickToFloorStepDown = JPH::Vec3::sZero();
+
+			character->ExtendedUpdate(fixedDeltaTime, gravity, update,
+				m_Impl->System.GetDefaultBroadPhaseLayerFilter(Layers::MOVING),
+				m_Impl->System.GetDefaultLayerFilter(Layers::MOVING),
+				{}, {}, m_Impl->TempAllocator);
+		}
+	}
+
 	// The other half of the reconcile: a body whose entity is gone, or which lost its
 	// RigidBodyComponent, has to leave Jolt or it keeps colliding with things invisibly and the
 	// body count grows for the rest of the session. Nothing could destroy an entity mid-run
@@ -744,6 +867,23 @@ namespace GanymedE {
 
 			it = m_Impl->EntityToBody.erase(it);
 		}
+
+		// Characters have no BodyID to release; dropping the Ref is the whole of it, since
+		// CharacterVirtual owns nothing in the solver.
+		for (auto it = m_Impl->EntityToCharacter.begin(); it != m_Impl->EntityToCharacter.end(); )
+		{
+			Entity entity = scene->FindEntityByUUID(it->first);
+			if (entity && entity.HasComponent<CharacterControllerComponent>())
+			{
+				++it;
+				continue;
+			}
+
+			m_PreviousPoses.erase(it->first);
+			m_CurrentPoses.erase(it->first);
+			m_WarnedNoCollider.erase(it->first);
+			it = m_Impl->EntityToCharacter.erase(it);
+		}
 	}
 
 	// Called once per frame from PhysicsSystem, before stepping - so a prefab spawned by a
@@ -755,6 +895,7 @@ namespace GanymedE {
 
 		RemoveDeadBodies(scene);
 		CreateBodies(scene);
+		CreateCharacters(scene);
 	}
 
 	void PhysicsScene::DestroyBodies()
@@ -787,6 +928,19 @@ namespace GanymedE {
 		{
 			JPH::RVec3 p = bodyInterface.GetPosition(bodyID);
 			JPH::Quat r = bodyInterface.GetRotation(bodyID);
+			BodyPose pose;
+			pose.Position = { (float)p.GetX(), (float)p.GetY(), (float)p.GetZ() };
+			pose.Rotation = glm::normalize(glm::quat(r.GetW(), r.GetX(), r.GetY(), r.GetZ()));
+			out[uuid] = pose;
+		}
+
+		// Characters interpolate on the same path as dynamic bodies. Their rotation is whatever
+		// was authored - nothing in the controller turns them - so it is carried through rather
+		// than read back, and a scripted yaw survives the round trip.
+		for (auto& [uuid, character] : m_Impl->EntityToCharacter)
+		{
+			JPH::RVec3 p = character->GetPosition();
+			JPH::Quat r = character->GetRotation();
 			BodyPose pose;
 			pose.Position = { (float)p.GetX(), (float)p.GetY(), (float)p.GetZ() };
 			pose.Rotation = glm::normalize(glm::quat(r.GetW(), r.GetX(), r.GetY(), r.GetZ()));
@@ -832,6 +986,10 @@ namespace GanymedE {
 		constexpr int cCollisionSteps = 1;
 		m_Impl->System.Update(fixedDeltaTime, cCollisionSteps, &m_Impl->TempAllocator, &m_Impl->JobSystem);
 
+		// After the solver, so a character walking on a moving platform sees where the platform
+		// ended up this step rather than where it started.
+		StepCharacters(fixedDeltaTime);
+
 		CapturePoses(m_CurrentPoses);
 
 		std::vector<PendingBodyPair> pending;
@@ -861,12 +1019,19 @@ namespace GanymedE {
 		for (auto& [uuid, current] : m_CurrentPoses)
 		{
 			Entity entity = scene->FindEntityByUUID(uuid);
-			if (!entity || !entity.HasComponent<RigidBodyComponent>())
+			if (!entity)
 				continue;
 
-			auto& rb = entity.GetComponent<RigidBodyComponent>();
-			if (rb.Type != RigidBodyType::Dynamic)
-				continue;
+			// A character writes back unconditionally; a body only when it is Dynamic, since
+			// Static never moves and Kinematic is driven the other way, from the transform.
+			const bool isCharacter = entity.HasComponent<CharacterControllerComponent>();
+			if (!isCharacter)
+			{
+				if (!entity.HasComponent<RigidBodyComponent>())
+					continue;
+				if (entity.GetComponent<RigidBodyComponent>().Type != RigidBodyType::Dynamic)
+					continue;
+			}
 
 			BodyPose previous = current;
 			auto prevIt = m_PreviousPoses.find(uuid);
@@ -938,7 +1103,23 @@ namespace GanymedE {
 		if (!m_Active || !m_Impl)
 			return false;
 
-		return m_Impl->EntityToBody.find(entity) != m_Impl->EntityToBody.end();
+		return m_Impl->EntityToBody.find(entity) != m_Impl->EntityToBody.end()
+			|| m_Impl->EntityToCharacter.find(entity) != m_Impl->EntityToCharacter.end();
+	}
+
+	bool PhysicsScene::IsGrounded(UUID entity) const
+	{
+		if (!m_Active || !m_Impl)
+			return false;
+
+		auto it = m_Impl->EntityToCharacter.find(entity);
+		if (it == m_Impl->EntityToCharacter.end())
+			return false;
+
+		// OnGround only. OnSteepGround means it is touching a slope it cannot climb and is
+		// sliding down it, which every gameplay use of "grounded" - jumping, footsteps, a
+		// landing animation - wants to treat as not grounded.
+		return it->second->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
 	}
 
 	PhysicsScene::RaycastHit PhysicsScene::CastRay(const glm::vec3& origin,
@@ -1011,6 +1192,12 @@ namespace GanymedE {
 		if (!m_Active || !m_Impl)
 			return;
 
+		if (auto ch = m_Impl->EntityToCharacter.find(entity); ch != m_Impl->EntityToCharacter.end())
+		{
+			ch->second->SetLinearVelocity(JPH::Vec3(velocity.x, velocity.y, velocity.z));
+			return;
+		}
+
 		auto it = m_Impl->EntityToBody.find(entity);
 		if (it == m_Impl->EntityToBody.end())
 			return;
@@ -1026,6 +1213,12 @@ namespace GanymedE {
 		if (!m_Active || !m_Impl)
 			return glm::vec3(0.0f);
 
+		if (auto ch = m_Impl->EntityToCharacter.find(entity); ch != m_Impl->EntityToCharacter.end())
+		{
+			const JPH::Vec3 v = ch->second->GetLinearVelocity();
+			return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
+		}
+
 		auto it = m_Impl->EntityToBody.find(entity);
 		if (it == m_Impl->EntityToBody.end())
 			return glm::vec3(0.0f);
@@ -1038,6 +1231,19 @@ namespace GanymedE {
 	{
 		if (!m_Active || !m_Impl)
 			return;
+
+		// A CharacterVirtual has no momentum for the solver to change, but the gameplay meaning
+		// of an impulse - a jump, a knockback - is a velocity change of J/m, and that it can do.
+		if (auto ch = m_Impl->EntityToCharacter.find(entity); ch != m_Impl->EntityToCharacter.end())
+		{
+			Entity e = m_Scene ? m_Scene->FindEntityByUUID(entity) : Entity{};
+			const float mass = (e && e.HasComponent<CharacterControllerComponent>())
+				? glm::max(e.GetComponent<CharacterControllerComponent>().Mass, 0.001f)
+				: 70.0f;
+			ch->second->SetLinearVelocity(ch->second->GetLinearVelocity()
+				+ JPH::Vec3(impulse.x, impulse.y, impulse.z) / mass);
+			return;
+		}
 
 		auto it = m_Impl->EntityToBody.find(entity);
 		if (it == m_Impl->EntityToBody.end())
@@ -1052,6 +1258,16 @@ namespace GanymedE {
 	{
 		if (!m_Active || !m_Impl)
 			return;
+
+		// No mass in the solver means no F = ma to apply. Saying so once beats a call that
+		// looks like it worked; SetLinearVelocity or AddImpulse is what a character wants.
+		if (m_Impl->EntityToCharacter.find(entity) != m_Impl->EntityToCharacter.end())
+		{
+			if (m_WarnedNoCollider.insert(entity).second)
+				GE_CORE_WARN("AddForce on a character controller does nothing - a CharacterVirtual "
+					"has no mass in the solver. Use SetLinearVelocity or AddImpulse.");
+			return;
+		}
 
 		auto it = m_Impl->EntityToBody.find(entity);
 		if (it == m_Impl->EntityToBody.end())

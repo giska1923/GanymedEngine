@@ -403,6 +403,40 @@ namespace GanymedE {
 		RigidBodyComponent(const RigidBodyComponent&) = default;
 	};
 
+	// A walking character, as opposed to a thing that falls over.
+	//
+	// Not a RigidBodyComponent with extra fields, and not a flag on one, because a
+	// CharacterVirtual is not a body: it has no mass in the solver, nothing pushes it, and it
+	// moves by collide-and-slide rather than by integration. Authoring it as its own component
+	// is what Unity and Unreal both do, for the same reason.
+	//
+	// Takes its shape from a CapsuleColliderComponent, the same rule rigid bodies follow. An
+	// entity with both this and a RigidBodyComponent is a contradiction; the character wins and
+	// the body is skipped, with one warning naming the entity.
+	struct CharacterControllerComponent
+	{
+		// Steeper than this and the character slides rather than climbing. 50 deg is Jolt's
+		// default and roughly the games convention.
+		float MaxSlopeAngle = 50.0f;
+
+		// How high a ledge the character steps onto rather than stopping at. This is the thing a
+		// velocity-driven rigid body cannot do at all; a capsule's bottom hemisphere happens to
+		// ride small kerbs, but nothing above them.
+		float StepHeight = 0.4f;
+
+		// Pushes the character back down onto the floor after a step, so walking off a shallow
+		// rise does not launch it into a ballistic arc. Off means it leaves the ground on every
+		// bump.
+		bool StickToFloor = true;
+
+		// Only used against *dynamic* bodies the character pushes. It has no bearing on how the
+		// character itself moves - nothing accelerates it but its own velocity.
+		float Mass = 70.0f;
+
+		CharacterControllerComponent() = default;
+		CharacterControllerComponent(const CharacterControllerComponent&) = default;
+	};
+
 	struct BoxColliderComponent
 	{
 		glm::vec3 HalfExtents{ 0.5f, 0.5f, 0.5f };

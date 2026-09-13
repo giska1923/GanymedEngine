@@ -161,6 +161,9 @@ precedent.
 
 ### Physics (pure data — Jolt never appears here)
 
+- **`CharacterControllerComponent`** — a walking character (Jolt `CharacterVirtual`): max slope,
+  step height, stick-to-floor, mass. Takes its shape from a capsule collider, and replaces rather
+  than accompanies a rigid body. See [physics.md](physics.md#character-controllers).
 - **`RigidBodyComponent`** — `Static | Dynamic | Kinematic`, mass, linear/angular damping,
   `UseGravity`, `LockRotation` (forbids rotation while keeping translation — what an upright
   walking capsule needs; see [physics.md](physics.md#locked-rotation)).

@@ -169,7 +169,12 @@ Two options, and they are not the same size:
   capsule that stays upright. Does **not** get step-up over a kerb, slope limits, or
   not-sticking-to-walls.
 - **`CharacterVirtual`** — Jolt's kinematic character controller. Medium. Gets all of the above,
-  and is what a production engine ships.
+  and is what a production engine ships. **DONE** — built after P1's gate failed on sticking, which
+  is the trigger Decision 1 set. `CharacterControllerComponent`, stepped after the solver, with
+  `IsGrounded` in Lua. Measured A/B against the flag on the same wall with the same push: the
+  character slid **10.07 m** along it and carried on past its end; the rotation-locked capsule slid
+  **0.00 m** and had already stopped dead against a 0.15 m kerb. See
+  [physics.md](../engine/physics.md#character-controllers).
 
 Start with the flag, because it unblocks P1 in an afternoon and the game will say whether the rest
 is needed. See Decision 1 — this is the call I am least sure about.
