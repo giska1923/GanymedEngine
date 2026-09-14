@@ -231,6 +231,12 @@ namespace GanymedE {
 		}
 
 		// RigidBodyType persists as its ordinal, which is why that enum is append-only.
+		if (entity.HasComponent<CharacterControllerComponent>())
+		{
+			WriteReflectedComponent(out, "CharacterControllerComponent",
+				entity.GetComponent<CharacterControllerComponent>());
+		}
+
 		if (entity.HasComponent<RigidBodyComponent>())
 		{
 			WriteReflectedComponent(out, "RigidBodyComponent",
@@ -649,6 +655,13 @@ namespace GanymedE {
 		{
 			ReadReflectedComponent(particleEmitterComponent,
 				deserializedEntity.AddComponent<ParticleEmitterComponent>());
+		}
+
+		auto characterComponent = entityNode["CharacterControllerComponent"];
+		if (characterComponent)
+		{
+			ReadReflectedComponent(characterComponent,
+				deserializedEntity.AddComponent<CharacterControllerComponent>());
 		}
 
 		auto rigidBodyComponent = entityNode["RigidBodyComponent"];

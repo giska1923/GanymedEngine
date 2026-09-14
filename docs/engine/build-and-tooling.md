@@ -155,9 +155,18 @@ Other build facts that have bitten before (details in
   dragging in whatever *it* referenced. The failure arrives as undefined references naming
   a file that is no longer in the repository, which is why it reads as impossible. The fix
   is to delete the build tree for that configuration (`bin/<cfg>-linux-x86_64` and
-  `temp/<cfg>-linux-x86_64`); `make clean` does the same. MSBuild does not have this
-  behaviour — its `Lib` task rebuilds the archive from the project's current object list —
-  so this is a Linux/macOS-only trap, and one Windows cannot warn you about.
+  `temp/<cfg>-linux-x86_64`); `make clean` does the same.
+- **MSBuild has a different stale-object failure with the same shape.** This was first written up
+  as a Linux-only trap on the grounds that the `Lib` task rebuilds the archive from the project's
+  current object list. It does — but it rebuilds it from whatever `.obj` files are *on disk*, and
+  it will not recompile one whose source has not changed. An object compiled under older settings
+  therefore survives in the `.lib` indefinitely, and if nothing references it, nothing notices.
+  Adding the first reference to `CharacterVirtual` produced
+  `Jolt.lib(CharacterVirtual.obj) : fatal error LNK1163: invalid selection for COMDAT section`,
+  from an object that had been sitting in the archive unlinked. A `/t:Rebuild` on that one project
+  fixed it. The mechanism differs from `ar`'s — MSBuild keeps a stale object, `ar` keeps a deleted
+  one — but the symptom is identical: **an archive member that only becomes wrong the day
+  something links it.**
 - **Angled includes on the xcode4 exporter.** premake maps `includedirs` to
   `USER_HEADER_SEARCH_PATHS` and emits `ALWAYS_SEARCH_USER_PATHS = NO`, and clang searches user
   paths for *quoted* includes only — so on Xcode, a dependency that reaches for its own public

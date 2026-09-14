@@ -109,6 +109,16 @@ declare interface Entity {
 	GetCurrentAnimation(): string;
 
 	/**
+	 * True only when this entity has a CharacterControllerComponent and is standing on ground it
+	 * can walk on. A steep slope it is sliding down counts as false, which is what jumping,
+	 * footsteps and landing animations all want.
+	 *
+	 * Always false for a rigid body: it has no such concept, and answering would invite the
+	 * question to be asked of the wrong thing.
+	 */
+	IsGrounded(): boolean;
+
+	/**
 	 * Physics, routed to the Jolt body rather than to the transform.
 	 *
 	 * Writing a dynamic body's translation does nothing visible — the simulation overwrites

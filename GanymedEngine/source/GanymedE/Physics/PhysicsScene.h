@@ -76,11 +76,22 @@ namespace GanymedE {
 		//
 		// Jolt puts idle bodies to sleep, so each of these wakes the body; a velocity set
 		// on a sleeping body would otherwise be quietly discarded.
+		// Each of these accepts a character controller as well as a rigid body, because a script
+		// should not have to know which one it is driving. AddForce is the exception: a
+		// CharacterVirtual has no mass in the solver for a force to act on, so it warns once per
+		// entity and does nothing. AddImpulse *is* meaningful - it becomes a velocity change of
+		// impulse/Mass, which is what a jump or a knockback wants.
 		void SetLinearVelocity(UUID entity, const glm::vec3& velocity);
 		glm::vec3 GetLinearVelocity(UUID entity) const;
 		void AddImpulse(UUID entity, const glm::vec3& impulse);
 		void AddForce(UUID entity, const glm::vec3& force);
 		bool HasBody(UUID entity) const;
+
+		// True when a character controller is standing on ground it can walk on. False for a
+		// steep slope it is sliding down, for freefall, and for every entity that is not a
+		// character - a rigid body has no such concept and answering for one would invite
+		// gameplay to ask the wrong question.
+		bool IsGrounded(UUID entity) const;
 
 		// ---- Queries ----
 
@@ -121,7 +132,9 @@ namespace GanymedE {
 		};
 
 		void CreateBodies(Scene* scene);
+		void CreateCharacters(Scene* scene);
 		void RemoveDeadBodies(Scene* scene);
+		void StepCharacters(float fixedDeltaTime);
 		void DestroyBodies();
 		void CapturePoses(std::unordered_map<UUID, BodyPose>& out);
 

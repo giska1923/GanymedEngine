@@ -309,6 +309,14 @@ namespace GanymedE {
 					PhysicsScene* physics = Physics();
 					return physics ? physics->GetLinearVelocity(e.GetUUID()) : glm::vec3(0.0f);
 				},
+				// Character controllers only. A rigid body has no notion of "standing on
+				// something it can walk on", and answering for one would invite gameplay to ask
+				// the wrong question of the wrong thing.
+				"IsGrounded", [](Entity& e)
+				{
+					PhysicsScene* physics = Physics();
+					return physics ? physics->IsGrounded(e.GetUUID()) : false;
+				},
 				"SetLinearVelocity", [](Entity& e, const glm::vec3& velocity)
 				{
 					if (PhysicsScene* physics = Physics())

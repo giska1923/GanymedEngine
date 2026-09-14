@@ -25,6 +25,62 @@ map 1:1 from the components: motion type, friction/restitution, damping, gravity
 Identity: `body.mUserData = UUID`, plus `UUID → BodyID` and `BodyID → UUID` maps. Everything
 crossing the physics/ECS boundary is keyed by UUID, so it survives the play-mode scene copy.
 
+### Character controllers
+
+`CharacterControllerComponent` puts a Jolt `CharacterVirtual` on an entity. It takes its shape from
+a `CapsuleColliderComponent`, the same rule rigid bodies follow, and it is **not** a
+`RigidBodyComponent` with extra fields — a `CharacterVirtual` has no mass in the solver, nothing
+pushes it, and it moves by collide-and-slide rather than by integration. Unity and Unreal both
+author it as its own component for the same reason. An entity carrying both gets one warning and
+the controller wins.
+
+| Field | Meaning |
+|---|---|
+| `MaxSlopeAngle` | Degrees. Steeper and the character slides instead of climbing (Jolt default 50) |
+| `StepHeight` | How high a ledge it steps onto rather than stopping at — `ExtendedUpdateSettings::mWalkStairsStepUp` |
+| `StickToFloor` | Pushes it back down after a step, so a shallow rise does not launch it |
+| `Mass` | Only used against *dynamic* bodies it pushes; nothing accelerates the character but its own velocity |
+
+**Why it exists.** A rotation-locked dynamic capsule walks, but it cannot slide along a wall: drive
+one straight at a surface and Jolt cancels the velocity, leaving nothing tangential to carry it
+sideways, so it stops dead. Measured A/B — same wall, same 5 m/s push at `(1, 0, 0.35)`:
+
+| | Slid along the wall | Grounded | Outcome |
+|---|---|---|---|
+| `CharacterControllerComponent` | **10.07 m** | true | crossed a 0.15 m kerb, slid to the wall's end, continued |
+| rotation-locked `RigidBodyComponent` | **0.00 m** | false | stopped against the kerb at x = 3.28 and never reached the wall |
+
+**Where it runs.** `StepCharacters` is called from `Step` *after* `PhysicsSystem::Update`, so a
+character standing on a moving platform sees where the platform ended up this step rather than
+where it started. Characters are reconciled in `SyncBodies` alongside bodies, interpolate through
+the same pose path, and write back through `SyncTransforms` unconditionally — unlike a body, which
+writes back only when Dynamic.
+
+Gravity is integrated by hand in `StepCharacters`, because nothing else will: a `CharacterVirtual`
+is not in the simulation. It is applied **only while airborne**; accumulating it on the ground
+builds a downward velocity that fights `StickToFloor` and makes the character judder on slopes.
+
+`mSupportingVolume` is set to a plane at the capsule's base rather than left at its default —
+without it the round bottom rolls over ledges the character should stop at.
+
+**The script API accepts either.** `SetLinearVelocity`, `GetLinearVelocity` and `HasBody` all route
+to a character when the entity has one, so gameplay need not know which it is driving. Two
+exceptions:
+
+- `AddForce` **does nothing** on a character and warns once. There is no mass in the solver for a
+  force to act on; the honest answer is to say so rather than accept a call that looks like it
+  worked.
+- `AddImpulse` **does** work, as a velocity change of `impulse / Mass` — which is what a jump or a
+  knockback means.
+
+`IsGrounded(uuid)` answers only for characters, and only for `EGroundState::OnGround`.
+`OnSteepGround` is a slope it is sliding down, which every gameplay use of "grounded" — jumping,
+footsteps, a landing animation — wants treated as *not* grounded. A rigid body always answers
+false, because it has no such concept and answering would invite the wrong question.
+
+**Not done yet:** a character generates no `OnCollisionEnter`. `CharacterVirtual` has its own
+contact listener, separate from the body contact listener the events come from today.
+
 ### Locked rotation
 
 `RigidBodyComponent::LockRotation` forbids rotation entirely while leaving translation and
