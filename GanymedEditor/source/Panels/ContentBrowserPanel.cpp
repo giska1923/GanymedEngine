@@ -141,6 +141,15 @@ namespace GanymedE {
 
 	}
 
+	// The root here is a placeholder, not the answer. This panel is a by-value member of
+	// EditorLayer, so its constructor runs before EditorLayer::OnAttach calls AssetManager::Init -
+	// GetAssetRoot() is still the default at this point, and with --project it is the *wrong*
+	// default. RefreshCaches re-homes it once the real root is set.
+	//
+	// This is the third form of one bug. It began as `extern const path g_AssetPath =
+	// GetAssetRoot();` at namespace scope, captured before main; that was replaced by this
+	// member, captured before OnAttach. Copying the root anywhere is the mistake - see the
+	// comment in AssetPaths.cpp.
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_BaseDirectory(GetAssetRoot()), m_CurrentDirectory(m_BaseDirectory)
 	{
@@ -218,6 +227,16 @@ namespace GanymedE {
 
 	void ContentBrowserPanel::RefreshCaches()
 	{
+		// First, because everything below is relative to it. Comparing rather than assigning
+		// unconditionally keeps navigation: re-homing on every frame would drop the user back to
+		// the project root each time they opened a folder.
+		if (Normalize(m_BaseDirectory) != Normalize(GetAssetRoot()))
+		{
+			m_BaseDirectory = GetAssetRoot();
+			m_CurrentDirectory = m_BaseDirectory;
+			m_IndexDirty = true;
+		}
+
 		const uint32_t reloads = AssetWatcher::GetStats().Reloads;
 		if (reloads != m_SeenReloads)
 		{

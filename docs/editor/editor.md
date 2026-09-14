@@ -16,6 +16,18 @@ The path is logged at boot, and a path that is not a directory is opened anyway 
 because an empty content browser looks like data loss rather than a typo. Without the switch the
 root is `assets`, exactly as before.
 
+The **Content Browser is rooted at the project**, and re-homes itself in `RefreshCaches` whenever
+the root differs from the one it holds. It has to: the panel is a by-value member of `EditorLayer`,
+so its constructor runs before `OnAttach` sets the root, and a root captured there is always the
+default — see [the project root](../engine/assets.md#the-project-root) for the two forms that bug
+has taken.
+
+A **new scene's default environment** (`environments/studio_small_08_1k.hdr`) is imported only when
+the project actually has that file. It is a project-relative path that exists because there was
+once only one project; without the check, every other project logged a failed HDR load on every new
+scene. An absent environment is the procedural fallback, which is what a `SkyLight` with no handle
+already means.
+
 ## Layout
 
 A dockable ImGui workspace. Host chrome is stacked in the dockspace window: a **fixed

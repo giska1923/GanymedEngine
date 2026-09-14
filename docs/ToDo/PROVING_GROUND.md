@@ -48,10 +48,13 @@ The game lives on a branch; engine work does not.
 Checkable, which is the point:
 
 ```
-git diff --stat master.. -- GanymedEngine/source
+git diff --stat master.. -- GanymedEngine/source GanymedEditor/source GanymedRuntime/source
 ```
 
-Anything it prints is a rule violation and belongs on master instead. The temptation will be real —
+Anything it prints is a rule violation and belongs on master instead. **All three paths, not just
+the engine** - the first version of this check named only `GanymedEngine/source` and would have
+reported clean while editor source was being changed on the game branch, which is exactly what
+happened. The temptation will be real —
 "just this one small engine tweak" is how long-lived branches rot — so the check is mechanical
 rather than cultural.
 

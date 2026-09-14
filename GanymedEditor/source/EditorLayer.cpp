@@ -1379,10 +1379,20 @@ namespace GanymedE {
 		dl.CastShadows = true;
 
 		// Environment / ambient (HDR IBL when the asset is present, procedural fallback otherwise)
+		//
+		// The presence check is the point: this path is project-relative, and it was written when
+		// there was only ever one project that happened to ship that file. Any other project got
+		// `Failed to load HDR environment` at every new scene. An invalid handle is already the
+		// procedural fallback the comment above promises, so the fix is to not ask for a file
+		// that is not there rather than to ship the file everywhere.
 		Entity sky = scene->CreateEntity("Sky Light");
 		auto& skyLight = sky.AddComponent<SkyLightComponent>();
-		skyLight.Environment = AssetRef<Environment>(
-			AssetManager::ImportAsset("environments/studio_small_08_1k.hdr"));
+
+		constexpr const char* kDefaultEnvironment = "environments/studio_small_08_1k.hdr";
+		std::error_code ec;
+		if (std::filesystem::exists(GetAssetRoot() / kDefaultEnvironment, ec))
+			skyLight.Environment = AssetRef<Environment>(AssetManager::ImportAsset(kDefaultEnvironment));
+
 		skyLight.Intensity = 1.0f;
 	}
 

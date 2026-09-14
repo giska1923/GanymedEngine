@@ -33,11 +33,20 @@ compose paths off it — so a write after startup is a data race with no lock to
 with a different root logs an error and asserts rather than silently repointing paths that have
 already been handed out.
 
-One consequence worth stating because it bit once already: **do not copy the root into a
-namespace-scope object.** The editor had `extern const std::filesystem::path g_AssetPath =
-GetAssetRoot();` in `ContentBrowserPanel.cpp`, which runs at static-initialisation time — before
-`main`, and therefore before any root could be set. It would have frozen the default forever. Call
-the accessor; do not cache it.
+One consequence worth stating because it has now bitten **twice**: **do not copy the root into
+anything that outlives the call.** Both forms were in the same file:
+
+1. `extern const std::filesystem::path g_AssetPath = GetAssetRoot();` at namespace scope, which
+   runs at static-initialisation time — before `main`, so before any root can be set.
+2. `ContentBrowserPanel`'s `m_BaseDirectory(GetAssetRoot())`, which runs in the panel's
+   constructor. The panel is a by-value member of `EditorLayer`, so that is still before
+   `EditorLayer::OnAttach` calls `AssetManager::Init`. Fixing (1) had moved the capture from
+   *before `main`* to *before `OnAttach`* and left the bug in place: the asset index pointed at the
+   project while the content browser walked the editor's own `assets/`.
+
+The panel now re-homes in `RefreshCaches` when the root differs from what it holds, which handles
+the ordering and any later change. **Call the accessor; do not cache it** — and if something must
+hold a copy, it has to notice when the copy goes stale.
 
 ## Handles & metadata
 
