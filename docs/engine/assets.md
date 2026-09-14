@@ -1183,6 +1183,51 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 call anywhere below it**, which is what lets it run on a worker. `BuildMesh` is the main-thread half
 that turns one into a live `Mesh`.
 
+### Tangents are generated when the file has none
+
+glTF does not require `TANGENT`. The spec makes producing one the **client's** job when a normal map
+is present, and exporters routinely omit it. `MeshImporter` therefore generates tangents per
+primitive whenever the attribute is absent, by Lengyel's method: accumulate each triangle's tangent
+weighted by its UV-space area, then orthonormalise against the vertex normal.
+
+This replaced a constant `{1, 0, 0}`, which is not a tangent and which
+[`fs_Phong.sc`](../../assets/shaders/src/fs_Phong.sc) then built a TBN out of:
+
+```glsl
+vec3 T = normalize(v_tangent - N * dot(N, v_tangent));
+vec3 B = cross(N, T);
+```
+
+On a surface facing anything but ±X that gave world-X projected onto it — a valid vector pointing
+in an arbitrary direction, so the normal map came out rotated by an arbitrary angle. On a surface
+facing **exactly ±X**, `dot(N, T)` is ±1, the subtraction yields the zero vector and `normalize`
+produced garbage. A box-shaped building has walls facing exactly ±X, so that was the common case
+rather than the corner case.
+
+Verified against a generated cube whose six faces each have a different, analytically known
+tangent, read back out of the compiled `.gres` rather than from a reimplementation:
+
+| Face | Correct T | Generated | Error |
+|---|---|---|---|
+| +Z / −Z | (1,0,0) / (−1,0,0) | exact | 0.000° |
+| **+X / −X** | (0,0,−1) / (0,0,1) | exact | 0.000° |
+| +Y / −Y | (1,0,0) / (1,0,0) | exact | 0.000° |
+
+`worst |T|−1 = 0`, `worst |T·N| = 0`, and 0 of 24 vertices failed unit-length, perpendicularity or
+NaN. The old constant was right on three of those faces by luck, backwards on one, and degenerate
+on two.
+
+Two deliberate limits:
+
+- **Triangles with zero UV area contribute nothing**, since `1/det` would be infinite. A vertex
+  whose every triangle is UV-degenerate falls back to a unit vector built by crossing the *normal*
+  with whichever axis is least aligned with it — built from N, never a constant, because a constant
+  is the bug this replaced.
+- **Handedness is dropped, because it already was.** `MeshVertex::Tangent` is a `vec3` and the
+  shader derives `B = cross(N, T)` with no sign, so glTF's tangent `w` had nowhere to go even when a
+  file supplied one. A mirrored UV shell lights as though it were not mirrored. Carrying `w` means a
+  vertex-format change; nothing in the project has mirrored shells yet.
+
 - Walks the node tree **depth-first into a vector**, flattening every mesh primitive into one
   interleaved vertex/index buffer with a `Submesh` per primitive. Traversal order is part of the
   contract: submesh order must be stable across runs or cache diffs and joint↔submesh correlation
