@@ -553,6 +553,85 @@ namespace GanymedE {
 		std::vector<Submesh> submeshes;
 		std::vector<float> weightScratch;
 
+		// glTF does not require TANGENT. The spec makes generating one the client's job when a
+		// normal map is present, and exporters routinely omit it - Meshy does. This used to
+		// substitute the constant world +X, which is not a tangent and which the shader then
+		// built a TBN out of: on a surface facing anything but +-X the normal map came out
+		// rotated by an arbitrary angle, and on a surface facing exactly +-X the Gram-Schmidt
+		// step in fs_Phong yielded the zero vector. A box-shaped building has walls facing
+		// exactly +-X, so that was the common case rather than the corner case.
+		//
+		// Lengyel's method: accumulate a per-triangle tangent weighted by its UV derivatives,
+		// then orthonormalise against the vertex normal. MikkTSpace is the exact answer and what
+		// a DCC tool bakes against; this is the standard approximation, and it agrees with
+		// MikkTSpace wherever the mesh has no split UV seams.
+		//
+		// Handedness is dropped, because it already was: MeshVertex::Tangent is a vec3 and
+		// fs_Phong derives B as cross(N, T) with no sign. A mirrored UV shell therefore lights
+		// as though it were not mirrored. Storing glTF's tangent w would be a vertex format
+		// change, and nothing in the project has mirrored shells yet.
+		auto generateTangents = [&](uint32_t baseVertex, size_t vertexCount,
+			uint32_t baseIndex, size_t indexCount)
+		{
+			std::vector<glm::vec3> accumulated(vertexCount, glm::vec3(0.0f));
+
+			for (size_t i = 0; i + 2 < indexCount; i += 3)
+			{
+				const uint32_t i0 = indices[baseIndex + i + 0];
+				const uint32_t i1 = indices[baseIndex + i + 1];
+				const uint32_t i2 = indices[baseIndex + i + 2];
+				if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount)
+					continue;
+
+				const MeshVertex& v0 = vertices[baseVertex + i0];
+				const MeshVertex& v1 = vertices[baseVertex + i1];
+				const MeshVertex& v2 = vertices[baseVertex + i2];
+
+				const glm::vec3 edge1 = v1.Position - v0.Position;
+				const glm::vec3 edge2 = v2.Position - v0.Position;
+				const glm::vec2 deltaUV1 = v1.TexCoord - v0.TexCoord;
+				const glm::vec2 deltaUV2 = v2.TexCoord - v0.TexCoord;
+
+				// A zero determinant means the triangle has no area in UV space - degenerate,
+				// or untextured. It has no tangent to contribute, and 1/det would be infinite.
+				const float determinant = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
+				if (glm::abs(determinant) < 1e-12f)
+					continue;
+
+				const glm::vec3 tangent =
+					(edge1 * deltaUV2.y - edge2 * deltaUV1.y) * (1.0f / determinant);
+
+				// Unnormalised on purpose: the magnitude is the triangle's UV-space area, which
+				// is exactly the weight a shared vertex should give each of its faces.
+				accumulated[i0] += tangent;
+				accumulated[i1] += tangent;
+				accumulated[i2] += tangent;
+			}
+
+			for (size_t v = 0; v < vertexCount; v++)
+			{
+				MeshVertex& vertex = vertices[baseVertex + v];
+				const glm::vec3 normal = vertex.Normal;
+
+				glm::vec3 tangent = accumulated[v] - normal * glm::dot(normal, accumulated[v]);
+				const float lengthSquared = glm::dot(tangent, tangent);
+				if (lengthSquared > 1e-12f)
+				{
+					vertex.Tangent = tangent * glm::inversesqrt(lengthSquared);
+					continue;
+				}
+
+				// Every triangle touching this vertex was UV-degenerate, or its tangent was
+				// parallel to the normal. Any unit vector perpendicular to N will do, and it
+				// must be built *from* N rather than being a constant - a constant is the bug
+				// this function exists to remove. Choosing the axis least aligned with N keeps
+				// the cross product well conditioned.
+				const glm::vec3 axis = (glm::abs(normal.x) < 0.9f)
+					? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+				vertex.Tangent = glm::normalize(glm::cross(normal, axis));
+			}
+		};
+
 		auto appendPrimitive = [&](const cgltf_primitive& primitive, const glm::mat4& transform,
 			const char* name, bool nodeIsSkinned)
 		{
@@ -646,7 +725,8 @@ namespace GanymedE {
 				}
 				else
 				{
-					vertex.Tangent = { 1.0f, 0.0f, 0.0f };
+					// Overwritten by generateTangents below; the file has no TANGENT attribute.
+					vertex.Tangent = { 0.0f, 0.0f, 0.0f };
 				}
 
 				if (texcoordAccessor)
@@ -663,6 +743,12 @@ namespace GanymedE {
 					? (uint32_t)cgltf_accessor_read_index(primitive.indices, i)
 					: (uint32_t)i);
 			}
+
+			// After the indices, because it needs the triangles, and per primitive rather than
+			// per file because indices are primitive-local.
+			if (!tangentAccessor)
+				generateTangents(submesh.BaseVertex, positionAccessor->count,
+					submesh.BaseIndex, indexCount);
 
 			// Indices are relative to this primitive's vertices; BaseVertex handles the offset in the draw call.
 			// Our IndexBuffer stores raw primitive indices (0-based per primitive), so BaseVertex is required.
