@@ -6,6 +6,7 @@ $input v_texcoord0
 // always emit float4, so the extra channels are written and discarded.
 
 #define PI 3.14159265359
+#define SAMPLE_COUNT 1024u
 
 float RadicalInverse_VdC(uint bits)
 {
@@ -61,7 +62,6 @@ vec2 IntegrateBRDF(float NdotV, float roughness)
 
 	vec3 N = vec3(0.0, 0.0, 1.0);
 
-	uint SAMPLE_COUNT = 1024u;
 	for (uint i = 0u; i < SAMPLE_COUNT; i++)
 	{
 		vec2 Xi = Hammersley(i, SAMPLE_COUNT);

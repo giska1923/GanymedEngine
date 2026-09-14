@@ -39,8 +39,11 @@ Null device (WSL exposes none) and degraded without complaint.
 
 Two caveats on that row, because "it ran in WSL2" is not "it runs on Linux":
 
-- **Vulkan was not exercised** — WSL has no Vulkan loader, so bgfx fell through to OpenGL. On a
-  real Linux box Vulkan is the backend bgfx would pick first.
+- **Vulkan on Intel ANV hung a native Ubuntu box** — WSL has no Vulkan loader, so the WSL run
+  never saw it. Native Linux picks Vulkan first; Intel UHD (TGL GT1) initialized, baked IBL, then
+  died in the first `bgfx::frame()` (`VK_ERROR_DEVICE_LOST`). The bake shaders and Intel+Vulkan
+  stage split in [rendering.md](rendering.md#environment--ibl) are the fix; they have not been
+  re-run on that machine yet. `--renderer=opengl` is the diagnostic fallback.
 - **GL came from Mesa's d3d12 gallium driver** (it reports `D3D12 (Intel(R) UHD Graphics)`), which
   is hardware-accelerated but is not the driver stack a native Linux user has.
 

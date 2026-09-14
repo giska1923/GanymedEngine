@@ -33,19 +33,21 @@ do not support, and deciding to support one is a bigger call than a ToDo entry.
 ## The Linux build is verified in WSL2, not on a real Linux machine
 
 Distinct from the above, and smaller. The Linux build and run happened under WSL2 (Ubuntu 22.04,
-gcc 11.4), which leaves three things genuinely untested rather than merely unmentioned:
+gcc 11.4). Native hardware has now been tried for Vulkan; GL and audio still have not.
 
-- **Vulkan.** WSL has no Vulkan loader, so bgfx fell through to OpenGL. On a native Linux box
-  Vulkan is the backend bgfx picks first, and it is therefore the one that matters most there.
-  It *is* verified on Windows, pixel-identical to D3D11, so the risk is the platform glue
-  (GLFW native handles, surface creation) rather than the renderer.
+- **Vulkan / Intel ANV.** WSL has no Vulkan loader, so bgfx fell through to OpenGL. On a native
+  Linux box Vulkan is the backend bgfx picks first. A native Ubuntu run on Intel UHD (TGL GT1)
+  brought Vulkan up, created the swapchain, loaded shaders, submitted the IBL bake, then died in
+  the first `bgfx::frame()` with Mesa ANV `GPU hung on one of our command buffers` /
+  `VK_ERROR_DEVICE_LOST`. Surface creation was not the problem. The bake shaders now use
+  integer-bounded loops, and `Environment::Bake` splits stages with `bgfx::frame()` when the
+  live device is Intel + Vulkan — see [rendering.md](../engine/rendering.md#environment--ibl).
+  That fix is **unverified on the machine that hung**; until it is, treat native Linux Vulkan as
+  diagnosed, not closed. Workaround if it still dies: `--renderer=opengl`.
 - **The GL driver stack.** WSLg's Mesa served GL through its **d3d12 gallium driver**
   (`D3D12 (Intel(R) UHD Graphics)`). Hardware-accelerated, but not what a native user runs.
 - **Audio.** miniaudio selected its Null device because WSL exposes none, so ALSA and PulseAudio
   were never opened. It degraded cleanly, which is worth something, but it is not a test.
-
-A single run on a native Linux box would close all three at once. Nothing here is known to be
-broken; it is simply unmeasured, and recorded so the Linux row is not read as more than it is.
 
 ## A frame profiler (Tracy) is still worth considering
 

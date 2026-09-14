@@ -11,6 +11,9 @@ uniform vec4 u_Roughness;  // .x
 uniform vec4 u_Resolution; // .x = source cubemap face resolution
 
 #define PI 3.14159265359
+// Compile-time loop bound: a mutable `uint SAMPLE_COUNT = 1024u` is a dynamic
+// loop to some SPIR-V compilers, and Intel ANV has hung on those.
+#define SAMPLE_COUNT 1024u
 
 float RadicalInverse_VdC(uint bits)
 {
@@ -61,7 +64,6 @@ void main()
 	vec3 R = N;
 	vec3 V = R;
 
-	uint SAMPLE_COUNT = 1024u;
 	vec3 prefilteredColor = vec3_splat(0.0);
 	float totalWeight = 0.0;
 

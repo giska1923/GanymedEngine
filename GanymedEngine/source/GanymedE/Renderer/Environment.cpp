@@ -278,9 +278,33 @@ namespace GanymedE {
 		ViewAllocator views;
 		std::vector<bgfx::FrameBufferHandle> framebuffers;
 
-		// The bake writes render targets and samples them back in later stages of
-		// the SAME frame. That is only safe because bgfx processes views in ID
-		// order and every stage below takes higher IDs than the one it samples.
+		// Intel ANV (Mesa on Linux, and Windows Intel Vulkan) has hung the GPU
+		// (`VK_ERROR_DEVICE_LOST`, i915 "GPU hung on one of our command buffers")
+		// when the whole bake - irradiance hemisphere, 1024-sample GGX prefilter,
+		// 512^2 BRDF LUT - plus the first editor frame went out as one submit.
+		// Discrete GPUs finish that in well under a vsync; ANV's compiler and
+		// i915's hangcheck do not. Split only there so D3D11/NVIDIA keep the
+		// single-frame bake.
+		const bgfx::Caps* caps = bgfx::getCaps();
+		const bool splitBakeStages = caps
+			&& caps->rendererType == bgfx::RendererType::Vulkan
+			&& caps->vendorId == BGFX_PCI_ID_INTEL;
+
+		auto flushBakeStage = [&]()
+		{
+			if (!splitBakeStages)
+				return;
+
+			// Keep Renderer::GetFrameNumber() in lockstep with bgfx; picking
+			// polls that, not bgfx's own counter.
+			Renderer::OnFrameSubmitted(bgfx::frame());
+			views.Next = RenderPass::EnvironmentBake;
+		};
+
+		// When splitBakeStages is false, later stages sample earlier ones in the
+		// SAME frame - that is only safe because bgfx processes views in ID order
+		// and every stage below takes higher IDs than the one it samples. When it
+		// is true, flushBakeStage makes the hazard a cross-frame one instead.
 		auto renderCubeFace = [&](bgfx::TextureHandle target, uint16_t face, uint16_t mip,
 			uint32_t size, const Ref<Shader>& shader)
 		{
@@ -315,6 +339,7 @@ namespace GanymedE {
 				renderCubeFace(m_EnvCubemap, face, mip, mipSize, equirectShader);
 			}
 		}
+		flushBakeStage();
 
 		// --- 2. Diffuse irradiance convolution --------------------------------
 		for (uint16_t face = 0; face < 6; face++)
@@ -322,6 +347,7 @@ namespace GanymedE {
 			irradianceShader->SetTexture("u_EnvironmentMap", 0, m_EnvCubemap, BGFX_SAMPLER_UVW_CLAMP);
 			renderCubeFace(m_Irradiance, face, 0, kIrradianceSize, irradianceShader);
 		}
+		flushBakeStage();
 
 		// --- 3. Pre-filtered specular environment (one mip per roughness) -----
 		for (uint16_t mip = 0; mip < (uint16_t)kPrefilterMips; mip++)
@@ -337,6 +363,7 @@ namespace GanymedE {
 				renderCubeFace(m_Prefilter, face, mip, mipSize, prefilterShader);
 			}
 		}
+		flushBakeStage();
 
 		// --- 4. BRDF integration LUT (once per process, not once per environment) ---
 		if (bakeLut)
@@ -361,18 +388,16 @@ namespace GanymedE {
 
 			shared.BRDF->Bind();
 			RenderCommand::DrawIndexed(quad);
+			flushBakeStage();
 		}
 
-		// The bake is submitted, not executed: bgfx runs it when the frame is presented, and
-		// because these views sort before the scene passes (RenderPassIDs.h) the results are
-		// readable by the very frame this was submitted into.
+		// The bake is submitted, not executed: bgfx runs it when the frame is presented.
+		// On non-Intel-Vulkan that is the same frame as the scene (views sort first, see
+		// RenderPassIDs.h). On Intel + Vulkan the flushes above already presented it.
 		//
-		// **No `bgfx::frame()` here.** It used to call it twice, to force the bake through
-		// before releasing the framebuffers - 24-26 ms of blocked main thread, measured, and it
-		// also presented two half-built frames on its way past. Destroying a framebuffer is
-		// deferred by bgfx until the frame that used it has been rendered, so the handles below
-		// can go back immediately; the cube textures they wrote into are owned by this object
-		// and survive.
+		// Destroying a framebuffer is deferred by bgfx until the frame that used it has
+		// been rendered, so the handles below can go back immediately; the cube textures
+		// they wrote into are owned by this object and survive.
 		for (bgfx::FrameBufferHandle fb : framebuffers)
 		{
 			if (bgfx::isValid(fb))
