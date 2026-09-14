@@ -219,6 +219,24 @@ player aims.
 **This is the milestone working as intended** - Phase 0 was an attempt to name the engine gaps in
 advance, and it missed one. Expect more.
 
+### P0.6 — The editor hard-codes a default environment that not every project has
+
+Found by opening `Game/assets` with `--project`. `EditorLayer.cpp:1385` calls
+
+```cpp
+AssetManager::ImportAsset("environments/studio_small_08_1k.hdr")
+```
+
+a **project-relative** path baked into the editor. Any project without that exact HDR at that exact
+location logs `Failed to load HDR environment` at boot. `Game/` has no `environments/` at all.
+
+It is one error and nothing else breaks, so it is not urgent - but it is the same class of bug
+P0.1 was built to remove, and it survived because nothing had ever opened a second project. The fix
+is for the editor's default environment to be an editor asset resolved against the editor, or for
+there to be no default at all.
+
+`master` work, like the two above.
+
 ### P0.4 — Sensors (optional)
 
 No `IsSensor` anywhere, so a trigger volume is a solid body you bump into rather than walk through.
@@ -238,7 +256,34 @@ Flat ground plane, capsule player, WASD plus mouse look, camera follow.
 - **Tests:** the character controller from P0.2, the `Input` bindings under continuous use rather
   than a probe, transform hierarchy, and the editor's authoring loop end to end.
 - **Gate:** walk the full extent of the map for two minutes without the capsule tipping, sinking
-  through the ground, or sticking to a wall. **Result: two of three pass; sticking fails.**
+  through the ground, or sticking to a wall. **PASSED** on `CharacterVirtual`, after failing on a
+  rotation-locked rigid body. Both runs are kept below; the failure is the more useful of the two.
+
+**Gate, re-run on `CharacterControllerComponent` - 130 s:**
+
+```
+maxTilt 0.0000   minY 0.950 (settled 0.950, zero penetration)
+worstStuck 0.00s   stuck-escapes 0   grounded 100%
+extent  x -10.9..8.8   z -8.6..7.2
+arrivals  wp1=13  wp2=13  wp3=13  wp4=13  wp5=13
+0 errors, 0 warnings
+```
+
+Thirteen complete laps, every waypoint reached on every lap, **never stuck once**. Waypoint 4 at
+`(-11, 5)` is the one that requires getting past Block B - the exact obstacle that jammed the rigid
+capsule ten times - and it was passed thirteen times cleanly. Penetration went from 12 mm to zero,
+because collide-and-slide never lets the shape overlap in the first place.
+
+Nothing in `Player.lua` changed for the swap except the component named in the scene:
+`SetLinearVelocity` routes to either kind, which is what that API accepting both was for.
+
+**A measurement error worth recording.** The first character run reported `x -0.6..3.6` and only
+ever sampled `wp=1` or `wp=4`, which read as "the route is not being followed". It was: a 5 s
+report against a ~9 s lap aliases onto two phases, and **sampled extents are not extents**. Fixed
+by tracking min/max every frame. Had it gone the other way, the same aliasing would have hidden a
+real failure behind clean-looking numbers.
+
+**The superseded run, on a rotation-locked rigid body - two of three pass, sticking fails:**
 
 **Gate run - 130 s of autopilot across a flat plane with three obstacles:**
 
@@ -277,6 +322,65 @@ Several buildings from box colliders, enterable, with interiors. Lighting.
 - **Tests:** static mesh rendering at scene scale, box colliders, the four light types, shadows,
   and the asset pipeline under a real content load rather than the eight committed fixtures.
 - **Gate:** walk inside and out of every building; no tunnelling through a wall at full speed.
+
+#### Content layout
+
+```
+Game/assets/
+  models/buildings/    blockhouse, warehouse - the things with interiors
+  models/props/        crates, drums, barriers - cover, and what Meshy is best at
+  models/characters/   player and enemy
+  models/weapons/      rifle, projectile
+  materials/           .gmat sidecars the importer writes
+  textures/            maps extracted out of GLBs on first import
+  scenes/  scripts/
+```
+
+Git does not track empty directories, so these appear in a clone only once they hold a file.
+
+#### What a model has to satisfy
+
+| Requirement | Why |
+|---|---|
+| **GLB (glTF 2.0)** | `cgltf` is the only importer |
+| **Albedo + Normal + *combined* MetallicRoughness** | The only three map handles `Material` has. A separate AO or emissive map is imported and then ignored |
+| **1 unit = 1 metre** | The player capsule is 1.9 m tall: radius 0.35, half-height 0.6 |
+| **Y-up, -Z forward** | What `Player.lua` assumes when it derives forward from yaw |
+| **Box-composable silhouette** | **There are no mesh colliders.** Every collider is a box, sphere or capsule placed by hand, so a curved wall looks right and collides wrong |
+| **Low poly** | Not for framerate. A cold mesh apply is 5.50 ms and two thirds of that is `GenerateSidecars` writing files on the main thread ([assets.md](assets.md)) |
+
+#### Importing one
+
+1. Drop the `.glb` into the right folder. The content browser's tree refreshes every 0.25 s, so it
+   appears on its own - but appearing is not importing.
+2. **Content Browser → Rescan assets/.** This is the step that mints the handle and writes the
+   `.meta`. The asset watcher does *not* do it: it tracks known assets for modification and has no
+   notion of a file that was not there before.
+3. Check the log. `Asset scan: N files, ... M handles minted, M sidecars written` should name your
+   model. Nothing `quarantined`, no `handle collisions`.
+4. Drag it into the scene, then check **in this order**, because each one masks the next:
+   - **Scale.** Stand it next to the player capsule. A model authored in centimetres arrives 100x
+     too big and everything after this is meaningless.
+   - **Orientation.** Facing -Z, upright.
+   - **Materials.** Albedo, normal and metallic-roughness all resolved - a missing map shows as
+     flat grey rather than as an error.
+   - **Collider.** Add box colliders by hand. Nothing is automatic and nothing warns you.
+5. Commit the `.glb` and its `.meta` together. A `.glb` without its sidecar has no identity, and
+   every scene referencing it breaks on the next clone. `.compiled/` is gitignored on purpose -
+   it is derived, and it rebuilds.
+
+#### The measurement P2 exists to take
+
+The pipeline has only ever been exercised on eight committed fixtures. Before importing a set,
+import **two or three** and record:
+
+- wall-clock cost of the first import of each (the cold `GenerateSidecars` path)
+- whether the frame hitches visibly on that first apply, and for how long
+- what the scan reports on the second boot, when everything is warm
+
+`assets.md` predicts 6-9 ms frames, worse when the disk is busy, and that it is entirely a
+first-import cost. That prediction has never met real content. Finding it wrong on three models is
+far cheaper than on fifteen.
 
 ### P3 — Shooting and dying
 

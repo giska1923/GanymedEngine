@@ -8,6 +8,11 @@
 -- Turning is on the keyboard because the engine has no cursor capture yet - see
 -- docs/ToDo/PROVING_GROUND.md P0.5. When that lands this reads a mouse delta instead and nothing
 -- else here changes.
+--
+-- The capsule is a CharacterControllerComponent, not a rotation-locked rigid body. The first
+-- version was the latter, and P1's gate failed on it: a velocity-driven body cannot slide along a
+-- wall, so it jammed on the same corner every lap. Nothing in this script changed for the swap -
+-- SetLinearVelocity routes to either - which is the point of that API accepting both.
 
 local Player = {
     entity = nil,
@@ -36,6 +41,12 @@ local Player = {
     worstStuck = 0.0,
     fell = false,
     wp = 1,
+    frames = 0,
+    groundedFrames = 0,
+    -- Sampled extents lie: a 5 s report against a ~9 s lap aliases onto two points and makes a
+    -- route that crosses the map look like a 4 m box. These are tracked every frame.
+    xmn = 1e9, xmx = -1e9, zmn = 1e9, zmx = -1e9,
+    wpHits = nil,
 }
 
 -- The circuit, in world XZ. Chosen to drive the capsule *into* the three obstacles from more than
@@ -128,18 +139,23 @@ function Player:AutoTurn()
     local target = ROUTE[self.wp]
     local dx, dz = target[1] - p.x, target[2] - p.z
 
-    -- Advance on arrival, or on having been stuck for a second and a half. The escape is not a
-    -- workaround for the route: a patrol that cannot get unstuck is a patrol that stops, and P4
-    -- needs the same behaviour for enemies. Without it one bad waypoint ends the run.
+    -- Advance on arrival, or on having been stuck for a second and a half. The escape stays for
+    -- P4's enemies, which need the same behaviour, but on a character controller it should now
+    -- never fire: sliding along a wall is exactly what it was compensating for. Every firing is
+    -- a finding, so it logs as a warning rather than quietly recovering.
     if self.stuckFor > 1.5 then
         self.stuckFor = 0.0
         self.wp = (self.wp % #ROUTE) + 1
+        self.wpHits = self.wpHits or {}
+        self.wpHits[self.wp] = (self.wpHits[self.wp] or 0) + 1
         Log.Warn(string.format("autopilot: stuck at (%.1f, %.1f), skipping to waypoint %d",
             p.x, p.z, self.wp))
         target = ROUTE[self.wp]
         dx, dz = target[1] - p.x, target[2] - p.z
     elseif (dx * dx + dz * dz) < 2.25 then
         self.wp = (self.wp % #ROUTE) + 1
+        self.wpHits = self.wpHits or {}
+        self.wpHits[self.wp] = (self.wpHits[self.wp] or 0) + 1
         target = ROUTE[self.wp]
         dx, dz = target[1] - p.x, target[2] - p.z
     end
@@ -156,7 +172,17 @@ function Player:Diagnose(ts)
     local p = self.entity:GetTranslation()
     local r = self.entity:GetRotation()
 
-    -- tipping: any rotation away from upright at all, since LockRotation should hold it at zero
+    if p.x < self.xmn then self.xmn = p.x end
+    if p.x > self.xmx then self.xmx = p.x end
+    if p.z < self.zmn then self.zmn = p.z end
+    if p.z > self.zmx then self.zmx = p.z end
+
+    -- grounded: a character that is never grounded is falling, and a gate that only checks
+    -- height would not notice it skimming the floor.
+    if self.entity:IsGrounded() then self.groundedFrames = self.groundedFrames + 1 end
+    self.frames = self.frames + 1
+
+    -- tipping: any rotation away from upright at all - a character never rotates from physics
     local tilt = math.max(math.abs(r.x), math.abs(r.z))
     if tilt > self.maxTilt then self.maxTilt = tilt end
 
@@ -189,8 +215,15 @@ function Player:Diagnose(ts)
     if self.t >= self.nextReport then
         self.nextReport = self.nextReport + 5.0
         Log.Info(string.format(
-            "GATE t=%.0fs wp=%d pos=(%.1f, %.2f, %.1f) maxTilt=%.4f minY=%.3f worstStuck=%.2fs",
-            self.t, self.wp, p.x, p.y, p.z, self.maxTilt, self.minY, self.worstStuck))
+            "GATE t=%.0fs wp=%d pos=(%.1f, %.2f, %.1f) maxTilt=%.4f minY=%.3f worstStuck=%.2fs grounded=%.0f%%",
+            self.t, self.wp, p.x, p.y, p.z, self.maxTilt, self.minY, self.worstStuck,
+            100.0 * self.groundedFrames / math.max(self.frames, 1)))
+        local hits = ""
+        for i = 1, #ROUTE do
+            hits = hits .. string.format(" wp%d=%d", i, (self.wpHits and self.wpHits[i]) or 0)
+        end
+        Log.Info(string.format("EXTENT x %.1f..%.1f  z %.1f..%.1f  arrivals:%s",
+            self.xmn, self.xmx, self.zmn, self.zmx, hits))
     end
 end
 

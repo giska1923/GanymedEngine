@@ -72,13 +72,11 @@ Entities:
         - 3000000000000000013
     ScriptComponent:
       Script: 3000000000000000090
-    RigidBodyComponent:
-      Type: 1
+    CharacterControllerComponent:
+      MaxSlopeAngle: 50
+      StepHeight: 0.400000006
+      StickToFloor: true
       Mass: 70
-      LinearDamping: 0.0500000007
-      AngularDamping: 0.0500000007
-      UseGravity: true
-      LockRotation: true
     CapsuleColliderComponent:
       Radius: 0.35
       HalfHeight: 0.600000024
