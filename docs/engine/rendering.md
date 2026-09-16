@@ -452,24 +452,37 @@ Three consequences worth encoding rather than discovering:
 
 ## Colour space
 
-**The engine has no sRGB pipeline, and this section exists so that is a recorded decision rather
-than a thing you rediscover.** Textures are sampled as raw `RGBA8` with no `BGFX_TEXTURE_SRGB` flag
-and no shader-side decode; lighting runs in whatever space the texels are already in; and
-`Tonemap.glsl` applies `pow(mapped, 1.0/2.2)` once at the end of the post stack, on the way to an
-8-bit target ImGui shows.
+**Lit mesh albedo is decoded from sRGB; everything else is still in the old manual-gamma world.**
+`fs_Phong` converts each albedo texel to linear before lighting, using the exact piecewise sRGB
+transfer function rather than `pow(c, 2.2)` — the approximation is worst in the darks, which is
+where weathered concrete and shadowed interiors live. `Tonemap.glsl` still applies
+`pow(mapped, 1.0/2.2)` once at the end of the post stack, which is the *output* half and was always
+correct.
 
-That is not correct, and it is consistent. Albedo authored in sRGB is being lit as though it were
-linear, which makes mid-tones brighter than they should be — and the single gamma at the end hides
-enough of it that everything looks plausible. Fixing it means flagging colour textures sRGB at
-creation, leaving normal/roughness/metallic linear, and re-checking every lighting constant that
-was tuned against the current look. **That is a rendering change with a visible before/after, not a
-side effect of anything else**, which is why the asset compiler deliberately has no `sRGB` config
-key ([assets.md](assets.md#texture-compilation)): a key that changed the look of every scene would
-be smuggling this change in through the back door.
+Why it mattered: an albedo of 123/255 was entering the BRDF as 0.482 when it means **0.198** —
+every textured surface roughly **2.4x too bright**, and the gamma at the end could not undo it
+because it runs after the error. Measured A/B on the same scene, same camera, only the decode
+changing: mean luminance **139.15 -> 111.01** (ratio 0.798) with 86.7% of object pixels changed.
+The naive prediction is 0.667; the shortfall is expected, because specular (`F0 = 0.04` for
+dielectrics) and ambient are not albedo-scaled and so do not darken with it.
 
-The convention to adopt when it is done is the standard one — albedo and emissive sRGB, everything
-else linear — and the check is a known reference gradient rendering identically before and after
-the *compiler*, then deliberately differently when the sRGB flag lands.
+**This diverges from what this section previously proposed, deliberately.** The plan was to flag
+colour textures `BGFX_TEXTURE_SRGB` at creation. That is the better answer in one respect —
+hardware sRGB filters and mips in the correct space, which a shader decode does not — but colour
+space belongs to the **slot, not the file**: the same texture handle could be an albedo map in one
+material and a mask in another, and the texture cache is keyed by handle alone. There is nowhere in
+the asset layer that knows the role, which is the same reason `TextureCompiler` still has no `sRGB`
+config key ([assets.md](assets.md#texture-compilation)). Incorrect-space filtering is a
+second-order error next to a 2.4x brightness error.
+
+**What is still not converted**, and is the reason this is "partly done" rather than done:
+
+- `Renderer2D`, the UI and particle paths sample colour with no decode.
+- `SkyLightComponent`'s `SkyColor`/`GroundColor`, and every light `Color`, are authored values that
+  were tuned against the *old* look. They are now slightly hot relative to albedo.
+- Emissive has no map, so the other half of the "albedo and emissive" convention is unwritten.
+
+The convention to finish on is the standard one — albedo and emissive sRGB, everything else linear.
 
 Block compression does not interact with this. BCn stores bits; colour space is a property of how
 the texture is created and sampled, not of the encoded payload.
