@@ -1,0 +1,10 @@
+Material:
+  Name: Material
+  Albedo: [1, 1, 1, 1]
+  Metallic: 1
+  Roughness: 1
+  AlbedoMap: models/buildings/GroundTile1x1x01_textures/albedo_0.jpg
+  NormalMap: models/buildings/GroundTile1x1x01_textures/normal_0.jpg
+  MetallicRoughnessMap: models/buildings/GroundTile1x1x01_textures/metallicRoughness_0.jpg
+  TwoSided: true
+  Transparent: false

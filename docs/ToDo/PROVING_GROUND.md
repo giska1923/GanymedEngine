@@ -240,6 +240,41 @@ there to be no default at all.
 
 `master` work, like the two above.
 
+### P0.7 — The importer invents tangents instead of generating them
+
+[`MeshImporter.cpp:642`](../../GanymedEngine/source/GanymedE/Renderer/MeshImporter.cpp) on a glTF
+with no `TANGENT` attribute:
+
+```cpp
+else { vertex.Tangent = { 1.0f, 0.0f, 0.0f }; }
+```
+
+Every vertex gets world +X. That is not a tangent, and the shader does consume it -
+[`fs_Phong.sc:241`](../../assets/shaders/src/fs_Phong.sc) builds a TBN from it whenever
+`u_UseNormalMap` is set:
+
+```glsl
+vec3 T = normalize(v_tangent - N * dot(N, v_tangent));
+```
+
+Two failure modes, and the second is the bad one:
+
+- On a surface facing anything other than +-X, `T` is world-X projected onto it: a valid vector
+  pointing in an arbitrary direction, so the normal map is applied **rotated by an arbitrary
+  angle**. Wrong lighting that reads as a bad texture.
+- On a surface facing **exactly +-X**, `dot(N, T)` is +-1, the subtraction yields the zero vector,
+  and `normalize` produces garbage. A box-shaped building has walls facing exactly +-X.
+
+glTF does not require `TANGENT`, and exporters routinely omit it because the spec says a client
+should generate tangents from positions and UVs when a normal map is present. Nothing here does.
+The fix is the standard per-triangle accumulation (Lengyel, or MikkTSpace for exactness) at import,
+when `TANGENT` is absent and the material has a normal map.
+
+**Currently latent, and only by accident:** Meshy's re-export dropped the normal maps, so
+`u_UseNormalMap` is off for every model in the project. The first normal-mapped asset turns this on.
+
+`master` work.
+
 ### P0.4 — Sensors (optional)
 
 No `IsSensor` anywhere, so a trigger volume is a solid body you bump into rather than walk through.
