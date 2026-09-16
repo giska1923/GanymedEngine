@@ -5,9 +5,17 @@
 -- written here would be erased before it was ever seen. Facing therefore lives on a child entity
 -- ("Yaw"), which has no body and whose local transform nothing else touches.
 --
--- Turning is on the keyboard because the engine has no cursor capture yet - see
--- docs/ToDo/PROVING_GROUND.md P0.5. When that lands this reads a mouse delta instead and nothing
--- else here changes.
+-- Looking is on the mouse. P0.5 landed cursor capture, and the prediction this comment used to
+-- carry - "reads a mouse delta instead and nothing else here changes" - was nearly right: the
+-- movement code below is untouched. What it missed is that capture needs a way *out*.
+--
+-- Click to capture, Escape to release. Not captured on OnCreate, because scripts also run in the
+-- editor's play mode, and the editor has no Escape handling at all: a script that grabbed the
+-- cursor unconditionally would trap it over the editor with no way to reach the Stop button. In
+-- the runtime Escape quits, so the same key gets you out of both.
+--
+-- Pitch lives on the camera and yaw on the "Yaw" entity, because they must not multiply: pitching
+-- a parent that a child yaws under rolls the horizon.
 --
 -- The capsule is a CharacterControllerComponent, not a rotation-locked rigid body. The first
 -- version was the latter, and P1's gate failed on it: a velocity-driven body cannot slide along a
@@ -18,17 +26,23 @@ local Player = {
     entity = nil,
     Properties = {
         speed = 6.0,        -- metres/second on the ground plane
-        turnSpeed = 2.4,    -- radians/second
-        -- Drives the circuit below with no keyboard. P1's gate is two minutes of walking into
-        -- things, and a human holding W for two minutes is a worse instrument than a script
-        -- that walks the same route every time. Turn it off to play.
-        autopilot = true,
+        turnSpeed = 2.4,    -- radians/second, for the keyboard fallback
+        -- Radians of turn per pixel of mouse movement. 0.0022 is about 0.13 degrees a pixel,
+        -- which is the middle of the range shooters ship with.
+        sensitivity = 0.0022,
+        -- Drives the circuit below with no keyboard, for gate runs. **Off by default now**: with
+        -- mouse look there is a human driving. The gate runs in the roadmap all set it true.
+        autopilot = false,
     },
     speed = 6.0,
     turnSpeed = 2.4,
-    autopilot = true,
+    sensitivity = 0.0022,
+    autopilot = false,
     yaw = 0.0,
+    pitch = 0.0,
+    looking = false,
     yawEntity = nil,
+    cameraEntity = nil,
     -- Gate diagnostics: the P1 gate is "walk for two minutes without tipping, sinking or
     -- sticking", and all three are invisible without a readout.
     t = 0.0,
@@ -111,7 +125,16 @@ function Player:OnCreate()
     self.yawEntity = self.entity:GetChildByName("Yaw")
     if not self.yawEntity then
         Log.Error("Player: no child named 'Yaw' - turning and the camera will not work")
+    else
+        self.cameraEntity = self.yawEntity:GetChildByName("Main Camera")
+        if self.cameraEntity then
+            -- Seed pitch from whatever the scene authored, so capturing the mouse does not snap
+            -- the view level on the first frame.
+            self.pitch = self.cameraEntity:GetRotation().x
+        end
     end
+
+    Log.Info("Player: click to look, Escape to release the cursor")
 
     local p = self.entity:GetTranslation()
     self.startY = p.y
@@ -130,7 +153,31 @@ function Player:OnUpdate(ts)
 
     self.t = self.t + ts
 
-    -- ---- turn ----
+    -- ---- capture ----
+    if not self.looking and Input.IsMouseButtonPressed(Mouse.ButtonLeft) then
+        Input.SetCursorMode(Cursor.Locked)
+        self.looking = true
+    elseif self.looking and Input.IsKeyPressed(Key.Escape) then
+        Input.SetCursorMode(Cursor.Normal)
+        self.looking = false
+    end
+
+    -- ---- look ----
+    if self.looking then
+        -- NOT scaled by ts. The delta is pixels moved last frame - an amount, not a rate - and
+        -- multiplying it by frame time makes sensitivity depend on framerate.
+        local dx, dy = Input.GetMouseDelta()
+        self.yaw = self.yaw - dx * self.sensitivity
+        self.pitch = self.pitch - dy * self.sensitivity
+        -- ~80 degrees. Past vertical the forward vector flips and the controls invert.
+        if self.pitch > 1.4 then self.pitch = 1.4 end
+        if self.pitch < -1.4 then self.pitch = -1.4 end
+        if self.cameraEntity then
+            self.cameraEntity:SetRotation(Vec3(self.pitch, 0, 0))
+        end
+    end
+
+    -- ---- turn (keyboard fallback, and the autopilot's only steering) ----
     local turn = 0.0
     if Input.IsKeyPressed(Key.Q) or Input.IsKeyPressed(Key.Left) then turn = turn + 1.0 end
     if Input.IsKeyPressed(Key.E) or Input.IsKeyPressed(Key.Right) then turn = turn - 1.0 end
