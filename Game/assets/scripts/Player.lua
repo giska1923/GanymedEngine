@@ -30,6 +30,14 @@ local Player = {
         -- Radians of turn per pixel of mouse movement. 0.0022 is about 0.13 degrees a pixel,
         -- which is the middle of the range shooters ship with.
         sensitivity = 0.0022,
+        -- P3. muzzleSpeed is deliberately moderate: Decision 2 accepted that projectiles tunnel
+        -- at some speed, and nothing here does continuous collision detection, so a round fast
+        -- enough to cross a 0.3 m wall in one step would pass through it.
+        muzzleSpeed = 28.0,
+        fireInterval = 0.12,
+        -- Gate mode: fire every frame instead of on a trigger, to put Scene.Spawn and the
+        -- 64-per-frame cap under sustained load. Off for play.
+        autofire = false,
         -- Drives the circuit below with no keyboard, for gate runs. **Off by default now**: with
         -- mouse look there is a human driving. The gate runs in the roadmap all set it true.
         autopilot = false,
@@ -37,7 +45,12 @@ local Player = {
     speed = 6.0,
     turnSpeed = 2.4,
     sensitivity = 0.0022,
+    muzzleSpeed = 28.0,
+    fireInterval = 0.12,
+    autofire = false,
     autopilot = false,
+    fireCooldown = 0.0,
+    refused = 0,
     yaw = 0.0,
     pitch = 0.0,
     looking = false,
@@ -177,6 +190,27 @@ function Player:OnUpdate(ts)
         end
     end
 
+    -- ---- fire ----
+    -- The same left button captures the cursor and then fires, which is the convention every
+    -- shooter uses: the first click is "I am playing now", the rest are shots.
+    self.fireCooldown = self.fireCooldown - ts
+    if self.autofire then
+        -- Three phases, so one run answers all of P3's gate rather than only the easy part:
+        --   < 50 s  one round a frame - sustained fire, which is what a leak would show up in
+        --   50-60 s 100 requests a frame - the only way to reach a 64-per-frame cap, since one
+        --           shot a frame never comes close to it
+        --   > 60 s  stop, and let the 3 s lifetime drain the last rounds so "entity count
+        --           returns to baseline" can actually be observed rather than inferred
+        local shots = 0
+        if self.t < 20.0 then shots = 1
+        elseif self.t < 24.0 then shots = 80 end
+        for _ = 1, shots do self:Fire() end
+    elseif self.looking and Input.IsMouseButtonPressed(Mouse.ButtonLeft)
+        and self.fireCooldown <= 0.0 then
+        self.fireCooldown = self.fireInterval
+        self:Fire()
+    end
+
     -- ---- turn (keyboard fallback, and the autopilot's only steering) ----
     local turn = 0.0
     if Input.IsKeyPressed(Key.Q) or Input.IsKeyPressed(Key.Left) then turn = turn + 1.0 end
@@ -210,7 +244,51 @@ function Player:OnUpdate(ts)
     local v = self.entity:GetLinearVelocity()
     self.entity:SetLinearVelocity(Vec3(ix * self.speed, v.y, iz * self.speed))
 
+    self:PushPending()
     self:Diagnose(ts)
+end
+
+function Player:Fire()
+    local p = self.entity:GetTranslation()
+    local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
+    local fx, fz = -sinY, -cosY
+
+    -- A metre ahead and at chest height. Spawning inside the capsule would have the round collide
+    -- with the player on its first step, and the shot would die where it was born.
+    local muzzle = Vec3(p.x + fx * 1.0, p.y + 0.5, p.z + fz * 1.0)
+
+    local id = Scene.Spawn("prefabs/Projectile.gprefab", muzzle)
+    if not id then
+        -- nil means the per-frame spawn cap refused it. Counting refusals is the point of
+        -- autofire: the cap should hold without the game noticing anything but fewer rounds.
+        self.refused = self.refused + 1
+        return
+    end
+
+    PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
+    PG.fired = PG.fired + 1
+
+    -- The entity does not exist until the command queue flushes at the next FrameBegin, so the
+    -- velocity cannot be set here. Stash the id and push it next frame.
+    self.pending = self.pending or {}
+    self.pending[#self.pending + 1] = { id = id, vx = fx * self.muzzleSpeed, vz = fz * self.muzzleSpeed }
+end
+
+function Player:PushPending()
+    if not self.pending or #self.pending == 0 then return end
+    local still = {}
+    for i = 1, #self.pending do
+        local q = self.pending[i]
+        local e = Scene.FindEntityByUUID(q.id)
+        if e then
+            e:SetLinearVelocity(Vec3(q.vx, 0, q.vz))
+        else
+            -- Not there yet; the flush happens at FrameBegin so one frame of lag is normal.
+            -- Anything still missing after that is a spawn that failed and is dropped.
+            if not q.waited then q.waited = true; still[#still + 1] = q end
+        end
+    end
+    self.pending = still
 end
 
 -- A circuit that walks the map and meets every obstacle in it: straight stretches long enough to
@@ -323,10 +401,10 @@ function Player:Diagnose(ts)
     if self.t >= self.nextReport then
         self.nextReport = self.nextReport + 5.0
         Log.Info(string.format(
-            "GATE t=%.0fs wp=%d pos=(%.1f, %.2f, %.1f) minY=%.3f stuck=%.2fs grounded=%.0f%% inBH=%d inWH=%d inWall=%d",
-            self.t, self.wp, p.x, p.y, p.z, self.minY, self.worstStuck,
-            100.0 * self.groundedFrames / math.max(self.frames, 1),
-            self.inBH, self.inWH, self.inWall))
+            "GATE t=%.0fs pos=(%.1f, %.2f, %.1f) grounded=%.0f%% inWall=%d | fired=%d live=%d despawned=%d hits=%d kills=%d refused=%d",
+            self.t, p.x, p.y, p.z,
+            100.0 * self.groundedFrames / math.max(self.frames, 1), self.inWall,
+            PG.fired, PG.fired - PG.despawned, PG.despawned, PG.hits, PG.kills, self.refused))
         local hits = ""
         for i = 1, #ROUTE do
             hits = hits .. string.format(" wp%d=%d", i, (self.wpHits and self.wpHits[i]) or 0)
