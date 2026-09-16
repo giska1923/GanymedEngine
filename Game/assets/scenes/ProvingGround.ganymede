@@ -206,32 +206,6 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
-  - Entity: 3000000000000000030
-    TagComponent:
-      Tag: Blockhouse
-    TransformComponent:
-      Translation: [16, 0, -6]
-      Rotation: [0, 0, 0]
-      Scale: [4, 4, 4]
-    RelationshipComponent:
-      Parent: 0
-      Children:
-        []
-    StaticMeshComponent:
-      Mesh: 2896349153812140998
-  - Entity: 3000000000000000031
-    TagComponent:
-      Tag: Warehouse
-    TransformComponent:
-      Translation: [-22, 0, -14]
-      Rotation: [0, 0, 0]
-      Scale: [10, 10, 10]
-    RelationshipComponent:
-      Parent: 0
-      Children:
-        []
-    StaticMeshComponent:
-      Mesh: 4660014437392013074
   - Entity: 3000000000000000032
     TagComponent:
       Tag: GroundTile
@@ -245,3 +219,399 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 10342787246598626112
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [1, 0.0900000036, 1]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000030
+    TagComponent:
+      Tag: Blockhouse
+    TransformComponent:
+      Translation: [16, 2.28, -6]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 3000000000000000040
+        - 3000000000000000041
+        - 3000000000000000042
+        - 3000000000000000043
+        - 3000000000000000044
+        - 3000000000000000045
+        - 3000000000000000046
+        - 3000000000000000047
+        - 3000000000000000048
+  - Entity: 3000000000000000040
+    TagComponent:
+      Tag: Blockhouse Mesh
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [4, 4, 4]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 2896349153812140998
+  - Entity: 3000000000000000041
+    TagComponent:
+      Tag: Blockhouse Wall X-
+    TransformComponent:
+      Translation: [-3.85, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [0.15, 2.28, 3.58]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000042
+    TagComponent:
+      Tag: Blockhouse Wall X+
+    TransformComponent:
+      Translation: [3.85, 0, -2.14]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [0.15, 2.28, 1.44]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000043
+    TagComponent:
+      Tag: Blockhouse Wall X+
+    TransformComponent:
+      Translation: [3.85, 0, 2.14]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [0.15, 2.28, 1.44]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000044
+    TagComponent:
+      Tag: Blockhouse Wall Z-
+    TransformComponent:
+      Translation: [-1.17, 0, -3.43]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [2.83, 2.28, 0.15]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000045
+    TagComponent:
+      Tag: Blockhouse Wall Z-
+    TransformComponent:
+      Translation: [3.73, 0, -3.43]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [0.27, 2.28, 0.15]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000046
+    TagComponent:
+      Tag: Blockhouse Wall Z+
+    TransformComponent:
+      Translation: [-3.84, 0, 3.43]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [0.16, 2.28, 0.15]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000047
+    TagComponent:
+      Tag: Blockhouse Wall Z+
+    TransformComponent:
+      Translation: [0.66, 0, 3.43]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [3.34, 2.28, 0.15]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000048
+    TagComponent:
+      Tag: Blockhouse Roof
+    TransformComponent:
+      Translation: [0, 2.13, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000030
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [4, 0.15, 3.58]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000031
+    TagComponent:
+      Tag: Warehouse
+    TransformComponent:
+      Translation: [-22, 4.23, -14]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 3000000000000000049
+        - 3000000000000000050
+        - 3000000000000000051
+        - 3000000000000000052
+        - 3000000000000000053
+        - 3000000000000000054
+        - 3000000000000000055
+  - Entity: 3000000000000000049
+    TagComponent:
+      Tag: Warehouse Mesh
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [10, 10, 10]
+    RelationshipComponent:
+      Parent: 3000000000000000031
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 4660014437392013074
+  - Entity: 3000000000000000050
+    TagComponent:
+      Tag: Warehouse Wall X-
+    TransformComponent:
+      Translation: [-9.85, 0, -4.0725]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000031
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [0.15, 4.23, 1.7025]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000051
+    TagComponent:
+      Tag: Warehouse Wall X-
+    TransformComponent:
+      Translation: [-9.85, 0, 2.1525]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000031
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [0.15, 4.23, 3.6225]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000052
+    TagComponent:
+      Tag: Warehouse Wall X+
+    TransformComponent:
+      Translation: [9.85, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000031
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [0.15, 4.23, 5.775]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000053
+    TagComponent:
+      Tag: Warehouse Wall Z-
+    TransformComponent:
+      Translation: [0, 0, -5.625]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000031
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [10, 4.23, 0.15]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000054
+    TagComponent:
+      Tag: Warehouse Wall Z+
+    TransformComponent:
+      Translation: [0, 0, 5.625]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000031
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [10, 4.23, 0.15]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
+  - Entity: 3000000000000000055
+    TagComponent:
+      Tag: Warehouse Roof
+    TransformComponent:
+      Translation: [0, 4.08, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000031
+      Children:
+        []
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+    BoxColliderComponent:
+      HalfExtents: [10, 0.15, 5.775]
+      Offset: [0, 0, 0]
+      Friction: 0.800000012
+      Restitution: 0
