@@ -754,8 +754,9 @@ Three details worth knowing:
 
 - **The image cannot have changed.** `TextureImporter::LoadFromMemory(bytes, size, flip)` is defined
   as `Upload(DecodeFromMemory(bytes, size, flip))`. The change is that exact composition split
-  across a thread boundary, with `flip = true` preserved, so the result is identical by
-  construction rather than by inspection.
+  across a thread boundary, with the flip preserved, so the result was identical by construction
+  rather than by inspection. Preserving it also preserved a bug: the flip itself was wrong, and is
+  now gone - see [The flip](#the-flip) below.
 - **The compressed bytes are still carried.** `MaterialSerializer::GenerateSidecars` extracts them
   to a real file on first import (see [Sidecar generation](#sidecar-generation-and-embedded-texture-extraction)),
   and re-encoding RGBA8 to recover them would be absurd. So a `MeshSource` in flight holds both
@@ -1094,10 +1095,10 @@ Everything is forced to 4 channels (bgfx has no 24-bit RGB8 format).
 | Entry point | Used by |
 |---|---|
 | `Decode(fullPath, flip=false)` → `DecodedImage` | The texture manager’s Parse stage. CPU only |
-| `DecodeFromMemory(bytes, size, flip=true)` → `DecodedImage` | The CPU half of the embedded-image path |
+| `DecodeFromMemory(bytes, size, flip=false)` → `DecodedImage` | The CPU half of the embedded-image path |
 | `Upload(DecodedImage)` | The texture manager’s Apply stage. Main thread only |
 | `LoadFromFile(fullPath, flip=false)` | `Decode` + `Upload`, for callers that want both at once |
-| `LoadFromMemory(bytes, size, flip=true)` | glTF images embedded in a buffer view |
+| `LoadFromMemory(bytes, size, flip=false)` | glTF images embedded in a buffer view |
 | `LoadMaterialMap(relativePath)` | Material maps recorded as a path — the de-duplicating resolve |
 
 `DecodedImage` is the Parse/Apply seam: RGBA8, tightly packed, owning stb’s buffer through a
@@ -1119,11 +1120,39 @@ content-hash de-dup is a possible later refinement.
 `.meta` sidecars, one beside each extracted image — the reason `ImportAsset` no longer needs the
 batched flush it used to: each write touches only the file it identifies.
 
-**Flip discrepancy (known, deliberate):** file-based maps load unflipped, embedded glTF images
-flipped. Unflipped is the correct one — glTF UVs are top-left origin and bgfx normalizes texture
-origin to top-left, which is why `Texture2D(const std::string&)` explicitly does not flip. The
-embedded path flips only because that is what it did before the loaders were consolidated;
-reconciling it changes rendering on that path, so it is a separate change.
+### The flip
+
+**Nothing flips any more, and that is the fix.** glTF UVs are top-left origin and bgfx normalises
+texture origin to top-left, so unflipped was always correct — which is why
+`Texture2D(const std::string&)` had always explicitly refused to flip. The embedded path flipped
+only because that is what it did before the loaders were consolidated, and every later refactor
+preserved the behaviour rather than questioning it.
+
+This section previously recorded the discrepancy as known and deferred, on the grounds that
+reconciling it "changes rendering on that path, so it is a separate change". It did change
+rendering on that path: **it was breaking it.** A vertically flipped atlas does not render upside
+down - it maps every UV island onto unrelated content, so each face samples a different part of the
+texture. On a single-image cube that reads as a mildly odd texture; on an atlas-mapped building it
+reads as unrecognisable smearing, which is how it was finally caught.
+
+The path is only reached when a mesh has no `.gmat` override to send it through the texture manager
+instead, which is why eight committed fixtures never revealed it.
+
+### Mips on the uncompiled paths
+
+`TextureImporter::Upload` and `Texture2D(const std::string&)` both build a full mip chain now.
+Neither did before: they used the `(width, height)` constructor, whose own comment says it exists
+for "the 1x1 white texture Renderer2D uses for untextured quads", and were handing it 4096x4096
+material maps with level 0 only.
+
+bgfx does not generate mips for an ordinary sampled texture - a render target can be blitted down,
+but a sampled one must be handed its whole chain, all levels contiguous, largest first. A 2x2 box
+filter builds it. The filter runs in sRGB space, which is very slightly wrong now that `fs_Phong`
+decodes albedo to linear; the error is a fraction of a tone and is recorded rather than fixed.
+
+This was **not** the cause of the smearing above - the flip was - but it is a real defect on the
+same path, and it is what keeps the uncompiled fallback matching the compiled path in *quality*
+rather than only in content.
 
 Editor chrome that is still a texture (`ContentBrowserPanel` file/folder icons, the checkerboard)
 stays on the `Texture2D(path)` constructor with hard-coded `resources/` paths — outside the asset

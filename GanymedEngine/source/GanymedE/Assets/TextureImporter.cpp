@@ -110,9 +110,13 @@ namespace GanymedE {
 		if (!image)
 			return nullptr;
 
-		Ref<Texture2D> texture = Texture2D::Create(image.Width, image.Height);
-		texture->SetData(image.Pixels.get(), image.Width * image.Height * 4);
-		return texture;
+		// The pixel-taking overload, which builds a mip chain. The (width, height) one does not:
+		// it is for scratch textures that SetData fills, and using it here uploaded 4096x4096
+		// material maps with level 0 only. Minified onto a building a few hundred pixels tall,
+		// that aliases into unrecognisable smearing - and it only ever showed up on this path,
+		// because a texture that goes through TextureCompiler arrives as a fully mipped
+		// container instead.
+		return Texture2D::Create(image.Pixels.get(), image.Width, image.Height);
 	}
 
 	Ref<Texture2D> TextureImporter::LoadFromFile(const std::filesystem::path& fullPath, bool flipVertically)
