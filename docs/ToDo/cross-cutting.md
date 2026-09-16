@@ -194,3 +194,21 @@ Not scheduled, because the right shape of the fix is a real decision: clamping c
 means for everyone, and a game that legitimately hitches wants to know. Recorded because it will be
 met again in [PROVING_GROUND.md](PROVING_GROUND.md)'s P1, and the failure looks like a gameplay bug
 rather than a frame-timing one.
+
+## The three per-platform Input files are one file three times
+
+`Platform/Windows/WindowsInput.cpp`, `Platform/Linux/LinuxInput.cpp` and
+`Platform/macOS/macOSInput.cpp` contain the *same* GLFW code - `glfwGetKey`, `glfwGetMouseButton`,
+`glfwGetCursorPos` - each wrapped in a `#ifdef GE_PLATFORM_*` so only one compiles. The split
+predates GLFW being the only windowing backend; there has never been a second implementation for
+them to differ in.
+
+Cursor mode and the mouse delta were added in `Core/Input.cpp` instead, written once, rather than
+pasting stateful logic into three files that would then have to be kept in step. That leaves
+`Input` split across two ideas of where it lives, which is worse than either option on its own -
+but only until the three are folded into the one.
+
+The fold is mechanical: move the three function bodies into `Core/Input.cpp`, delete the platform
+files, regenerate. It is left out of the cursor change because deleting three source files and
+adding one is a project-regeneration change that has nothing to do with cursor capture, and mixing
+them would make both harder to review.

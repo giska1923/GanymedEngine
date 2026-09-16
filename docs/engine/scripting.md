@@ -353,6 +353,29 @@ if sparks then
 end
 ```
 
+### Mouse look
+
+`Input.SetCursorMode(Cursor.Locked)` captures the cursor; `Input.GetMouseDelta()` is what you read
+while it is captured, because a locked cursor's absolute position is a virtual coordinate that
+means nothing on its own.
+
+```lua
+function Player:OnCreate()
+    Input.SetCursorMode(Cursor.Locked)
+end
+
+function Player:OnUpdate(ts)
+    local dx, dy = Input.GetMouseDelta()
+    self.yaw   = self.yaw   - dx * self.sensitivity
+    self.pitch = math.max(-1.4, math.min(1.4, self.pitch - dy * self.sensitivity))
+end
+```
+
+`Cursor.Normal | Cursor.Hidden | Cursor.Locked`, and `Input.GetCursorMode()` reads it back. The
+delta is in **pixels moved last frame**, not a rate, so it must not be multiplied by `ts` - mouse
+movement is already an amount rather than a speed, and scaling it by frame time makes sensitivity
+depend on framerate. See [platform.md](platform.md#cursor-mode-and-mouse-delta).
+
 ### Characters
 
 `Entity:SetLinearVelocity`, `GetLinearVelocity` and the rest accept a character controller as well
