@@ -219,11 +219,37 @@ float ShadowFactor(vec3 N, vec3 L, vec3 worldPos)
 	return SampleCascade(s_shadowMap3, mul(u_LightSpaceMatrices[3], vec4(worldPos, 1.0)), N, L);
 }
 
+// Albedo textures are authored and stored sRGB-encoded; the lighting below is linear. Without
+// this decode a mid-grey of 123/255 enters the BRDF as 0.482 when it means 0.198 - every surface
+// roughly 2.4x too bright - and the 1/2.2 applied at tonemap cannot undo it, because it runs
+// after the error rather than before.
+//
+// Done here rather than as an sRGB texture format because the colour space belongs to the
+// *slot*, not the file: the same handle could be an albedo map in one material and a mask in
+// another, and the texture cache is keyed by handle alone. TextureCompiler.h records why a
+// colour-space key does not belong in the asset config either. Hardware sRGB would filter and
+// mip in the correct space, which this does not; that is a second-order error next to the one
+// being fixed, and it belongs with a real colour-management pass.
+//
+// The exact piecewise transfer function rather than pow(c, 2.2): the approximation is worst in
+// the darks, which is precisely where weathered concrete and shadowed interiors live.
+vec3 SrgbToLinear(vec3 c)
+{
+	vec3 lo = c / 12.92;
+	vec3 hi = pow((c + vec3_splat(0.055)) / 1.055, vec3_splat(2.4));
+	return mix(lo, hi, step(vec3_splat(0.04045), c));
+}
+
 void main()
 {
+	// u_AlbedoColor is a linear multiplier and is NOT decoded - only the texel is.
 	vec4 albedoSample = u_AlbedoColor;
 	if (u_UseAlbedoMap.x > 0.5)
-		albedoSample *= texture2D(u_AlbedoMap, v_texcoord0);
+	{
+		vec4 texel = texture2D(u_AlbedoMap, v_texcoord0);
+		texel.xyz = SrgbToLinear(texel.xyz);
+		albedoSample *= texel;
+	}
 	vec3 albedo = albedoSample.rgb;
 
 	float metallic = u_Metallic.x;

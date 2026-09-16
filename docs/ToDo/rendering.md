@@ -41,11 +41,27 @@ two lines (accept `VK_INCOMPLETE`, or size the array from the first query).
 **Async picking**: done, and it was broken on *every* backend rather than just GL — see
 [Entity picking](../engine/rendering.md#entity-picking-async).
 
-**sRGB**: verified. The manual-gamma pipeline renders identically on all four backends — a textured
-lit scene with a sky gradient gives the same mean channel value to two decimal places, mean
-per-pixel difference 0.000, max 4/255. Nothing to fix; the captures are a baseline for whenever the
-real sRGB pipeline lands (which is [its own scoped change](../engine/rendering.md#colour-space),
-deliberately not this).
+**sRGB**: the backend-parity check passed — all four render the manual-gamma pipeline identically,
+mean per-pixel difference 0.000, max 4/255. What that check could not see is that the pipeline
+itself was wrong: albedo was sampled as linear when it is authored sRGB, so every textured surface
+was ~2.4x too bright, identically on every backend.
+
+**Lit mesh albedo is now decoded** in `fs_Phong` (139.15 -> 111.01 mean luminance, 86.7% of pixels
+changed) — see [rendering.md](../engine/rendering.md#colour-space). It went unnoticed for as long
+as it did because the only textured content was `BoxTextured.glb`'s flat cartoon texture and the
+editor's checkerboard; the first photoreal PBR asset exposed it immediately, which is what
+[PROVING_GROUND.md](PROVING_GROUND.md) exists to do.
+
+**Still open, and why this is "partly done":**
+
+- `Renderer2D`, UI and particles sample colour with no decode.
+- `SkyColor`/`GroundColor` and every light `Color` were authored against the *old* look and are now
+  slightly hot relative to albedo. Retuning them is a judgement call about how the game should
+  look, not a correctness fix, so it waits until there is enough content to judge against.
+- Emissive maps do not exist yet, so the other half of the standard convention is unwritten.
+- Hardware `BGFX_TEXTURE_SRGB` would filter and mip in the correct space, which the shader decode
+  does not. It needs the texture's *role* at upload time, and nothing in the asset layer knows it
+  — the reason is recorded in `TextureCompiler.h`.
 
 **MSAA**: checked, and it **does not work** — see below.
 
