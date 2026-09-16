@@ -197,6 +197,11 @@ namespace GanymedE {
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
+			// One cursor sample per frame, before anything can ask for it, so every caller in a
+			// frame sees the same delta. Deriving it lazily inside GetMouseDelta would give the
+			// second caller in a frame a zero.
+			Input::NewFrame();
+
 			// Before the layers, and outside the minimised gate. Before, so a resource a
 			// worker finished last frame becomes usable by the systems that draw with it
 			// this frame instead of a frame later. Outside, because a minimised window has

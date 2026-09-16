@@ -492,6 +492,24 @@ namespace GanymedE {
 			// Two returns rather than a Vec3: mouse position is 2D, and TSTL models this as
 			// LuaMultiReturn<[number, number]>.
 			input["GetMousePosition"]     = []() { const glm::vec2 p = Input::GetMousePosition(); return std::make_tuple(p.x, p.y); };
+
+			// How far the mouse moved last frame, in pixels. This - not GetMousePosition - is
+			// what mouse-look reads: with the cursor locked the absolute position is an
+			// unbounded virtual coordinate that means nothing on its own.
+			input["GetMouseDelta"]        = []() { const glm::vec2 d = Input::GetMouseDelta(); return std::make_tuple(d.x, d.y); };
+
+			// Cursor.Normal / Cursor.Hidden / Cursor.Locked. Locked is mouse-look: hidden, held
+			// to the window, raw motion where the platform has it.
+			input["SetCursorMode"]        = [](int mode) { Input::SetCursorMode((CursorMode)mode); };
+			input["GetCursorMode"]        = []() { return (int)Input::GetCursorMode(); };
+		}
+
+		void RegisterCursorModes(sol::state& lua)
+		{
+			sol::table cursor = lua.create_named_table("Cursor");
+			cursor["Normal"] = (int)CursorMode::Normal;
+			cursor["Hidden"] = (int)CursorMode::Hidden;
+			cursor["Locked"] = (int)CursorMode::Locked;
 		}
 
 		void RegisterKeyCodes(sol::state& lua)
@@ -768,6 +786,7 @@ namespace GanymedE {
 	void RegisterScriptGlobals(sol::state& lua)
 	{
 		RegisterInput(lua);
+		RegisterCursorModes(lua);
 		RegisterKeyCodes(lua);
 		RegisterLog(lua);
 		RegisterScene(lua);

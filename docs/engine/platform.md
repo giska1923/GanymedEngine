@@ -94,9 +94,43 @@ implementation, so the old interface (and `OpenGLContext`) was deleted with it.
 
 ## Input & file dialogs
 
-- `Platform/<OS>/<OS>Input.cpp` implements the static
+- `Platform/<OS>/<OS>Input.cpp` implements the polling half of the static
   [`Input`](../../GanymedEngine/source/GanymedE/Core/Input.h) API over
-  `glfwGetKey`/`glfwGetMouseButton`/`glfwGetCursorPos` against the application's window.
+  `glfwGetKey`/`glfwGetMouseButton`/`glfwGetCursorPos` against the application's window. All three
+  files are the same GLFW code behind three `#ifdef`s, which predates GLFW being the only
+  windowing backend.
+- **`Core/Input.cpp` holds the cursor half**, written once rather than three times, because there
+  is one implementation of it to write. Consolidating the three polling files is a separate
+  change — see [ToDo/cross-cutting.md](../ToDo/cross-cutting.md).
+
+### Cursor mode and mouse delta
+
+`Input::SetCursorMode` takes `CursorMode::Normal | Hidden | Locked`:
+
+| Mode | GLFW | For |
+|---|---|---|
+| `Normal` | `GLFW_CURSOR_NORMAL` | The editor, and the default |
+| `Hidden` | `GLFW_CURSOR_HIDDEN` | A game drawing its own crosshair but still aiming pointer-style |
+| `Locked` | `GLFW_CURSOR_DISABLED` | Mouse-look: hidden, held to the window, unbounded virtual coordinates |
+
+`Locked` also enables `GLFW_RAW_MOUSE_MOTION` where the platform supports it. Raw motion skips the
+OS pointer-acceleration curve, which a desktop cursor wants and mouse-look does not — with
+acceleration, the same physical movement turns the camera by different amounts depending on how
+fast it was made.
+
+**`Input::GetMouseDelta` is the one to read while locked**, because a locked cursor's absolute
+position is a virtual coordinate that means nothing on its own — `GetMousePosition` stops being a
+sensible question. The delta is sampled **once per frame** by `Application::Run`, before the layers
+update, so every caller within a frame sees the same value; deriving it lazily inside the getter
+would hand the second caller in a frame a zero.
+
+A mode change warps the cursor, and that warp is not motion. The frame a change lands on reports a
+zero delta rather than one enormous jump.
+
+Measured end to end by driving 200 synthetic `(+6, +3)` relative moves into a locked window: the
+accumulated delta moved by `(732, 366)` over the clean interval — the 2:1 ratio that was driven —
+two `GetMouseDelta()` calls in one frame returned identical values, and the frame the lock landed
+on reported `(0, 0)`.
 - `Platform/<OS>/<OS>PlatformUtils.cpp` implements
   [`FileDialogs::OpenFile/SaveFile`](../../GanymedEngine/source/GanymedE/Utils/PlatformUtils.h)
   (Win32 common dialogs on Windows; zenity/osascript-style equivalents elsewhere). Filter strings
