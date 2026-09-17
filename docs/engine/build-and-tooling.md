@@ -9,6 +9,28 @@
   `make -j$(nproc) config=debug`.
 - macOS: `scripts/macOS_GenerateProjects.sh` → Xcode workspace.
 
+`scripts/fix_submodules.sh` is the first thing to run when a build fails naming a dependency
+that should exist. `--check` reports every path in `.gitmodules` and changes nothing; with no
+arguments it syncs the URLs and runs `git submodule update --init --recursive`, which restores
+the **pinned** commits; `--force` deinitialises first, for a working tree that will not move.
+It reads `.gitmodules` rather than a list of its own, so a new submodule is covered the day it
+is added.
+
+The failure it exists for is quiet. A missing or empty submodule directory still gets a premake
+project generated for it — premake does not check that the sources it was told about are on
+disk — so the first symptom is a link error against an archive nothing builds:
+
+```
+make: *** No rule to make target '../bin/Debug-linux-x86_64/enkiTS/libenkiTS.a',
+      needed by '../bin/Debug-linux-x86_64/GanymedEditor/GanymedEditor'.  Stop.
+```
+
+Two other things produce that same message, and they are worth ruling out in this order: a
+**stale generated makefile** (they are gitignored, so a pull that changes `premake5.lua` or
+`extern/*.lua` never updates them — regenerate), and **running `make` inside a project
+directory** rather than at the root, where only the workspace makefile knows what has to be
+built first.
+
 `Linux_GenerateProjects.sh` wants a native `vendor/premake/bin/premake5`, and only the Windows
 `premake5.exe` is committed. `setup_premake.sh` downloads one; **premake also cross-generates**,
 which needs no download and no Wine:
@@ -39,8 +61,11 @@ Null device (WSL exposes none) and degraded without complaint.
 
 Two caveats on that row, because "it ran in WSL2" is not "it runs on Linux":
 
-- **Vulkan was not exercised** — WSL has no Vulkan loader, so bgfx fell through to OpenGL. On a
-  real Linux box Vulkan is the backend bgfx would pick first.
+- **Vulkan on Intel ANV hung a native Ubuntu box** — WSL has no Vulkan loader, so the WSL run
+  never saw it. Native Linux picks Vulkan first; Intel UHD (TGL GT1) initialized, baked IBL, then
+  died in the first `bgfx::frame()` (`VK_ERROR_DEVICE_LOST`). The bake shaders and Intel+Vulkan
+  stage split in [rendering.md](rendering.md#environment--ibl) are the fix; they have not been
+  re-run on that machine yet. `--renderer=opengl` is the diagnostic fallback.
 - **GL came from Mesa's d3d12 gallium driver** (it reports `D3D12 (Intel(R) UHD Graphics)`), which
   is hardware-accelerated but is not the driver stack a native Linux user has.
 

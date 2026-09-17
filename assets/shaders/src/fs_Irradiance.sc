@@ -8,29 +8,42 @@ SAMPLERCUBE(u_EnvironmentMap, 0);
 
 #define PI 3.14159265359
 
+// Integer bounds, not `phi += 0.025`. Mesa's ANV SPIR-V compiler has produced
+// non-terminating fragment loops from float-increment hemisphere walks, which
+// shows up as i915 `GPU hung` / `VK_ERROR_DEVICE_LOST` on the first frame that
+// runs the bake (Intel UHD, Linux Vulkan). 256 x 64 is the same order as the
+// old 0.025-radian grid (~15.8k samples).
+//
+// 128 x 32 = 4096 samples, down from 256 x 64. The target is a 32^2 cubemap face of a
+// low-frequency signal - diffuse irradiance is the most heavily blurred thing in the whole bake -
+// and 4096 stratified samples per texel is still far above what it can resolve.
+#define PHI_SAMPLES 128
+#define THETA_SAMPLES 32
+
 void main()
 {
 	vec3 N = normalize(v_worldpos);
 
-	vec3 irradiance = vec3_splat(0.0);
-
-	vec3 up = vec3(0.0, 1.0, 0.0);
+	// When N is colinear with +Y the original `cross((0,1,0), N)` is a zero
+	// vector and `normalize` is NaN - the +Y/-Y cube faces baked black. Pick
+	// a different up when N is near the Y axis.
+	vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);
 	vec3 right = normalize(cross(up, N));
 	up = normalize(cross(N, right));
 
-	float sampleDelta = 0.025;
-	float nrSamples = 0.0;
-	for (float phi = 0.0; phi < 2.0 * PI; phi += sampleDelta)
+	vec3 irradiance = vec3_splat(0.0);
+	for (int i = 0; i < PHI_SAMPLES; i++)
 	{
-		for (float theta = 0.0; theta < 0.5 * PI; theta += sampleDelta)
+		float phi = (float(i) + 0.5) * (2.0 * PI / float(PHI_SAMPLES));
+		for (int j = 0; j < THETA_SAMPLES; j++)
 		{
+			float theta = (float(j) + 0.5) * (0.5 * PI / float(THETA_SAMPLES));
 			vec3 tangentSample = vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
 			vec3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N;
 			irradiance += textureCube(u_EnvironmentMap, sampleVec).rgb * cos(theta) * sin(theta);
-			nrSamples++;
 		}
 	}
-	irradiance = PI * irradiance * (1.0 / nrSamples);
+	irradiance = PI * irradiance * (1.0 / float(PHI_SAMPLES * THETA_SAMPLES));
 
 	gl_FragColor = vec4(irradiance, 1.0);
 }

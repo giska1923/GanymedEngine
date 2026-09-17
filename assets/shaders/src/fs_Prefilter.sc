@@ -8,9 +8,19 @@ $input v_worldpos
 SAMPLERCUBE(u_EnvironmentMap, 0);
 
 uniform vec4 u_Roughness;  // .x
-uniform vec4 u_Resolution; // .x = source cubemap face resolution
+uniform vec4 u_Resolution; // .x = source cubemap face resolution, .y = its highest valid mip
 
 #define PI 3.14159265359
+// Compile-time loop bound: a mutable `uint SAMPLE_COUNT = 1024u` is a dynamic
+// loop to some SPIR-V compilers, and Intel ANV has hung on those.
+//
+// 128, not 1024, and this one is free rather than a trade: the loop below already picks a mip of
+// the environment cubemap from the sample PDF and reads it with textureCubeLod. That technique
+// (Karis, "Real Shading in Unreal Engine 4") exists precisely so that a low sample count does not
+// alias - the mip does the averaging the missing samples would have done. Karis uses 64-128.
+// Sampling 1024 times into a mip chain built for 128 is paying eight times over for the same
+// answer.
+#define SAMPLE_COUNT 128u
 
 float RadicalInverse_VdC(uint bits)
 {
@@ -61,7 +71,6 @@ void main()
 	vec3 R = N;
 	vec3 V = R;
 
-	uint SAMPLE_COUNT = 1024u;
 	vec3 prefilteredColor = vec3_splat(0.0);
 	float totalWeight = 0.0;
 
@@ -83,6 +92,17 @@ void main()
 			float saTexel = 4.0 * PI / (6.0 * u_Resolution.x * u_Resolution.x);
 			float saSample = 1.0 / (float(SAMPLE_COUNT) * pdf + 0.0001);
 			float mipLevel = u_Roughness.x == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel);
+
+			// **Clamped, and it was not before.** The source cubemap has 5 mips, so the only
+			// levels that exist are 0..4 - and this formula asks for up to 11.6. It exceeds 4
+			// even at the GGX peak once roughness reaches 0.5, so it is not an edge case: every
+			// rough material was sampling past the end of the chain on every backend, which is a
+			// correctness bug quite apart from what it does to a driver.
+			//
+			// It is also the one thing this stage does that no other bake stage does - an
+			// explicit, computed, out-of-range LOD - and this stage is the one that hangs Intel
+			// ANV while the irradiance convolution beside it finishes 25M cube samples in 21 ms.
+			mipLevel = clamp(mipLevel, 0.0, u_Resolution.y);
 
 			prefilteredColor += textureCubeLod(u_EnvironmentMap, L, mipLevel).rgb * NdotL;
 			totalWeight += NdotL;

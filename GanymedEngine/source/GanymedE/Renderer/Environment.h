@@ -31,7 +31,9 @@ namespace GanymedE {
 	//
 	// Concrete over bgfx handles, like the other resources. The bake runs once on
 	// construction across a block of transient views (RenderPass::EnvironmentBake),
-	// rendering into individual cubemap faces and mips via bgfx::Attachment.
+	// rendering into individual cubemap faces and mips via bgfx::Attachment, which
+	// it attaches with BGFX_RESOLVE_NONE - see FaceFramebuffer for why the default
+	// on that parameter hangs Mesa ANV.
 	//
 	// Binding is the caller's job: a sampler belongs to a shader, so the handles
 	// are exposed and Renderer3D feeds them to Shader::SetTexture.
@@ -77,7 +79,10 @@ namespace GanymedE {
 		static constexpr uint32_t kIrradianceSize = 32;
 		static constexpr uint32_t kPrefilterSize = 128;
 		static constexpr uint32_t kPrefilterMips = 5;
-		static constexpr uint32_t kBRDFLutSize = 512;
+		// 256, not 512. The LUT is a smooth two-channel function of (NdotV, roughness) with no
+		// high-frequency content anywhere in it - UE4 ships 256x256 - so the extra 3/4 of the
+		// pixels bought nothing and cost the most expensive single draw in the engine.
+		static constexpr uint32_t kBRDFLutSize = 256;
 
 		std::string m_Filepath;
 		bool m_Valid = false;

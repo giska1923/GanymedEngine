@@ -516,12 +516,47 @@ not an entity id. Picking would need a separate non-multisampled pass or a custo
 
 [`Environment`](../../GanymedEngine/source/GanymedE/Renderer/Environment.h) bakes an
 equirectangular HDR into: a 512² 5-mip environment cubemap (skybox), a 32² diffuse irradiance map,
-a 128² 5-mip prefiltered specular map, and — once per process, not once per environment — a 512²
-BRDF LUT. The bake runs **once, entirely within one frame**, across the transient view block starting at `RenderPass::EnvironmentBake` (67 views:
-faces × mips, twice, + LUT) — valid only because views execute in ID order, so each stage samples
-what a lower-numbered view wrote. bgfx cannot mipmap render targets, so every env mip is rendered
+a 128² 5-mip prefiltered specular map, and — once per process, not once per environment — a 256²
+BRDF LUT.
+
+**The prefilter clamps its LOD, and that is a correctness fix, not a workaround.** It picks a mip
+of the source cubemap from the sample PDF (Karis) and the formula routinely asks for levels that do
+not exist: the source has 5 mips, so LOD 0..4, and the computed value reaches **11.6** - past 4 even
+at the GGX peak once roughness hits 0.5. Every rough material was therefore sampling off the end of
+the chain, on every backend. `u_Resolution.y` carries the highest valid LOD and the shader clamps to
+it. It is also the only thing this stage does that no other bake stage does - an explicit, computed,
+out-of-range LOD - and it is the stage that hangs Intel ANV while the irradiance convolution beside
+it finishes 25M cube samples in 21 ms.
+
+**Sample counts are production values, not the tutorial's.** 4096 stratified samples for
+irradiance, 128 for the GGX prefilter, 256 for the LUT. The LearnOpenGL bake this descends from
+uses 16k / 1024 / 1024, which is roughly 500M fragment-loop iterations for one environment: fine on
+a discrete GPU, and more than a 32-EU Intel iGPU finishes inside i915's hangcheck. Nothing visible
+was bought by the difference — the prefilter already picks a mip from the sample PDF and reads it
+with `textureCubeLod` (Karis), which is the technique that makes a low sample count safe, and the
+LUT is a smooth two-channel function that UE4 ships at 256². The bake runs **once**, across the transient view block starting at `RenderPass::EnvironmentBake` (67 views:
+faces × mips, twice, + LUT). bgfx cannot mipmap render targets, so every env mip is rendered
 from the panorama directly. Binding is the caller's job (`Renderer3D` feeds the handles to
 `Shader::SetTexture` per material — samplers belong to shaders, there is no global bind).
+
+**Every cube-face attachment passes `BGFX_RESOLVE_NONE`, and that is the fix for the Intel hang.**
+`bgfx::Attachment::init` declares its last parameter as `uint8_t _resolve = BGFX_RESOLVE_AUTO_GEN_MIPS`,
+so the ordinary five-argument call asks bgfx to generate the texture's mip chain on resolve. The
+bake renders every mip by hand, so there was nothing to generate - and bgfx's Vulkan mip-gen
+computes the blit's array range as `baseArrayLayer = _layer` with `layerCount = m_numSides`
+(`TextureVK::resolve`), which for face 1 of a cubemap asks for layers 1..6 of a six-layer image.
+The Khronos validation layer reports it as `VUID-vkCmdBlitImage-srcSubresource-01707` plus the
+matching barrier VUID; on Mesa ANV the malformed blit **hangs the GPU** on the first frame the bake
+submits. D3D11 and NVIDIA tolerate it silently, which is why it survived every platform the engine
+had been run on until a native Linux box tried it.
+
+The whole bake is **one frame on every backend**: views execute in ID order, so each stage samples
+what a lower-numbered view wrote, and the scene pass in that same frame already sees the result.
+
+While the ANV hang above was being chased it was split across frames on Intel + Vulkan, with the
+GPU drained between stages so each stage could be timed. Neither survived the diagnosis: the hang
+was the mip-gen blit, not the size of a command buffer, and once `BGFX_RESOLVE_NONE` landed there
+was no reason to keep a second code path for one vendor. **One bake, one frame, every backend.**
 
 Only the upload and the submission are on the submit thread; the panorama is `stbi_loadf`-decoded on
 a worker first (`Environment::Load`, the asset layer's Parse stage — see
@@ -544,6 +579,13 @@ crash (the reasoning is spelled out in [`MeshShader.h`](../../GanymedEngine/sour
 Together these take a second and subsequent environment load from ~4–5 ms of submit-thread work to
 **2.2–3.3 ms**. The first load in a process still pays for both (~6.3 ms).
 
+One thing learned while the ANV hang was being chased is worth keeping, because it will mislead
+anyone who tries to time a bgfx frame: **`bgfx::frame()` does not wait for the GPU.** It returns as
+soon as the next frame can begin, which against a 3-image swapchain is two to three frames of
+slack. A stage timed that way reported 0.7 ms for 25M cube samples, having waited for none of them,
+and the call that eventually blocked was two or three stages downstream of the work that was
+actually stuck. Timing a stage needs extra empty frames to drain the pipeline first.
+
 ### The IBL bake is a prepass
 
 `RenderPass::EnvironmentBake = 1` — **before the shadow and scene passes**, not after them. That
@@ -556,8 +598,8 @@ main thread (measured, Release) — it was the larger half of the load hitch —
 presented two half-built frames.
 
 Ordering the bake first makes it correct within the frame it is submitted in, so the forced frames
-are gone. Verified frame by frame with backbuffer screenshots: the frame an environment applies in
-already renders the baked skybox, and the following frames are pixel-identical to it.
+are gone. Verified frame by frame with backbuffer screenshots (D3D11): the frame an environment
+applies in already renders the baked skybox, and the following frames are pixel-identical to it.
 
 Two consequences worth knowing if you add a pass:
 
