@@ -374,7 +374,9 @@ namespace GanymedE::Reflection {
 				.data<&RigidBodyComponent::UseGravity>("UseGravity")
 					.custom<Attr>(Attr{}.Label("Use Gravity"))
 				.data<&RigidBodyComponent::LockRotation>("LockRotation")
-					.custom<Attr>(Attr{}.Label("Lock Rotation"));
+					.custom<Attr>(Attr{}.Label("Lock Rotation"))
+				.data<&RigidBodyComponent::IsSensor>("IsSensor")
+					.custom<Attr>(Attr{}.Label("Is Sensor"));
 
 			GE_REFLECT_COMPONENT(CharacterControllerComponent)
 				.custom<Attr>(Attr{}.Label("Character Controller"))

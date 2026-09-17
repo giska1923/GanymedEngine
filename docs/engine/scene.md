@@ -163,10 +163,13 @@ precedent.
 
 - **`CharacterControllerComponent`** — a walking character (Jolt `CharacterVirtual`): max slope,
   step height, stick-to-floor, mass. Takes its shape from a capsule collider, and replaces rather
-  than accompanies a rigid body. See [physics.md](physics.md#character-controllers).
+  than accompanies a rigid body. It is still detectable — raycasts hit it and it raises
+  `OnCollisionEnter` — through an inner body the engine always gives it, which is not authored
+  here because there is nothing to choose. See [physics.md](physics.md#character-controllers).
 - **`RigidBodyComponent`** — `Static | Dynamic | Kinematic`, mass, linear/angular damping,
   `UseGravity`, `LockRotation` (forbids rotation while keeping translation — what an upright
-  walking capsule needs; see [physics.md](physics.md#locked-rotation)).
+  walking capsule needs; see [physics.md](physics.md#locked-rotation)), and `IsSensor` (a trigger
+  volume: reports contacts, causes none — see [physics.md](physics.md#sensors-trigger-volumes)).
 - **`BoxColliderComponent`** (half extents), **`SphereColliderComponent`** (radius),
   **`CapsuleColliderComponent`** (radius + half height) — each with a local `Offset` and a
   `PhysicsMaterial { Friction, Restitution }`.
