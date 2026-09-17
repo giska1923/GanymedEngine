@@ -41,6 +41,11 @@ local Player = {
         -- Drives the circuit below with no keyboard, for gate runs. **Off by default now**: with
         -- mouse look there is a human driving. The gate runs in the roadmap all set it true.
         autopilot = false,
+        -- P4's gate. Drives LOS_ROUTE instead of ROUTE - walk to a marked spot, stop, stand
+        -- still long enough for the Sentry's answer to be unambiguous, move to the next. Also
+        -- sets PG.freeze, which makes every enemy sense without moving: six of them converging
+        -- on the probe point would shove the player off the spot the measurement is taken at.
+        losgate = false,
     },
     speed = 6.0,
     turnSpeed = 2.4,
@@ -49,6 +54,12 @@ local Player = {
     fireInterval = 0.12,
     autofire = false,
     autopilot = false,
+    losgate = false,
+    losWp = 1,
+    losHold = 0.0,
+    losDrive = false,
+    losSlow = 1.0,
+    losDone = false,
     fireCooldown = 0.0,
     refused = 0,
     yaw = 0.0,
@@ -134,6 +145,28 @@ local ROUTE = {
     {  0,  0 },    -- back through the middle
 }
 
+-- P4's gate route. Not a circuit - a sequence of marked spots to stand on, because the question
+-- "does the wall occlude" only has a clean answer while nothing is moving.
+--
+-- The geometry it is built on, read off the scene rather than guessed. The Blockhouse's -Z wall
+-- is two collider segments at world z = -9.43: one spanning x 12.00..17.66, one spanning
+-- x 19.46..20.00, leaving the 1.8 m doorway at x 17.66..19.46. The Sentry stands inside at
+-- (18.4, -6) and never turns, so its eye is fixed.
+--
+-- A sight line from (18.4, -6) to a player at (px, -12) crosses z = -9.43 at
+--     x = 18.4 + 0.5717 * (px - 18.4)
+-- so the wall's inner edge at x = 17.66 predicts the crossover at **px = 17.11**. That is the
+-- falsifiable part: the Sentry should acquire the player within a body-width of x = 17.1 on the
+-- way east, and lose it again near the same x on the way back.
+--
+-- { x, z, seconds to stand there, what it is for }
+local LOS_ROUTE = {
+    {  2.00, -11.0, 0.5, "staging - clear of Block A, which is on the direct line from spawn" },
+    { 14.00, -12.0, 8.0, "behind the -Z wall: the Sentry must NOT acquire" },
+    { 18.56, -12.0, 8.0, "on the doorway's sight line: it must" },
+    { 14.00, -12.0, 6.0, "back behind the wall: it must lose me again" },
+}
+
 function Player:OnCreate()
     self.yawEntity = self.entity:GetChildByName("Yaw")
     if not self.yawEntity then
@@ -153,6 +186,71 @@ function Player:OnCreate()
     self.startY = p.y
     self.lastPos = p
     Log.Info(string.format("Player ready at (%.2f, %.2f, %.2f)", p.x, p.y, p.z))
+
+    if self.losgate then
+        -- The full initialiser, not `PG or {}`: Fire() only fills the counters in when PG is
+        -- absent entirely, so a PG that exists but holds nothing but `freeze` would make the
+        -- first shot add 1 to nil.
+        PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
+        PG.freeze = true
+        Log.Info("LOSGATE armed: enemies sense but do not move")
+    end
+end
+
+-- Walk to the next probe point, stand on it, move on. Returns a steering contribution in the
+-- same units AutoTurn uses, and sets losDrive / losSlow, which the movement block reads.
+--
+-- The slowdown is not polish. At 6 m/s a frame covers 0.1 m, so a tight arrival radius is
+-- overshot and the capsule orbits the point forever; a large one makes the probe position
+-- imprecise, and this gate is a claim about a specific x. Easing to 1.2 m/s inside 3 m makes a
+-- 0.35 m radius reachable without either.
+function Player:LosTurn(ts)
+    local p = self.entity:GetTranslation()
+    local target = LOS_ROUTE[self.losWp]
+
+    if self.losDone then
+        self.losDrive = false
+        self.losSlow = 1.0
+        return 0.0
+    end
+
+    if self.losHold > 0.0 then
+        self.losHold = self.losHold - ts
+        self.losDrive = false
+        self.losSlow = 1.0
+        if self.losHold <= 0.0 then
+            Log.Info(string.format("LOSGATE probe %d done, standing at (%.2f, %.2f)",
+                self.losWp, p.x, p.z))
+            if self.losWp >= #LOS_ROUTE then
+                self.losDone = true
+                Log.Info("LOSGATE route complete")
+            else
+                self.losWp = self.losWp + 1
+            end
+        end
+        return 0.0
+    end
+
+    local dx, dz = target[1] - p.x, target[2] - p.z
+    local dist = math.sqrt(dx * dx + dz * dz)
+
+    if dist < 0.35 then
+        -- max(..., 0.001) so a zero-second hold still takes the branch above next frame rather
+        -- than re-arriving, and re-logging, every frame.
+        self.losHold = math.max(target[3], 0.001)
+        self.losDrive = false
+        self.losSlow = 1.0
+        Log.Info(string.format("LOSGATE probe %d at (%.2f, %.2f), holding %.1fs - %s",
+            self.losWp, p.x, p.z, target[3], target[4]))
+        return 0.0
+    end
+
+    self.losDrive = true
+    self.losSlow = dist < 3.0 and 0.2 or 1.0
+
+    local want = math.atan(-dx, -dz)
+    local diff = (want - self.yaw + math.pi) % (2 * math.pi) - math.pi
+    return math.max(-1.0, math.min(1.0, diff * 2.0))
 end
 
 function Player:OnUpdate(ts)
@@ -216,6 +314,7 @@ function Player:OnUpdate(ts)
     if Input.IsKeyPressed(Key.Q) or Input.IsKeyPressed(Key.Left) then turn = turn + 1.0 end
     if Input.IsKeyPressed(Key.E) or Input.IsKeyPressed(Key.Right) then turn = turn - 1.0 end
     if self.autopilot then turn = turn + self:AutoTurn() end
+    if self.losgate then turn = turn + self:LosTurn(ts) end
     self.yaw = self.yaw + turn * self.turnSpeed * ts
     if self.yawEntity then
         self.yawEntity:SetRotation(Vec3(0, self.yaw, 0))
@@ -229,6 +328,7 @@ function Player:OnUpdate(ts)
 
     local ix, iz = 0.0, 0.0
     if self.autopilot then ix, iz = ix + fx, iz + fz end
+    if self.losDrive then ix, iz = ix + fx, iz + fz end
     if Input.IsKeyPressed(Key.W) then ix = ix + fx; iz = iz + fz end
     if Input.IsKeyPressed(Key.S) then ix = ix - fx; iz = iz - fz end
     if Input.IsKeyPressed(Key.D) then ix = ix + rx; iz = iz + rz end
@@ -242,7 +342,8 @@ function Player:OnUpdate(ts)
     -- Keep the body's own vertical velocity. Overwriting it with 0 would cancel gravity and the
     -- capsule would hang in the air the moment it walked off anything.
     local v = self.entity:GetLinearVelocity()
-    self.entity:SetLinearVelocity(Vec3(ix * self.speed, v.y, iz * self.speed))
+    local speed = self.speed * self.losSlow
+    self.entity:SetLinearVelocity(Vec3(ix * speed, v.y, iz * speed))
 
     self:PushPending()
     self:Diagnose(ts)
@@ -363,7 +464,7 @@ function Player:Diagnose(ts)
     -- movement is legitimately zero and counting it produced a false 2.13 s.
     local moved = math.sqrt((p.x - self.lastPos.x) ^ 2 + (p.z - self.lastPos.z) ^ 2)
     local grounded = math.abs(self.entity:GetLinearVelocity().y) < 1.0
-    local wants = grounded and (self.autopilot or Input.IsKeyPressed(Key.W)
+    local wants = grounded and (self.autopilot or self.losDrive or Input.IsKeyPressed(Key.W)
         or Input.IsKeyPressed(Key.S) or Input.IsKeyPressed(Key.A) or Input.IsKeyPressed(Key.D))
     if wants and moved < 0.001 then
         self.stuckFor = self.stuckFor + ts

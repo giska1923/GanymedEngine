@@ -4,26 +4,42 @@ Entities:
     TagComponent:
       Tag: Enemy
     TransformComponent:
-      Translation: [0, 0, 0]
+      Translation: [0, 0.899999976, 0]
       Rotation: [0, 0, 0]
-      Scale: [0.699999988, 1.79999995, 0.699999988]
+      Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 0
       Children:
-        []
+        - 2
     ScriptComponent:
       Script: 3000000000000000093
-    StaticMeshComponent:
-      Mesh: 1000000000000000002
     RigidBodyComponent:
-      Type: 0
+      Type: 1
       Mass: 70
       LinearDamping: 0.0500000007
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
     BoxColliderComponent:
-      HalfExtents: [0.5, 0.5, 0.5]
+      HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+  - Entity: 2
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.899999976, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.018000001, 0.018000001, 0.018000001]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 478897338981515368
+    AnimatorComponent:
+      Clip: Survey
+      Speed: 1
+      Playing: true
+      Loop: true

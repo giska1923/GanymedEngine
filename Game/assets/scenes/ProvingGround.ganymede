@@ -621,159 +621,347 @@ Entities:
     TransformComponent:
       Translation: [-4, 0.9, -12]
       Rotation: [0, 0, 0]
-      Scale: [0.699999988, 1.79999995, 0.699999988]
+      Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 0
       Children:
-        []
+        - 3000000000000000080
     ScriptComponent:
       Script: 3000000000000000093
-    StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Fields:
+        - Name: label
+          Type: String
+          Value: E1
+        - Name: patrolTo
+          Type: Vec3
+          Value: [-4, 0, -19]
     RigidBodyComponent:
-      Type: 0
+      Type: 1
       Mass: 70
       LinearDamping: 0.0500000007
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
     BoxColliderComponent:
-      HalfExtents: [0.5, 0.5, 0.5]
+      HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+  - Entity: 3000000000000000080
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.899999976, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.018000001, 0.018000001, 0.018000001]
+    RelationshipComponent:
+      Parent: 3000000000000000070
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 478897338981515368
+    AnimatorComponent:
+      Clip: Survey
+      Speed: 1
+      Playing: true
+      Loop: true
   - Entity: 3000000000000000071
     TagComponent:
       Tag: Enemy
     TransformComponent:
       Translation: [2, 0.9, -14]
       Rotation: [0, 0, 0]
-      Scale: [0.699999988, 1.79999995, 0.699999988]
+      Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 0
       Children:
-        []
+        - 3000000000000000081
     ScriptComponent:
       Script: 3000000000000000093
-    StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Fields:
+        - Name: label
+          Type: String
+          Value: E2
+        - Name: patrolTo
+          Type: Vec3
+          Value: [10, 0, -14]
     RigidBodyComponent:
-      Type: 0
+      Type: 1
       Mass: 70
       LinearDamping: 0.0500000007
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
     BoxColliderComponent:
-      HalfExtents: [0.5, 0.5, 0.5]
+      HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+  - Entity: 3000000000000000081
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.899999976, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.018000001, 0.018000001, 0.018000001]
+    RelationshipComponent:
+      Parent: 3000000000000000071
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 478897338981515368
+    AnimatorComponent:
+      Clip: Survey
+      Speed: 1
+      Playing: true
+      Loop: true
   - Entity: 3000000000000000072
     TagComponent:
       Tag: Enemy
     TransformComponent:
       Translation: [8, 0.9, -13]
       Rotation: [0, 0, 0]
-      Scale: [0.699999988, 1.79999995, 0.699999988]
+      Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 0
       Children:
-        []
+        - 3000000000000000082
     ScriptComponent:
       Script: 3000000000000000093
-    StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Fields:
+        - Name: label
+          Type: String
+          Value: E3
+        - Name: patrolTo
+          Type: Vec3
+          Value: [8, 0, -20]
     RigidBodyComponent:
-      Type: 0
+      Type: 1
       Mass: 70
       LinearDamping: 0.0500000007
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
     BoxColliderComponent:
-      HalfExtents: [0.5, 0.5, 0.5]
+      HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+  - Entity: 3000000000000000082
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.899999976, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.018000001, 0.018000001, 0.018000001]
+    RelationshipComponent:
+      Parent: 3000000000000000072
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 478897338981515368
+    AnimatorComponent:
+      Clip: Survey
+      Speed: 1
+      Playing: true
+      Loop: true
   - Entity: 3000000000000000073
     TagComponent:
       Tag: Enemy
     TransformComponent:
       Translation: [-8, 0.9, -3]
       Rotation: [0, 0, 0]
-      Scale: [0.699999988, 1.79999995, 0.699999988]
+      Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 0
       Children:
-        []
+        - 3000000000000000083
     ScriptComponent:
       Script: 3000000000000000093
-    StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Fields:
+        - Name: label
+          Type: String
+          Value: E4
+        - Name: patrolTo
+          Type: Vec3
+          Value: [-14, 0, -3]
     RigidBodyComponent:
-      Type: 0
+      Type: 1
       Mass: 70
       LinearDamping: 0.0500000007
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
     BoxColliderComponent:
-      HalfExtents: [0.5, 0.5, 0.5]
+      HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+  - Entity: 3000000000000000083
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.899999976, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.018000001, 0.018000001, 0.018000001]
+    RelationshipComponent:
+      Parent: 3000000000000000073
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 478897338981515368
+    AnimatorComponent:
+      Clip: Survey
+      Speed: 1
+      Playing: true
+      Loop: true
   - Entity: 3000000000000000074
     TagComponent:
       Tag: Enemy
     TransformComponent:
-      Translation: [5, 0.9, 3]
+      Translation: [5, 1.1, 3]
       Rotation: [0, 0, 0]
-      Scale: [0.699999988, 1.79999995, 0.699999988]
+      Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 0
       Children:
-        []
+        - 3000000000000000084
     ScriptComponent:
       Script: 3000000000000000093
-    StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Fields:
+        - Name: label
+          Type: String
+          Value: E5
+        - Name: patrolTo
+          Type: Vec3
+          Value: [5, 0, 14]
     RigidBodyComponent:
-      Type: 0
+      Type: 1
       Mass: 70
       LinearDamping: 0.0500000007
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
     BoxColliderComponent:
-      HalfExtents: [0.5, 0.5, 0.5]
+      HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+  - Entity: 3000000000000000084
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.899999976, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.018000001, 0.018000001, 0.018000001]
+    RelationshipComponent:
+      Parent: 3000000000000000074
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 478897338981515368
+    AnimatorComponent:
+      Clip: Survey
+      Speed: 1
+      Playing: true
+      Loop: true
   - Entity: 3000000000000000075
     TagComponent:
       Tag: Enemy
     TransformComponent:
-      Translation: [-3, 0.9, 8]
+      Translation: [-3, 1.1, 8]
       Rotation: [0, 0, 0]
-      Scale: [0.699999988, 1.79999995, 0.699999988]
+      Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 0
       Children:
-        []
+        - 3000000000000000085
     ScriptComponent:
       Script: 3000000000000000093
-    StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Fields:
+        - Name: label
+          Type: String
+          Value: E6
+        - Name: patrolTo
+          Type: Vec3
+          Value: [6, 0, 8]
     RigidBodyComponent:
-      Type: 0
+      Type: 1
       Mass: 70
       LinearDamping: 0.0500000007
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
     BoxColliderComponent:
-      HalfExtents: [0.5, 0.5, 0.5]
+      HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+  - Entity: 3000000000000000085
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.899999976, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.018000001, 0.018000001, 0.018000001]
+    RelationshipComponent:
+      Parent: 3000000000000000075
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 478897338981515368
+    AnimatorComponent:
+      Clip: Survey
+      Speed: 1
+      Playing: true
+      Loop: true
+  - Entity: 3000000000000000076
+    TagComponent:
+      Tag: Enemy
+    TransformComponent:
+      Translation: [18.4, 0.9, -6]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 3000000000000000086
+    ScriptComponent:
+      Script: 3000000000000000093
+      Fields:
+        - Name: label
+          Type: String
+          Value: Sentry
+        - Name: patrolTo
+          Type: Vec3
+          Value: [18.4, 0, -6]
+    RigidBodyComponent:
+      Type: 1
+      Mass: 70
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: true
+    BoxColliderComponent:
+      HalfExtents: [0.349999994, 0.899999976, 0.349999994]
+      Offset: [0, 0, 0]
+      Friction: 0.5
+      Restitution: 0
+  - Entity: 3000000000000000086
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.899999976, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.018000001, 0.018000001, 0.018000001]
+    RelationshipComponent:
+      Parent: 3000000000000000076
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 478897338981515368
+    AnimatorComponent:
+      Clip: Survey
+      Speed: 1
+      Playing: true
+      Loop: true

@@ -429,13 +429,152 @@ Projectile weapon. Enemies with health that despawn on death.
 - **Gate:** fire continuously for a minute; entity count returns to baseline; no leaked Jolt
   bodies.
 
-### P4 — Enemies with eyes
+### P4 — Enemies with eyes — **PASSED**
 
 Waypoint patrol, line-of-sight acquisition via raycast, charge. Animation on the enemies.
 
 - **Tests:** P0.3's raycast, the animator under many simultaneous instances, and whether buildings
   actually occlude.
 - **Gate:** an enemy behind a building does not acquire the player; stepping into the doorway does.
+  **PASSED**, and to within 0.1 m of a position predicted before the run.
+
+#### What was built
+
+Seven enemies, each a two-entity rig: a dynamic, rotation-locked body carrying `Enemy.lua` and the
+box collider, and a `Body` child carrying the mesh, the `AnimatorComponent` and the facing. The
+child exists for the same reason the player's `Yaw` does — the body is `LockRotation`, so Jolt
+hands `SyncTransforms` the same orientation every frame and a yaw written on the parent is erased
+before anything can see it.
+
+Six patrol a two-point leg authored per instance as script `Fields` (`label`, `patrolTo`); the
+seventh, the **Sentry**, stands still inside the Blockhouse and exists for the gate.
+
+`Fox.glb` is the enemy mesh, copied out of the editor's sample models. It is a placeholder for a
+Meshy-authored humanoid and it is the wrong shape for one — 2.8 m long against a 0.7 m collider.
+It was chosen anyway because it is the only asset in either tree with **more than one clip**
+(`Survey` 3.417 s, `Walk` 0.708 s, `Run` 1.158 s, 24 joints), and "the animator under many
+simultaneous instances" is not tested by six copies of the same clip.
+
+#### The premise this phase overturned
+
+`Enemy.lua`'s P3 header said: *P4 makes them move, and that is when they become character
+controllers.* **Wrong, and wrong in a way that would have deleted P3's result.**
+
+A `CharacterVirtual` is not a body. It has no `BodyID`, it is not in the broadphase, and
+`NarrowPhaseQuery` cannot find it. Making an enemy a character stops projectiles hitting it, stops
+its `OnCollisionEnter` firing, and stops any raycast seeing it — all at once. So the enemies are
+dynamic rigid bodies with `LockRotation`, which is what the player was before P1 replaced it, and
+they inherit P1's sticking failure along with it.
+
+The same fact is what makes line of sight work, inverted: `Enemy.lua` casts at the player and
+treats a **miss** as "I can see you", because the player is a character and there is nothing at
+the far end to hit. Cheap, correct today, and silently load-bearing — written up in
+[cross-cutting.md](cross-cutting.md) with the fix (`mInnerBodyShape`), which P5 will need anyway.
+
+#### Gate run 1 — the occlusion probe (`losgate`, enemies sense but do not move)
+
+The geometry, read off the scene rather than guessed. The Blockhouse's `-Z` wall is two collider
+segments at world `z = -9.43`, spanning `x 12.00..17.66` and `x 19.46..20.00`, leaving the 1.8 m
+doorway between them. The Sentry stands at `(18.4, -6)` and never turns. A sight line from there
+to a player at `(px, -12)` crosses `z = -9.43` at `x = 18.4 + 0.5717 * (px - 18.4)`, so the wall's
+inner edge at `x = 17.66` **predicts acquisition at `px = 17.11`**.
+
+```
+LOSGATE probe 2 at (13.66, -12.01), holding 8.0s - behind the -Z wall: the Sentry must NOT acquire
+  ... 8 s, no Sentry line at all ...
+LOS Sentry t=17.7s ACQUIRED player=(17.2, -12.0) self=(18.4, -6.0) d=6.1m
+LOSGATE probe 3 at (18.22, -12.00), holding 8.0s - on the doorway's sight line: it must
+  ... 8 s, acquired and held ...
+LOS Sentry t=28.3s lost player=(16.2, -16.1) self=(18.4, -6.0) d=10.4m blocked-by=Blockhouse Wall Z-
+LOSGATE probe 4 at (14.14, -12.32), holding 6.0s - back behind the wall: it must lose me again
+  ... 6 s, stays lost ...
+0 errors
+```
+
+Acquisition at `px = 17.2` against a predicted 17.11. The loss on the way back, at `(16.2, -16.1)`,
+puts the crossing at `x = 17.65` against the same 17.66 edge. **Buildings occlude, and they occlude
+exactly where their colliders are** — which also says the colliders hand-placed in P2 line up with
+the mesh they were measured from.
+
+The probe route stops and stands still at each point, because "does the wall occlude" only has a
+clean answer while nothing is moving, and it sets `PG.freeze` so that six enemies converging on the
+probe point cannot shove the player off the spot the measurement is taken at.
+
+#### Gate run 2 — everything live, 125 s
+
+Patrol, acquire, charge, search, and the stuck escape, all exercised. Zero errors. 162 LOS
+transitions across seven enemies; `blocked-by` names the occluder every time, and enemies occlude
+each other as well as the buildings (`blocked-by=Enemy`).
+
+Sixteen enemy stuck-escapes fired, every one logged. That is P1's failure reproducing exactly as
+predicted on a velocity-driven rigid body, and the sidestep is a workaround in the game rather than
+a fix in the engine — same status as the autopilot's own escape.
+
+**One of them refines P1's result.** With the player standing still at the origin, every enemy
+charging from the south stops at `z = -8.8` — its collider's front face at `-8.45`, against the
+Step's south face at `-8.5`:
+
+```
+Enemy E1: stuck at (-2.0, -8.8) in state 'hunt' - sidestepping (escape #1)
+Enemy E3: stuck at ( 3.7, -8.8) in state 'hunt' - sidestepping (escape #1)
+```
+
+P1 measured that a rotation-locked rigid **capsule** climbs that same 0.2 m step — "the hemisphere
+at the capsule's base rides it". These enemies have a **box** collider, and a flat-bottomed box has
+no hemisphere: it stops dead at a kerb a capsule walks over. So the thing that climbs a low step
+without a character controller is the *shape*, not the body type, and P1's finding should be read
+as being about capsules specifically.
+
+**The player was pinned for 40 s, and it is not an engine bug.** From `t=40s` to `t=80s` the
+capsule sat at `x = -12.7` with `z` sliding between `-8.9` and `-10.8`. The Warehouse's `X+` wall
+is at world `x = -12.15` with a 0.15 m half-extent and the capsule's radius is 0.35, which puts a
+body pressed against its inner face at exactly `-12.65`. The controller was working — it slid along
+the wall the whole time. What failed is the autopilot's stuck escape: it advances to the *next
+waypoint*, with no notion of whether that waypoint is reachable, so once it was inside a building
+with every remaining target outside it, it simply leaned on the nearest wall until a later waypoint
+happened to line up with the door. **Decision 5's cost, arriving where Decision 5 said it would.**
+
+#### Gate run 3 — P3 does not regress on dynamic enemies
+
+The worry was specific: P3's kills were all against **static** bodies, and this phase made every
+enemy dynamic.
+
+```
+fired=2417  despawned=2417  live=0  hits=1875  kills=5  refused=400
+0 errors
+```
+
+Five of seven killed, every projectile despawned, entity count back to baseline. Contact dispatch,
+`Entity:Destroy` on a subtree, and the spawn cap all behave the same against a dynamic target.
+
+#### The animator, under six instances switching three clips
+
+`PlayAnimation` is read back through `GetCurrentAnimation` on every change, because an unresolved
+clip name does not fail loudly — `AnimationSystem` warns once and holds the bind pose, so "no
+warnings" is weak evidence.
+
+```
+CLIP E4 -> 'Walk' (animator reports 'Walk', playing=true)
+CLIP E3 -> 'Run'  (animator reports 'Run',  playing=true)
+CLIP E6 -> 'Walk' (animator reports 'Walk', playing=true)
+CLIP E6 -> 'Run'  (animator reports 'Run',  playing=true)
+...
+```
+
+All three clips resolve, and six instances switch between them independently in the same frames.
+The animation milestone verified two entities on different clips; this is the first time more than
+two have been driven at once, and nothing broke.
+
+#### Left undone, deliberately
+
+- **Nobody has looked at this.** Every result above is from the log. The Fox's world scale
+  (`0.018`, giving ~1.4 m tall) and its facing axis (assumed `-Z`, like everything else) are
+  **unverified by eye** and may need a nudge in the editor.
+- `Fox.glb` has no `.compiled` output in the tree — it is gitignored and derived — so the runtime
+  recompiles it at every boot (26 ms) and says so. Running the editor once over `Game/assets` fixes
+  it locally; P7 is where it stops being cosmetic.
+- No cover AI, no pathfinding. Decision 5 stands; the 40 s pin above is the first real evidence
+  about what it costs, and it cost the *autopilot*, not the enemies.
 
 ### P5 — Pickups, health, upgrades
 
