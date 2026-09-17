@@ -519,6 +519,15 @@ equirectangular HDR into: a 512² 5-mip environment cubemap (skybox), a 32² dif
 a 128² 5-mip prefiltered specular map, and — once per process, not once per environment — a 256²
 BRDF LUT.
 
+**The prefilter clamps its LOD, and that is a correctness fix, not a workaround.** It picks a mip
+of the source cubemap from the sample PDF (Karis) and the formula routinely asks for levels that do
+not exist: the source has 5 mips, so LOD 0..4, and the computed value reaches **11.6** - past 4 even
+at the GGX peak once roughness hits 0.5. Every rough material was therefore sampling off the end of
+the chain, on every backend. `u_Resolution.y` carries the highest valid LOD and the shader clamps to
+it. It is also the only thing this stage does that no other bake stage does - an explicit, computed,
+out-of-range LOD - and it is the stage that hangs Intel ANV while the irradiance convolution beside
+it finishes 25M cube samples in 21 ms.
+
 **Sample counts are production values, not the tutorial's.** 4096 stratified samples for
 irradiance, 128 for the GGX prefilter, 256 for the LUT. The LearnOpenGL bake this descends from
 uses 16k / 1024 / 1024, which is roughly 500M fragment-loop iterations for one environment: fine on

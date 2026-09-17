@@ -374,11 +374,22 @@ namespace GanymedE {
 			{
 				prefilterShader->SetTexture("u_EnvironmentMap", 0, m_EnvCubemap, BGFX_SAMPLER_UVW_CLAMP);
 				prefilterShader->SetFloat("u_Roughness", roughness);
-				prefilterShader->SetFloat("u_Resolution", (float)kEnvSize);
+				// .y is the highest LOD that exists in the source chain. The shader clamps to it;
+				// without that it asks for levels two to three times past the end.
+				prefilterShader->SetFloat2("u_Resolution",
+					glm::vec2((float)kEnvSize, (float)(kEnvMips - 1)));
 				renderCubeFace(m_Prefilter, face, mip, mipSize, prefilterShader);
 			}
+
+			// Per mip, not per stage. Prefilter is where the ANV hang lives, and five submits
+			// instead of one is what turns "it died somewhere in the specular convolution" into a
+			// roughness value. Mip 0 is the one case where the shader forces LOD 0, so a hang
+			// there would rule the LOD maths out and a hang after it would not.
+			char label[48];
+			std::snprintf(label, sizeof(label), "prefilter mip%u (roughness %.2f)",
+				(unsigned)mip, roughness);
+			flushBakeStage(label);
 		}
-		flushBakeStage("prefilter");
 
 		// --- 4. BRDF integration LUT (once per process, not once per environment) ---
 		if (bakeLut)
