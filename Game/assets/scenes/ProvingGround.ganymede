@@ -965,3 +965,141 @@ Entities:
       Speed: 1
       Playing: true
       Loop: true
+  - Entity: 3000000000000000100
+    TagComponent:
+      Tag: Heal Spot
+    TransformComponent:
+      Translation: [-6, 1, -6]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 3000000000000000110
+    ScriptComponent:
+      Script: 8012153513204603916
+      Fields:
+        - Name: kind
+          Type: String
+          Value: heal
+        - Name: label
+          Type: String
+          Value: Heal Spot
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+      IsSensor: true
+    BoxColliderComponent:
+      HalfExtents: [1, 1, 1]
+      Offset: [0, 0, 0]
+      Friction: 0.5
+      Restitution: 0
+  - Entity: 3000000000000000110
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.600000024, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.800000012, 0.800000012, 0.800000012]
+    RelationshipComponent:
+      Parent: 3000000000000000100
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 1000000000000000002
+  - Entity: 3000000000000000101
+    TagComponent:
+      Tag: Weapon Crate
+    TransformComponent:
+      Translation: [10, 1, 2]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 3000000000000000111
+    ScriptComponent:
+      Script: 8012153513204603916
+      Fields:
+        - Name: kind
+          Type: String
+          Value: weapon
+        - Name: label
+          Type: String
+          Value: Weapon Crate
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+      IsSensor: true
+    BoxColliderComponent:
+      HalfExtents: [1, 1, 1]
+      Offset: [0, 0, 0]
+      Friction: 0.5
+      Restitution: 0
+  - Entity: 3000000000000000111
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.600000024, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.800000012, 0.800000012, 0.800000012]
+    RelationshipComponent:
+      Parent: 3000000000000000101
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 1000000000000000002
+  - Entity: 3000000000000000102
+    TagComponent:
+      Tag: Upgrade Station
+    TransformComponent:
+      Translation: [-14, 1, 6]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 3000000000000000112
+    ScriptComponent:
+      Script: 8012153513204603916
+      Fields:
+        - Name: kind
+          Type: String
+          Value: upgrade
+        - Name: label
+          Type: String
+          Value: Upgrade Station
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+      IsSensor: true
+    BoxColliderComponent:
+      HalfExtents: [1, 1, 1]
+      Offset: [0, 0, 0]
+      Friction: 0.5
+      Restitution: 0
+  - Entity: 3000000000000000112
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.600000024, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.800000012, 0.800000012, 0.800000012]
+    RelationshipComponent:
+      Parent: 3000000000000000102
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 1000000000000000002

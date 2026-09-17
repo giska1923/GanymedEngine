@@ -43,6 +43,14 @@ function Projectile:OnCollisionEnter(other)
         -- jamming. Cheap to ignore, and it keeps the hit count meaning "hit something solid".
         return
     end
+
+    -- P5. A sensor causes no collision RESPONSE, so a round flies through a pickup - but the
+    -- contact event still fires, and this script would count it as a hit and despawn the round in
+    -- mid-air over a heal spot. Scripts cannot ask whether a contact was with a sensor; the table
+    -- is filled in by Pickup.lua, which knows, and is the honest workaround until they can.
+    if other and PG.passThrough and PG.passThrough[other:GetName()] then
+        return
+    end
     PG.hits = PG.hits + 1
     self:Despawn("hit")
 end

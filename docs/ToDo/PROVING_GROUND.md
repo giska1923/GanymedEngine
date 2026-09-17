@@ -275,11 +275,17 @@ when `TANGENT` is absent and the material has a normal map.
 
 `master` work.
 
-### P0.4 — Sensors (optional)
+### P0.4 — Sensors — **DONE, and it was not optional**
 
-No `IsSensor` anywhere, so a trigger volume is a solid body you bump into rather than walk through.
-`OnCollisionEnter` already reaches Lua, so pickups and heal spots **work without this** — they just
-feel wrong, because you stop when you touch them. Small. Do it if P5 feels bad, not before.
+`RigidBodyComponent::IsSensor` maps to Jolt's `mIsSensor`: a body that reports contacts and causes
+none. Landed on `master` with the character inner body, because P5 could not be built without it.
+
+**This entry was wrong, and worth keeping wrong here.** It said pickups and heal spots *work
+without this* and would merely feel bad — true when it was written, and false by the time P5
+arrived. Giving the player presence made it a **Kinematic** inner body, and Jolt refuses to pair two
+non-dynamic bodies; the single exemption in `Body::sFindCollidingPairsCanCollide` is a sensor. So a
+plain static box is not solid-when-it-should-be-walkthrough, it is **undetectable**. See
+[physics.md](../engine/physics.md#sensors-trigger-volumes).
 
 ---
 
@@ -576,12 +582,114 @@ two have been driven at once, and nothing broke.
 - No cover AI, no pathfinding. Decision 5 stands; the 40 s pin above is the first real evidence
   about what it costs, and it cost the *autopilot*, not the enemies.
 
-### P5 — Pickups, health, upgrades
+### P5 — Pickups, health, upgrades — **PASSED**
 
 Weapon pickups, heal spots, an upgrade station.
 
 - **Tests:** `OnCollisionEnter` as a trigger mechanism, and the existing `UI.SetHealth` /
   `UI.SetScore` data model, which is bound but has never been driven by real gameplay.
+- **Gate (defined here, because the plan did not state one):** in one run, with nobody touching the
+  keyboard — take damage from an enemy, heal it back at a heal spot, pick up a weapon and see the
+  fire interval change, bank score from kills and spend it at an upgrade station, and have
+  `UI.GetHealth()` / `UI.GetScore()` read back exactly what gameplay wrote at every step.
+
+#### This phase could not start until the engine changed. Twice.
+
+**The player had no presence in the world.** A `CharacterVirtual` has no `BodyID` and is not in the
+broadphase, so enemies passed through it, projectiles passed through it, and no trigger volume
+could notice it. Nothing in P5 is expressible without that. Landed on `master` as the character
+inner body ([physics.md](../engine/physics.md#presence-the-inner-body)), which was already named as
+the fix in the ToDo entry P4 wrote.
+
+**And a static box is still invisible to it.** The inner body is *Kinematic*, and Jolt refuses to
+pair two non-dynamic bodies — with exactly one exemption, which is sensors. So P0.4, filed as
+"optional, do it if P5 feels bad", turned out to be **required**: without `IsSensor` a pickup is not
+merely solid-when-it-should-be-walkthrough, it is undetectable. P0.4's own text said pickups "work
+without this", and that was true when it was written and false by the time P5 arrived.
+
+#### What was built
+
+`Pickup.lua`, one script for all three kinds, each a static **sensor** box with a cube child so
+there is something to see:
+
+| Tag | Kind | Behaviour |
+|---|---|---|
+| `Heal Spot` | heal | permanent; heals 14/s while you stand in it, using enter/exit to count |
+| `Weapon Crate` | weapon | consumed on touch, destroys itself, halves the fire interval |
+| `Upgrade Station` | upgrade | permanent; spends 2 score for +1 projectile damage, refuses if poor |
+
+The effect is applied by the **player**, not the pickup: contacts dispatch to both participants, so
+the player's `OnCollisionEnter` reads the tag off whatever it touched. The pickup script only
+handles what happens to the pickup. That split is not a preference — reaching into another entity's
+script instance is not something the API can express, and it is already how `Enemy.lua` counts its
+own hits. Damage and score cross the same way, through the shared `PG` table.
+
+#### Gate run — 165 s, 0 errors
+
+```
+probe 1 (2.09, -2.30)  hold until hurt   -> hp 100 -> 82, taken=3, ended at (2.16, -2.26)
+TRIGGER enter Heal Spot        t=20.7s
+probe 2 (-5.77, -5.75) hold 8s           -> hp 82 -> 100, healed=18
+TRIGGER enter Weapon Crate     t=34.1s   -> weapon level 2, fireInterval 0.120 -> 0.060, consumed
+TRIGGER enter Upgrade Station  t=43.9s   -> UPGRADE bought: projectile damage -> 2, score left 0
+PLAYER DOWN at 20 hits taken                 ... and up again 3 s later
+final: hp=94/100 taken=21 healed=18 weapon=2 dmg=2 score=0 upgrades=1 triggers=3 ui-mismatch=0
+       fired=144 despawned=144 live=0 hits=17 kills=2
+```
+
+`ui-mismatch=0` is the whole of the second test: every `SetHealth` and `SetScore` is read straight
+back and compared, because a setter that silently dropped its value would look exactly like one
+that worked. `despawned == fired` says P3 still holds with sensors in the scene — projectiles fly
+*through* the pickups rather than dying on them.
+
+#### Three defects this phase found, all of them real
+
+**1. `UI.SetScore` took an `int`, and every script property is a Lua float.** Buying an upgrade
+computed `score - cost` where the cost came from a property, so the result was a float, and sol2
+with `SOL_ALL_SAFETIES_ON` refused it — "not a numeric type that fits exactly an integer". The
+throw escaped into the frame and took the rest of `OnUpdate` with it, so the run continued looking
+healthy while the player stopped updating. Fixed on `master`: the binding takes a `double` and
+truncates, which is what `EmitBurst` and `SetParticleMaxParticles` already did. **The precedent
+existed and this binding had not followed it.**
+
+**2. An enemy shoved the player through the ground plane.** Giving the player presence made a
+charging enemy able to move it, and a `CharacterVirtual` resolves an overlap by moving *itself*,
+with no mass and no resistance. The first full gate run:
+
+```
+GATE t=60s pos=(18.4, 0.95,  8.4)
+GATE t=70s pos=(27.2, 0.95, 26.3)
+GATE t=80s pos=(35.9, 0.95, 44.2)
+GATE t=85s pos=(36.6, -14.47, 45.1)   <- through the ground, not off it: the plane is +-50
+GATE t=95s pos=(10.3, -678.57, 2.4)
+```
+
+Steady 1 m/s of bulldozing for over a minute, then through the floor. Jolt can refuse the push per
+contact (`CharacterContactSettings::mCanPushCharacter`) but only through a
+`CharacterContactListener`, and the engine installs none — recorded in
+[cross-cutting.md](cross-cutting.md). The game-side fix is what melee AI does anyway: land a touch,
+then back off to 2.2 m for 1.5 s. Drift during a 14 s hold went from **21 m to 0.07 m**.
+
+**3. The gate reported success while falling out of the world.** Horizontal control still works in
+freefall and the route measures arrival in XZ only, so 700 m below the map it was still "reaching"
+the next waypoint. `Diagnose` was shouting `GATE FAIL: left the ground plane` the whole time and
+the route did not listen. A probe route now aborts on `fell`, so a failed run cannot read as a
+passing one. **This one is mine, not the engine's, and it is the more dangerous kind**: the
+instrument agreeing with itself.
+
+#### What P5 could not express
+
+- **A character cannot be teleported from script.** Its `TransformComponent` is overwritten from
+  the controller every frame and nothing exposes `CharacterVirtual::SetPosition`, so "respawn at
+  the spawn point" does not exist. Death recovers the player *where it fell* instead, which is not
+  what anyone would ship.
+- **There is no `OnCollisionStay`.** "An enemy is on me" has to be reconstructed from enter/exit
+  pairs, and that counter leaks the moment an enemy dies while touching. Contact damage is a
+  bounded budget of ticks per touch instead, which cannot leak.
+- **A script cannot ask whether a contact was with a sensor.** Projectiles had to be told which
+  names to fly through, published into `PG` by the pickups themselves.
+
+All three are in [cross-cutting.md](cross-cutting.md).
 
 ### P6 — It looks and sounds like something
 

@@ -46,6 +46,20 @@ local Player = {
         -- sets PG.freeze, which makes every enemy sense without moving: six of them converging
         -- on the probe point would shove the player off the spot the measurement is taken at.
         losgate = false,
+        -- P5's gate. Drives P5_ROUTE: stand and fight until it hurts, heal, arm, upgrade.
+        p5gate = false,
+
+        -- ---- P5: health and the things that change it ----
+        maxHealth = 100.0,
+        -- Per touch from an enemy. Enemies close to 0.8 m now (Enemy.lua's standoff), so contact
+        -- is continuous once one reaches you - the cooldown, not the contact, sets the rate.
+        contactDamage = 6.0,
+        damageCooldown = 1.0,
+        -- Health per second while standing in a heal spot. Faster than two enemies can take it
+        -- off, or the spot is scenery.
+        healRate = 14.0,
+        -- What the upgrade station charges for +1 projectile damage.
+        upgradeCost = 2.0,
     },
     speed = 6.0,
     turnSpeed = 2.4,
@@ -55,11 +69,37 @@ local Player = {
     autofire = false,
     autopilot = false,
     losgate = false,
-    losWp = 1,
-    losHold = 0.0,
-    losDrive = false,
-    losSlow = 1.0,
-    losDone = false,
+    p5gate = false,
+    maxHealth = 100.0,
+    contactDamage = 6.0,
+    damageCooldown = 1.0,
+    healRate = 14.0,
+    upgradeCost = 2.0,
+
+    -- Probe-route state, shared by both gate modes: they differ only in which table they walk.
+    probeWp = 1,
+    probeHold = 0.0,
+    probeDrive = false,
+    probeSlow = 1.0,
+    probeDone = false,
+
+    -- P5 state.
+    health = 100.0,
+    hurtCooldown = 0.0,
+    hits = 0,          -- times an enemy has landed a touch
+    inHeal = 0,        -- how many heal-spot sensors we are standing in
+    healed = 0.0,
+    weapon = 1,
+    upgrades = 0,
+    lastKills = 0,
+    downed = false,
+    downFor = 0.0,
+    uiHealth = -1.0,
+    uiScore = -1,
+    uiMismatch = 0,
+    pendingHurt = 0,
+    probeAborted = false,
+
     fireCooldown = 0.0,
     refused = 0,
     yaw = 0.0,
@@ -167,6 +207,20 @@ local LOS_ROUTE = {
     { 14.00, -12.0, 6.0, "back behind the wall: it must lose me again" },
 }
 
+-- P5's gate route. Each stop exercises one mechanism, in the order that makes the next one mean
+-- something: you cannot show a heal spot working without first being hurt, and you cannot show an
+-- upgrade station working without first having banked something to spend.
+--
+-- Leg 1 also fires, which is not decoration: the enemies that come to hurt you are the ones that
+-- die to give you the score leg 4 spends.
+local P5_ROUTE = {
+    {   2.0,  -2.0, 14.0, "stand and fight - take contact damage, and bank kills" },
+    {  -6.0,  -6.0,  8.0, "the heal spot: health must climb back" },
+    {  10.0,   2.0,  3.0, "the weapon crate: fire interval must halve, and it must be consumed" },
+    { -14.0,   6.0,  5.0, "the upgrade station: spend score for projectile damage" },
+    {   0.0,   0.0,  3.0, "back to the middle" },
+}
+
 function Player:OnCreate()
     self.yawEntity = self.entity:GetChildByName("Yaw")
     if not self.yawEntity then
@@ -187,6 +241,20 @@ function Player:OnCreate()
     self.lastPos = p
     Log.Info(string.format("Player ready at (%.2f, %.2f, %.2f)", p.x, p.y, p.z))
 
+    -- P5. PG.damage is what an enemy subtracts when a round lands, and it lives in PG because
+    -- there is no way to call into another entity's script instance; PG.score is banked here and
+    -- spent at the upgrade station. Both are seeded once, by whoever gets here first.
+    PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
+    PG.damage = PG.damage or 1
+    PG.score = PG.score or 0
+    self.health = self.maxHealth
+    self:PushUI()
+
+    if self.p5gate then
+        PG.freeze = false
+        Log.Info("P5GATE armed")
+    end
+
     if self.losgate then
         -- The full initialiser, not `PG or {}`: Fire() only fills the counters in when PG is
         -- absent entirely, so a PG that exists but holds nothing but `freeze` would make the
@@ -197,35 +265,152 @@ function Player:OnCreate()
     end
 end
 
+-- ---- P5: health, and the four things that change it ----
+--
+-- Every one of these arrives as a contact, and every one of them is a contact the engine could not
+-- deliver until P5: the player is a CharacterVirtual, and a character had no presence in the
+-- broadphase at all. Enemies passed through it, projectiles passed through it, and a trigger
+-- volume could not notice it. The inner body landed on master for this phase.
+function Player:OnCollisionEnter(other)
+    if not other then return end
+    local name = other:GetName()
+
+    if name == "Enemy" then
+        -- A budget of ticks, not a "while touching" flag, and the difference is an engine gap
+        -- rather than a preference. **There is no OnCollisionStay.** Enter fires once when the
+        -- contact is made and never again while it lasts, so "an enemy is on me" has to be
+        -- reconstructed by counting enter/exit pairs - and that counter leaks the moment an enemy
+        -- dies while touching, because the entity is gone before its contact-removed event can be
+        -- resolved back to it. A budget cannot leak: three ticks per touch, spent one a second,
+        -- and the jostling re-makes the contact often enough to keep it topped up.
+        -- Recorded in docs/ToDo/cross-cutting.md.
+        self.pendingHurt = math.min((self.pendingHurt or 0) + 3, 6)
+    elseif name == "Heal Spot" then
+        self.inHeal = self.inHeal + 1
+    elseif name == "Weapon Crate" then
+        self.weapon = self.weapon + 1
+        -- Halving the interval is the visible half of the pickup; the fired count in the gate
+        -- report is what proves it, because nothing else about the run changes.
+        self.fireInterval = self.fireInterval * 0.5
+        Log.Info(string.format("PICKUP weapon -> level %d, fireInterval %.3f",
+            self.weapon, self.fireInterval))
+    elseif name == "Upgrade Station" then
+        self:Upgrade()
+    end
+end
+
+function Player:OnCollisionExit(other)
+    if other and other:GetName() == "Heal Spot" and self.inHeal > 0 then
+        self.inHeal = self.inHeal - 1
+    end
+end
+
+function Player:Hurt()
+    if self.downed then
+        return
+    end
+    self.hurtCooldown = self.damageCooldown
+    self.hits = self.hits + 1
+    self.health = math.max(0.0, self.health - self.contactDamage)
+    if self.health <= 0.0 then
+        self.downed = true
+        self.downFor = 0.0
+        -- Not a respawn. A character cannot be teleported from script - its TransformComponent is
+        -- overwritten from the controller every frame by SyncTransforms, and nothing exposes
+        -- CharacterVirtual::SetPosition - so "back to the spawn point" is not expressible today.
+        -- Recorded in docs/ToDo/cross-cutting.md. It recovers where it fell instead.
+        Log.Warn(string.format("PLAYER DOWN at %.0f hits taken", self.hits))
+    end
+end
+
+function Player:Upgrade()
+    if PG.score < self.upgradeCost then
+        self.refusedUpgrades = (self.refusedUpgrades or 0) + 1
+        Log.Info(string.format("UPGRADE refused: score %d < cost %d",
+            PG.score, math.floor(self.upgradeCost)))
+        return
+    end
+    PG.score = PG.score - self.upgradeCost
+    PG.damage = PG.damage + 1
+    self.upgrades = self.upgrades + 1
+    Log.Info(string.format("UPGRADE bought: projectile damage -> %d, score left %d",
+        PG.damage, PG.score))
+end
+
+-- The HUD data model is the thing P5 is meant to put under real gameplay: it has been bound since
+-- the runtime milestone and has never had a number in it that gameplay produced. Written only on
+-- change, and **read straight back**, because a setter that silently drops its value would look
+-- exactly like a setter that worked.
+function Player:PushUI()
+    if self.health ~= self.uiHealth then
+        self.uiHealth = self.health
+        UI.SetHealth(self.health)
+        if math.abs(UI.GetHealth() - self.health) > 0.001 then
+            self.uiMismatch = self.uiMismatch + 1
+        end
+    end
+    if PG.score ~= self.uiScore then
+        self.uiScore = PG.score
+        UI.SetScore(PG.score)
+        if UI.GetScore() ~= PG.score then
+            self.uiMismatch = self.uiMismatch + 1
+        end
+    end
+end
+
 -- Walk to the next probe point, stand on it, move on. Returns a steering contribution in the
--- same units AutoTurn uses, and sets losDrive / losSlow, which the movement block reads.
+-- same units AutoTurn uses, and sets probeDrive / probeSlow, which the movement block reads.
 --
 -- The slowdown is not polish. At 6 m/s a frame covers 0.1 m, so a tight arrival radius is
 -- overshot and the capsule orbits the point forever; a large one makes the probe position
 -- imprecise, and this gate is a claim about a specific x. Easing to 1.2 m/s inside 3 m makes a
 -- 0.35 m radius reachable without either.
-function Player:LosTurn(ts)
+function Player:ProbeTurn(ts)
+    local route = self.losgate and LOS_ROUTE or P5_ROUTE
+    local tag = self.losgate and "LOSGATE" or "P5GATE"
     local p = self.entity:GetTranslation()
-    local target = LOS_ROUTE[self.losWp]
+    local target = route[self.probeWp]
 
-    if self.losDone then
-        self.losDrive = false
-        self.losSlow = 1.0
+    if self.probeDone then
+        self.probeDrive = false
+        self.probeSlow = 1.0
         return 0.0
     end
 
-    if self.losHold > 0.0 then
-        self.losHold = self.losHold - ts
-        self.losDrive = false
-        self.losSlow = 1.0
-        if self.losHold <= 0.0 then
-            Log.Info(string.format("LOSGATE probe %d done, standing at (%.2f, %.2f)",
-                self.losWp, p.x, p.z))
-            if self.losWp >= #LOS_ROUTE then
-                self.losDone = true
-                Log.Info("LOSGATE route complete")
+    -- A route measured in XZ will happily report arriving at every remaining waypoint while the
+    -- capsule falls through the world, because horizontal control still works in freefall. The
+    -- first P5 run did exactly that: shoved through the ground plane at t=83s, and 700 m down it
+    -- was still "reaching" probe 3. Diagnose already shouts about the fall; this makes the route
+    -- stop claiming things, so a failed run cannot read as a passing one.
+    if self.fell then
+        if not self.probeAborted then
+            self.probeAborted = true
+            Log.Error(tag .. " ABORTED: left the ground plane, so nothing below is measured")
+        end
+        self.probeDrive = false
+        self.probeSlow = 1.0
+        return 0.0
+    end
+
+    if self.probeHold > 0.0 then
+        -- Leg 1 of the P5 route is "stand until it hurts", not "stand for 14 seconds". A fixed
+        -- hold made the gate depend on whether an enemy happened to arrive in time: one run
+        -- reached the heal spot at full health, where a heal spot proves nothing. It still has a
+        -- ceiling, because a gate that can hang is not a gate.
+        if not self.losgate and self.probeWp == 1 and self.hits < 3 and self.t < 45.0 then
+            return 0.0
+        end
+        self.probeHold = self.probeHold - ts
+        self.probeDrive = false
+        self.probeSlow = 1.0
+        if self.probeHold <= 0.0 then
+            Log.Info(string.format("%s probe %d done, standing at (%.2f, %.2f) hp=%.0f score=%d",
+                tag, self.probeWp, p.x, p.z, self.health, PG.score))
+            if self.probeWp >= #route then
+                self.probeDone = true
+                Log.Info(tag .. " route complete")
             else
-                self.losWp = self.losWp + 1
+                self.probeWp = self.probeWp + 1
             end
         end
         return 0.0
@@ -237,16 +422,16 @@ function Player:LosTurn(ts)
     if dist < 0.35 then
         -- max(..., 0.001) so a zero-second hold still takes the branch above next frame rather
         -- than re-arriving, and re-logging, every frame.
-        self.losHold = math.max(target[3], 0.001)
-        self.losDrive = false
-        self.losSlow = 1.0
-        Log.Info(string.format("LOSGATE probe %d at (%.2f, %.2f), holding %.1fs - %s",
-            self.losWp, p.x, p.z, target[3], target[4]))
+        self.probeHold = math.max(target[3], 0.001)
+        self.probeDrive = false
+        self.probeSlow = 1.0
+        Log.Info(string.format("%s probe %d at (%.2f, %.2f), holding %.1fs - %s",
+            tag, self.probeWp, p.x, p.z, target[3], target[4]))
         return 0.0
     end
 
-    self.losDrive = true
-    self.losSlow = dist < 3.0 and 0.2 or 1.0
+    self.probeDrive = true
+    self.probeSlow = dist < 3.0 and 0.2 or 1.0
 
     local want = math.atan(-dx, -dz)
     local diff = (want - self.yaw + math.pi) % (2 * math.pi) - math.pi
@@ -303,6 +488,12 @@ function Player:OnUpdate(ts)
         if self.t < 20.0 then shots = 1
         elseif self.t < 24.0 then shots = 80 end
         for _ = 1, shots do self:Fire() end
+    elseif self.p5gate and not self.probeDone and self.probeWp == 1 and self.fireCooldown <= 0.0 then
+        -- Only on the first leg, and on the ordinary cooldown rather than every frame: this is
+        -- meant to look like someone shooting back, and the fired count has to stay a number the
+        -- weapon pickup can visibly change later in the run.
+        self.fireCooldown = self.fireInterval
+        self:Fire()
     elseif self.looking and Input.IsMouseButtonPressed(Mouse.ButtonLeft)
         and self.fireCooldown <= 0.0 then
         self.fireCooldown = self.fireInterval
@@ -314,7 +505,7 @@ function Player:OnUpdate(ts)
     if Input.IsKeyPressed(Key.Q) or Input.IsKeyPressed(Key.Left) then turn = turn + 1.0 end
     if Input.IsKeyPressed(Key.E) or Input.IsKeyPressed(Key.Right) then turn = turn - 1.0 end
     if self.autopilot then turn = turn + self:AutoTurn() end
-    if self.losgate then turn = turn + self:LosTurn(ts) end
+    if self.losgate or self.p5gate then turn = turn + self:ProbeTurn(ts) end
     self.yaw = self.yaw + turn * self.turnSpeed * ts
     if self.yawEntity then
         self.yawEntity:SetRotation(Vec3(0, self.yaw, 0))
@@ -328,7 +519,7 @@ function Player:OnUpdate(ts)
 
     local ix, iz = 0.0, 0.0
     if self.autopilot then ix, iz = ix + fx, iz + fz end
-    if self.losDrive then ix, iz = ix + fx, iz + fz end
+    if self.probeDrive then ix, iz = ix + fx, iz + fz end
     if Input.IsKeyPressed(Key.W) then ix = ix + fx; iz = iz + fz end
     if Input.IsKeyPressed(Key.S) then ix = ix - fx; iz = iz - fz end
     if Input.IsKeyPressed(Key.D) then ix = ix + rx; iz = iz + rz end
@@ -342,11 +533,45 @@ function Player:OnUpdate(ts)
     -- Keep the body's own vertical velocity. Overwriting it with 0 would cancel gravity and the
     -- capsule would hang in the air the moment it walked off anything.
     local v = self.entity:GetLinearVelocity()
-    local speed = self.speed * self.losSlow
+    -- Downed is not dead: a character cannot be moved from script, so there is nowhere to
+    -- respawn to. It stops instead, and gets back up where it fell.
+    local speed = self.downed and 0.0 or (self.speed * self.probeSlow)
     self.entity:SetLinearVelocity(Vec3(ix * speed, v.y, iz * speed))
 
+    self:Tick(ts)
     self:PushPending()
     self:Diagnose(ts)
+end
+
+-- Health, score and the HUD, once a frame.
+function Player:Tick(ts)
+    self.hurtCooldown = math.max(0.0, self.hurtCooldown - ts)
+
+    if (self.pendingHurt or 0) > 0 and self.hurtCooldown <= 0.0 and not self.downed then
+        self.pendingHurt = self.pendingHurt - 1
+        self:Hurt()
+    end
+
+    if self.downed then
+        self.downFor = self.downFor + ts
+        if self.downFor > 3.0 then
+            self.downed = false
+            self.health = self.maxHealth
+            Log.Info("PLAYER up again (in place - see Player:Hurt)")
+        end
+    elseif self.inHeal > 0 and self.health < self.maxHealth then
+        self.health = math.min(self.maxHealth, self.health + self.healRate * ts)
+        self.healed = self.healed + self.healRate * ts
+    end
+
+    -- Score is banked from kills. Enemy.lua owns PG.kills, because the victim counts its own
+    -- death; this only notices the counter moving.
+    if PG.kills > self.lastKills then
+        PG.score = PG.score + (PG.kills - self.lastKills)
+        self.lastKills = PG.kills
+    end
+
+    self:PushUI()
 end
 
 function Player:Fire()
@@ -464,7 +689,7 @@ function Player:Diagnose(ts)
     -- movement is legitimately zero and counting it produced a false 2.13 s.
     local moved = math.sqrt((p.x - self.lastPos.x) ^ 2 + (p.z - self.lastPos.z) ^ 2)
     local grounded = math.abs(self.entity:GetLinearVelocity().y) < 1.0
-    local wants = grounded and (self.autopilot or self.losDrive or Input.IsKeyPressed(Key.W)
+    local wants = grounded and (self.autopilot or self.probeDrive or Input.IsKeyPressed(Key.W)
         or Input.IsKeyPressed(Key.S) or Input.IsKeyPressed(Key.A) or Input.IsKeyPressed(Key.D))
     if wants and moved < 0.001 then
         self.stuckFor = self.stuckFor + ts
@@ -506,6 +731,11 @@ function Player:Diagnose(ts)
             self.t, p.x, p.y, p.z,
             100.0 * self.groundedFrames / math.max(self.frames, 1), self.inWall,
             PG.fired, PG.fired - PG.despawned, PG.despawned, PG.hits, PG.kills, self.refused))
+        Log.Info(string.format(
+            "P5   hp=%.0f/%.0f taken=%d healed=%.0f weapon=%d dmg=%d score=%d upgrades=%d "
+            .. "triggers=%d ui-mismatch=%d",
+            self.health, self.maxHealth, self.hits, self.healed, self.weapon, PG.damage,
+            PG.score, self.upgrades, PG.triggers or 0, self.uiMismatch))
         local hits = ""
         for i = 1, #ROUTE do
             hits = hits .. string.format(" wp%d=%d", i, (self.wpHits and self.wpHits[i]) or 0)

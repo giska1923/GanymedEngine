@@ -15,18 +15,24 @@
 -- escape the autopilot carries. Every firing of it is logged, because each one is a place the
 -- engine cannot express what the game wants.
 --
--- ---- How seeing works, and the assumption underneath it ----
+-- ---- How seeing works ----
 --
--- Cast from this enemy's eye at the player's eye, over exactly the distance between them, ignoring
--- our own body. A **miss** means clear line of sight; a hit means something is in the way, and the
--- thing it hit is named in the log.
+-- Cast from this enemy's eye at the player's eye, slightly past it, ignoring our own body. A clear
+-- line of sight means **the first thing the ray hits is the player**; anything else is an occluder,
+-- and it is named in the log.
 --
--- That reads backwards until you know the load-bearing fact: **the player is a CharacterVirtual,
--- so the ray cannot hit the player either.** There is nothing to hit at the far end, so "did I hit
--- anything at all" is the whole test. This works, it is cheap, and it is fragile - the day the
--- player grows an inner body, every enemy in this scene goes blind at once. Recorded in
--- docs/ToDo/cross-cutting.md rather than worked around here, because the fix belongs in the
--- engine (a cast that can see characters), not in a script.
+-- P4 wrote this inside out, and said so. The player was a CharacterVirtual with no presence in the
+-- broadphase, so there was nothing to hit at the far end and a **miss** had to stand for "I can see
+-- you". That comment predicted its own expiry - "the day the player grows an inner body, every
+-- enemy in this scene goes blind at once" - and P5 is that day: landing the inner body on master
+-- broke this function, exactly as written, and the log said so in as many words:
+--
+--   LOS E1 t=3.4s lost player=(0.0, 0.0) self=(-3.8, -17.1) d=17.5m blocked-by=Player
+--
+-- The distance in that line is the tell. The old cast stopped at 0.98 of the way, which cleared a
+-- 0.35 m capsule while the player was further than ~17.8 m away and struck it closer in, so the
+-- enemies went blind as they closed. The test below is positive rather than negative now, which is
+-- both correct and no longer distance-dependent.
 
 PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
 
@@ -47,7 +53,10 @@ local Enemy = {
         -- the gate is about occlusion.
         fov = 1.40,
         eyeHeight = 0.60,     -- above the body centre, so 1.5 m off the ground
-        standoff = 2.5,       -- stop closing inside this, or it shoves the player around
+        -- Close enough to touch. P4 held enemies at 2.5 m, which looked fine and meant they
+        -- never made contact with anything. P5 needs the contact: it is what damages the player.
+        -- 0.8 is just under the two half-widths (0.35 + 0.35), so they press in.
+        standoff = 0.8,
         label = "E",          -- what it calls itself in the log
     },
     health = 3,
@@ -57,7 +66,7 @@ local Enemy = {
     sightRange = 22.0,
     fov = 1.40,
     eyeHeight = 0.60,
-    standoff = 2.5,
+    standoff = 0.8,
     label = "E",
 
     dead = false,
@@ -74,6 +83,8 @@ local Enemy = {
     sidestepFor = 0.0,
     sidestepSign = 1.0,
     escapes = 0,
+    lungeCooldown = 0.0,
+    touches = 0,
     clip = nil,
     clipLogs = 0,
     lastPos = nil,
@@ -143,10 +154,16 @@ function Enemy:Look(player)
         end
     end
 
-    -- 0.98 rather than the full distance, so a wall standing exactly where the player is does not
-    -- decide the question. Nothing at the far end can be hit anyway - see the header.
-    local hit = Physics.Raycast(Vec3(ex, ey, ez), Vec3(dx, dy, dz), dist * 0.98, self.entity)
-    if hit then
+    -- 1.05 rather than the exact distance: the ray has to reach *past* the player's centre to be
+    -- sure of striking its capsule, and overshooting costs nothing, because whenever the line is
+    -- clear the player is the first thing in the way.
+    local hit = Physics.Raycast(Vec3(ex, ey, ez), Vec3(dx, dy, dz), dist * 1.05, self.entity)
+    if not hit then
+        -- Nothing at all, not even the player. Reachable when the player sits exactly on the far
+        -- edge of the overshoot, so it counts as blocked rather than as a lucky clear line.
+        return false, dist, "nothing"
+    end
+    if not hit.entity or hit.entity ~= player then
         return false, dist, (hit.entity and hit.entity:GetName() or "?")
     end
 
@@ -212,14 +229,36 @@ function Enemy:Move(ts, dist)
         return
     end
 
+    self.lungeCooldown = math.max(0.0, self.lungeCooldown - ts)
+
     local tx, tz, speed
     if self.state == "hunt" then
         tx, tz, speed = self.lastSeen.x, self.lastSeen.z, self.chargeSpeed
-        if dist < self.standoff then
+        if self.lungeCooldown > 0.0 then
+            -- Just landed one: give ground rather than lean on the player. Backing to 2.2 m puts
+            -- the box's corner (0.35 * sqrt(2) = 0.49) clear of the capsule with room to spare.
+            local bx, bz = p.x - tx, p.z - tz
+            local blen = math.sqrt(bx * bx + bz * bz)
+            if blen > 0.01 and blen < 2.2 then
+                tx, tz = p.x + (bx / blen) * 2.2, p.z + (bz / blen) * 2.2
+                speed = self.speed
+            else
+                tx, tz = nil, nil
+            end
+        elseif dist < self.standoff then
             tx, tz = nil, nil
         end
     elseif self.state == "search" and self.lastSeen then
         tx, tz, speed = self.lastSeen.x, self.lastSeen.z, self.chargeSpeed * 0.6
+        -- Stop on arrival. P4 left this branch with no stopping rule at all, which was invisible
+        -- while a character had no presence: an enemy that had lost sight of the player drove at
+        -- its last known position forever, straight through it. P5 gave the player a body, and
+        -- the effect was immediate and absurd - enemies bulldozed the player 20 m across the map
+        -- during a gate hold. The last known position is a place to go to, not a place to push.
+        local sx, sz = tx - p.x, tz - p.z
+        if (sx * sx + sz * sz) < (self.standoff * self.standoff) then
+            tx, tz = nil, nil
+        end
     elseif self.state == "patrol" then
         tx, tz, speed = self.leg.x, self.leg.z, self.speed
         local lx, lz = tx - p.x, tz - p.z
@@ -328,7 +367,34 @@ function Enemy:Animate()
 end
 
 function Enemy:OnCollisionEnter(other)
-    if self.dead or not other or other:GetName() ~= "Projectile" then
+    if self.dead or not other then
+        return
+    end
+
+    -- ---- Landing a touch, and then getting out of the way ----
+    --
+    -- P5 gave the player an inner body, so an enemy pressed against it now reports a contact -
+    -- which is what damages the player, and is the point. What it also did, immediately, was let
+    -- a charging enemy **bulldoze the player across the map**: a CharacterVirtual resolves any
+    -- overlap by moving itself, with no mass and no resistance, and an enemy driving at 4.2 m/s
+    -- never stops driving. The first P5 gate run ended with the player shoved from (2, -2) to
+    -- (36, 45) and then pushed straight through the ground plane - inside its +-50 extent, so it
+    -- went through rather than off - after which it fell forever while the route above cheerfully
+    -- reported reaching every remaining waypoint, because those are measured in XZ only.
+    --
+    -- The engine half of that is recorded in docs/ToDo/cross-cutting.md: Jolt can refuse the push
+    -- per contact (CharacterContactSettings::mCanPushCharacter) but only through a
+    -- CharacterContactListener, and the engine installs none.
+    --
+    -- The game half is this: land a touch, then back off. It is what melee AI does anyway, and it
+    -- bounds the shove to the moment of contact instead of letting it run for a minute.
+    if other:GetName() == "Player" then
+        self.touches = self.touches + 1
+        self.lungeCooldown = 1.5
+        return
+    end
+
+    if other:GetName() ~= "Projectile" then
         return
     end
 
@@ -343,7 +409,9 @@ function Enemy:OnCollisionEnter(other)
         end
     end
 
-    self.health = self.health - 1
+    -- The damage is the player's, not the projectile's - the upgrade station raises it - and PG is
+    -- the only channel between two script instances there is.
+    self.health = self.health - (PG.damage or 1)
     if self.health > 0 then
         return
     end
