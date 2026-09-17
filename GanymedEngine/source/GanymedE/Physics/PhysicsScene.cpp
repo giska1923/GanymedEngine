@@ -470,9 +470,14 @@ namespace GanymedE {
 		std::unordered_map<UUID, JPH::BodyID> EntityToBody;
 		std::unordered_map<uint32_t, UUID> BodyToEntity;
 
-		// Characters are not bodies and cannot live in the map above: they have no BodyID, the
-		// body interface knows nothing about them, and they are stepped by hand rather than by
-		// the solver. A second map is the honest representation of that.
+		// Characters are not bodies and cannot live in the map above: they have no BodyID of
+		// their own, and they are stepped by hand rather than by the solver. A second map is the
+		// honest representation of that.
+		//
+		// Each one does carry an *inner* body for presence, which Jolt creates and destroys with
+		// the character. That body's id appears in BodyToEntity - contacts arrive as BodyIDs and
+		// are resolved through it - but never in EntityToBody, which names the body an entity
+		// owns and drives.
 		std::unordered_map<UUID, JPH::Ref<JPH::CharacterVirtual>> EntityToCharacter;
 	};
 
@@ -682,6 +687,11 @@ namespace GanymedE {
 			settings.mGravityFactor = rb.UseGravity ? 1.0f : 0.0f;
 			settings.mUserData = static_cast<uint64_t>(uuid);
 
+			// A sensor reports contacts and causes none, which is what a trigger volume is.
+			// Nothing else changes: it keeps its motion type, its layer and its shape, so a
+			// static sensor is a static body that you walk through.
+			settings.mIsSensor = rb.IsSensor;
+
 			if (motionType == JPH::EMotionType::Dynamic && rb.Mass > 0.0f)
 			{
 				settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
@@ -773,11 +783,38 @@ namespace GanymedE {
 			// the plane exactly at the bottom of the hemisphere.
 			settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -radius);
 
+			// ---- Presence ----
+			//
+			// Without an inner body a character is invisible to everything outside itself. It has
+			// no BodyID and is not in the broadphase, so no raycast finds it, no projectile hits
+			// it, and it raises no contact - "did I shoot the player" cannot even be asked. The
+			// inner body is Jolt's own answer: a Kinematic body carrying the same capsule, kept
+			// on the character's position by CharacterVirtual itself (UpdateInnerBodyTransform
+			// runs inside Update), and destroyed with it.
+			//
+			// It is not optional and there is no flag for it. Every engine's character has
+			// presence in the world; a character that nothing can detect is the odd case, and
+			// when one is wanted the answer is an object layer, not a bool on the component.
+			//
+			// MOVING, because it is Kinematic. That choice is also what keeps the contact stream
+			// quiet: Jolt does not pair two non-dynamic bodies (Body::sFindCollidingPairsCanCollide),
+			// so the inner body never reports the ground or a wall - only dynamic bodies, and
+			// sensors, which is exactly the set gameplay wants to hear about.
+			settings.mInnerBodyShape = shapeResult.Get();
+			settings.mInnerBodyLayer = Layers::MOVING;
+
 			auto character = new JPH::CharacterVirtual(&settings,
 				JPH::RVec3(worldPos.x, worldPos.y, worldPos.z),
 				JPH::Quat(worldRot.x, worldRot.y, worldRot.z, worldRot.w),
 				static_cast<uint64_t>(uuid),
 				&m_Impl->System);
+
+			// Jolt copies mUserData onto the inner body, so a raycast already resolves the right
+			// entity through Body::GetUserData. Contacts do not: they arrive as BodyIDs and are
+			// resolved through this map, so the inner body has to be in it or every contact the
+			// character takes part in is silently dropped.
+			if (JPH::BodyID innerID = character->GetInnerBodyID(); !innerID.IsInvalid())
+				m_Impl->BodyToEntity[innerID.GetIndexAndSequenceNumber()] = uuid;
 
 			m_Impl->EntityToCharacter[uuid] = character;
 
@@ -868,8 +905,10 @@ namespace GanymedE {
 			it = m_Impl->EntityToBody.erase(it);
 		}
 
-		// Characters have no BodyID to release; dropping the Ref is the whole of it, since
-		// CharacterVirtual owns nothing in the solver.
+		// Dropping the Ref is still the whole of the release: the inner body is created and
+		// destroyed by CharacterVirtual itself, so nothing here removes it from the solver. What
+		// does have to happen is erasing its entry from BodyToEntity, or a later body reusing
+		// that index reports contacts as the character that has gone.
 		for (auto it = m_Impl->EntityToCharacter.begin(); it != m_Impl->EntityToCharacter.end(); )
 		{
 			Entity entity = scene->FindEntityByUUID(it->first);
@@ -878,6 +917,9 @@ namespace GanymedE {
 				++it;
 				continue;
 			}
+
+			if (JPH::BodyID innerID = it->second->GetInnerBodyID(); !innerID.IsInvalid())
+				m_Impl->BodyToEntity.erase(innerID.GetIndexAndSequenceNumber());
 
 			m_PreviousPoses.erase(it->first);
 			m_CurrentPoses.erase(it->first);
@@ -914,6 +956,15 @@ namespace GanymedE {
 			}
 		}
 		m_Impl->EntityToBody.clear();
+
+		// Characters go here too, and explicitly, now that they own an inner body.
+		// `~CharacterVirtual` reaches back into the body interface to remove and destroy it, so
+		// it must run while the PhysicsSystem is still alive. Leaving that to `m_Impl.reset()`
+		// happens to work - `System` is declared first in Impl, so it is destroyed last - but
+		// that is a member-order coincidence, and a future reorder of that struct would turn it
+		// into a use-after-free with no other sign.
+		m_Impl->EntityToCharacter.clear();
+
 		m_Impl->BodyToEntity.clear();
 	}
 
@@ -1152,12 +1203,19 @@ namespace GanymedE {
 
 		// IgnoreSingleBodyFilter takes a BodyID, so an ignore that names an entity with no
 		// body resolves to an invalid id, which matches nothing - the desired outcome.
+		//
+		// A character is named by its inner body. Before that body existed this branch could not
+		// exist either, because there was nothing to ignore and nothing to hit; now a character
+		// casting from its own eye would hit itself on the first millimetre without it.
 		JPH::BodyID ignoreBody;
 		if (ignore != 0)
 		{
 			auto it = m_Impl->EntityToBody.find(ignore);
 			if (it != m_Impl->EntityToBody.end())
 				ignoreBody = it->second;
+			else if (auto ch = m_Impl->EntityToCharacter.find(ignore);
+				ch != m_Impl->EntityToCharacter.end())
+				ignoreBody = ch->second->GetInnerBodyID();
 		}
 		const JPH::IgnoreSingleBodyFilter bodyFilter(ignoreBody);
 

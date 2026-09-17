@@ -399,6 +399,19 @@ namespace GanymedE {
 		// anyone needs it. See docs/engine/physics.md.
 		bool LockRotation = false;
 
+		// A trigger volume: it reports contacts and causes none. Jolt calls this a sensor, so
+		// this does too rather than inventing a synonym.
+		//
+		// **Static is the right motion type for one**, and the cheapest: a static sensor costs
+		// nothing in the broadphase and still detects every active Dynamic or Kinematic body
+		// that enters it. A Dynamic or Kinematic sensor additionally sees *sleeping* bodies,
+		// which is rarely what a pickup wants and always costs more.
+		//
+		// This is a body-level flag because a body here is one compound shape. Unity puts
+		// `isTrigger` on the collider because a Unity body can own several colliders with
+		// different roles; ours cannot, so per-collider would be a lie.
+		bool IsSensor = false;
+
 		RigidBodyComponent() = default;
 		RigidBodyComponent(const RigidBodyComponent&) = default;
 	};

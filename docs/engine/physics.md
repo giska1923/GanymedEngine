@@ -78,8 +78,41 @@ exceptions:
 footsteps, a landing animation — wants treated as *not* grounded. A rigid body always answers
 false, because it has no such concept and answering would invite the wrong question.
 
-**Not done yet:** a character generates no `OnCollisionEnter`. `CharacterVirtual` has its own
-contact listener, separate from the body contact listener the events come from today.
+#### Presence: the inner body
+
+A `CharacterVirtual` on its own is **invisible to everything outside itself**. It has no `BodyID`
+and is not in the broadphase, so no raycast finds it, no projectile hits it, and it raises no
+contact — "did I shoot the player" could not be asked at all.
+
+Every character therefore gets Jolt's own answer, an **inner body**
+(`CharacterVirtualSettings::mInnerBodyShape`): a Kinematic body carrying the same capsule, created
+and destroyed by `CharacterVirtual` itself and kept on the character's position from inside
+`Update`. Three things follow, and they are Jolt's own list:
+
+- `NarrowPhaseQuery` finds it, so raycasts hit characters.
+- Contacts reach the ordinary `ContactListener`, so `OnCollisionEnter/Exit` fires for characters
+  on both sides.
+- A `LinearCast` body can no longer pass through a character in one step.
+
+**There is no flag for it.** Every engine's character has presence in the world; a character
+nothing can detect is the odd case, and when one is wanted the answer is an object layer, not a
+bool on the component.
+
+It goes in `MOVING`, because it is Kinematic, and that is also what keeps the contact stream quiet:
+Jolt does not pair two non-dynamic bodies (`Body::sFindCollidingPairsCanCollide`), so the inner
+body never reports the ground or a wall. It reports dynamic bodies and sensors — exactly the set
+gameplay wants to hear about.
+
+Two consequences worth knowing:
+
+- **A character now pushes dynamic bodies out of its way** by being kinematic, on top of the
+  impulse `HandleContact` already applied. A crate in a doorway gets shoved rather than sealing it.
+- **The inner body is in `BodyToEntity` but never in `EntityToBody`.** Contacts arrive as `BodyID`s
+  and are resolved through the first, so it has to be there or every contact a character takes part
+  in is dropped. The second names the body an entity *owns and drives*, and a character does not
+  drive its inner body — putting it there would alias with a real rigid body on the same entity and
+  leak it. `CastRay`'s `ignore` reaches the inner body through `EntityToCharacter` instead, which
+  is what lets a character cast from its own eye without hitting itself on the first millimetre.
 
 ### Locked rotation
 
@@ -188,6 +221,25 @@ Order matters and is validated: `PhysicsSystem` declares `AccessView<RW<Transfor
 `SystemManager::ValidateOrdering` knows `TransformSystem` (which consumes transform changes) must
 run *after* physics.
 
+### Sensors (trigger volumes)
+
+`RigidBodyComponent::IsSensor` maps to Jolt's `mIsSensor`: the body reports contacts and causes
+none, so you walk through it and a script hears about it. Nothing else changes — same motion type,
+same layer, same shape.
+
+**Author one as Static.** That is the cheapest kind and the one a pickup, a heal spot or a
+checkpoint wants: it costs nothing in the broadphase and still detects every *active* Dynamic or
+Kinematic body that enters it. A Dynamic or Kinematic sensor additionally sees sleeping bodies,
+and pays for it.
+
+Static-and-sensor is also the only shape that works against a **character**. A character's presence
+is a Kinematic inner body, and Jolt refuses to pair two non-dynamic bodies — except when one of
+them is a sensor, which is precisely the exemption in `Body::sFindCollidingPairsCanCollide`. So a
+plain static box is invisible to a character walking through it, and a static *sensor* is not.
+
+The flag is read at body creation, like `LockRotation`; toggling it during play does nothing until
+the body is rebuilt.
+
 ## Collision events → scripts
 
 `PhysicsSystem::DispatchCollisionEvents` resolves each event's UUIDs to entities and calls
@@ -232,16 +284,11 @@ Static and dynamic bodies are both hit. A line-of-sight test that could not see 
 useless, and a weapon that could not hit scenery would be worse. Sensors are what would want
 filtering out here, and there are none yet.
 
-**Character controllers are not hit, and cannot be.** `NarrowPhaseQuery` searches bodies, and a
-`CharacterVirtual` is not one — it has no `BodyID` and is not in the broadphase. The same absence
-is why a character raises no `OnCollisionEnter` (above). So a cast at a character always misses,
-whatever is or is not between the two, and "did this ray reach the player" cannot be asked of one.
-A line-of-sight test against a character has to be written the other way round — cast at it over
-exactly the distance to it, and read a **miss** as a clear line — which is what the Proving
-Ground's `Enemy.lua` does, on the `first-game` branch. Jolt's own answer is
-`CharacterVirtualSettings::mInnerBodyShape`, which puts a body in the broadphase that moves with
-the character; it is not built, and is recorded in
-[docs/ToDo/cross-cutting.md](../ToDo/cross-cutting.md).
+**Character controllers are hit too**, through their inner body
+([above](#presence-the-inner-body)) — a `CharacterVirtual` itself is not in the broadphase and
+never can be. The hit resolves to the character's entity with no special case, because Jolt copies
+the character's user data onto that body and `Entity` is read from `Body::GetUserData`. `ignore`
+also names a character correctly, so one can cast from its own eye.
 
 Reading the surface normal needs the body, so a `BodyLockRead` is taken and released before
 returning — never held across a call into script. A body that vanishes between the cast and the
