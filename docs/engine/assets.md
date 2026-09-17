@@ -99,6 +99,15 @@ lifetime for something nobody authored. The corollary for a shipped build is tha
 asset needs its sidecar shipped with it** — a read-only scan can adopt an identity, never persist
 one.
 
+**And the scan says so, by name.** A mint on a writable install is ordinary: a file appeared, the
+scan gave it identity and wrote it down. A mint on a read-only install is a shipping defect — the
+handle is different on every boot, and anything naming that asset by handle rather than by path is
+already broken with no error to say so. So `ScanAssets` warns once with a count and then names each
+path, the same shape as the orphaned-sidecar report, and for the same reason the `.compiled`
+warning next door exists: this is the one moment the information exists, and the install it
+describes has no editor to go and look with. The Proving Ground's P7 shipped a `.gprefab` whose
+sidecar had never been minted, and the only sign of it was a `1` in the middle of the scan line.
+
 ### The `.meta` sidecar
 
 [`AssetMeta.h`](../../GanymedEngine/source/GanymedE/Assets/AssetMeta.h) defines the file that *is*
