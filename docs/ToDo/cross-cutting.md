@@ -56,6 +56,11 @@ gcc 11.4). Native hardware has now been tried for Vulkan; GL and audio still hav
   were aimed at the wrong thing. On a machine that reproduces a GPU hang, install
   `vulkan-validationlayers` and run with `VK_LOADER_LAYERS_ENABLE='*validation*'` **first**.
 
+  **Verified on the machine that hung**: editor and runtime both boot and run. The staged bake and
+  the inter-stage GPU drain that were added while chasing this are gone again - they were never the
+  fix, and a second code path for one vendor is not worth carrying for a theory that turned out to
+  be wrong. Native Linux Vulkan is closed.
+
   *The history of the four wrong turns follows, because the reasoning is the part worth keeping.*
 
   Four attempts in it was **not diagnosed**. Integer-bounded loops, an 8x sample-count cut, a

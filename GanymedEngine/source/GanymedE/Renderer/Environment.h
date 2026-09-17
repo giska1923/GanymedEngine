@@ -31,9 +31,9 @@ namespace GanymedE {
 	//
 	// Concrete over bgfx handles, like the other resources. The bake runs once on
 	// construction across a block of transient views (RenderPass::EnvironmentBake),
-	// rendering into individual cubemap faces and mips via bgfx::Attachment. On
-	// Intel + Vulkan the constructor also kicks `bgfx::frame()` between stages so
-	// ANV never sees the whole convolution as one command buffer - see Bake().
+	// rendering into individual cubemap faces and mips via bgfx::Attachment, which
+	// it attaches with BGFX_RESOLVE_NONE - see FaceFramebuffer for why the default
+	// on that parameter hangs Mesa ANV.
 	//
 	// Binding is the caller's job: a sampler belongs to a shader, so the handles
 	// are exposed and Renderer3D feeds them to Shader::SetTexture.

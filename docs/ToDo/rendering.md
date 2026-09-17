@@ -304,27 +304,26 @@ Three things made the OpenGL bugs findable, and they generalise:
 
 ## Runtime IBL convolution vs an offline bake
 
-The Intel ANV hang (`VK_ERROR_DEVICE_LOST` on the first frame of a native Linux editor) is the
-LearnOpenGL split-sum bake running as fragment shaders at load: hemisphere irradiance, 1024-sample
-GGX prefilter, 512² BRDF LUT — about 500M fragment-loop iterations, of which 268M were the LUT
-alone, in a single draw. The sample counts are cut to production values now (4096 / 128 / 256,
-a 256² LUT), which is 8x less work; whether that is enough for ANV is unverified. UE and Unity do not do that at runtime — they persist a cubemap + SH
-(or a prefiltered specular chain) from an editor/offline step. Ganymed cannot yet: `Environment` has
-no compiled output, only the HDR source.
+The split-sum bake runs as fragment shaders at load, every time an HDR is loaded: hemisphere
+irradiance, GGX prefilter, BRDF LUT. UE and Unity do not do that at runtime — they persist a
+cubemap + SH (or a prefiltered specular chain) from an editor/offline step. Ganymed cannot yet:
+`Environment` has no compiled output, only the HDR source.
 
-Two things landed as the cheap fix, and they are in
-[rendering.md](../engine/rendering.md#environment--ibl): integer-bounded bake loops, and
-`bgfx::frame()` between stages when the live device is Intel + Vulkan. What is still the right
-production shape, and is **not** done:
+**This is no longer where the Intel ANV hang lives** — that was a malformed mip-gen blit and is
+fixed (see [cross-cutting.md](cross-cutting.md)). What the hunt left behind is the observation that
+prompted this entry: the bake was running the LearnOpenGL teaching sample counts, about 500M
+fragment-loop iterations for one environment, and cutting them to production values (4096 / 128 /
+256, a 256² LUT) changed nothing visible. Work nobody could see is still work nobody should pay
+for on every load. What is still the right production shape, and is **not** done:
 
 - Persist the four bake targets (env cube, irradiance, prefilter, shared BRDF LUT) next to the HDR
   as a compiled Environment output, and skip the GPU convolution on subsequent loads.
 - The BRDF LUT is a pure function of the BRDF. Baking it at runtime at all is wasted work; it can
   ship as a 256² RG16F asset.
 
-Until that exists, every new HDR still costs a convolution, and every iGPU is one compiler quirk
-away from another hang. The item sits here rather than in assets.md because the missing compiler is
-a renderer pass writing textures, not an importer.
+Until that exists, every new HDR costs a convolution on every load, on every machine. The item sits
+here rather than in assets.md because the missing compiler is a renderer pass writing textures, not
+an importer.
 
 ## Optional, and explicitly not scheduled
 

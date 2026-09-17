@@ -550,16 +550,13 @@ matching barrier VUID; on Mesa ANV the malformed blit **hangs the GPU** on the f
 submits. D3D11 and NVIDIA tolerate it silently, which is why it survived every platform the engine
 had been run on until a native Linux box tried it.
 
-On D3D11 / NVIDIA Vulkan the whole bake is **one frame**: views execute in ID order, so each stage
-samples what a lower-numbered view wrote, and the scene pass in that same frame already sees the
-result. On **Intel + Vulkan** (Mesa ANV) that single submit has hung the GPU — `VK_ERROR_DEVICE_LOST`,
-`i915: GPU hung on one of our command buffers` — on the first `bgfx::frame()` after boot. The
-convolution shaders are long-running fragment loops (hemisphere walk, 1024-sample GGX); ANV's SPIR-V
-compiler has historically turned float-increment loops into non-terminating ones, and even a correct
-compile can exceed i915's ~2 s hangcheck when the bake is fused with the first editor frame. There
-the constructor kicks `bgfx::frame()` between stages so each command buffer is one convolution, not
-four plus ImGui. Discrete backends keep the single-frame path; the split is gated on
-`vendorId == BGFX_PCI_ID_INTEL && rendererType == Vulkan`.
+The whole bake is **one frame on every backend**: views execute in ID order, so each stage samples
+what a lower-numbered view wrote, and the scene pass in that same frame already sees the result.
+
+While the ANV hang above was being chased it was split across frames on Intel + Vulkan, with the
+GPU drained between stages so each stage could be timed. Neither survived the diagnosis: the hang
+was the mip-gen blit, not the size of a command buffer, and once `BGFX_RESOLVE_NONE` landed there
+was no reason to keep a second code path for one vendor. **One bake, one frame, every backend.**
 
 Only the upload and the submission are on the submit thread; the panorama is `stbi_loadf`-decoded on
 a worker first (`Environment::Load`, the asset layer's Parse stage — see
@@ -580,21 +577,14 @@ crash (the reasoning is spelled out in [`MeshShader.h`](../../GanymedEngine/sour
   environment's destructor frees it.
 
 Together these take a second and subsequent environment load from ~4–5 ms of submit-thread work to
-**2.2–3.3 ms** on the single-frame path. The first load in a process still pays for both (~6.3 ms).
-On Intel + Vulkan the kicked frames add a few vsyncs; that is load hitch, not per-frame cost.
+**2.2–3.3 ms**. The first load in a process still pays for both (~6.3 ms).
 
-Each stage on that path logs its own name and wall time (`IBL bake stage 'prefilter': N ms
-(drained)`). Without that an ANV hang inside the bake is a silence: the log stops after the four
-target textures are created, and the next line is `GPU hung on one of our command buffers` fourteen
-seconds later, naming no stage.
-
-**The drain is what makes the number mean anything, and the first version of this did not have
-it.** One `bgfx::frame()` does not wait for the GPU - it returns as soon as the next frame can
-begin, which against a 3-image swapchain is two to three frames of slack. So a stage reported
-0.7 ms for 25M cube samples, having waited for none of them, and the flush that finally blocked was
-two or three stages downstream of the one the GPU was stuck on. Reading that log named the wrong
-convolution. Three extra empty frames per stage force the wait, because acquiring the fourth image
-cannot succeed until the first is free.
+One thing learned while the ANV hang was being chased is worth keeping, because it will mislead
+anyone who tries to time a bgfx frame: **`bgfx::frame()` does not wait for the GPU.** It returns as
+soon as the next frame can begin, which against a 3-image swapchain is two to three frames of
+slack. A stage timed that way reported 0.7 ms for 25M cube samples, having waited for none of them,
+and the call that eventually blocked was two or three stages downstream of the work that was
+actually stuck. Timing a stage needs extra empty frames to drain the pipeline first.
 
 ### The IBL bake is a prepass
 
@@ -607,21 +597,15 @@ therefore unreadable by that same frame's scene pass, and the bake worked around
 main thread (measured, Release) — it was the larger half of the load hitch — and on the way past it
 presented two half-built frames.
 
-Ordering the bake first makes it correct within the frame it is submitted in on backends that keep
-the single-frame path, so the forced frames are gone there. Verified frame by frame with backbuffer
-screenshots (D3D11): the frame an environment applies in already renders the baked skybox, and the
-following frames are pixel-identical to it.
-
-Intel + Vulkan is the exception: the constructor presents between stages, so the scene that follows
-samples a bake the GPU has already finished rather than one in flight. That reintroduces a few
-vsyncs of load hitch on those GPUs — the cost of not dying in `bgfx::frame()`.
+Ordering the bake first makes it correct within the frame it is submitted in, so the forced frames
+are gone. Verified frame by frame with backbuffer screenshots (D3D11): the frame an environment
+applies in already renders the baked skybox, and the following frames are pixel-identical to it.
 
 Two consequences worth knowing if you add a pass:
 
 - **Everything that samples the bake must sort above 67.** The pass table leaves views 1–68 to the
   bake and starts the frame proper at `Shadow = 69`; `ViewAllocator` asserts against `Shadow` rather
   than counting. A bake takes 67 views the first time and **66 after that** — see the BRDF LUT below.
-  On the Intel/Vulkan split those IDs are reused across the kicked frames, still below `Shadow`.
 - Destroying the bake's 67 transient framebuffers immediately after submission is safe: bgfx defers
   handle destruction until the frame that used them has been rendered. The cube textures they wrote
   into are owned by the `Environment`.

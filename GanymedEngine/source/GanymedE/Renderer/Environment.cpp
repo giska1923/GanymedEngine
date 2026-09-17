@@ -326,64 +326,14 @@ namespace GanymedE {
 		ViewAllocator views;
 		std::vector<bgfx::FrameBufferHandle> framebuffers;
 
-		// Intel ANV (Mesa on Linux, and Windows Intel Vulkan) has hung the GPU
-		// (`VK_ERROR_DEVICE_LOST`, i915 "GPU hung on one of our command buffers")
-		// when the whole bake - irradiance hemisphere, 1024-sample GGX prefilter,
-		// 512^2 BRDF LUT - plus the first editor frame went out as one submit.
-		// Discrete GPUs finish that in well under a vsync; ANV's compiler and
-		// i915's hangcheck do not. Split only there so D3D11/NVIDIA keep the
-		// single-frame bake.
-		const bgfx::Caps* caps = bgfx::getCaps();
-		const bool splitBakeStages = caps
-			&& caps->rendererType == bgfx::RendererType::Vulkan
-			&& caps->vendorId == BGFX_PCI_ID_INTEL;
-
-		// Named and timed, because an Intel ANV hang inside the bake is otherwise a silence:
-		// the log stops after the four target textures are created and the next thing in it is
-		// `GPU hung on one of our command buffers`, 14 seconds later, with no way to tell which
-		// convolution the GPU died in.
+		// The bake writes render targets and samples them back in later stages of
+		// the SAME frame. That is only safe because bgfx processes views in ID
+		// order and every stage below takes higher IDs than the one it samples.
 		//
-		// **One bgfx::frame() does not wait for the GPU, and a first version of this assumed it
-		// did.** bgfx returns as soon as it can begin the next frame, which against a 3-image
-		// swapchain is two to three frames of slack - so the flush that blocks is two or three
-		// stages downstream of the one the GPU is actually stuck on, and a stage can report
-		// 0.7 ms for 25M cube samples because it never waited for any of them. A run read that
-		// way blames the wrong convolution.
-		//
-		// kDrainFrames extra empty frames force the wait. With three swapchain images, acquiring
-		// the fourth cannot succeed until the first is free, which requires this stage's work to
-		// have finished. That makes the reported time real GPU time and, more importantly, makes
-		// a hang block in the stage that caused it.
-		//
-		// Only on the split path, and only ever at load: three empty frames per stage is a few
-		// vsyncs of extra hitch on the one boot that bakes an environment, in exchange for a
-		// diagnosis that is not a guess.
-		constexpr int kDrainFrames = 3;
-
-		auto flushBakeStage = [&](const char* stage)
-		{
-			if (!splitBakeStages)
-				return;
-
-			const auto begin = std::chrono::steady_clock::now();
-
-			// Keep Renderer::GetFrameNumber() in lockstep with bgfx; picking
-			// polls that, not bgfx's own counter.
-			Renderer::OnFrameSubmitted(bgfx::frame());
-			views.Next = RenderPass::EnvironmentBake;
-
-			for (int i = 0; i < kDrainFrames; i++)
-				Renderer::OnFrameSubmitted(bgfx::frame());
-
-			const double ms = std::chrono::duration<double, std::milli>(
-				std::chrono::steady_clock::now() - begin).count();
-			GE_CORE_INFO("IBL bake stage '{0}': {1:.1f} ms (drained)", stage, ms);
-		};
-
-		// When splitBakeStages is false, later stages sample earlier ones in the
-		// SAME frame - that is only safe because bgfx processes views in ID order
-		// and every stage below takes higher IDs than the one it samples. When it
-		// is true, flushBakeStage makes the hazard a cross-frame one instead.
+		// It was split across frames on Intel + Vulkan for a while, with the GPU drained between
+		// stages, while the ANV hang was being chased. Neither was ever the fix - the hang was a
+		// malformed mip-gen blit that bgfx issued because `BGFX_RESOLVE_AUTO_GEN_MIPS` is the
+		// default on `Attachment::init` (see FaceFramebuffer). One asset tree, one code path.
 		auto renderCubeFace = [&](bgfx::TextureHandle target, uint16_t face, uint16_t mip,
 			uint32_t size, const Ref<Shader>& shader)
 		{
@@ -418,7 +368,6 @@ namespace GanymedE {
 				renderCubeFace(m_EnvCubemap, face, mip, mipSize, equirectShader);
 			}
 		}
-		flushBakeStage("equirect");
 
 		// --- 2. Diffuse irradiance convolution --------------------------------
 		for (uint16_t face = 0; face < 6; face++)
@@ -426,7 +375,6 @@ namespace GanymedE {
 			irradianceShader->SetTexture("u_EnvironmentMap", 0, m_EnvCubemap, BGFX_SAMPLER_UVW_CLAMP);
 			renderCubeFace(m_Irradiance, face, 0, kIrradianceSize, irradianceShader);
 		}
-		flushBakeStage("irradiance");
 
 		// --- 3. Pre-filtered specular environment (one mip per roughness) -----
 		for (uint16_t mip = 0; mip < (uint16_t)kPrefilterMips; mip++)
@@ -444,15 +392,6 @@ namespace GanymedE {
 					glm::vec2((float)kEnvSize, (float)(kEnvMips - 1)));
 				renderCubeFace(m_Prefilter, face, mip, mipSize, prefilterShader);
 			}
-
-			// Per mip, not per stage. Prefilter is where the ANV hang lives, and five submits
-			// instead of one is what turns "it died somewhere in the specular convolution" into a
-			// roughness value. Mip 0 is the one case where the shader forces LOD 0, so a hang
-			// there would rule the LOD maths out and a hang after it would not.
-			char label[48];
-			std::snprintf(label, sizeof(label), "prefilter mip%u (roughness %.2f)",
-				(unsigned)mip, roughness);
-			flushBakeStage(label);
 		}
 
 		// --- 4. BRDF integration LUT (once per process, not once per environment) ---
@@ -482,12 +421,11 @@ namespace GanymedE {
 
 			shared.BRDF->Bind();
 			RenderCommand::DrawIndexed(quad);
-			flushBakeStage("brdf-lut");
 		}
 
-		// The bake is submitted, not executed: bgfx runs it when the frame is presented.
-		// On non-Intel-Vulkan that is the same frame as the scene (views sort first, see
-		// RenderPassIDs.h). On Intel + Vulkan the flushes above already presented it.
+		// The bake is submitted, not executed: bgfx runs it when the frame is presented, and
+		// because these views sort before the scene passes (RenderPassIDs.h) the results are
+		// readable by the very frame this was submitted into.
 		//
 		// Destroying a framebuffer is deferred by bgfx until the frame that used it has
 		// been rendered, so the handles below can go back immediately; the cube textures
