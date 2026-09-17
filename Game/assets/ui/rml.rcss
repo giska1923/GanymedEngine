@@ -1,0 +1,69 @@
+/* Default element styles, the equivalent of a browser's user-agent stylesheet.
+ *
+ * RmlUi ships NO built-in defaults: every element starts as `display: inline`
+ * unless a stylesheet says otherwise. Without this file a <div> with an explicit
+ * width and height silently lays out at zero width - it renders nothing, logs
+ * nothing, and the Debugger is the only way to see why. Every UI document should
+ * <link> this before its own stylesheet.
+ *
+ * Copied verbatim from RmlUi's Samples/assets/rml.rcss (MIT, see
+ * GanymedEngine/extern/RmlUi/LICENSE.txt). Re-copy it if RmlUi is upgraded.
+ */
+
+div
+{
+	display: block;
+}
+
+p
+{
+	display: block;
+}
+
+h1
+{
+	display: block;
+}
+
+em
+{
+	font-style: italic;
+}
+
+strong
+{
+	font-weight: bold;
+}
+
+select
+{
+	text-align: left;
+}
+
+tabset tabs
+{
+	display: block;
+}
+
+table {
+	box-sizing: border-box;
+	display: table;
+}
+tr {
+	box-sizing: border-box;
+	display: table-row;
+}
+td {
+	box-sizing: border-box;
+	display: table-cell;
+}
+col {
+	box-sizing: border-box;
+	display: table-column;
+}
+colgroup {
+	display: table-column-group;
+}
+thead, tbody, tfoot {
+	display: table-row-group;
+}

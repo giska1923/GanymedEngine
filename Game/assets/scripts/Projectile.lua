@@ -52,6 +52,18 @@ function Projectile:OnCollisionEnter(other)
         return
     end
     PG.hits = PG.hits + 1
+
+    -- P6. Both at the point of contact, which is near enough this entity's position: a round
+    -- moving at 28 m/s covers 0.47 m in a step, so the error is smaller than the effect.
+    --
+    -- Positional, unlike the shot itself. This is the one sound in the game that the 3D listener
+    -- has a real job to do on - it happens somewhere other than the player, while the player is
+    -- moving and turning.
+    local p = self.entity:GetTranslation()
+    -- Quieter than the shot that fired it: the gun is at the ear and this is not.
+    Audio.PlayOneShot("audio/impact.wav", p, 0.45)
+    Scene.Spawn("prefabs/Impact.gprefab", p)
+
     self:Despawn("hit")
 end
 

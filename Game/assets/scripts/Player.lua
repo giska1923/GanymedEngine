@@ -60,6 +60,10 @@ local Player = {
         healRate = 14.0,
         -- What the upgrade station charges for +1 projectile damage.
         upgradeCost = 2.0,
+
+        -- P6. Seconds between footsteps at full speed. 0.42 is a brisk walk; the sound is
+        -- retriggered rather than looped, so this is the only thing setting the cadence.
+        stepInterval = 0.42,
     },
     speed = 6.0,
     turnSpeed = 2.4,
@@ -75,6 +79,7 @@ local Player = {
     damageCooldown = 1.0,
     healRate = 14.0,
     upgradeCost = 2.0,
+    stepInterval = 0.42,
 
     -- Probe-route state, shared by both gate modes: they differ only in which table they walk.
     probeWp = 1,
@@ -99,6 +104,13 @@ local Player = {
     uiMismatch = 0,
     pendingHurt = 0,
     probeAborted = false,
+
+    -- P6.
+    footsteps = nil,
+    muzzle = nil,
+    stepTimer = 0.0,
+    steps = 0,
+    muzzleBursts = 0,
 
     fireCooldown = 0.0,
     refused = 0,
@@ -234,6 +246,16 @@ function Player:OnCreate()
         end
     end
 
+    -- P6. Both are optional on purpose: the scripts have to keep working in a scene that has
+    -- not been given sound or particles yet, and a missing child is an authoring state rather
+    -- than an error.
+    self.footsteps = self.entity:GetChildByName("Footsteps")
+    if self.yawEntity then
+        self.muzzle = self.yawEntity:GetChildByName("Muzzle")
+    end
+    if not self.footsteps then Log.Warn("Player: no 'Footsteps' child - no step sound") end
+    if not self.muzzle then Log.Warn("Player: no 'Muzzle' child under Yaw - no muzzle flash") end
+
     Log.Info("Player: click to look, Escape to release the cursor")
 
     local p = self.entity:GetTranslation()
@@ -274,6 +296,10 @@ end
 function Player:OnCollisionEnter(other)
     if not other then return end
     local name = other:GetName()
+
+    if name == "Heal Spot" or name == "Weapon Crate" or name == "Upgrade Station" then
+        Audio.PlayOneShot("audio/chime.wav", nil, 0.8)
+    end
 
     if name == "Enemy" then
         -- A budget of ticks, not a "while touching" flag, and the difference is an engine gap
@@ -571,7 +597,51 @@ function Player:Tick(ts)
         self.lastKills = PG.kills
     end
 
+    self:Step(ts)
     self:PushUI()
+end
+
+-- Footsteps.
+--
+-- An AudioSourceComponent rather than Audio.PlayOneShot. That started as a workaround: the
+-- one-shot binding could not be given a volume - AudioEngine::PlayOneShot takes one, and its own
+-- comment says it exists "for footsteps and impacts", but the Lua side passed a hardcoded 1.0, so
+-- every one-shot was full blast. That is fixed on master now, and PlayOneShot takes an optional
+-- gain.
+--
+-- It stays on the component anyway, because the two routes are not the same test. This one
+-- exercises PlaySound/StopSound on a component-owned voice and the Stop-then-Play retrigger idiom;
+-- the shot and the impact exercise one-shots, now including the volume that was missing.
+--
+-- Retriggered with Stop-then-Play, because PlaySound on an already-playing source is documented
+-- as a no-op rather than a restart - which is what makes calling it every frame from a branch
+-- safe everywhere else, and exactly wrong here.
+function Player:Step(ts)
+    if not self.footsteps then
+        return
+    end
+
+    local v = self.entity:GetLinearVelocity()
+    local speed = math.sqrt(v.x * v.x + v.z * v.z)
+    -- Grounded matters: the same velocity while falling is not walking, and a character sliding
+    -- down a slope should not sound like it is striding.
+    if speed < 1.0 or not self.entity:IsGrounded() then
+        -- Reset rather than pause, so the first step after stopping lands immediately instead of
+        -- on whatever fraction of a stride was left over.
+        self.stepTimer = self.stepInterval
+        return
+    end
+
+    self.stepTimer = self.stepTimer - ts
+    if self.stepTimer > 0.0 then
+        return
+    end
+
+    -- Cadence with speed: full speed is 6 m/s, and a slow walk should not tick at the same rate.
+    self.stepTimer = self.stepInterval * (self.speed / math.max(speed, 0.1))
+    self.steps = self.steps + 1
+    self.footsteps:StopSound()
+    self.footsteps:PlaySound()
 end
 
 function Player:Fire()
@@ -593,6 +663,21 @@ function Player:Fire()
 
     PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
     PG.fired = PG.fired + 1
+
+    -- P6. **After the spawn, not before.** The first version flashed and banged first, and the
+    -- gate caught it in one line: muzzle-bursts=2602 against fired=1894 with refused=708, and
+    -- 1894 + 708 = 2602 exactly. Every shot the spawn cap turned away still made a noise and a
+    -- flash, which is a gun that fires blanks under load - visible only because the counters were
+    -- kept separately.
+    --
+    -- The shot itself is unspatialised: it is at the listener by definition, and spatialising a
+    -- sound that starts inside the ear gives you a bang that pans depending on which way you were
+    -- facing when you pulled the trigger.
+    Audio.PlayOneShot("audio/impact.wav", nil, 0.7)
+    if self.muzzle then
+        self.muzzleBursts = self.muzzleBursts + 1
+        self.muzzle:EmitBurst(6)
+    end
 
     -- The entity does not exist until the command queue flushes at the next FrameBegin, so the
     -- velocity cannot be set here. Stash the id and push it next frame.
@@ -736,6 +821,16 @@ function Player:Diagnose(ts)
             .. "triggers=%d ui-mismatch=%d",
             self.health, self.maxHealth, self.hits, self.healed, self.weapon, PG.damage,
             PG.score, self.upgrades, PG.triggers or 0, self.uiMismatch))
+        Log.Info(string.format(
+            "P6   steps=%d muzzle-bursts=%d impacts=%d impacts-despawned=%d live-impacts=%d "
+            .. "ui-health=%.0f ui-score=%d",
+            self.steps, self.muzzleBursts, PG.impacts or 0, PG.impactsDespawned or 0,
+            (PG.impacts or 0) - (PG.impactsDespawned or 0), UI.GetHealth(), UI.GetScore()))
+        -- Voices are the audio equivalent of P3's entity count: component-owned voices should sit
+        -- at a fixed number (one per enemy, plus music and footsteps) and one-shots should drain
+        -- back toward zero. Both counters were bound for this line.
+        Log.Info(string.format("P6b  voices=%d one-shots=%d",
+            Audio.GetVoiceCount(), Audio.GetOneShotCount()))
         local hits = ""
         for i = 1, #ROUTE do
             hits = hits .. string.format(" wp%d=%d", i, (self.wpHits and self.wpHits[i]) or 0)

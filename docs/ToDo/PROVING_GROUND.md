@@ -691,12 +691,97 @@ instrument agreeing with itself.
 
 All three are in [cross-cutting.md](cross-cutting.md).
 
-### P6 — It looks and sounds like something
+### P6 — It looks and sounds like something — **PASSED**
 
 RmlUi HUD, footsteps, weapon sound, a music bed, muzzle flash and impact particles.
 
 - **Tests:** the RmlUi document under live data binding, the audio pipeline and 3D listener driven
   by a *moving* player for the first time, and `EmitBurst` under load.
+- **Gate (defined here):** one run of autopilot plus autofire, the whole circuit. Every shot that
+  is actually fired flashes and bangs and nothing else does; every impact emitter is reaped;
+  component-owned voices track what is alive; one-shots drain to zero; the HUD reads back what
+  gameplay wrote. Zero errors.
+
+#### What was built
+
+| Piece | What it exercises |
+|---|---|
+| `ui/hud.rml` + `hud.rcss` | the data model P5 drives, live, plus a crosshair |
+| Footsteps on the player | `AudioSourceComponent` and the `StopSound`-then-`PlaySound` retrigger |
+| Weapon report | unspatialised `Audio.PlayOneShot`, at the listener by definition |
+| Impact sound | **positional** one-shot — the only sound with real work for the 3D listener |
+| A hum on every enemy | seven spatialised *moving* looping sources, which the listener had never been driven by |
+| Music bed | streamed, looping, unspatialised, on the `Music` group |
+| Muzzle flash | `EmitBurst` on a local-space emitter parented to `Yaw`, so it points where you look |
+| `Impact.gprefab` | one emitter entity per hit, spawned at the contact point, self-destructing |
+
+The audio is four files carried over from the runtime demo, and the map from files to roles is
+**three SFX for four jobs**: `impact.wav` is the shot, the impact and (pitched down and quieter)
+the footstep. It sounds like a placeholder because it is one.
+
+#### Gate run — 140 s, 0 errors
+
+```
+fired=1894  refused=708  despawned=1894  live=0
+muzzle-bursts=2602    <- see below
+impacts=1506  impacts-despawned=1506  live-impacts=0
+steps=323 over 140 s
+voices  9 -> 8 -> 6 -> 5 -> 4      (settles at 2 surviving enemies + music + footsteps)
+one-shots  peak 115 during the burst phase -> 0
+grounded 100%, inWall=0, no GATE FAIL
+```
+
+`impacts == hits` and `impacts-despawned == impacts` at every report: 1506 emitter entities
+spawned at contact points, each bursting 16 particles, all reaped. That is `EmitBurst` under the
+load the phase asked for, on top of 2602 muzzle bursts.
+
+#### Three defects, and the counters found two of them
+
+**1. A destroyed entity's voice was never released.** The first gate run killed six humming enemies
+and `Audio.GetVoiceCount()` sat at **nine** for the rest of the session. `AudioSystem`'s voice map
+was emptied by exactly one thing, `OnRuntimeStop`, so a voice outlived its entity — playing, at the
+last position it had been pushed to. Audible rather than merely leaked: a dead enemy hums over its
+own grave. Fixed on `master`; `AudioSourceComponent` now carries `EnableFini` and `OnUpdate` drains
+a `FiniView` first. The reactive view is not a preference — the whole-entity-destroyed case is
+precisely the one a plain iteration cannot see, because the component is gone by the time you look.
+After the fix the same run reads `9 -> 8 -> 6 -> 5 -> 4`.
+
+This is one of the three places [How we will know it worked](#how-we-will-know-it-worked) predicted
+the defects would cluster: *memory or handle growth over a session longer than any probe has ever
+run*.
+
+**2. The gun fired blanks under load.** `muzzle-bursts=2602` against `fired=1894` with
+`refused=708`, and `1894 + 708 = 2602` exactly. Every shot the per-frame spawn cap turned away
+still made a noise and a muzzle flash. Visible only because the two counters were kept separately —
+either one alone looks fine. Fixed by moving the sound and the burst *after* the spawn succeeds;
+the same run now reads `muzzle-bursts = fired = 1965` with `refused=448` beside it.
+
+**3. `Audio.PlayOneShot` could not be given a volume.** `AudioEngine::PlayOneShot` has always taken
+one, and its own comment says it exists "for footsteps and impacts" — the binding passed a
+hardcoded `1.0`. A footstep at the volume of a gunshot is not a footstep, so the footsteps were
+built on an `AudioSourceComponent` purely to reach `Volume`. Fixed on `master`: position and volume
+are both optional now. The footsteps stayed on the component anyway, because the two routes are
+different tests.
+
+`Audio.GetVoiceCount()` and `GetOneShotCount()` were bound in the same change. Both existed in C++
+and were called by **nothing**, so "no leaked voices" was not a claim any test could make — which
+is why defect 1 had survived this long.
+
+#### Not verified by eye
+
+Every number above is from the log. The HUD **loads** — RmlUi reports the document, the fonts and
+the compositing target, and parses the RCSS without a single warning — and `ui-health` tracks
+gameplay, so the binding is live. Whether the bar, the score and the crosshair are actually in the
+right places, and whether the muzzle flash looks like anything, has not been looked at. Nor has the
+mix: four sounds at authored volumes with no one listening to them is a guess.
+
+#### What P6 could not express
+
+The HUD data model is **fixed at two variables**, `health` and `score`, declared in C++ before any
+document loads. The Proving Ground tracks a weapon level, a damage level and an enemy count, and
+none of them can reach the HUD. [ui.md](../engine/ui.md) already said a general `UI.Set(name,
+value)` was "worth doing when a second HUD needs it — not before"; this is the second HUD.
+Recorded in [cross-cutting.md](cross-cutting.md).
 
 ### P7 — Ship it
 

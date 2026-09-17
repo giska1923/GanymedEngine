@@ -20,6 +20,15 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
+    AudioSourceComponent:
+      Clip: 17648988721109958119
+      Group: SFX
+      Volume: 0.300000012
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: true
+      Stream: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]

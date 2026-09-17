@@ -1,0 +1,32 @@
+Prefab: Impact
+Entities:
+  - Entity: 1
+    TagComponent:
+      Tag: Impact
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    ScriptComponent:
+      Script: 6482755675179149801
+    ParticleEmitterComponent:
+      RateOverTime: 0
+      MaxParticles: 24
+      Looping: true
+      PlayOnStart: true
+      LifetimeMin: 0.150000006
+      LifetimeMax: 0.400000006
+      SpeedMin: 2
+      SpeedMax: 5
+      ConeAngle: 70
+      StartSizeMin: 0.0299999993
+      StartSizeMax: 0.0700000003
+      GravityModifier: 1
+      WorldSpace: true
+      SizeCurve: [[0, 1], [1, 0]]
+      ColorOverLifetime: [[0, 1, 0.800000012, 0.300000012, 1], [1, 1, 0.300000012, 0.0500000007, 0]]
+      Blend: 1

@@ -70,6 +70,7 @@ Entities:
       Children:
         - 3000000000000000011
         - 3000000000000000013
+        - 3000000000000000014
     ScriptComponent:
       Script: 3000000000000000090
     CharacterControllerComponent:
@@ -94,6 +95,7 @@ Entities:
       Parent: 3000000000000000010
       Children:
         - 3000000000000000012
+        - 3000000000000000015
   - Entity: 3000000000000000012
     TagComponent:
       Tag: Main Camera
@@ -642,6 +644,15 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
+    AudioSourceComponent:
+      Clip: 17648988721109958119
+      Group: SFX
+      Volume: 0.300000012
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: true
+      Stream: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -692,6 +703,15 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
+    AudioSourceComponent:
+      Clip: 17648988721109958119
+      Group: SFX
+      Volume: 0.300000012
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: true
+      Stream: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -742,6 +762,15 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
+    AudioSourceComponent:
+      Clip: 17648988721109958119
+      Group: SFX
+      Volume: 0.300000012
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: true
+      Stream: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -792,6 +821,15 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
+    AudioSourceComponent:
+      Clip: 17648988721109958119
+      Group: SFX
+      Volume: 0.300000012
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: true
+      Stream: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -842,6 +880,15 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
+    AudioSourceComponent:
+      Clip: 17648988721109958119
+      Group: SFX
+      Volume: 0.300000012
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: true
+      Stream: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -892,6 +939,15 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
+    AudioSourceComponent:
+      Clip: 17648988721109958119
+      Group: SFX
+      Volume: 0.300000012
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: true
+      Stream: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -942,6 +998,15 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: true
       LockRotation: true
+    AudioSourceComponent:
+      Clip: 17648988721109958119
+      Group: SFX
+      Volume: 0.300000012
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: true
+      Stream: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -1103,3 +1168,71 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 1000000000000000002
+  - Entity: 3000000000000000014
+    TagComponent:
+      Tag: Footsteps
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000010
+      Children:
+        []
+    AudioSourceComponent:
+      Clip: 10527665043451059732
+      Group: SFX
+      Volume: 0.234999999
+      Pitch: 0.699999988
+      Loop: false
+      PlayOnStart: false
+      Spatialize: false
+      Stream: false
+  - Entity: 3000000000000000015
+    TagComponent:
+      Tag: Muzzle
+    TransformComponent:
+      Translation: [0, 0.5, -1]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000011
+      Children:
+        []
+    ParticleEmitterComponent:
+      RateOverTime: 0
+      MaxParticles: 96
+      Looping: true
+      PlayOnStart: true
+      LifetimeMin: 0.0500000007
+      LifetimeMax: 0.150000006
+      SpeedMin: 1
+      SpeedMax: 3
+      ConeAngle: 25
+      StartSizeMin: 0.0399999991
+      StartSizeMax: 0.100000001
+      GravityModifier: 0
+      WorldSpace: false
+      SizeCurve: [[0, 1], [1, 0]]
+      ColorOverLifetime: [[0, 1, 0.899999976, 0.550000012, 1], [1, 1, 0.550000012, 0.150000006, 0]]
+      Blend: 1
+  - Entity: 3000000000000000016
+    TagComponent:
+      Tag: Music
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    AudioSourceComponent:
+      Clip: 12944725709994923015
+      Group: Music
+      Volume: 0.349999994
+      Pitch: 1
+      Loop: true
+      PlayOnStart: true
+      Spatialize: false
+      Stream: true

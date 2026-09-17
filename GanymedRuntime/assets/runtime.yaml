@@ -20,7 +20,7 @@ StartScene: scenes/ProvingGround.ganymede
 
 # Empty string means "no HUD". Loaded after the scene starts, so a document whose data
 # bindings a script writes on OnCreate has its model populated before first layout.
-UIDocument: ""
+UIDocument: ui/hud.rml
 
 Title: Proving Ground
 
