@@ -306,6 +306,20 @@ color-coded to stdout and to `GanymedE.log`:
 Levels: `TRACE`, `INFO`, `WARN`, `ERROR`, `FATAL`. Format is `[HH:MM:SS] name: message`; messages
 use fmt syntax (`GE_CORE_INFO("Loaded {0}", path)`).
 
+**Dist logs `info` and above, and flushes on `warn`.** Debug and Release log everything and flush
+every line, which is what you want with a debugger attached: the last line before a crash is
+already on disk, and the volume is a scene load's worth.
+
+A shipped game is the opposite case, and it took shipping one to see it. A 150 s run of the Proving
+Ground wrote **15,463 trace lines and 1.7 MB**, each one flushed to disk synchronously in the middle
+of a frame, because gameplay spawns thousands of prefabs and the deserializer traces every entity it
+creates. The same run now writes 799 lines and 96 KB. Nobody reads a shipped game's trace log, those
+lines carry build-machine paths, and the boot banner, the asset scan, every warning and every error
+are all `info` or above - which is what a user's bug report actually needs.
+
+Dropping the per-line flush means a buffered tail could be lost if the process ends abruptly, so
+`Init` registers `spdlog::shutdown` with `atexit`.
+
 ## Asserts
 
 From [`Core.h`](../../GanymedEngine/source/GanymedE/Core/Core.h): `GE_ASSERT(cond, msg)` (client)
