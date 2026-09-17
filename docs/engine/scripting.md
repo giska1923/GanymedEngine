@@ -302,6 +302,7 @@ The `Audio` global covers what has no entity behind it:
 ```lua
 Audio.PlayOneShot("audio/impact.wav", self.entity:GetTranslation())  -- spatialised
 Audio.PlayOneShot("audio/chime.wav")                                 -- flat, for UI
+Audio.PlayOneShot("audio/step.wav", nil, 0.25)                       -- flat and quiet
 Audio.SetGroupVolume("Music", 0.0)                                   -- "Master" | "Music" | "SFX"
 Audio.SetMasterVolume(0.8)
 ```

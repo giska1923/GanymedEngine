@@ -422,8 +422,15 @@ declare namespace Audio {
 	 */
 	function PlayOneShot(path: string): void;
 	function PlayOneShot(path: string, position: Vec3): void;
+	/** volume is a gain, 1 = unchanged, clamped to 0..4. */
+	function PlayOneShot(path: string, position: Vec3 | undefined, volume: number): void;
 
 	function SetMasterVolume(volume: number): void;
+
+	/** Component-owned voices alive right now. For leak checks, not gameplay. */
+	function GetVoiceCount(): number;
+	/** Fire-and-forget voices still waiting to be reaped. */
+	function GetOneShotCount(): number;
 
 	/** group is "Master", "Music" or "SFX". An unknown name warns and falls back to SFX. */
 	function SetGroupVolume(group: string, volume: number): void;

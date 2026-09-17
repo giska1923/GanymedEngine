@@ -227,8 +227,17 @@ else
 end
 
 Audio.PlayOneShot("audio/impact.wav", self.entity:GetTranslation())
+Audio.PlayOneShot("audio/step.wav", nil, 0.25)  -- flat, and quiet
 Audio.SetGroupVolume("Music", 0.0)
+
+Log.Info(Audio.GetVoiceCount() .. " voices, " .. Audio.GetOneShotCount() .. " one-shots")
 ```
+
+`PlayOneShot`'s position and volume are both optional: no position means unspatialised, and the
+volume is a gain clamped to 0..4. It takes a Lua **number** rather than an int for the same reason
+`EmitBurst` does — every `ScriptComponent` property is a float, and a tuned volume would otherwise
+be the thing that throws. The two counters are diagnostics, bound so that "no leaked voices" is
+something a test can check rather than assert; they are not gameplay state.
 
 The split that matters: `PlaySound`/`StopSound`/`IsSoundPlaying` go through `AudioSystem` because
 they touch the live voice; `SetSoundVolume`/`SetSoundPitch`/`SetSoundLooping` write

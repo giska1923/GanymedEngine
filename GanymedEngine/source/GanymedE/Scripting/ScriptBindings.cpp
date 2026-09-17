@@ -741,15 +741,36 @@ namespace GanymedE {
 			// The positional overload takes a Vec3 rather than three floats, because every
 			// other position in these bindings is a Vec3 and the common call is
 			// Audio.PlayOneShot(path, entity:GetTranslation()).
-			audio["PlayOneShot"] = sol::overload(
-				[](const std::string& path)
-				{
-					AudioEngine::PlayOneShot(GetAssetRoot() / path, AudioGroup::SFX, nullptr, 1.0f);
-				},
-				[](const std::string& path, const glm::vec3& position)
-				{
-					AudioEngine::PlayOneShot(GetAssetRoot() / path, AudioGroup::SFX, &position, 1.0f);
-				});
+			// Audio.PlayOneShot(path [, position] [, volume])
+			//
+			// `sol::optional` rather than a pile of overloads, matching Scene.Spawn and
+			// Physics.Raycast. nil for `position` means unspatialised, which is what UI and any
+			// sound already at the listener wants.
+			//
+			// **The volume is not decoration.** `AudioEngine::PlayOneShot` has always taken one -
+			// its own comment says it exists "for footsteps and impacts" - and this binding
+			// hardcoded 1.0, so every one-shot a script could fire was full blast. A footstep at
+			// the volume of a gunshot is not a footstep, which left scripts reaching for an
+			// `AudioSourceComponent` purely to get at Volume. Found by the Proving Ground's P6.
+			audio["PlayOneShot"] = [](const std::string& path, sol::optional<glm::vec3> position,
+				sol::optional<double> volume)
+			{
+				// double, not float: every ScriptComponent property is a Lua float, and taking
+				// one keeps a tuned volume from being the thing that throws. Clamped rather than
+				// trusted - miniaudio takes a gain, and a negative one inverts the waveform.
+				const float gain = static_cast<float>(
+					glm::clamp(volume.value_or(1.0), 0.0, 4.0));
+
+				AudioEngine::PlayOneShot(GetAssetRoot() / path, AudioGroup::SFX,
+					position ? &position.value() : nullptr, gain);
+			};
+
+			// Diagnostics, and the reason they are bound: "no leaked voices" was not a thing a
+			// gate could check. Both counters existed in C++ and were called by nothing.
+			//   GetVoiceCount   - component-owned voices created and not yet destroyed
+			//   GetOneShotCount - fire-and-forget voices still waiting to be reaped
+			audio["GetVoiceCount"]   = []() { return (int)AudioEngine::GetVoiceCount(); };
+			audio["GetOneShotCount"] = []() { return (int)AudioEngine::GetOneShotCount(); };
 
 			audio["SetMasterVolume"] = [](float volume)
 			{
