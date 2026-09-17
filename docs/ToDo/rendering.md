@@ -306,7 +306,9 @@ Three things made the OpenGL bugs findable, and they generalise:
 
 The Intel ANV hang (`VK_ERROR_DEVICE_LOST` on the first frame of a native Linux editor) is the
 LearnOpenGL split-sum bake running as fragment shaders at load: hemisphere irradiance, 1024-sample
-GGX prefilter, 512² BRDF LUT. UE and Unity do not do that at runtime — they persist a cubemap + SH
+GGX prefilter, 512² BRDF LUT — about 500M fragment-loop iterations, of which 268M were the LUT
+alone, in a single draw. The sample counts are cut to production values now (4096 / 128 / 256,
+a 256² LUT), which is 8x less work; whether that is enough for ANV is unverified. UE and Unity do not do that at runtime — they persist a cubemap + SH
 (or a prefiltered specular chain) from an editor/offline step. Ganymed cannot yet: `Environment` has
 no compiled output, only the HDR source.
 

@@ -13,8 +13,12 @@ SAMPLERCUBE(u_EnvironmentMap, 0);
 // shows up as i915 `GPU hung` / `VK_ERROR_DEVICE_LOST` on the first frame that
 // runs the bake (Intel UHD, Linux Vulkan). 256 x 64 is the same order as the
 // old 0.025-radian grid (~15.8k samples).
-#define PHI_SAMPLES 256
-#define THETA_SAMPLES 64
+//
+// 128 x 32 = 4096 samples, down from 256 x 64. The target is a 32^2 cubemap face of a
+// low-frequency signal - diffuse irradiance is the most heavily blurred thing in the whole bake -
+// and 4096 stratified samples per texel is still far above what it can resolve.
+#define PHI_SAMPLES 128
+#define THETA_SAMPLES 32
 
 void main()
 {

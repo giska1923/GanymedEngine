@@ -79,7 +79,10 @@ namespace GanymedE {
 		static constexpr uint32_t kIrradianceSize = 32;
 		static constexpr uint32_t kPrefilterSize = 128;
 		static constexpr uint32_t kPrefilterMips = 5;
-		static constexpr uint32_t kBRDFLutSize = 512;
+		// 256, not 512. The LUT is a smooth two-channel function of (NdotV, roughness) with no
+		// high-frequency content anywhere in it - UE4 ships 256x256 - so the extra 3/4 of the
+		// pixels bought nothing and cost the most expensive single draw in the engine.
+		static constexpr uint32_t kBRDFLutSize = 256;
 
 		std::string m_Filepath;
 		bool m_Valid = false;

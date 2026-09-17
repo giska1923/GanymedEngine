@@ -516,8 +516,16 @@ not an entity id. Picking would need a separate non-multisampled pass or a custo
 
 [`Environment`](../../GanymedEngine/source/GanymedE/Renderer/Environment.h) bakes an
 equirectangular HDR into: a 512² 5-mip environment cubemap (skybox), a 32² diffuse irradiance map,
-a 128² 5-mip prefiltered specular map, and — once per process, not once per environment — a 512²
-BRDF LUT. The bake runs **once**, across the transient view block starting at `RenderPass::EnvironmentBake` (67 views:
+a 128² 5-mip prefiltered specular map, and — once per process, not once per environment — a 256²
+BRDF LUT.
+
+**Sample counts are production values, not the tutorial's.** 4096 stratified samples for
+irradiance, 128 for the GGX prefilter, 256 for the LUT. The LearnOpenGL bake this descends from
+uses 16k / 1024 / 1024, which is roughly 500M fragment-loop iterations for one environment: fine on
+a discrete GPU, and more than a 32-EU Intel iGPU finishes inside i915's hangcheck. Nothing visible
+was bought by the difference — the prefilter already picks a mip from the sample PDF and reads it
+with `textureCubeLod` (Karis), which is the technique that makes a low sample count safe, and the
+LUT is a smooth two-channel function that UE4 ships at 256². The bake runs **once**, across the transient view block starting at `RenderPass::EnvironmentBake` (67 views:
 faces × mips, twice, + LUT). bgfx cannot mipmap render targets, so every env mip is rendered
 from the panorama directly. Binding is the caller's job (`Renderer3D` feeds the handles to
 `Shader::SetTexture` per material — samplers belong to shaders, there is no global bind).

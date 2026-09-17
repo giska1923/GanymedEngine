@@ -13,7 +13,14 @@ uniform vec4 u_Resolution; // .x = source cubemap face resolution
 #define PI 3.14159265359
 // Compile-time loop bound: a mutable `uint SAMPLE_COUNT = 1024u` is a dynamic
 // loop to some SPIR-V compilers, and Intel ANV has hung on those.
-#define SAMPLE_COUNT 1024u
+//
+// 128, not 1024, and this one is free rather than a trade: the loop below already picks a mip of
+// the environment cubemap from the sample PDF and reads it with textureCubeLod. That technique
+// (Karis, "Real Shading in Unreal Engine 4") exists precisely so that a low sample count does not
+// alias - the mip does the averaging the missing samples would have done. Karis uses 64-128.
+// Sampling 1024 times into a mip chain built for 128 is paying eight times over for the same
+// answer.
+#define SAMPLE_COUNT 128u
 
 float RadicalInverse_VdC(uint bits)
 {

@@ -6,7 +6,11 @@ $input v_texcoord0
 // always emit float4, so the extra channels are written and discarded.
 
 #define PI 3.14159265359
-#define SAMPLE_COUNT 1024u
+// 256, not 1024. Combined with the 256^2 LUT this is 16x less work than before: 268M loop
+// iterations of transcendental math in ONE draw, which is what a 32-EU Intel iGPU cannot finish
+// inside i915's hangcheck. The integral converges long before 1024 samples on a function this
+// smooth; 1024 is the LearnOpenGL teaching value, not a production one.
+#define SAMPLE_COUNT 256u
 
 float RadicalInverse_VdC(uint bits)
 {
