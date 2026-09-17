@@ -310,3 +310,25 @@ P5 worked around it by having the pickups publish their own names into a shared 
 projectiles to check, which is the kind of thing a script should never have to arrange. The fix is
 to carry the flag on the event: `PhysicsCollisionEvent` already exists and the sensor bit is known
 at dispatch time (`Body::IsSensor`), so this is a field, a parameter, and a line in the `.d.ts`.
+
+## The HUD data model is two variables, declared in C++
+
+`UIEngine` binds exactly `health` and `score` into the `hud` data model, before any document loads,
+because RmlUi binds to real C++ addresses rather than to a bag of names. So **a game cannot add a
+third**. The Proving Ground tracks a weapon level, a projectile damage level and how many enemies
+are left, and none of them can reach its HUD.
+
+[ui.md](../engine/ui.md) already records the shape of the answer and the condition for doing it:
+*"Fixed setters rather than a general UI.Set(name, value)... Worth doing when a second HUD needs
+it - not before."* P6 is the second HUD, so the condition is met.
+
+Two ways to do it, and the choice is the whole of the work:
+
+- **A bound map.** RmlUi can bind a container, so one `Rml::Vector`/`Map` of variants reaches every
+  name a document asks for. Cheapest, and it gives up compile-time knowledge of what exists: a
+  typo'd `{{helth}}` renders empty rather than failing.
+- **`BindFunc` per name, registered at document load.** Keeps the addresses real, costs a
+  registration step and a place to put it.
+
+Either way `UI.SetHealth`/`UI.SetScore` should stay as they are - a HUD that every game has wants
+the short call, and the general path is for the rest.
