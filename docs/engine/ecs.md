@@ -57,7 +57,7 @@ using ComponentList = TypeList<TransformComponent, WorldTransformComponent, Rela
    - `EnableInit` — component creation is recorded; enables `InitView`. Currently:
      `NativeScriptComponent`, `ScriptComponent`.
    - `EnableFini` — removed instances are buried in a graveyard for one frame; enables `FiniView`.
-     Currently: `NativeScriptComponent`, `ScriptComponent`.
+     Currently: `NativeScriptComponent`, `ScriptComponent`, `AudioSourceComponent`.
 4. Register its members in
    [`ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp)
    with `GE_REFLECT_COMPONENT`, and add a `sizeof` sentinel there if the struct has no

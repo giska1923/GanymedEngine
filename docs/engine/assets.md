@@ -33,11 +33,20 @@ compose paths off it — so a write after startup is a data race with no lock to
 with a different root logs an error and asserts rather than silently repointing paths that have
 already been handed out.
 
-One consequence worth stating because it bit once already: **do not copy the root into a
-namespace-scope object.** The editor had `extern const std::filesystem::path g_AssetPath =
-GetAssetRoot();` in `ContentBrowserPanel.cpp`, which runs at static-initialisation time — before
-`main`, and therefore before any root could be set. It would have frozen the default forever. Call
-the accessor; do not cache it.
+One consequence worth stating because it has now bitten **twice**: **do not copy the root into
+anything that outlives the call.** Both forms were in the same file:
+
+1. `extern const std::filesystem::path g_AssetPath = GetAssetRoot();` at namespace scope, which
+   runs at static-initialisation time — before `main`, so before any root can be set.
+2. `ContentBrowserPanel`'s `m_BaseDirectory(GetAssetRoot())`, which runs in the panel's
+   constructor. The panel is a by-value member of `EditorLayer`, so that is still before
+   `EditorLayer::OnAttach` calls `AssetManager::Init`. Fixing (1) had moved the capture from
+   *before `main`* to *before `OnAttach`* and left the bug in place: the asset index pointed at the
+   project while the content browser walked the editor's own `assets/`.
+
+The panel now re-homes in `RefreshCaches` when the root differs from what it holds, which handles
+the ordering and any later change. **Call the accessor; do not cache it** — and if something must
+hold a copy, it has to notice when the copy goes stale.
 
 ## Handles & metadata
 
@@ -89,6 +98,15 @@ Handles minted in a read-only session still work; they just do not outlive it, w
 lifetime for something nobody authored. The corollary for a shipped build is that **every shipped
 asset needs its sidecar shipped with it** — a read-only scan can adopt an identity, never persist
 one.
+
+**And the scan says so, by name.** A mint on a writable install is ordinary: a file appeared, the
+scan gave it identity and wrote it down. A mint on a read-only install is a shipping defect — the
+handle is different on every boot, and anything naming that asset by handle rather than by path is
+already broken with no error to say so. So `ScanAssets` warns once with a count and then names each
+path, the same shape as the orphaned-sidecar report, and for the same reason the `.compiled`
+warning next door exists: this is the one moment the information exists, and the install it
+describes has no editor to go and look with. The Proving Ground's P7 shipped a `.gprefab` whose
+sidecar had never been minted, and the only sign of it was a `1` in the middle of the scan line.
 
 ### The `.meta` sidecar
 
@@ -745,8 +763,9 @@ Three details worth knowing:
 
 - **The image cannot have changed.** `TextureImporter::LoadFromMemory(bytes, size, flip)` is defined
   as `Upload(DecodeFromMemory(bytes, size, flip))`. The change is that exact composition split
-  across a thread boundary, with `flip = true` preserved, so the result is identical by
-  construction rather than by inspection.
+  across a thread boundary, with the flip preserved, so the result was identical by construction
+  rather than by inspection. Preserving it also preserved a bug: the flip itself was wrong, and is
+  now gone - see [The flip](#the-flip) below.
 - **The compressed bytes are still carried.** `MaterialSerializer::GenerateSidecars` extracts them
   to a real file on first import (see [Sidecar generation](#sidecar-generation-and-embedded-texture-extraction)),
   and re-encoding RGBA8 to recover them would be absurd. So a `MeshSource` in flight holds both
@@ -1085,10 +1104,10 @@ Everything is forced to 4 channels (bgfx has no 24-bit RGB8 format).
 | Entry point | Used by |
 |---|---|
 | `Decode(fullPath, flip=false)` → `DecodedImage` | The texture manager’s Parse stage. CPU only |
-| `DecodeFromMemory(bytes, size, flip=true)` → `DecodedImage` | The CPU half of the embedded-image path |
+| `DecodeFromMemory(bytes, size, flip=false)` → `DecodedImage` | The CPU half of the embedded-image path |
 | `Upload(DecodedImage)` | The texture manager’s Apply stage. Main thread only |
 | `LoadFromFile(fullPath, flip=false)` | `Decode` + `Upload`, for callers that want both at once |
-| `LoadFromMemory(bytes, size, flip=true)` | glTF images embedded in a buffer view |
+| `LoadFromMemory(bytes, size, flip=false)` | glTF images embedded in a buffer view |
 | `LoadMaterialMap(relativePath)` | Material maps recorded as a path — the de-duplicating resolve |
 
 `DecodedImage` is the Parse/Apply seam: RGBA8, tightly packed, owning stb’s buffer through a
@@ -1110,11 +1129,39 @@ content-hash de-dup is a possible later refinement.
 `.meta` sidecars, one beside each extracted image — the reason `ImportAsset` no longer needs the
 batched flush it used to: each write touches only the file it identifies.
 
-**Flip discrepancy (known, deliberate):** file-based maps load unflipped, embedded glTF images
-flipped. Unflipped is the correct one — glTF UVs are top-left origin and bgfx normalizes texture
-origin to top-left, which is why `Texture2D(const std::string&)` explicitly does not flip. The
-embedded path flips only because that is what it did before the loaders were consolidated;
-reconciling it changes rendering on that path, so it is a separate change.
+### The flip
+
+**Nothing flips any more, and that is the fix.** glTF UVs are top-left origin and bgfx normalises
+texture origin to top-left, so unflipped was always correct — which is why
+`Texture2D(const std::string&)` had always explicitly refused to flip. The embedded path flipped
+only because that is what it did before the loaders were consolidated, and every later refactor
+preserved the behaviour rather than questioning it.
+
+This section previously recorded the discrepancy as known and deferred, on the grounds that
+reconciling it "changes rendering on that path, so it is a separate change". It did change
+rendering on that path: **it was breaking it.** A vertically flipped atlas does not render upside
+down - it maps every UV island onto unrelated content, so each face samples a different part of the
+texture. On a single-image cube that reads as a mildly odd texture; on an atlas-mapped building it
+reads as unrecognisable smearing, which is how it was finally caught.
+
+The path is only reached when a mesh has no `.gmat` override to send it through the texture manager
+instead, which is why eight committed fixtures never revealed it.
+
+### Mips on the uncompiled paths
+
+`TextureImporter::Upload` and `Texture2D(const std::string&)` both build a full mip chain now.
+Neither did before: they used the `(width, height)` constructor, whose own comment says it exists
+for "the 1x1 white texture Renderer2D uses for untextured quads", and were handing it 4096x4096
+material maps with level 0 only.
+
+bgfx does not generate mips for an ordinary sampled texture - a render target can be blitted down,
+but a sampled one must be handed its whole chain, all levels contiguous, largest first. A 2x2 box
+filter builds it. The filter runs in sRGB space, which is very slightly wrong now that `fs_Phong`
+decodes albedo to linear; the error is a fraction of a tone and is recorded rather than fixed.
+
+This was **not** the cause of the smearing above - the flip was - but it is a real defect on the
+same path, and it is what keeps the uncompiled fallback matching the compiled path in *quality*
+rather than only in content.
 
 Editor chrome that is still a texture (`ContentBrowserPanel` file/folder icons, the checkerboard)
 stays on the `Texture2D(path)` constructor with hard-coded `resources/` paths — outside the asset
@@ -1173,6 +1220,51 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 [`MeshSource`](../../GanymedEngine/source/GanymedE/Renderer/MeshSource.h) — **CPU data only, no bgfx
 call anywhere below it**, which is what lets it run on a worker. `BuildMesh` is the main-thread half
 that turns one into a live `Mesh`.
+
+### Tangents are generated when the file has none
+
+glTF does not require `TANGENT`. The spec makes producing one the **client's** job when a normal map
+is present, and exporters routinely omit it. `MeshImporter` therefore generates tangents per
+primitive whenever the attribute is absent, by Lengyel's method: accumulate each triangle's tangent
+weighted by its UV-space area, then orthonormalise against the vertex normal.
+
+This replaced a constant `{1, 0, 0}`, which is not a tangent and which
+[`fs_Phong.sc`](../../assets/shaders/src/fs_Phong.sc) then built a TBN out of:
+
+```glsl
+vec3 T = normalize(v_tangent - N * dot(N, v_tangent));
+vec3 B = cross(N, T);
+```
+
+On a surface facing anything but ±X that gave world-X projected onto it — a valid vector pointing
+in an arbitrary direction, so the normal map came out rotated by an arbitrary angle. On a surface
+facing **exactly ±X**, `dot(N, T)` is ±1, the subtraction yields the zero vector and `normalize`
+produced garbage. A box-shaped building has walls facing exactly ±X, so that was the common case
+rather than the corner case.
+
+Verified against a generated cube whose six faces each have a different, analytically known
+tangent, read back out of the compiled `.gres` rather than from a reimplementation:
+
+| Face | Correct T | Generated | Error |
+|---|---|---|---|
+| +Z / −Z | (1,0,0) / (−1,0,0) | exact | 0.000° |
+| **+X / −X** | (0,0,−1) / (0,0,1) | exact | 0.000° |
+| +Y / −Y | (1,0,0) / (1,0,0) | exact | 0.000° |
+
+`worst |T|−1 = 0`, `worst |T·N| = 0`, and 0 of 24 vertices failed unit-length, perpendicularity or
+NaN. The old constant was right on three of those faces by luck, backwards on one, and degenerate
+on two.
+
+Two deliberate limits:
+
+- **Triangles with zero UV area contribute nothing**, since `1/det` would be infinite. A vertex
+  whose every triangle is UV-degenerate falls back to a unit vector built by crossing the *normal*
+  with whichever axis is least aligned with it — built from N, never a constant, because a constant
+  is the bug this replaced.
+- **Handedness is dropped, because it already was.** `MeshVertex::Tangent` is a `vec3` and the
+  shader derives `B = cross(N, T)` with no sign, so glTF's tangent `w` had nowhere to go even when a
+  file supplied one. A mirrored UV shell lights as though it were not mirrored. Carrying `w` means a
+  vertex-format change; nothing in the project has mirrored shells yet.
 
 - Walks the node tree **depth-first into a vector**, flattening every mesh primitive into one
   interleaved vertex/index buffer with a `Submesh` per primitive. Traversal order is part of the

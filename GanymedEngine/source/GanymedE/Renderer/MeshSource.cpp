@@ -47,7 +47,7 @@ namespace GanymedE {
 			if (!path.empty() || bytes.empty())
 				return {};
 
-			return TextureImporter::DecodeFromMemory(bytes.data(), bytes.size(), true);
+			return TextureImporter::DecodeFromMemory(bytes.data(), bytes.size(), false);
 		};
 
 		for (MeshMaterialSource& material : source.Materials)

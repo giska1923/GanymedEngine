@@ -59,9 +59,17 @@ obligation.
 | Hook | What it does |
 |---|---|
 | `OnRuntimeStart` | Builds and starts a voice for every `PlayOnStart` source |
-| `OnUpdate` | Pushes `Volume`/`Pitch`/`Loop` and (for spatial sources) the entity's world position; resolves and pushes the listener pose |
+| `OnUpdate` | Reaps voices whose source went away, then pushes `Volume`/`Pitch`/`Loop` and (for spatial sources) the entity's world position; resolves and pushes the listener pose |
 | `OnRuntimeStop` | Destroys every voice, clears the map, `StopAll()` |
 | `OnUpdateEditor` | **Absent.** Edit mode is silent |
+
+**A voice dies with its source, and that needed a reactive view.** `AudioSourceComponent` carries
+`EnableFini`, and `OnUpdate` drains an `EmitterFiniView` before anything else. Without it the only
+thing that ever emptied `m_Voices` was `OnRuntimeStop`, so an entity destroyed mid-play left its
+voice running at the last position pushed to it — audible rather than merely leaked, and the
+entity-destroyed case is exactly the one a plain iteration cannot see, because the component is
+gone by the time you look. The Proving Ground found it by killing six humming enemies and watching
+`Audio.GetVoiceCount()` stay at nine.
 
 Plus three methods that exist for the script bindings and nothing else — `PlaySound(entity)`,
 `StopSound(entity)`, `IsSoundPlaying(entity)`. They are here rather than on `AudioEngine` so the
@@ -227,8 +235,17 @@ else
 end
 
 Audio.PlayOneShot("audio/impact.wav", self.entity:GetTranslation())
+Audio.PlayOneShot("audio/step.wav", nil, 0.25)  -- flat, and quiet
 Audio.SetGroupVolume("Music", 0.0)
+
+Log.Info(Audio.GetVoiceCount() .. " voices, " .. Audio.GetOneShotCount() .. " one-shots")
 ```
+
+`PlayOneShot`'s position and volume are both optional: no position means unspatialised, and the
+volume is a gain clamped to 0..4. It takes a Lua **number** rather than an int for the same reason
+`EmitBurst` does — every `ScriptComponent` property is a float, and a tuned volume would otherwise
+be the thing that throws. The two counters are diagnostics, bound so that "no leaked voices" is
+something a test can check rather than assert; they are not gameplay state.
 
 The split that matters: `PlaySound`/`StopSound`/`IsSoundPlaying` go through `AudioSystem` because
 they touch the live voice; `SetSoundVolume`/`SetSoundPitch`/`SetSoundLooping` write

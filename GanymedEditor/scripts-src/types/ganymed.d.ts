@@ -264,6 +264,22 @@ declare namespace Input {
 	function IsMouseButtonPressed(button: number): boolean;
 	/** Returns [x, y]. */
 	function GetMousePosition(): LuaMultiReturn<[number, number]>;
+
+	/**
+	 * How far the mouse moved during the previous frame, in pixels, as [dx, dy].
+	 *
+	 * This — not GetMousePosition — is what mouse-look reads: with the cursor locked the absolute
+	 * position is an unbounded virtual coordinate that means nothing on its own.
+	 *
+	 * It is an **amount, not a rate**. Do not multiply it by the frame's timestep; mouse movement
+	 * is already a distance, and scaling it by time makes sensitivity depend on framerate.
+	 */
+	function GetMouseDelta(): [number, number];
+
+	/** Cursor.Normal | Cursor.Hidden | Cursor.Locked. Locked is mouse-look: hidden, held to the
+	 * window, raw motion where the platform supports it. */
+	function SetCursorMode(mode: number): void;
+	function GetCursorMode(): number;
 }
 
 declare namespace Key {
@@ -406,8 +422,15 @@ declare namespace Audio {
 	 */
 	function PlayOneShot(path: string): void;
 	function PlayOneShot(path: string, position: Vec3): void;
+	/** volume is a gain, 1 = unchanged, clamped to 0..4. */
+	function PlayOneShot(path: string, position: Vec3 | undefined, volume: number): void;
 
 	function SetMasterVolume(volume: number): void;
+
+	/** Component-owned voices alive right now. For leak checks, not gameplay. */
+	function GetVoiceCount(): number;
+	/** Fire-and-forget voices still waiting to be reaped. */
+	function GetOneShotCount(): number;
 
 	/** group is "Master", "Music" or "SFX". An unknown name warns and falls back to SFX. */
 	function SetGroupVolume(group: string, volume: number): void;
@@ -423,6 +446,7 @@ declare namespace Audio {
 declare namespace UI {
 	/** 0..100; the health bar's width is bound to this. */
 	function SetHealth(health: number): void;
+	/** Truncated to a whole number. A fractional score is accepted, not refused. */
 	function SetScore(score: number): void;
 	function GetHealth(): number;
 	function GetScore(): number;
@@ -476,4 +500,14 @@ declare interface RmlContext {
 declare namespace rmlui {
 	/** Keyed by context name; the engine creates a single context called "main". */
 	const contexts: { [name: string]: RmlContext | undefined };
+}
+
+/** Cursor modes for `Input.SetCursorMode`. */
+declare namespace Cursor {
+	/** Visible and free to leave the window. The default. */
+	const Normal: number;
+	/** Invisible over the window, but still a normal cursor underneath. */
+	const Hidden: number;
+	/** Captured for mouse-look: hidden, held to the window, unbounded coordinates. */
+	const Locked: number;
 }

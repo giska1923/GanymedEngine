@@ -492,6 +492,24 @@ namespace GanymedE {
 			// Two returns rather than a Vec3: mouse position is 2D, and TSTL models this as
 			// LuaMultiReturn<[number, number]>.
 			input["GetMousePosition"]     = []() { const glm::vec2 p = Input::GetMousePosition(); return std::make_tuple(p.x, p.y); };
+
+			// How far the mouse moved last frame, in pixels. This - not GetMousePosition - is
+			// what mouse-look reads: with the cursor locked the absolute position is an
+			// unbounded virtual coordinate that means nothing on its own.
+			input["GetMouseDelta"]        = []() { const glm::vec2 d = Input::GetMouseDelta(); return std::make_tuple(d.x, d.y); };
+
+			// Cursor.Normal / Cursor.Hidden / Cursor.Locked. Locked is mouse-look: hidden, held
+			// to the window, raw motion where the platform has it.
+			input["SetCursorMode"]        = [](int mode) { Input::SetCursorMode((CursorMode)mode); };
+			input["GetCursorMode"]        = []() { return (int)Input::GetCursorMode(); };
+		}
+
+		void RegisterCursorModes(sol::state& lua)
+		{
+			sol::table cursor = lua.create_named_table("Cursor");
+			cursor["Normal"] = (int)CursorMode::Normal;
+			cursor["Hidden"] = (int)CursorMode::Hidden;
+			cursor["Locked"] = (int)CursorMode::Locked;
 		}
 
 		void RegisterKeyCodes(sol::state& lua)
@@ -723,15 +741,36 @@ namespace GanymedE {
 			// The positional overload takes a Vec3 rather than three floats, because every
 			// other position in these bindings is a Vec3 and the common call is
 			// Audio.PlayOneShot(path, entity:GetTranslation()).
-			audio["PlayOneShot"] = sol::overload(
-				[](const std::string& path)
-				{
-					AudioEngine::PlayOneShot(GetAssetRoot() / path, AudioGroup::SFX, nullptr, 1.0f);
-				},
-				[](const std::string& path, const glm::vec3& position)
-				{
-					AudioEngine::PlayOneShot(GetAssetRoot() / path, AudioGroup::SFX, &position, 1.0f);
-				});
+			// Audio.PlayOneShot(path [, position] [, volume])
+			//
+			// `sol::optional` rather than a pile of overloads, matching Scene.Spawn and
+			// Physics.Raycast. nil for `position` means unspatialised, which is what UI and any
+			// sound already at the listener wants.
+			//
+			// **The volume is not decoration.** `AudioEngine::PlayOneShot` has always taken one -
+			// its own comment says it exists "for footsteps and impacts" - and this binding
+			// hardcoded 1.0, so every one-shot a script could fire was full blast. A footstep at
+			// the volume of a gunshot is not a footstep, which left scripts reaching for an
+			// `AudioSourceComponent` purely to get at Volume. Found by the Proving Ground's P6.
+			audio["PlayOneShot"] = [](const std::string& path, sol::optional<glm::vec3> position,
+				sol::optional<double> volume)
+			{
+				// double, not float: every ScriptComponent property is a Lua float, and taking
+				// one keeps a tuned volume from being the thing that throws. Clamped rather than
+				// trusted - miniaudio takes a gain, and a negative one inverts the waveform.
+				const float gain = static_cast<float>(
+					glm::clamp(volume.value_or(1.0), 0.0, 4.0));
+
+				AudioEngine::PlayOneShot(GetAssetRoot() / path, AudioGroup::SFX,
+					position ? &position.value() : nullptr, gain);
+			};
+
+			// Diagnostics, and the reason they are bound: "no leaked voices" was not a thing a
+			// gate could check. Both counters existed in C++ and were called by nothing.
+			//   GetVoiceCount   - component-owned voices created and not yet destroyed
+			//   GetOneShotCount - fire-and-forget voices still waiting to be reaped
+			audio["GetVoiceCount"]   = []() { return (int)AudioEngine::GetVoiceCount(); };
+			audio["GetOneShotCount"] = []() { return (int)AudioEngine::GetOneShotCount(); };
 
 			audio["SetMasterVolume"] = [](float volume)
 			{
@@ -759,7 +798,17 @@ namespace GanymedE {
 			// bag would need a different mechanism entirely (see docs/engine/ui.md).
 			sol::table ui = lua.create_named_table("UI");
 			ui["SetHealth"] = [](float health) { UIEngine::SetHudHealth(health); };
-			ui["SetScore"]  = [](int score)    { UIEngine::SetHudScore(score); };
+			// double, not int, for the same reason EmitBurst takes one: **every ScriptComponent
+			// property is a Lua float**, so any score computed from one is a float, and sol2 with
+			// SOL_ALL_SAFETIES_ON refuses a float where an int is declared - "not a numeric type
+			// that fits exactly an integer". The throw escapes into the frame and takes the whole
+			// OnUpdate with it.
+			//
+			// Found by the Proving Ground's P5, where a score was banked from kills and then had
+			// a cost subtracted; the cost came from a property, so `score - cost` was a float and
+			// every later SetScore threw. Truncating here is what the HUD wants anyway - a score
+			// is a whole number - and it makes this binding agree with the particle ones.
+			ui["SetScore"]  = [](double score) { UIEngine::SetHudScore(static_cast<int>(score)); };
 			ui["GetHealth"] = []() { return UIEngine::GetHudHealth(); };
 			ui["GetScore"]  = []() { return UIEngine::GetHudScore(); };
 		}
@@ -768,6 +817,7 @@ namespace GanymedE {
 	void RegisterScriptGlobals(sol::state& lua)
 	{
 		RegisterInput(lua);
+		RegisterCursorModes(lua);
 		RegisterKeyCodes(lua);
 		RegisterLog(lua);
 		RegisterScene(lua);

@@ -302,6 +302,7 @@ The `Audio` global covers what has no entity behind it:
 ```lua
 Audio.PlayOneShot("audio/impact.wav", self.entity:GetTranslation())  -- spatialised
 Audio.PlayOneShot("audio/chime.wav")                                 -- flat, for UI
+Audio.PlayOneShot("audio/step.wav", nil, 0.25)                       -- flat and quiet
 Audio.SetGroupVolume("Music", 0.0)                                   -- "Master" | "Music" | "SFX"
 Audio.SetMasterVolume(0.8)
 ```
@@ -352,6 +353,29 @@ if sparks then
     sparks:EmitBurst(24)
 end
 ```
+
+### Mouse look
+
+`Input.SetCursorMode(Cursor.Locked)` captures the cursor; `Input.GetMouseDelta()` is what you read
+while it is captured, because a locked cursor's absolute position is a virtual coordinate that
+means nothing on its own.
+
+```lua
+function Player:OnCreate()
+    Input.SetCursorMode(Cursor.Locked)
+end
+
+function Player:OnUpdate(ts)
+    local dx, dy = Input.GetMouseDelta()
+    self.yaw   = self.yaw   - dx * self.sensitivity
+    self.pitch = math.max(-1.4, math.min(1.4, self.pitch - dy * self.sensitivity))
+end
+```
+
+`Cursor.Normal | Cursor.Hidden | Cursor.Locked`, and `Input.GetCursorMode()` reads it back. The
+delta is in **pixels moved last frame**, not a rate, so it must not be multiplied by `ts` - mouse
+movement is already an amount rather than a speed, and scaling it by frame time makes sensitivity
+depend on framerate. See [platform.md](platform.md#cursor-mode-and-mouse-delta).
 
 ### Characters
 

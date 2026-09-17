@@ -20,7 +20,16 @@ namespace GanymedE {
 	class Texture2D
 	{
 	public:
+		// Uninitialised storage with **no mip chain**, for scratch textures that SetData fills -
+		// the 1x1 white texture the 2D and particle renderers use for untextured geometry. Not
+		// for anything sampled at a minified size: see the pixel-taking overload below.
 		Texture2D(uint32_t width, uint32_t height);
+
+		// Decoded RGBA8 pixels, uploaded **with a full mip chain**. This is what a material map
+		// needs: a 4096x4096 texture with only level 0 aliases catastrophically the moment it is
+		// minified, which is what a building a few hundred pixels tall does to it.
+		Texture2D(const uint8_t* rgba, uint32_t width, uint32_t height);
+
 		Texture2D(const std::string& path);
 
 		// A compiled texture container - DDS or KTX bytes, as the asset compiler writes them.
@@ -57,6 +66,7 @@ namespace GanymedE {
 		uint32_t GetGpuBytes() const { return m_GpuBytes; }
 
 		static Ref<Texture2D> Create(uint32_t width, uint32_t height);
+		static Ref<Texture2D> Create(const uint8_t* rgba, uint32_t width, uint32_t height);
 		static Ref<Texture2D> Create(const std::string& path);
 		static Ref<Texture2D> CreateFromContainer(const uint8_t* containerBytes, uint32_t size);
 	private:

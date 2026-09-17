@@ -59,6 +59,19 @@ namespace GanymedE {
 		static constexpr bool EnableFini   = true;
 	};
 
+	// A voice outlives its component unless something reaps it. AudioSystem owns a map from
+	// entity to VoiceId, and before this the only thing that emptied it was OnRuntimeStop - so an
+	// entity destroyed mid-play left its voice playing, at the last position it was pushed to,
+	// for the rest of the session. Audible, not just a leak: a dead enemy kept humming over its
+	// own grave. FiniView is what lets the system see a removal it cannot otherwise iterate,
+	// including the whole-entity case.
+	template<> struct ComponentTraits<AudioSourceComponent>
+	{
+		static constexpr bool TrackChanges = false;
+		static constexpr bool EnableInit   = false;
+		static constexpr bool EnableFini   = true;
+	};
+
 	// ---- Every user-facing component, in one place ----
 	// This is the single source of truth: anything that must be applied to "all components"
 	// (Scene::Copy, and later serialization / editor menus / change-buffer hookup) iterates this

@@ -196,3 +196,198 @@ Not scheduled, because the right shape of the fix is a real decision: clamping c
 means for everyone, and a game that legitimately hitches wants to know. Recorded because it will be
 met again in [PROVING_GROUND.md](PROVING_GROUND.md)'s P1, and the failure looks like a gameplay bug
 rather than a frame-timing one.
+
+## The three per-platform Input files are one file three times
+
+`Platform/Windows/WindowsInput.cpp`, `Platform/Linux/LinuxInput.cpp` and
+`Platform/macOS/macOSInput.cpp` contain the *same* GLFW code - `glfwGetKey`, `glfwGetMouseButton`,
+`glfwGetCursorPos` - each wrapped in a `#ifdef GE_PLATFORM_*` so only one compiles. The split
+predates GLFW being the only windowing backend; there has never been a second implementation for
+them to differ in.
+
+Cursor mode and the mouse delta were added in `Core/Input.cpp` instead, written once, rather than
+pasting stateful logic into three files that would then have to be kept in step. That leaves
+`Input` split across two ideas of where it lives, which is worse than either option on its own -
+but only until the three are folded into the one.
+
+The fold is mechanical: move the three function bodies into `Core/Input.cpp`, delete the platform
+files, regenerate. It is left out of the cursor change because deleting three source files and
+adding one is a project-regeneration change that has nothing to do with cursor capture, and mixing
+them would make both harder to review.
+
+## `CharacterVirtual::mMaxStrength` is not exposed, and a scripted body cannot be pushed anyway
+
+The other half of this pair - that a character was invisible to every query and raised no
+contact - is **done**: every character now carries an inner body, and
+[physics.md](../engine/physics.md#presence-the-inner-body) describes it. What is left is the
+strength knob and the velocity-write question below, which the inner body does not touch.
+
+Jolt's character *does* push dynamic bodies: `CharacterVirtual::HandleContact` applies an impulse
+to any dynamic body it touches, clamped to `mMaxStrength * dt`. `CreateCharacters` never sets
+`mMaxStrength`, so every character in the engine runs on Jolt's default of 100 N, and
+`CharacterControllerComponent` gives nobody a way to change it.
+
+That is a small gap on its own. It is a larger one in combination with how gameplay drives an NPC:
+the game branch's `Enemy.lua` writes `SetLinearVelocity` every frame, which overwrites whatever
+impulse the character imparted before the next step ever sees it, so **an impulse cannot move a
+script-driven body at all**.
+
+How much that still matters is now an open question rather than a measured one. The inner body
+is Kinematic, so it also displaces dynamic bodies through ordinary penetration resolution, which
+a velocity write does not undo - a character may already shove a scripted NPC out of a doorway
+without any impulse surviving. **Measure before fixing**: the earlier claim here, that such an
+NPC is an impassable door, was written when characters had no presence at all and has not been
+re-checked since.
+
+Both halves are worth fixing and they are separate: exposing `MaxStrength` is a field, while
+"pushes should survive a velocity write" is a question about whether the velocity API should set
+or should target - an `AddVelocity`/`SetDesiredVelocity` distinction, which is what controllers in
+most engines end up with.
+
+## Nothing can refuse a push on a character, so an NPC can shove the player out of the world
+
+A `CharacterVirtual` resolves an overlap by moving **itself**, with no mass and no resistance. Now
+that characters have presence, any dynamic body that drives into one moves it, for as long as it
+keeps driving. The Proving Ground's P5 met this immediately: an enemy charging at 4.2 m/s pushed
+the player a steady 1 m/s for over a minute and then through the ground plane -
+
+```
+GATE t=60s pos=(18.4, 0.95,  8.4)
+GATE t=80s pos=(35.9, 0.95, 44.2)
+GATE t=85s pos=(36.6, -14.47, 45.1)   <- inside the plane's +-50 extent, so through it, not off it
+GATE t=95s pos=(10.3, -678.57, 2.4)
+```
+
+Jolt has the control: `CharacterContactSettings::mCanPushCharacter`, delivered per contact through
+`CharacterContactListener::OnContactAdded`. **The engine installs no `CharacterContactListener at
+all`**, so that setting cannot be reached, and neither can any of the others on that interface
+(`mCanReceiveImpulses`, contact velocity overrides for moving platforms).
+
+Installing one is the single change that unlocks all of them, and it is the same shape as the
+`ContactListener` that already exists for bodies. The policy question underneath it is worth
+deciding once rather than per-game: *what is allowed to move a character?* Unity's answer is
+nothing, unless the script asks; Unreal's is mass-weighted. Either is a defensible default, and
+having no answer is not.
+
+Worked around in the game for now by having enemies back off after landing a touch, which bounded
+the drift during a 14 s hold from 21 m to 0.07 m - a fix in the AI for a gap in the engine.
+
+## There is no `OnCollisionStay`
+
+`OnCollisionEnter` fires once when a contact is made and `OnCollisionExit` once when it breaks.
+Nothing reports the frames in between, so **"something is touching me right now" is not a question
+a script can ask.** Every trigger volume that acts continuously - standing in fire, standing in a
+heal spot, an enemy leaning on you - has to reconstruct it by counting enter/exit pairs.
+
+That counter leaks, and the leak is not hypothetical: when an entity is *destroyed* while touching,
+its contact-removed event arrives after the entity is gone and cannot be resolved back to it, so
+the exit never lands and the count stays high forever. P5's contact damage is a bounded budget of
+ticks per touch rather than a "while touching" flag for exactly this reason - a budget cannot leak.
+
+Jolt reports persisting contacts through `ContactListener::OnContactPersisted`, which
+`PhysicsContactListener` does not override. The cost is one more virtual and a third event kind on
+the way to scripts; the question worth thinking about first is whether gameplay wants a per-frame
+event at all, or a queryable "who am I touching" set, which is what most engines settle on.
+
+## A character cannot be teleported
+
+Nothing moves a character except its own velocity. Its `TransformComponent` is overwritten from the
+controller every frame by `SyncTransforms`, so writing it does nothing, and `CharacterVirtual`'s
+own `SetPosition` is not exposed through `PhysicsScene` or the script bindings.
+
+So **there is no way to respawn**. P5's player recovers where it fell, which is not a thing anyone
+would ship, and the same gap blocks checkpoints, teleporters, level transitions and cutscene
+placement. It is also the smallest item in this file: `SetPosition` already exists on the Jolt
+object and already keeps the inner body in step (`UpdateInnerBodyTransform` runs inside it) - what
+it needs is a `PhysicsScene::SetPosition` that routes to the character or the body interface, the
+same way `SetLinearVelocity` already routes to either.
+
+## A script cannot tell whether a contact was with a sensor
+
+`OnCollisionEnter(other)` hands over the other entity and nothing else. A sensor causes no collision
+response, but its contact event is indistinguishable from a solid hit, so a projectile that flies
+*through* a trigger volume still reports hitting something and despawns in mid-air over it.
+
+P5 worked around it by having the pickups publish their own names into a shared table for the
+projectiles to check, which is the kind of thing a script should never have to arrange. The fix is
+to carry the flag on the event: `PhysicsCollisionEvent` already exists and the sensor bit is known
+at dispatch time (`Body::IsSensor`), so this is a field, a parameter, and a line in the `.d.ts`.
+
+## The HUD data model is two variables, declared in C++
+
+`UIEngine` binds exactly `health` and `score` into the `hud` data model, before any document loads,
+because RmlUi binds to real C++ addresses rather than to a bag of names. So **a game cannot add a
+third**. The Proving Ground tracks a weapon level, a projectile damage level and how many enemies
+are left, and none of them can reach its HUD.
+
+[ui.md](../engine/ui.md) already records the shape of the answer and the condition for doing it:
+*"Fixed setters rather than a general UI.Set(name, value)... Worth doing when a second HUD needs
+it - not before."* P6 is the second HUD, so the condition is met.
+
+Two ways to do it, and the choice is the whole of the work:
+
+- **A bound map.** RmlUi can bind a container, so one `Rml::Vector`/`Map` of variants reaches every
+  name a document asks for. Cheapest, and it gives up compile-time knowledge of what exists: a
+  typo'd `{{helth}}` renders empty rather than failing.
+- **`BindFunc` per name, registered at document load.** Keeps the addresses real, costs a
+  registration step and a place to put it.
+
+Either way `UI.SetHealth`/`UI.SetScore` should stay as they are - a HUD that every game has wants
+the short call, and the general path is for the rest.
+
+## A shipped Dist build is not self-contained
+
+`staticruntime "off"` in both `GanymedEngine/premake5.lua` and `GanymedRuntime/premake5.lua`, in
+every configuration, so the Dist executable imports `MSVCP140.dll`, `VCRUNTIME140.dll` and
+`VCRUNTIME140_1.dll`. A machine without the Visual C++ redistributable cannot start it, and the
+failure is a Windows dialog before any of our code runs - so there is no log, and no way for the
+person to tell you what happened.
+
+**This is invisible on any development machine**, because installing Visual Studio installs the
+redistributable. The Proving Ground's P7 only found it by reading the import table.
+
+The obvious fix - `staticruntime "on"` under the Dist filter - **is not available**: every static
+library the executable links must agree on the CRT, and the third-party projects are built from
+premake files inside `GanymedEngine/extern/`, which is not ours to edit. Switching only the engine
+and the runtime produces a link error, not a smaller problem.
+
+So the choice is between:
+
+- **Ship the three DLLs beside the executable.** What P7 did by hand, and what a packaging step
+  should do. Microsoft permits redistributing them, and it keeps the install self-contained.
+- **Require the redistributable** and say so in an installer. Normal for a large game, absurd for
+  a demo.
+
+Either way it belongs in a packaging step rather than in a person's memory.
+
+## There is no packaging step
+
+P7 assembled a shipped install by hand, and the list is not obvious enough to keep re-deriving:
+
+```
+ship/
+  GanymedRuntime.exe                 from bin/Dist-windows-x86_64/GanymedRuntime/
+  msvcp140.dll vcruntime140.dll vcruntime140_1.dll
+  assets/                            the whole project root, .meta and .compiled included
+    runtime.yaml                     with AssetRoot: assets
+    fonts/                           ENGINE-owned, from GanymedRuntime/assets/fonts
+    shaders/compiled/                ENGINE-owned, from GanymedRuntime/assets/shaders
+```
+
+The two engine-owned directories are the part that surprises. `UIEngine` loads its faces from
+`assets/fonts/...` and `Shader::Create` loads from `assets/shaders/compiled/<profile>/...`, both
+**relative to the working directory** rather than to the project root - by design, so the editor's
+own chrome keeps working when it opens someone else's project. In a shipped layout the working
+directory *is* the install and the project root is `assets/`, so engine chrome and game content
+end up in the same tree. It works - the asset scan ignores `.ttf` and `.bin`, so nothing is minted
+or quarantined - but a game's asset tree containing the engine's fonts is a surprise, and it means
+`AssetRoot` cannot be renamed to anything other than `assets` without splitting them.
+
+Two things would make this repeatable, and they are separable:
+
+- **A packaging script** under `scripts/`, taking a configuration and an output directory. Cheap,
+  and it can fail loudly on the mistakes P7 actually made: a missing `.meta`, an absent
+  `.compiled` tree, a `runtime.yaml` still pointing at a development path.
+- **Resolving engine chrome against the executable** rather than the working directory, which
+  would let a shipped game's `assets/` hold only the game. Bigger, and it touches every
+  `Shader::Create` call site.

@@ -36,7 +36,11 @@ namespace GanymedE {
 		using ListenerView = ECS::IterView<ECS::EntityId,
 			ECS::RO<AudioListenerComponent>, ECS::RO<WorldTransformComponent>>;
 
-		using Views = TypeList<EmitterView, ListenerView>;
+		// Sources that went away since the last update, so their voice can be destroyed with
+		// them. ReactRO rather than ReactRW: FiniView statically requires ReadTypes == ReactTypes.
+		using EmitterFiniView = ECS::FiniView<ECS::EntityId, ECS::ReactRO<AudioSourceComponent>>;
+
+		using Views = TypeList<EmitterView, ListenerView, EmitterFiniView>;
 
 		using ECS::System<AudioSystem>::System;
 

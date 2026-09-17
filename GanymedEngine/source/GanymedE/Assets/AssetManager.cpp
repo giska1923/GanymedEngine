@@ -118,6 +118,11 @@ namespace GanymedE {
 			std::size_t Quarantined = 0;
 			std::size_t Collisions = 0;
 			std::size_t TypeCorrected = 0;
+
+			// Which assets were minted, not just how many. Only interesting on a read-only
+			// install, where a mint cannot be persisted and so happens again on every boot -
+			// see the report at the end of ScanAssets.
+			std::vector<std::string> MintedPaths;
 		};
 
 		// The one place a path becomes a handle. Both the scan and ImportAsset go through it, so
@@ -222,7 +227,10 @@ namespace GanymedE {
 				{
 					meta.Handle = UUID();
 					if (stats)
+					{
 						++stats->Minted;
+						stats->MintedPaths.push_back(pathKey);
+					}
 				}
 			}
 			else if (stats)
@@ -409,6 +417,28 @@ namespace GanymedE {
 			"collisions, {7} types corrected",
 			assetFiles.size(), stats.Adopted, stats.AdoptedLegacy, stats.Minted, stats.Written,
 			stats.Quarantined, stats.Collisions, stats.TypeCorrected);
+
+		// A mint on a read-only install is a shipping defect, and it is silent without this.
+		//
+		// Writable, a mint is ordinary: a new file appeared and the scan gave it identity, which
+		// it then persists next to the asset. Read-only, the sidecar cannot be written, so the
+		// handle is fresh on every boot - and anything that names that asset by handle rather
+		// than by path is broken in a way that no error message mentions. The cause is always
+		// the same: the `.meta` did not travel with the asset.
+		//
+		// Named individually, and at WARN, for the reason the `.compiled` warning next door is:
+		// this is the one moment the information exists, and the install it describes has no
+		// editor to go and look with.
+		if (!s_Data.AssetsWritable && !stats.MintedPaths.empty())
+		{
+			GE_CORE_WARN("{0} asset(s) in this read-only install have no `.meta` sidecar, so a "
+				"fresh handle was minted for each and cannot be saved. Every boot will mint "
+				"different ones. Anything referencing these by handle is already broken; ship "
+				"the sidecars beside the assets.", stats.MintedPaths.size());
+
+			for (const std::string& path : stats.MintedPaths)
+				GE_CORE_WARN("  no sidecar: {0}", path);
+		}
 
 		// Named individually rather than counted. An orphan is either debris from a delete that
 		// went around the editor, or the first visible symptom of an asset that failed to
