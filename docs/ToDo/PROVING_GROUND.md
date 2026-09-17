@@ -1,6 +1,9 @@
 # Milestone — Proving Ground (the test game)
 
-**Status: planned, not started.** This is a roadmap. Nothing here is built.
+**Status: complete.** Phase 0 and P1–P7 are all built, gated and written up below. The game
+runs in `GanymedRuntime`, Dist, from a shipped install. What is left of this document is a
+record rather than a plan, and it belongs in `docs/history/` once the branch is merged — see
+[ToDo/README.md](README.md) for the one thing missing from it first.
 
 A small third-person shooter, built to find out what is wrong with the engine. The game is the
 instrument, not the goal: every phase below is chosen for the engine surface it puts under load,
@@ -783,14 +786,111 @@ none of them can reach the HUD. [ui.md](../engine/ui.md) already said a general 
 value)` was "worth doing when a second HUD needs it — not before"; this is the second HUD.
 Recorded in [cross-cutting.md](cross-cutting.md).
 
-### P7 — Ship it
+### P7 — Ship it — **PASSED**
 
 Run the whole thing in `GanymedRuntime`, Dist configuration, from a copied asset tree.
 
 - **Tests:** the read-only asset path, `.meta` sidecar completeness, registry portability, the
   `WindowedApp` / `mainCRTStartup` Dist configuration, and boot with no editor present.
-- **This phase is where I expect the most bugs.** It is the least-exercised code in the engine, and
-  its failure mode — a shipped game that cannot find its own assets — is invisible from the editor.
+- **This phase is where I expect the most bugs.**
+- **Gate (defined here):** an install containing nothing but the executable, its DLLs and an
+  `assets/` tree boots, scans every asset from a sidecar with **nothing minted and nothing
+  written**, uses the `.compiled` cache without recompiling, and plays a full autopilot-plus-
+  autofire circuit with zero errors.
+
+#### The install
+
+```
+ship/
+  GanymedRuntime.exe                 9.7 MB, Dist          (Debug is 42 MB)
+  msvcp140.dll vcruntime140.dll vcruntime140_1.dll
+  assets/                            Game/assets entire, .meta and .compiled included
+    runtime.yaml                     AssetRoot: assets
+    fonts/                           ENGINE-owned
+    shaders/compiled/                ENGINE-owned
+```
+
+The two engine-owned directories are the part worth knowing. `UIEngine` loads its faces from
+`assets/fonts/...` and `Shader::Create` from `assets/shaders/compiled/<profile>/...`, both
+**relative to the working directory** rather than to the project root — by design, so the editor's
+chrome survives opening someone else's project. In a shipped layout the working directory *is* the
+install, so engine chrome and game content share one tree. It works, and the asset scan ignores
+`.ttf` and `.bin` so nothing is minted or quarantined by it, but it is a surprise and it pins
+`AssetRoot` to `assets`.
+
+#### Gate run — 150 s in the shipped install, 0 errors
+
+```
+Asset scan: 31 files, 31 adopted from sidecars, 0 minted, 0 written, 0 quarantined, 0 collisions
+AssetManager initialized (31 assets indexed, assets read-only)
+Scene 'assets/scenes/ProvingGround.ganymede' loaded (52 entities)
+UI document 'assets/ui/hud.rml' loaded
+
+fired=7975  refused=7376  despawned=7975  live=0
+muzzle-bursts=7975   impacts=7605  impacts-despawned=7605  live-impacts=0
+voices=6  one-shots=0   grounded=100%  steps=325
+```
+
+No recompile lines at all: the shipped `.compiled` tree was used as shipped. No
+`AssetRegistry.gr` in the game's tree and nothing adopted from a legacy registry — **sidecars alone
+are sufficient identity for a shipped game**, which is what that migration was for.
+
+**Dist is roughly four times the throughput of Debug.** The same 145 s of script time fired 7,975
+rounds against Debug's 1,894, and ran at wall-clock speed instead of stalling through the burst
+phase. The spawn cap absorbed the difference: 7,376 refusals, every one counted, nothing leaked.
+
+#### Three defects, all of them invisible from the editor
+
+**1. A shipped asset with no `.meta`, and nothing said so.** The first shipped boot read
+`31 files, 30 adopted from sidecars, 1 handles minted` — and that line reads as normal at a glance.
+The asset was `prefabs/Impact.gprefab`, created in P6 after the editor run that would have minted
+its sidecar. It happened to still work, because `Scene.Spawn` resolves by path; anything naming it
+by handle would have been broken with no message anywhere.
+
+A mint on a *writable* install is ordinary. A mint on a **read-only** install is a shipping defect:
+the sidecar cannot be written, so the handle is different on every boot. `ScanAssets` now warns and
+names each path, the same shape as the orphaned-sidecar report beside it. Verified in both
+directions — with the sidecar restored the scan reads `31 adopted, 0 minted`; with it removed the
+log says `no sidecar: prefabs/Impact.gprefab`.
+
+**2. The shipped build wrote a 1.7 MB trace log in 150 seconds.** 15,463 lines, one per spawned
+entity, each flushed to disk **synchronously inside a frame**, because `Log::Init` set level
+`trace` and `flush_on(trace)` in every configuration. Right with a debugger attached; absurd in a
+shipped game, where nobody reads it and the lines carry build-machine paths. Dist now logs `info`
+and above and flushes on `warn`: the same run writes 799 lines and 96 KB, and still carries the
+boot banner, the renderer table, the asset scan, every warning and every error — which is what a
+user's bug report actually needs.
+
+**3. The executable is not self-contained.** `staticruntime "off"` in every configuration, so the
+import table names `MSVCP140.dll`, `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll`. A machine without
+the redistributable fails with a Windows dialog before any of our code runs — no log, nothing to
+report. **Not fixable as written**: every static library must agree on the CRT, and the third-party
+ones build from premake files inside `extern/`, which is not ours to edit. Recorded in
+[cross-cutting.md](cross-cutting.md) with the two real options; P7's install ships the three DLLs.
+
+#### What held
+
+- **`WindowedApp` / `mainCRTStartup` works.** No console window, `stdout` empty, and the log file
+  still written.
+- **The read-only path is correct.** Nothing was written into `assets/` during any run; the guard
+  held at the one place identity is decided.
+- **Boot with no editor present.** The install has no editor, no source, no registry, no project
+  file. It boots in about a second.
+
+#### One thing that is not the engine's fault
+
+Every MSBuild build on this machine ends with
+
+```
+pwsh.exe -ExecutionPolicy Bypass ... applocal.ps1 ...
+'pwsh.exe' is not recognized as an internal or external command
+```
+
+That is vcpkg's global MSBuild integration (`vcpkg integrate install`) running its AppLocal DLL
+copier, which needs PowerShell 7. This project uses no vcpkg packages, so the step has nothing to
+do and the link has already succeeded by the time it runs — but it reports an error on every build,
+which is exactly the kind of noise that trains people to ignore build output. `vcpkg integrate
+remove`, or installing `pwsh`, is the fix, and neither is a change to this repository.
 
 ---
 
@@ -820,13 +920,48 @@ Recorded now so that when this moves to `docs/history/` we can see which held.
    pointless and the map read as flat — in which case the answer is more enemies and tighter sight
    lines before it is pathfinding.
 
-## How we will know it worked
+## How we will know it worked — checked
 
 Not "the game is fun". The milestone succeeds if it produces a list of **engine** defects that the
-probe-per-change method never found — and the prediction, recorded now so it can be checked later,
-is that they cluster in three places: P7's read-only asset path, the animator under many
+probe-per-change method never found — and the prediction, recorded before any of it was built, was
+that they would cluster in three places: P7's read-only asset path, the animator under many
 simultaneous instances, and memory or handle growth over a session longer than any probe has ever
 run.
 
-If the game ships and finds nothing, that is also a result, and it means the probes were better
-than I think they are.
+**Two of the three landed. One did not. And the largest group was not predicted at all.**
+
+| Predicted | Outcome |
+|---|---|
+| P7's read-only asset path | **Hit.** A shipped asset with no `.meta` mints a fresh handle on every boot and said nothing about it; the count sat in the middle of an INFO line that reads as normal |
+| The animator under many simultaneous instances | **Missed.** P4 drove six instances across three clips, switching independently in the same frames, and nothing broke. The animation milestone's work held |
+| Memory or handle growth over a long session | **Hit, and it was audible.** A destroyed entity's audio voice was never released — it kept playing, at its last position, for the rest of the session |
+
+The group nobody predicted is **the script binding surface**, and it produced the same bug twice:
+`UI.SetScore` declared `int` and `Audio.PlayOneShot` hardcoded its volume, in a codebase where
+`EmitBurst` already carried a comment explaining why a binding must take a `double`. Both were
+found by gameplay doing the ordinary thing; neither could have been found by a probe, because a
+probe passes the literal the author had in mind.
+
+The second-largest group is **character controllers**, which is less a list of defects than one
+missing decision: a `CharacterVirtual` had no presence in the world at all, and everything downstream
+of that — no raycast could see the player, no projectile could hit it, no trigger could notice it,
+and once it had presence nothing could refuse a push — followed from never having had a game ask.
+
+### The defects, by phase
+
+| Phase | Found | Fixed |
+|---|---|---|
+| P0/P1 | velocity-driven capsules cannot slide along a wall | `CharacterVirtual` |
+| P2 | importer invented tangents; albedo decoded as linear; textures loaded upside down; no mip chain | all four |
+| P4 | a raycast cannot see a character controller | documented, then fixed in P5 |
+| P5 | `UI.SetScore` refused a float; a character could be shoved out of the world; a static box is invisible to a character | binding fixed, sensors added, push recorded |
+| P6 | a destroyed entity's voice was never released; `PlayOneShot` had no volume; voice counters were unreachable | all three |
+| P7 | a read-only install mints silently; Dist wrote a 1.7 MB trace log; the executable is not self-contained | first two fixed, third recorded |
+
+Eleven fixed, five recorded in [cross-cutting.md](cross-cutting.md) as decisions rather than
+oversights. **None of them were found by a probe**, and every one was found by the game doing
+something ordinary for longer than a probe runs.
+
+The honest caveat: this milestone verified almost everything through the log. The renderer output,
+the HUD layout and the audio mix have been **measured and not looked at**. Whatever is wrong with
+how any of it looks or sounds is still there.
