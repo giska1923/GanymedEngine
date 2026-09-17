@@ -178,6 +178,12 @@ Scripts drive it through the `UI` table — `UI.SetHealth(n)`, `UI.SetScore(n)`,
 example `Player.ts` drains health and ticks score, and the bar's width follows via
 `data-style-width="health + '%'"` without the script knowing anything about RML or RCSS.
 
+Both setters take a Lua **number**, and `SetScore` truncates. That is deliberate rather than lax:
+every `ScriptComponent` property is a Lua float, so a score with any property in its arithmetic is
+a float, and a binding declared `int` would be refused by sol2 — "not a numeric type that fits
+exactly an integer" — with the throw escaping into the frame and taking the rest of that
+`OnUpdate` with it. The particle bindings take `double` for the same reason.
+
 > Fixed setters rather than a general `UI.Set(name, value)`: RmlUi data models bind to real C++
 > addresses declared up front, so an arbitrary property bag needs a different mechanism entirely
 > (`BindFunc`, or a bound map type). Worth doing when a second HUD needs it — not before.

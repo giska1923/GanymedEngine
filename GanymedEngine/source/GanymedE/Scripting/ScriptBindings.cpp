@@ -777,7 +777,17 @@ namespace GanymedE {
 			// bag would need a different mechanism entirely (see docs/engine/ui.md).
 			sol::table ui = lua.create_named_table("UI");
 			ui["SetHealth"] = [](float health) { UIEngine::SetHudHealth(health); };
-			ui["SetScore"]  = [](int score)    { UIEngine::SetHudScore(score); };
+			// double, not int, for the same reason EmitBurst takes one: **every ScriptComponent
+			// property is a Lua float**, so any score computed from one is a float, and sol2 with
+			// SOL_ALL_SAFETIES_ON refuses a float where an int is declared - "not a numeric type
+			// that fits exactly an integer". The throw escapes into the frame and takes the whole
+			// OnUpdate with it.
+			//
+			// Found by the Proving Ground's P5, where a score was banked from kills and then had
+			// a cost subtracted; the cost came from a property, so `score - cost` was a float and
+			// every later SetScore threw. Truncating here is what the HUD wants anyway - a score
+			// is a whole number - and it makes this binding agree with the particle ones.
+			ui["SetScore"]  = [](double score) { UIEngine::SetHudScore(static_cast<int>(score)); };
 			ui["GetHealth"] = []() { return UIEngine::GetHudHealth(); };
 			ui["GetScore"]  = []() { return UIEngine::GetHudScore(); };
 		}
