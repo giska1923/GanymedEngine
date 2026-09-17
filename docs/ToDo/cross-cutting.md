@@ -332,3 +332,60 @@ Two ways to do it, and the choice is the whole of the work:
 
 Either way `UI.SetHealth`/`UI.SetScore` should stay as they are - a HUD that every game has wants
 the short call, and the general path is for the rest.
+
+## A shipped Dist build is not self-contained
+
+`staticruntime "off"` in both `GanymedEngine/premake5.lua` and `GanymedRuntime/premake5.lua`, in
+every configuration, so the Dist executable imports `MSVCP140.dll`, `VCRUNTIME140.dll` and
+`VCRUNTIME140_1.dll`. A machine without the Visual C++ redistributable cannot start it, and the
+failure is a Windows dialog before any of our code runs - so there is no log, and no way for the
+person to tell you what happened.
+
+**This is invisible on any development machine**, because installing Visual Studio installs the
+redistributable. The Proving Ground's P7 only found it by reading the import table.
+
+The obvious fix - `staticruntime "on"` under the Dist filter - **is not available**: every static
+library the executable links must agree on the CRT, and the third-party projects are built from
+premake files inside `GanymedEngine/extern/`, which is not ours to edit. Switching only the engine
+and the runtime produces a link error, not a smaller problem.
+
+So the choice is between:
+
+- **Ship the three DLLs beside the executable.** What P7 did by hand, and what a packaging step
+  should do. Microsoft permits redistributing them, and it keeps the install self-contained.
+- **Require the redistributable** and say so in an installer. Normal for a large game, absurd for
+  a demo.
+
+Either way it belongs in a packaging step rather than in a person's memory.
+
+## There is no packaging step
+
+P7 assembled a shipped install by hand, and the list is not obvious enough to keep re-deriving:
+
+```
+ship/
+  GanymedRuntime.exe                 from bin/Dist-windows-x86_64/GanymedRuntime/
+  msvcp140.dll vcruntime140.dll vcruntime140_1.dll
+  assets/                            the whole project root, .meta and .compiled included
+    runtime.yaml                     with AssetRoot: assets
+    fonts/                           ENGINE-owned, from GanymedRuntime/assets/fonts
+    shaders/compiled/                ENGINE-owned, from GanymedRuntime/assets/shaders
+```
+
+The two engine-owned directories are the part that surprises. `UIEngine` loads its faces from
+`assets/fonts/...` and `Shader::Create` loads from `assets/shaders/compiled/<profile>/...`, both
+**relative to the working directory** rather than to the project root - by design, so the editor's
+own chrome keeps working when it opens someone else's project. In a shipped layout the working
+directory *is* the install and the project root is `assets/`, so engine chrome and game content
+end up in the same tree. It works - the asset scan ignores `.ttf` and `.bin`, so nothing is minted
+or quarantined - but a game's asset tree containing the engine's fonts is a surprise, and it means
+`AssetRoot` cannot be renamed to anything other than `assets` without splitting them.
+
+Two things would make this repeatable, and they are separable:
+
+- **A packaging script** under `scripts/`, taking a configuration and an output directory. Cheap,
+  and it can fail loudly on the mistakes P7 actually made: a missing `.meta`, an absent
+  `.compiled` tree, a `runtime.yaml` still pointing at a development path.
+- **Resolving engine chrome against the executable** rather than the working directory, which
+  would let a shipped game's `assets/` hold only the game. Bigger, and it touches every
+  `Shader::Create` call site.
