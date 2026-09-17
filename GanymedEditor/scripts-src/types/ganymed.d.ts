@@ -439,6 +439,7 @@ declare namespace Audio {
 declare namespace UI {
 	/** 0..100; the health bar's width is bound to this. */
 	function SetHealth(health: number): void;
+	/** Truncated to a whole number. A fractional score is accepted, not refused. */
 	function SetScore(score: number): void;
 	function GetHealth(): number;
 	function GetScore(): number;
