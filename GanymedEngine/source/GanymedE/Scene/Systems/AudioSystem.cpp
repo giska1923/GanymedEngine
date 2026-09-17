@@ -67,6 +67,21 @@ namespace GanymedE {
 	{
 		(void)ts;
 
+		// Reap first. The slot reads the buried copy, so this works whether the component was
+		// removed or the whole entity destroyed - and the destroyed case is the one a plain
+		// iteration cannot see at all, which is exactly how a killed enemy used to leave its hum
+		// playing for the rest of the session.
+		for (auto [entity, source] : View<EmitterFiniView>())
+		{
+			(void)source;
+			auto it = m_Voices.find(entity);
+			if (it == m_Voices.end())
+				continue;
+
+			AudioEngine::DestroyVoice(it->second);
+			m_Voices.erase(it);
+		}
+
 		UpdateListener();
 
 		// Poll and push rather than track changes: three floats and a bool per voice is
