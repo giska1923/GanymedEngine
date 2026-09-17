@@ -290,15 +290,30 @@ namespace GanymedE {
 			&& caps->rendererType == bgfx::RendererType::Vulkan
 			&& caps->vendorId == BGFX_PCI_ID_INTEL;
 
-		auto flushBakeStage = [&]()
+		// Named and timed, because an Intel ANV hang inside the bake is otherwise a silence:
+		// the log stops after the four target textures are created and the next thing in it is
+		// `GPU hung on one of our command buffers`, 14 seconds later, with no way to tell which
+		// convolution the GPU died in.
+		//
+		// On the split path the timing is real GPU time - bgfx::frame() in single-threaded mode
+		// does not return until the frame is rendered - so a run that SURVIVES also says where
+		// the cost is. Off it, this measures submission only (2-3 ms, see rendering.md), which is
+		// the number that was already documented.
+		auto flushBakeStage = [&](const char* stage)
 		{
 			if (!splitBakeStages)
 				return;
+
+			const auto begin = std::chrono::steady_clock::now();
 
 			// Keep Renderer::GetFrameNumber() in lockstep with bgfx; picking
 			// polls that, not bgfx's own counter.
 			Renderer::OnFrameSubmitted(bgfx::frame());
 			views.Next = RenderPass::EnvironmentBake;
+
+			const double ms = std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - begin).count();
+			GE_CORE_INFO("IBL bake stage '{0}': {1:.1f} ms", stage, ms);
 		};
 
 		// When splitBakeStages is false, later stages sample earlier ones in the
@@ -339,7 +354,7 @@ namespace GanymedE {
 				renderCubeFace(m_EnvCubemap, face, mip, mipSize, equirectShader);
 			}
 		}
-		flushBakeStage();
+		flushBakeStage("equirect");
 
 		// --- 2. Diffuse irradiance convolution --------------------------------
 		for (uint16_t face = 0; face < 6; face++)
@@ -347,7 +362,7 @@ namespace GanymedE {
 			irradianceShader->SetTexture("u_EnvironmentMap", 0, m_EnvCubemap, BGFX_SAMPLER_UVW_CLAMP);
 			renderCubeFace(m_Irradiance, face, 0, kIrradianceSize, irradianceShader);
 		}
-		flushBakeStage();
+		flushBakeStage("irradiance");
 
 		// --- 3. Pre-filtered specular environment (one mip per roughness) -----
 		for (uint16_t mip = 0; mip < (uint16_t)kPrefilterMips; mip++)
@@ -363,7 +378,7 @@ namespace GanymedE {
 				renderCubeFace(m_Prefilter, face, mip, mipSize, prefilterShader);
 			}
 		}
-		flushBakeStage();
+		flushBakeStage("prefilter");
 
 		// --- 4. BRDF integration LUT (once per process, not once per environment) ---
 		if (bakeLut)
@@ -388,7 +403,7 @@ namespace GanymedE {
 
 			shared.BRDF->Bind();
 			RenderCommand::DrawIndexed(quad);
-			flushBakeStage();
+			flushBakeStage("brdf-lut");
 		}
 
 		// The bake is submitted, not executed: bgfx runs it when the frame is presented.

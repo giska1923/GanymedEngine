@@ -555,6 +555,12 @@ Together these take a second and subsequent environment load from ~4–5 ms of s
 **2.2–3.3 ms** on the single-frame path. The first load in a process still pays for both (~6.3 ms).
 On Intel + Vulkan the kicked frames add a few vsyncs; that is load hitch, not per-frame cost.
 
+Each stage on that path logs its own name and wall time (`IBL bake stage 'prefilter': N ms`).
+On the split path `bgfx::frame()` does not return until the frame is rendered, so those are real
+GPU times and a surviving run says where the cost went. Without them an ANV hang inside the bake
+is a silence: the log stops after the four target textures are created, and the next line is
+`GPU hung on one of our command buffers` fourteen seconds later, naming no stage.
+
 ### The IBL bake is a prepass
 
 `RenderPass::EnvironmentBake = 1` — **before the shadow and scene passes**, not after them. That
