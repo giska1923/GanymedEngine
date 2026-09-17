@@ -59,9 +59,17 @@ obligation.
 | Hook | What it does |
 |---|---|
 | `OnRuntimeStart` | Builds and starts a voice for every `PlayOnStart` source |
-| `OnUpdate` | Pushes `Volume`/`Pitch`/`Loop` and (for spatial sources) the entity's world position; resolves and pushes the listener pose |
+| `OnUpdate` | Reaps voices whose source went away, then pushes `Volume`/`Pitch`/`Loop` and (for spatial sources) the entity's world position; resolves and pushes the listener pose |
 | `OnRuntimeStop` | Destroys every voice, clears the map, `StopAll()` |
 | `OnUpdateEditor` | **Absent.** Edit mode is silent |
+
+**A voice dies with its source, and that needed a reactive view.** `AudioSourceComponent` carries
+`EnableFini`, and `OnUpdate` drains an `EmitterFiniView` before anything else. Without it the only
+thing that ever emptied `m_Voices` was `OnRuntimeStop`, so an entity destroyed mid-play left its
+voice running at the last position pushed to it — audible rather than merely leaked, and the
+entity-destroyed case is exactly the one a plain iteration cannot see, because the component is
+gone by the time you look. The Proving Ground found it by killing six humming enemies and watching
+`Audio.GetVoiceCount()` stay at nine.
 
 Plus three methods that exist for the script bindings and nothing else — `PlaySound(entity)`,
 `StopSound(entity)`, `IsSoundPlaying(entity)`. They are here rather than on `AudioEngine` so the
