@@ -9,6 +9,28 @@
   `make -j$(nproc) config=debug`.
 - macOS: `scripts/macOS_GenerateProjects.sh` → Xcode workspace.
 
+`scripts/fix_submodules.sh` is the first thing to run when a build fails naming a dependency
+that should exist. `--check` reports every path in `.gitmodules` and changes nothing; with no
+arguments it syncs the URLs and runs `git submodule update --init --recursive`, which restores
+the **pinned** commits; `--force` deinitialises first, for a working tree that will not move.
+It reads `.gitmodules` rather than a list of its own, so a new submodule is covered the day it
+is added.
+
+The failure it exists for is quiet. A missing or empty submodule directory still gets a premake
+project generated for it — premake does not check that the sources it was told about are on
+disk — so the first symptom is a link error against an archive nothing builds:
+
+```
+make: *** No rule to make target '../bin/Debug-linux-x86_64/enkiTS/libenkiTS.a',
+      needed by '../bin/Debug-linux-x86_64/GanymedEditor/GanymedEditor'.  Stop.
+```
+
+Two other things produce that same message, and they are worth ruling out in this order: a
+**stale generated makefile** (they are gitignored, so a pull that changes `premake5.lua` or
+`extern/*.lua` never updates them — regenerate), and **running `make` inside a project
+directory** rather than at the root, where only the workspace makefile knows what has to be
+built first.
+
 `Linux_GenerateProjects.sh` wants a native `vendor/premake/bin/premake5`, and only the Windows
 `premake5.exe` is committed. `setup_premake.sh` downloads one; **premake also cross-generates**,
 which needs no download and no Wine:
