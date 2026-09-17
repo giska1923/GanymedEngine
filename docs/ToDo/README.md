@@ -33,13 +33,13 @@ documented.** A file here is a promise, not a description.
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types | 2 |
 | [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
 | [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
-| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, character controllers invisible to queries | 10 |
+| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, and five gaps around character controllers and contacts | 13 |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
 this copy of [PROVING_GROUND.md](PROVING_GROUND.md) carries P0.1–P0.4 and nothing else, while
-P0.5–P0.7, P1 and P4 are written up on the branch. Two things follow, both worth knowing before this moves to
-`docs/history/`:
+P0.5–P0.7, P1, P4 and P5 are written up on the branch. Two things follow, both worth knowing
+before this moves to `docs/history/`:
 
 - **P2 and P3 have no record on either branch.** They were built and gated; the runs were never
   written up, and both sections are still only their plan. Reconstructing that honestly means

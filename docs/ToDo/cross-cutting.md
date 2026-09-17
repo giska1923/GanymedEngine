@@ -241,3 +241,72 @@ Both halves are worth fixing and they are separate: exposing `MaxStrength` is a 
 "pushes should survive a velocity write" is a question about whether the velocity API should set
 or should target - an `AddVelocity`/`SetDesiredVelocity` distinction, which is what controllers in
 most engines end up with.
+
+## Nothing can refuse a push on a character, so an NPC can shove the player out of the world
+
+A `CharacterVirtual` resolves an overlap by moving **itself**, with no mass and no resistance. Now
+that characters have presence, any dynamic body that drives into one moves it, for as long as it
+keeps driving. The Proving Ground's P5 met this immediately: an enemy charging at 4.2 m/s pushed
+the player a steady 1 m/s for over a minute and then through the ground plane -
+
+```
+GATE t=60s pos=(18.4, 0.95,  8.4)
+GATE t=80s pos=(35.9, 0.95, 44.2)
+GATE t=85s pos=(36.6, -14.47, 45.1)   <- inside the plane's +-50 extent, so through it, not off it
+GATE t=95s pos=(10.3, -678.57, 2.4)
+```
+
+Jolt has the control: `CharacterContactSettings::mCanPushCharacter`, delivered per contact through
+`CharacterContactListener::OnContactAdded`. **The engine installs no `CharacterContactListener at
+all`**, so that setting cannot be reached, and neither can any of the others on that interface
+(`mCanReceiveImpulses`, contact velocity overrides for moving platforms).
+
+Installing one is the single change that unlocks all of them, and it is the same shape as the
+`ContactListener` that already exists for bodies. The policy question underneath it is worth
+deciding once rather than per-game: *what is allowed to move a character?* Unity's answer is
+nothing, unless the script asks; Unreal's is mass-weighted. Either is a defensible default, and
+having no answer is not.
+
+Worked around in the game for now by having enemies back off after landing a touch, which bounded
+the drift during a 14 s hold from 21 m to 0.07 m - a fix in the AI for a gap in the engine.
+
+## There is no `OnCollisionStay`
+
+`OnCollisionEnter` fires once when a contact is made and `OnCollisionExit` once when it breaks.
+Nothing reports the frames in between, so **"something is touching me right now" is not a question
+a script can ask.** Every trigger volume that acts continuously - standing in fire, standing in a
+heal spot, an enemy leaning on you - has to reconstruct it by counting enter/exit pairs.
+
+That counter leaks, and the leak is not hypothetical: when an entity is *destroyed* while touching,
+its contact-removed event arrives after the entity is gone and cannot be resolved back to it, so
+the exit never lands and the count stays high forever. P5's contact damage is a bounded budget of
+ticks per touch rather than a "while touching" flag for exactly this reason - a budget cannot leak.
+
+Jolt reports persisting contacts through `ContactListener::OnContactPersisted`, which
+`PhysicsContactListener` does not override. The cost is one more virtual and a third event kind on
+the way to scripts; the question worth thinking about first is whether gameplay wants a per-frame
+event at all, or a queryable "who am I touching" set, which is what most engines settle on.
+
+## A character cannot be teleported
+
+Nothing moves a character except its own velocity. Its `TransformComponent` is overwritten from the
+controller every frame by `SyncTransforms`, so writing it does nothing, and `CharacterVirtual`'s
+own `SetPosition` is not exposed through `PhysicsScene` or the script bindings.
+
+So **there is no way to respawn**. P5's player recovers where it fell, which is not a thing anyone
+would ship, and the same gap blocks checkpoints, teleporters, level transitions and cutscene
+placement. It is also the smallest item in this file: `SetPosition` already exists on the Jolt
+object and already keeps the inner body in step (`UpdateInnerBodyTransform` runs inside it) - what
+it needs is a `PhysicsScene::SetPosition` that routes to the character or the body interface, the
+same way `SetLinearVelocity` already routes to either.
+
+## A script cannot tell whether a contact was with a sensor
+
+`OnCollisionEnter(other)` hands over the other entity and nothing else. A sensor causes no collision
+response, but its contact event is indistinguishable from a solid hit, so a projectile that flies
+*through* a trigger volume still reports hitting something and despawns in mid-air over it.
+
+P5 worked around it by having the pickups publish their own names into a shared table for the
+projectiles to check, which is the kind of thing a script should never have to arrange. The fix is
+to carry the flag on the event: `PhysicsCollisionEvent` already exists and the sensor bit is known
+at dispatch time (`Body::IsSensor`), so this is a field, a parameter, and a line in the `.d.ts`.
