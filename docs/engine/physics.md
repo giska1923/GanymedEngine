@@ -232,6 +232,17 @@ Static and dynamic bodies are both hit. A line-of-sight test that could not see 
 useless, and a weapon that could not hit scenery would be worse. Sensors are what would want
 filtering out here, and there are none yet.
 
+**Character controllers are not hit, and cannot be.** `NarrowPhaseQuery` searches bodies, and a
+`CharacterVirtual` is not one — it has no `BodyID` and is not in the broadphase. The same absence
+is why a character raises no `OnCollisionEnter` (above). So a cast at a character always misses,
+whatever is or is not between the two, and "did this ray reach the player" cannot be asked of one.
+A line-of-sight test against a character has to be written the other way round — cast at it over
+exactly the distance to it, and read a **miss** as a clear line — which is what the Proving
+Ground's `Enemy.lua` does, on the `first-game` branch. Jolt's own answer is
+`CharacterVirtualSettings::mInnerBodyShape`, which puts a body in the broadphase that moves with
+the character; it is not built, and is recorded in
+[docs/ToDo/cross-cutting.md](../ToDo/cross-cutting.md).
+
 Reading the surface normal needs the body, so a `BodyLockRead` is taken and released before
 returning — never held across a call into script. A body that vanishes between the cast and the
 lock yields `Entity = 0` and a zero normal rather than failing the query.
