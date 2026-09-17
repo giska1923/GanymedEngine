@@ -42,7 +42,23 @@ gcc 11.4). Native hardware has now been tried for Vulkan; GL and audio still hav
   `VK_ERROR_DEVICE_LOST`. Surface creation was not the problem. The bake shaders now use
   integer-bounded loops, and `Environment::Bake` splits stages with `bgfx::frame()` when the
   live device is Intel + Vulkan — see [rendering.md](../engine/rendering.md#environment--ibl).
-  Four attempts later it is **not diagnosed**. Integer-bounded loops, an 8x sample-count cut, a
+  **Diagnosed and fixed.** The cause was `bgfx::Attachment::init`'s default last parameter,
+  `BGFX_RESOLVE_AUTO_GEN_MIPS`: the bake asked bgfx to generate mips for a cubemap whose mips it
+  renders by hand, and bgfx's Vulkan mip-gen builds that blit with `baseArrayLayer = face` and
+  `layerCount = 6`, which is out of bounds for every face but 0. ANV hangs on it; D3D11 and NVIDIA
+  do not. Passing `BGFX_RESOLVE_NONE` is the whole fix - see
+  [rendering.md](../engine/rendering.md#environment--ibl).
+
+  **What actually found it was the Khronos validation layer**, which had never been loaded: every
+  earlier log shows `Enabled instance layers:` empty while `VK_EXT_debug_report` and
+  `VK_EXT_debug_utils` were both enabled, so bgfx had a callback waiting with nothing feeding it.
+  Four changes were made before that on inference from timings and hang locations, and all four
+  were aimed at the wrong thing. On a machine that reproduces a GPU hang, install
+  `vulkan-validationlayers` and run with `VK_LOADER_LAYERS_ENABLE='*validation*'` **first**.
+
+  *The history of the four wrong turns follows, because the reasoning is the part worth keeping.*
+
+  Four attempts in it was **not diagnosed**. Integer-bounded loops, an 8x sample-count cut, a
   clamp on an out-of-range prefilter LOD and splitting the bake across command buffers all left it
   hanging. With the GPU drained between stages so the timing means something, it dies **before the
   first stage reports** - and that stage is the panorama blit, one `texture2D` fetch per pixel with

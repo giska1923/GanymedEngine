@@ -77,10 +77,34 @@ namespace GanymedE {
 		}
 
 		// A framebuffer targeting one face (and mip) of a cubemap.
+		//
+		// **BGFX_RESOLVE_NONE is load-bearing, and it is the last parameter's DEFAULT that is the
+		// trap.** `Attachment::init` declares `uint8_t _resolve = BGFX_RESOLVE_AUTO_GEN_MIPS`, so
+		// the five-argument call every tutorial writes asks bgfx to generate the mip chain when
+		// this attachment resolves.
+		//
+		// That is wrong twice over here. Pointless, because the bake renders every mip from the
+		// panorama by hand - there is nothing for bgfx to generate. And broken, because bgfx's
+		// Vulkan mip-gen computes the blit's array range as
+		//
+		//     baseArrayLayer = _layer          // the face we attached, 1..5
+		//     layerCount     = m_numSides      // forced to 6 for any cubemap
+		//
+		// (`TextureVK::resolve`, renderer_vk.cpp). For face 1 that asks for layers 1..6 of a
+		// six-layer image, which is out of bounds. The Khronos validation layer says so in as many
+		// words - VUID-vkCmdBlitImage-srcSubresource-01707, and the matching barrier VUID - and on
+		// Mesa ANV the malformed blit **hangs the GPU**: i915 `GPU hung on one of our command
+		// buffers`, VK_ERROR_DEVICE_LOST, on the first frame the bake submits. D3D11 and NVIDIA
+		// tolerate it silently, which is why this survived every platform the engine had been run
+		// on.
+		//
+		// Nothing above this line can fix it: not smaller command buffers, not fewer samples, not
+		// a clamped LOD. The blit is issued by bgfx on resolve, and the only say we have is
+		// whether to ask for it.
 		bgfx::FrameBufferHandle FaceFramebuffer(bgfx::TextureHandle cubemap, uint16_t face, uint16_t mip)
 		{
 			bgfx::Attachment attachment;
-			attachment.init(cubemap, bgfx::Access::Write, face, 1, mip);
+			attachment.init(cubemap, bgfx::Access::Write, face, 1, mip, BGFX_RESOLVE_NONE);
 			return bgfx::createFrameBuffer(1, &attachment, false);
 		}
 
@@ -436,7 +460,11 @@ namespace GanymedE {
 		{
 			const uint16_t view = views.Take();
 			bgfx::Attachment attachment;
-			attachment.init(shared.BRDFLut, bgfx::Access::Write, 0, 1, 0);
+			// BGFX_RESOLVE_NONE for the same reason as the cube faces, though this one is a
+			// single-mip 2D target and so never reaches bgfx's mip-gen path. Explicit anyway: the
+			// default on this parameter is the bug, and a reader should not have to know that the
+			// mip count is what saves this call site.
+			attachment.init(shared.BRDFLut, bgfx::Access::Write, 0, 1, 0, BGFX_RESOLVE_NONE);
 			bgfx::FrameBufferHandle fb = bgfx::createFrameBuffer(1, &attachment, false);
 			framebuffers.push_back(fb);
 

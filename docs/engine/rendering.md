@@ -539,6 +539,17 @@ faces × mips, twice, + LUT). bgfx cannot mipmap render targets, so every env mi
 from the panorama directly. Binding is the caller's job (`Renderer3D` feeds the handles to
 `Shader::SetTexture` per material — samplers belong to shaders, there is no global bind).
 
+**Every cube-face attachment passes `BGFX_RESOLVE_NONE`, and that is the fix for the Intel hang.**
+`bgfx::Attachment::init` declares its last parameter as `uint8_t _resolve = BGFX_RESOLVE_AUTO_GEN_MIPS`,
+so the ordinary five-argument call asks bgfx to generate the texture's mip chain on resolve. The
+bake renders every mip by hand, so there was nothing to generate - and bgfx's Vulkan mip-gen
+computes the blit's array range as `baseArrayLayer = _layer` with `layerCount = m_numSides`
+(`TextureVK::resolve`), which for face 1 of a cubemap asks for layers 1..6 of a six-layer image.
+The Khronos validation layer reports it as `VUID-vkCmdBlitImage-srcSubresource-01707` plus the
+matching barrier VUID; on Mesa ANV the malformed blit **hangs the GPU** on the first frame the bake
+submits. D3D11 and NVIDIA tolerate it silently, which is why it survived every platform the engine
+had been run on until a native Linux box tried it.
+
 On D3D11 / NVIDIA Vulkan the whole bake is **one frame**: views execute in ID order, so each stage
 samples what a lower-numbered view wrote, and the scene pass in that same frame already sees the
 result. On **Intel + Vulkan** (Mesa ANV) that single submit has hung the GPU — `VK_ERROR_DEVICE_LOST`,
