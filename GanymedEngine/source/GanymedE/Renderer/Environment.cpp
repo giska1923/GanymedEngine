@@ -265,6 +265,30 @@ namespace GanymedE {
 			return;
 		}
 
+		// ---- GANYMED_SKIP_IBL_BAKE: a bisection switch, not a feature ----
+		//
+		// The targets above are created either way, so every handle stays valid and every sampler
+		// still resolves - they are simply never rendered into, which gives a black IBL and an
+		// editor that is ugly and alive.
+		//
+		// It exists because the Intel ANV hang has outlived three theories. With the pipeline
+		// drained, the GPU dies before the FIRST stage reports, and that stage is the panorama
+		// blit: one texture2D fetch per pixel, no loops, nothing the earlier fixes touched. And
+		// this bake runs from EditorLayer::OnAttach, so no frame has ever been presented when it
+		// happens - the submission that hangs is the first real rendering the process does.
+		//
+		// That makes "is it the bake at all, or is it the first frame" the only question left
+		// worth asking, and this answers it in one run. Env var rather than a config field
+		// because a debugging switch that survives into a shipped build is how config knobs are
+		// born.
+		if (const char* skip = std::getenv("GANYMED_SKIP_IBL_BAKE"); skip && skip[0] == '1')
+		{
+			GE_CORE_WARN("GANYMED_SKIP_IBL_BAKE=1 - IBL targets created but not rendered. "
+				"Ambient lighting will be black. This is a bisection switch; unset it for a "
+				"normal run.");
+			return;
+		}
+
 		glm::mat4 captureViews[6];
 		BuildCaptureViews(captureViews);
 		// The cubemap bake renders through real projections like any other pass, so it needs

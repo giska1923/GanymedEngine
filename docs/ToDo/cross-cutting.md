@@ -42,8 +42,22 @@ gcc 11.4). Native hardware has now been tried for Vulkan; GL and audio still hav
   `VK_ERROR_DEVICE_LOST`. Surface creation was not the problem. The bake shaders now use
   integer-bounded loops, and `Environment::Bake` splits stages with `bgfx::frame()` when the
   live device is Intel + Vulkan — see [rendering.md](../engine/rendering.md#environment--ibl).
-  That fix is **unverified on the machine that hung**; until it is, treat native Linux Vulkan as
-  diagnosed, not closed. Workaround if it still dies: `--renderer=opengl`.
+  Four attempts later it is **not diagnosed**. Integer-bounded loops, an 8x sample-count cut, a
+  clamp on an out-of-range prefilter LOD and splitting the bake across command buffers all left it
+  hanging. With the GPU drained between stages so the timing means something, it dies **before the
+  first stage reports** - and that stage is the panorama blit, one `texture2D` fetch per pixel with
+  no loop in it. The bake also runs from `EditorLayer::OnAttach`, so the submission that hangs is
+  the first real rendering the process ever does.
+
+  Two things are worth knowing before anyone picks this up again. `GANYMED_SKIP_IBL_BAKE=1` creates
+  the IBL targets without rendering into them, which answers "is it the bake at all, or is it the
+  first frame" in one run. And **the Vulkan validation layer has never been loaded** on that
+  machine - `Enabled instance layers:` is empty in every log - while `VK_EXT_debug_report` and
+  `VK_EXT_debug_utils` are both enabled, so bgfx already has a callback waiting for it. Installing
+  `vulkan-validationlayers` and forcing the layer in through the loader costs no code change and is
+  the most likely thing to name the actual fault.
+
+  Workaround meanwhile: `--renderer=opengl`.
 - **The GL driver stack.** WSLg's Mesa served GL through its **d3d12 gallium driver**
   (`D3D12 (Intel(R) UHD Graphics)`). Hardware-accelerated, but not what a native user runs.
 - **Audio.** miniaudio selected its Null device because WSL exposes none, so ALSA and PulseAudio
