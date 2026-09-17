@@ -295,10 +295,23 @@ namespace GanymedE {
 		// `GPU hung on one of our command buffers`, 14 seconds later, with no way to tell which
 		// convolution the GPU died in.
 		//
-		// On the split path the timing is real GPU time - bgfx::frame() in single-threaded mode
-		// does not return until the frame is rendered - so a run that SURVIVES also says where
-		// the cost is. Off it, this measures submission only (2-3 ms, see rendering.md), which is
-		// the number that was already documented.
+		// **One bgfx::frame() does not wait for the GPU, and a first version of this assumed it
+		// did.** bgfx returns as soon as it can begin the next frame, which against a 3-image
+		// swapchain is two to three frames of slack - so the flush that blocks is two or three
+		// stages downstream of the one the GPU is actually stuck on, and a stage can report
+		// 0.7 ms for 25M cube samples because it never waited for any of them. A run read that
+		// way blames the wrong convolution.
+		//
+		// kDrainFrames extra empty frames force the wait. With three swapchain images, acquiring
+		// the fourth cannot succeed until the first is free, which requires this stage's work to
+		// have finished. That makes the reported time real GPU time and, more importantly, makes
+		// a hang block in the stage that caused it.
+		//
+		// Only on the split path, and only ever at load: three empty frames per stage is a few
+		// vsyncs of extra hitch on the one boot that bakes an environment, in exchange for a
+		// diagnosis that is not a guess.
+		constexpr int kDrainFrames = 3;
+
 		auto flushBakeStage = [&](const char* stage)
 		{
 			if (!splitBakeStages)
@@ -311,9 +324,12 @@ namespace GanymedE {
 			Renderer::OnFrameSubmitted(bgfx::frame());
 			views.Next = RenderPass::EnvironmentBake;
 
+			for (int i = 0; i < kDrainFrames; i++)
+				Renderer::OnFrameSubmitted(bgfx::frame());
+
 			const double ms = std::chrono::duration<double, std::milli>(
 				std::chrono::steady_clock::now() - begin).count();
-			GE_CORE_INFO("IBL bake stage '{0}': {1:.1f} ms", stage, ms);
+			GE_CORE_INFO("IBL bake stage '{0}': {1:.1f} ms (drained)", stage, ms);
 		};
 
 		// When splitBakeStages is false, later stages sample earlier ones in the
