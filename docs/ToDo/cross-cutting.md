@@ -212,3 +212,51 @@ The fold is mechanical: move the three function bodies into `Core/Input.cpp`, de
 files, regenerate. It is left out of the cursor change because deleting three source files and
 adding one is a project-regeneration change that has nothing to do with cursor capture, and mixing
 them would make both harder to review.
+
+## A raycast cannot see a character controller
+
+`PhysicsScene::CastRay` goes through `NarrowPhaseQuery::CastRay`, which queries **bodies**. A
+`CharacterVirtual` is not a body: `CreateCharacters` builds it with a shape and a position and
+nothing else, so it has no `BodyID`, it is not in the broadphase, and no query can find it. The
+same holds for the contact listener - a character generates no `OnCollisionEnter`, because
+`CharacterVirtual` reports its contacts through its own listener interface, which nothing
+subscribes to.
+
+Three things follow, and P4 of [PROVING_GROUND.md](PROVING_GROUND.md) met all three. Its write-up
+is on the `first-game` branch, not in this copy - see that file's own branch policy:
+
+- **Enemies cannot be character controllers.** Make one a character and projectiles pass through
+  it, its `OnCollisionEnter` never fires, and nothing can raycast it. P4's enemies are dynamic
+  rigid bodies with `LockRotation` for exactly this reason, and they inherit the sticking failure
+  P1 found - a velocity-driven body does not slide along a wall.
+- **Line of sight is written inside out.** The game branch's `Game/assets/scripts/Enemy.lua` casts
+  at the player and treats a **miss** as "I can see you", because there is nothing at the far end
+  to hit. It works, it is cheap, and it is silently load-bearing: give the player an inner body
+  and every enemy in the scene goes blind in the same frame.
+- **"Did I shoot the player" cannot be asked at all.** P5 needs it.
+
+The standard fix is Jolt's own: give the character an inner rigid body
+(`CharacterVirtualSettings::mInnerBodyShape`, plus `mInnerBodyLayer`), which puts a sensor-ish
+body in the broadphase that moves with the character. Queries and contacts then find it, and the
+simulation still runs the character kinematically. That is one component field, one shape, and a
+decision about which object layer it belongs to - the layer is the part worth thinking about,
+because the inner body must not start blocking the character it belongs to.
+
+Not scheduled before P5, which is the phase that needs it.
+
+## `CharacterVirtual::mMaxStrength` is not exposed, and a scripted body cannot be pushed anyway
+
+Jolt's character *does* push dynamic bodies: `CharacterVirtual::HandleContact` applies an impulse
+to any dynamic body it touches, clamped to `mMaxStrength * dt`. `CreateCharacters` never sets
+`mMaxStrength`, so every character in the engine runs on Jolt's default of 100 N, and
+`CharacterControllerComponent` gives nobody a way to change it.
+
+That is a small gap on its own. It is a larger one in combination with how gameplay drives an NPC:
+the game branch's `Enemy.lua` writes `SetLinearVelocity` every frame, which overwrites whatever
+impulse the character imparted before the next step ever sees it. **A script-driven body cannot
+be pushed by anything**, which means an NPC standing in a doorway is an impassable door.
+
+Both halves are worth fixing and they are separate: exposing `MaxStrength` is a field, while
+"pushes should survive a velocity write" is a question about whether the velocity API should set
+or should target - an `AddVelocity`/`SetDesiredVelocity` distinction, which is what controllers in
+most engines end up with.
