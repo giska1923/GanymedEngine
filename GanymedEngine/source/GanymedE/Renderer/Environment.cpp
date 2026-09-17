@@ -77,10 +77,34 @@ namespace GanymedE {
 		}
 
 		// A framebuffer targeting one face (and mip) of a cubemap.
+		//
+		// **BGFX_RESOLVE_NONE is load-bearing, and it is the last parameter's DEFAULT that is the
+		// trap.** `Attachment::init` declares `uint8_t _resolve = BGFX_RESOLVE_AUTO_GEN_MIPS`, so
+		// the five-argument call every tutorial writes asks bgfx to generate the mip chain when
+		// this attachment resolves.
+		//
+		// That is wrong twice over here. Pointless, because the bake renders every mip from the
+		// panorama by hand - there is nothing for bgfx to generate. And broken, because bgfx's
+		// Vulkan mip-gen computes the blit's array range as
+		//
+		//     baseArrayLayer = _layer          // the face we attached, 1..5
+		//     layerCount     = m_numSides      // forced to 6 for any cubemap
+		//
+		// (`TextureVK::resolve`, renderer_vk.cpp). For face 1 that asks for layers 1..6 of a
+		// six-layer image, which is out of bounds. The Khronos validation layer says so in as many
+		// words - VUID-vkCmdBlitImage-srcSubresource-01707, and the matching barrier VUID - and on
+		// Mesa ANV the malformed blit **hangs the GPU**: i915 `GPU hung on one of our command
+		// buffers`, VK_ERROR_DEVICE_LOST, on the first frame the bake submits. D3D11 and NVIDIA
+		// tolerate it silently, which is why this survived every platform the engine had been run
+		// on.
+		//
+		// Nothing above this line can fix it: not smaller command buffers, not fewer samples, not
+		// a clamped LOD. The blit is issued by bgfx on resolve, and the only say we have is
+		// whether to ask for it.
 		bgfx::FrameBufferHandle FaceFramebuffer(bgfx::TextureHandle cubemap, uint16_t face, uint16_t mip)
 		{
 			bgfx::Attachment attachment;
-			attachment.init(cubemap, bgfx::Access::Write, face, 1, mip);
+			attachment.init(cubemap, bgfx::Access::Write, face, 1, mip, BGFX_RESOLVE_NONE);
 			return bgfx::createFrameBuffer(1, &attachment, false);
 		}
 
@@ -265,6 +289,30 @@ namespace GanymedE {
 			return;
 		}
 
+		// ---- GANYMED_SKIP_IBL_BAKE: a bisection switch, not a feature ----
+		//
+		// The targets above are created either way, so every handle stays valid and every sampler
+		// still resolves - they are simply never rendered into, which gives a black IBL and an
+		// editor that is ugly and alive.
+		//
+		// It exists because the Intel ANV hang has outlived three theories. With the pipeline
+		// drained, the GPU dies before the FIRST stage reports, and that stage is the panorama
+		// blit: one texture2D fetch per pixel, no loops, nothing the earlier fixes touched. And
+		// this bake runs from EditorLayer::OnAttach, so no frame has ever been presented when it
+		// happens - the submission that hangs is the first real rendering the process does.
+		//
+		// That makes "is it the bake at all, or is it the first frame" the only question left
+		// worth asking, and this answers it in one run. Env var rather than a config field
+		// because a debugging switch that survives into a shipped build is how config knobs are
+		// born.
+		if (const char* skip = std::getenv("GANYMED_SKIP_IBL_BAKE"); skip && skip[0] == '1')
+		{
+			GE_CORE_WARN("GANYMED_SKIP_IBL_BAKE=1 - IBL targets created but not rendered. "
+				"Ambient lighting will be black. This is a bisection switch; unset it for a "
+				"normal run.");
+			return;
+		}
+
 		glm::mat4 captureViews[6];
 		BuildCaptureViews(captureViews);
 		// The cubemap bake renders through real projections like any other pass, so it needs
@@ -281,6 +329,11 @@ namespace GanymedE {
 		// The bake writes render targets and samples them back in later stages of
 		// the SAME frame. That is only safe because bgfx processes views in ID
 		// order and every stage below takes higher IDs than the one it samples.
+		//
+		// It was split across frames on Intel + Vulkan for a while, with the GPU drained between
+		// stages, while the ANV hang was being chased. Neither was ever the fix - the hang was a
+		// malformed mip-gen blit that bgfx issued because `BGFX_RESOLVE_AUTO_GEN_MIPS` is the
+		// default on `Attachment::init` (see FaceFramebuffer). One asset tree, one code path.
 		auto renderCubeFace = [&](bgfx::TextureHandle target, uint16_t face, uint16_t mip,
 			uint32_t size, const Ref<Shader>& shader)
 		{
@@ -333,7 +386,10 @@ namespace GanymedE {
 			{
 				prefilterShader->SetTexture("u_EnvironmentMap", 0, m_EnvCubemap, BGFX_SAMPLER_UVW_CLAMP);
 				prefilterShader->SetFloat("u_Roughness", roughness);
-				prefilterShader->SetFloat("u_Resolution", (float)kEnvSize);
+				// .y is the highest LOD that exists in the source chain. The shader clamps to it;
+				// without that it asks for levels two to three times past the end.
+				prefilterShader->SetFloat2("u_Resolution",
+					glm::vec2((float)kEnvSize, (float)(kEnvMips - 1)));
 				renderCubeFace(m_Prefilter, face, mip, mipSize, prefilterShader);
 			}
 		}
@@ -343,7 +399,11 @@ namespace GanymedE {
 		{
 			const uint16_t view = views.Take();
 			bgfx::Attachment attachment;
-			attachment.init(shared.BRDFLut, bgfx::Access::Write, 0, 1, 0);
+			// BGFX_RESOLVE_NONE for the same reason as the cube faces, though this one is a
+			// single-mip 2D target and so never reaches bgfx's mip-gen path. Explicit anyway: the
+			// default on this parameter is the bug, and a reader should not have to know that the
+			// mip count is what saves this call site.
+			attachment.init(shared.BRDFLut, bgfx::Access::Write, 0, 1, 0, BGFX_RESOLVE_NONE);
 			bgfx::FrameBufferHandle fb = bgfx::createFrameBuffer(1, &attachment, false);
 			framebuffers.push_back(fb);
 
@@ -367,12 +427,9 @@ namespace GanymedE {
 		// because these views sort before the scene passes (RenderPassIDs.h) the results are
 		// readable by the very frame this was submitted into.
 		//
-		// **No `bgfx::frame()` here.** It used to call it twice, to force the bake through
-		// before releasing the framebuffers - 24-26 ms of blocked main thread, measured, and it
-		// also presented two half-built frames on its way past. Destroying a framebuffer is
-		// deferred by bgfx until the frame that used it has been rendered, so the handles below
-		// can go back immediately; the cube textures they wrote into are owned by this object
-		// and survive.
+		// Destroying a framebuffer is deferred by bgfx until the frame that used it has
+		// been rendered, so the handles below can go back immediately; the cube textures
+		// they wrote into are owned by this object and survive.
 		for (bgfx::FrameBufferHandle fb : framebuffers)
 		{
 			if (bgfx::isValid(fb))

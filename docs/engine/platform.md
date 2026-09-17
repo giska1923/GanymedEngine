@@ -84,7 +84,7 @@ the backbuffer swapchain:
   runtime (see the premake comment and BGFX_MIGRATION §9.3).
 - `Frame()` touches the backbuffer view (a view with no draws is skipped *including its clear*),
   calls `bgfx::frame()`, and reports the returned frame number to `Renderer::OnFrameSubmitted`
-  (async readback polls against it).
+  (async readback polls against it). It is the only caller of `bgfx::frame()` in the engine.
 - The destructor lowers `Renderer::SetGpuAlive(false)` **before** `bgfx::shutdown()` — the flag
   every GPU-resource destructor checks so statics outliving `main()` don't call into dead bgfx.
 - `Resize`/`SetVSync` funnel into one `Reset()` (`bgfx::reset` + backbuffer view rect).

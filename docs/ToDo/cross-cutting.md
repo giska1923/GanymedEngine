@@ -33,19 +33,56 @@ do not support, and deciding to support one is a bigger call than a ToDo entry.
 ## The Linux build is verified in WSL2, not on a real Linux machine
 
 Distinct from the above, and smaller. The Linux build and run happened under WSL2 (Ubuntu 22.04,
-gcc 11.4), which leaves three things genuinely untested rather than merely unmentioned:
+gcc 11.4). Native hardware has now been tried for Vulkan; GL and audio still have not.
 
-- **Vulkan.** WSL has no Vulkan loader, so bgfx fell through to OpenGL. On a native Linux box
-  Vulkan is the backend bgfx picks first, and it is therefore the one that matters most there.
-  It *is* verified on Windows, pixel-identical to D3D11, so the risk is the platform glue
-  (GLFW native handles, surface creation) rather than the renderer.
+- **Vulkan / Intel ANV.** WSL has no Vulkan loader, so bgfx fell through to OpenGL. On a native
+  Linux box Vulkan is the backend bgfx picks first. A native Ubuntu run on Intel UHD (TGL GT1)
+  brought Vulkan up, created the swapchain, loaded shaders, submitted the IBL bake, then died in
+  the first `bgfx::frame()` with Mesa ANV `GPU hung on one of our command buffers` /
+  `VK_ERROR_DEVICE_LOST`. Surface creation was not the problem. The bake shaders now use
+  integer-bounded loops, and `Environment::Bake` splits stages with `bgfx::frame()` when the
+  live device is Intel + Vulkan — see [rendering.md](../engine/rendering.md#environment--ibl).
+  **Diagnosed and fixed.** The cause was `bgfx::Attachment::init`'s default last parameter,
+  `BGFX_RESOLVE_AUTO_GEN_MIPS`: the bake asked bgfx to generate mips for a cubemap whose mips it
+  renders by hand, and bgfx's Vulkan mip-gen builds that blit with `baseArrayLayer = face` and
+  `layerCount = 6`, which is out of bounds for every face but 0. ANV hangs on it; D3D11 and NVIDIA
+  do not. Passing `BGFX_RESOLVE_NONE` is the whole fix - see
+  [rendering.md](../engine/rendering.md#environment--ibl).
+
+  **What actually found it was the Khronos validation layer**, which had never been loaded: every
+  earlier log shows `Enabled instance layers:` empty while `VK_EXT_debug_report` and
+  `VK_EXT_debug_utils` were both enabled, so bgfx had a callback waiting with nothing feeding it.
+  Four changes were made before that on inference from timings and hang locations, and all four
+  were aimed at the wrong thing. On a machine that reproduces a GPU hang, install
+  `vulkan-validationlayers` and run with `VK_LOADER_LAYERS_ENABLE='*validation*'` **first**.
+
+  **Verified on the machine that hung**: editor and runtime both boot and run. The staged bake and
+  the inter-stage GPU drain that were added while chasing this are gone again - they were never the
+  fix, and a second code path for one vendor is not worth carrying for a theory that turned out to
+  be wrong. Native Linux Vulkan is closed.
+
+  *The history of the four wrong turns follows, because the reasoning is the part worth keeping.*
+
+  Four attempts in it was **not diagnosed**. Integer-bounded loops, an 8x sample-count cut, a
+  clamp on an out-of-range prefilter LOD and splitting the bake across command buffers all left it
+  hanging. With the GPU drained between stages so the timing means something, it dies **before the
+  first stage reports** - and that stage is the panorama blit, one `texture2D` fetch per pixel with
+  no loop in it. The bake also runs from `EditorLayer::OnAttach`, so the submission that hangs is
+  the first real rendering the process ever does.
+
+  Two things are worth knowing before anyone picks this up again. `GANYMED_SKIP_IBL_BAKE=1` creates
+  the IBL targets without rendering into them, which answers "is it the bake at all, or is it the
+  first frame" in one run. And **the Vulkan validation layer has never been loaded** on that
+  machine - `Enabled instance layers:` is empty in every log - while `VK_EXT_debug_report` and
+  `VK_EXT_debug_utils` are both enabled, so bgfx already has a callback waiting for it. Installing
+  `vulkan-validationlayers` and forcing the layer in through the loader costs no code change and is
+  the most likely thing to name the actual fault.
+
+  Workaround meanwhile: `--renderer=opengl`.
 - **The GL driver stack.** WSLg's Mesa served GL through its **d3d12 gallium driver**
   (`D3D12 (Intel(R) UHD Graphics)`). Hardware-accelerated, but not what a native user runs.
 - **Audio.** miniaudio selected its Null device because WSL exposes none, so ALSA and PulseAudio
   were never opened. It degraded cleanly, which is worth something, but it is not a test.
-
-A single run on a native Linux box would close all three at once. Nothing here is known to be
-broken; it is simply unmeasured, and recorded so the Linux row is not read as more than it is.
 
 ## A frame profiler (Tracy) is still worth considering
 

@@ -30,7 +30,7 @@ documented.** A file here is a promise, not a description.
 | Document | Covers | Items |
 |---|---|---|
 | [PROVING_GROUND.md](PROVING_GROUND.md) | **Milestone plan** — the test game, and the engine work that must land first | Phase 0 + P1-P7 |
-| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types | 2 |
+| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL | 3 |
 | [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
 | [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
 | [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, five gaps around character controllers and contacts, a fixed HUD data model, and two shipping gaps | 16 |
@@ -58,7 +58,9 @@ latent bug that was never about spawning: `PhysicsScene::CreateBodies` ran only 
 three configurations, editor and runtime, with the status table in
 [build-and-tooling.md](../engine/build-and-tooling.md#platform-status). What is left in
 [cross-cutting.md](cross-cutting.md) is macOS (never compiled) and the gap between "runs in WSL2"
-and "runs on Linux" — chiefly Vulkan, which WSL cannot load.
+and "runs on Linux" — chiefly native Vulkan. WSL cannot load it; a native Intel UHD box
+brought it up and then hung in the IBL bake (`VK_ERROR_DEVICE_LOST`). The bake is split on
+Intel+Vulkan now; that still needs a re-run on the machine that hung.
 
 [assets.md](assets.md)'s entries were **measured**, and one of them is now **done**: parse
 backpressure was real and was a memory bound — 24 meshes loaded at once held 127 MB of decoded data

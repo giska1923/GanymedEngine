@@ -302,6 +302,29 @@ Three things made the OpenGL bugs findable, and they generalise:
    back vertically mirrored against D3D11/D3D12/Vulkan, which was the *expected* raw-target
    convention rather than a bug — but it was only readable as such because the other three agreed.
 
+## Runtime IBL convolution vs an offline bake
+
+The split-sum bake runs as fragment shaders at load, every time an HDR is loaded: hemisphere
+irradiance, GGX prefilter, BRDF LUT. UE and Unity do not do that at runtime — they persist a
+cubemap + SH (or a prefiltered specular chain) from an editor/offline step. Ganymed cannot yet:
+`Environment` has no compiled output, only the HDR source.
+
+**This is no longer where the Intel ANV hang lives** — that was a malformed mip-gen blit and is
+fixed (see [cross-cutting.md](cross-cutting.md)). What the hunt left behind is the observation that
+prompted this entry: the bake was running the LearnOpenGL teaching sample counts, about 500M
+fragment-loop iterations for one environment, and cutting them to production values (4096 / 128 /
+256, a 256² LUT) changed nothing visible. Work nobody could see is still work nobody should pay
+for on every load. What is still the right production shape, and is **not** done:
+
+- Persist the four bake targets (env cube, irradiance, prefilter, shared BRDF LUT) next to the HDR
+  as a compiled Environment output, and skip the GPU convolution on subsequent loads.
+- The BRDF LUT is a pure function of the BRDF. Baking it at runtime at all is wasted work; it can
+  ship as a 256² RG16F asset.
+
+Until that exists, every new HDR costs a convolution on every load, on every machine. The item sits
+here rather than in assets.md because the missing compiler is a renderer pass writing textures, not
+an importer.
+
 ## Optional, and explicitly not scheduled
 
 From the same section, listed so they are not rediscovered as if they were new: multithreaded render
