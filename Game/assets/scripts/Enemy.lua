@@ -328,9 +328,14 @@ function Enemy:Move(ts, dist)
     end
 end
 
--- Three states, three clips. Fox.glb is the only asset in this tree with more than one clip, and
--- driving six instances between three of them in the same frame is the part of the animator the
--- animation milestone never reached: it verified two entities on different clips.
+-- Three states, three clips. Driving six instances between three of them in the same frame is
+-- the part of the animator the animation milestone never reached: it verified two entities on
+-- different clips.
+--
+-- The names are not ours. The engine resolves a clip by name off the mesh asset
+-- (AnimationSystem::ResolveClip -> Mesh::FindClip), so these are whatever Meshy's animation
+-- library baked into Ork.glb - which is why they read like library entries rather than states.
+-- Renaming them means re-exporting the character, not editing this file.
 --
 -- PlayAnimation every frame is the documented idiom - it restarts only on an actual clip change,
 -- so calling it from a branch like this advances time instead of pinning it at zero.
@@ -341,11 +346,14 @@ function Enemy:Animate()
 
     local clip, speed
     if self.state == "hunt" then
-        clip, speed = "Run", 1.0
+        -- RunFast is a 0.47 s stride, roughly a third of the walk's cadence per step. At 1.0 it
+        -- outruns the 4 m/s charge it is meant to sell, so it is pulled back.
+        clip, speed = "RunFast", 0.8
     elseif self.moving then
-        clip, speed = "Walk", 1.0
+        clip, speed = "Slow_Orc_Walk", 1.0
     else
-        clip, speed = "Survey", 0.6
+        -- 7.87 s already, and the old 0.6 on Fox's 3.4 s Survey was there to slow it down.
+        clip, speed = "Short_Breathe_and_Look_Around", 1.0
     end
 
     self.body:PlayAnimation(clip)

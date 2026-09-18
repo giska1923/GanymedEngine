@@ -370,6 +370,49 @@ Two ways to do it, and the choice is the whole of the work:
 Either way `UI.SetHealth`/`UI.SetScore` should stay as they are - a HUD that every game has wants
 the short call, and the general path is for the rest.
 
+## Nothing can be attached to a joint, so a character cannot hold anything
+
+There is no bone-socket concept anywhere: nothing in `Scene/` or `Scripting/` can read a joint's
+transform, and `AnimatorComponent::Palette` is consumed only by `RenderSystem`. An entity can be
+parented to another entity, never to a *joint* of one.
+
+The consequence is concrete rather than theoretical. The player is unarmed on screen because a
+rifle cannot be put in its hand: parenting the weapon to the `Yaw` entity leaves it floating at a
+fixed offset, ignoring every arm animation, and modelling it into the character instead makes
+auto-rig weight it across both arms and the chest, so it stretches on any clip that swings the
+arms independently. Meshy produced exactly that on the first attempt, which is what the re-roll
+in [PROVING_GROUND.md](PROVING_GROUND.md) was for.
+
+The fix is small, and smaller than it looks because the hard part already exists. The palette is
+already composed every frame and already lives on the component, so a `BoneAttachmentComponent`
+holding a parent entity and a joint *name* needs only to resolve that name to an index once and
+write the child's world transform from the palette each frame, after `AnimationSystem` and before
+`TransformSystem` publishes world matrices. Ordering is the only real design question.
+
+Not scheduled, because nothing in the game needs a held weapon yet — the muzzle flash is a
+particle emitter on `Yaw` and reads correctly without one. Recorded because "the player has no
+gun" has a cause, and the cause is this.
+
+## Animation clips cannot be separated from the mesh that ships them
+
+`AnimationSystem::ResolveClip` looks a clip up with `Mesh::FindClip`, so clips live inside the
+mesh asset. There is no clip asset, and no retargeting: a clip authored against one skeleton
+cannot be applied to another, and `Walk.glb` cannot be applied to `Character.glb`.
+
+Every engine of this kind separates the two — Unity's Animation Clips, Unreal's Animation
+Sequences — because it decouples *who made the mesh* from *where the animations come from*.
+Here it forces every clip set through the character's own export: three clips today, and a fourth
+means re-exporting and re-downloading the character rather than importing one file.
+
+The runtime types, the binary serializer (`MeshCompiler::WriteClips`/`ReadClips`) and the sampler
+all exist already. What is missing is an importer that reads `animations` out of a glb carrying no
+mesh, somewhere on the entity to list extra clip assets, and channel remapping by joint **name**
+rather than index so a clip survives meeting a different skeleton.
+
+Worth doing as its own milestone; explicitly **not** worth building a keyframe or timeline editor
+alongside it. Authoring animation by hand would produce worse results than a library gives free,
+and the tool is not the bottleneck.
+
 ## A shipped Dist build is not self-contained
 
 `staticruntime "off"` in both `GanymedEngine/premake5.lua` and `GanymedRuntime/premake5.lua`, in

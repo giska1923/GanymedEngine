@@ -1,0 +1,10 @@
+Material:
+  Name: BakedMaterial
+  Albedo: [1, 1, 1, 1]
+  Metallic: 1
+  Roughness: 1
+  AlbedoMap: models/characters/ArmoredHumanoid_textures/albedo_0.jpg
+  NormalMap: models/characters/ArmoredHumanoid_textures/normal_0.jpg
+  MetallicRoughnessMap: models/characters/ArmoredHumanoid_textures/metallicRoughness_0.jpg
+  TwoSided: false
+  Transparent: false

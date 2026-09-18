@@ -1,0 +1,9 @@
+Material:
+  Name: BakedMaterial
+  Albedo: [1, 1, 1, 1]
+  Metallic: 1
+  Roughness: 1
+  AlbedoMap: models/weapons/Rifle_textures/albedo_0.png
+  MetallicRoughnessMap: models/weapons/Rifle_textures/metallicRoughness_0.png
+  TwoSided: false
+  Transparent: false

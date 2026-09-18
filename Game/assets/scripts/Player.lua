@@ -108,6 +108,9 @@ local Player = {
     -- P6.
     footsteps = nil,
     muzzle = nil,
+    -- P8. The mesh child, which carries the skin and the AnimatorComponent.
+    body = nil,
+    clip = nil,
     stepTimer = 0.0,
     steps = 0,
     muzzleBursts = 0,
@@ -253,8 +256,10 @@ function Player:OnCreate()
     if self.yawEntity then
         self.muzzle = self.yawEntity:GetChildByName("Muzzle")
     end
+    self.body = self.entity:GetChildByName("Body")
     if not self.footsteps then Log.Warn("Player: no 'Footsteps' child - no step sound") end
     if not self.muzzle then Log.Warn("Player: no 'Muzzle' child under Yaw - no muzzle flash") end
+    if not self.body then Log.Warn("Player: no 'Body' child - the player will not animate") end
 
     Log.Info("Player: click to look, Escape to release the cursor")
 
@@ -598,7 +603,45 @@ function Player:Tick(ts)
     end
 
     self:Step(ts)
+    self:Animate()
     self:PushUI()
+end
+
+-- The player's own three clips, chosen from the capsule's measured horizontal speed rather
+-- than from the input. Easing toward a probe point runs at 1.2 m/s (Player:Route), and driving
+-- this off "is a key held" would snap between idle and a sprint through the whole approach.
+--
+-- The Body child sits under the capsule, not under Yaw, so it does not inherit the mouse yaw -
+-- which is correct for now: the mesh faces the capsule's forward, and the capsule never turns.
+-- The character therefore strafes without turning, the same way the placeholder cube did. A
+-- turning mesh needs the Body reparented under Yaw, and that is a change to what the gates
+-- measured, so it is written into docs/ToDo/ rather than folded in here.
+function Player:Animate()
+    if not self.body then
+        return
+    end
+
+    local v = self.entity:GetLinearVelocity()
+    local speed = math.sqrt(v.x * v.x + v.z * v.z)
+
+    -- Airborne or downed is not walking, whatever the horizontal velocity says. Same test
+    -- Player:Step uses to keep footsteps off a falling character.
+    if self.downed or not self.entity:IsGrounded() then
+        speed = 0.0
+    end
+
+    local clip, animSpeed
+    if speed < 0.5 then
+        clip, animSpeed = "Idle", 1.0
+    elseif speed < 4.0 then
+        clip, animSpeed = "Casual_Walk", 1.0
+    else
+        clip, animSpeed = "RunFast", 0.6
+    end
+
+    self.body:PlayAnimation(clip)
+    self.body:SetAnimationSpeed(animSpeed)
+    self.clip = clip
 end
 
 -- Footsteps.
