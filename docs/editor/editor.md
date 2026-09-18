@@ -667,7 +667,7 @@ drawer and falls through to the nested-struct fallback below, so a collider stil
 and `Restitution` as its own rows. `RangeF` has one, and drawing its `Min` and `Max` as two loose
 rows is precisely the widget that type was introduced to replace.
 
-**Converted (15 of 20):** Sprite Renderer, Directional / Point / Spot Light, Transform, **Camera**,
+**Converted (15 of 19):** Sprite Renderer, Directional / Point / Spot Light, Transform, **Camera**,
 **Sky Light**, Audio Listener, Audio Source, Prefab Instance, Particle Emitter, Rigid Body, and the
 three colliders.
 
@@ -690,6 +690,7 @@ vocabulary deliberately cannot say:
 | ----------- | ----------------------------------------------------------------------------------- |
 | Static Mesh | The material-override list is sized by the **mesh asset**, not by component members |
 | Animator    | Clip names come from the mesh asset                                                 |
+| Bone Attachment | Joint names come from the **target** entity's skeleton, not this entity's        |
 | Script      | The field schema comes from Lua, not from C++                                       |
 
 **Camera and Sky Light converted via a field filter.** Their blocker was field _visibility_
@@ -790,6 +791,11 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   overwrite the scrubbed value on the next update and the slider would look broken. Falls back to
   "No rigged mesh on this entity" when the mesh has no skeleton. Scripts drive the same component
   through `PlayAnimation` and friends — see [scripting.md](../engine/scripting.md).
+- Bone attachment: **Target** is a drop from the outliner (zero / Parent button = hierarchy parent),
+  and **Joint** is a combo over the *target's* `skeleton.JointNames`, not this entity's — the
+  inspector has not previously read another entity's mesh for any component. Offset and Rotation
+  are reflected (`Trait::Radians` on Rotation). Local transform is ignored while the socket
+  resolves; edit Offset, not the gizmo, to place the attached mesh in the hand.
 - Script: shows the `.lua` asset (handle + path) with a Clear button — assign with
   `AcceptAssetDropHandle(Script)`. Below it, one row per property the
   script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The

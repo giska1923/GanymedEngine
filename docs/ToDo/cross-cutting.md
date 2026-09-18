@@ -324,6 +324,16 @@ Jolt reports persisting contacts through `ContactListener::OnContactPersisted`, 
 the way to scripts; the question worth thinking about first is whether gameplay wants a per-frame
 event at all, or a queryable "who am I touching" set, which is what most engines settle on.
 
+## `CharacterControllerComponent` is not in `ComponentList`
+
+Found while adding `BoneAttachmentComponent` to that list. The controller is reflected, has a
+hand-written serializer block, and is a real component on entities, but `Scene::Copy` and
+`DuplicateEntity` iterate `ComponentList` — so a character in the editor scene loses the controller
+on play, and a duplicated character is not a character. The constructor's change-buffer hookup
+skips it too; that is harmless today because the type is untracked.
+
+The fix is adding it to the list. There is no runtime field to reset on copy.
+
 ## A character cannot be teleported
 
 Nothing moves a character except its own velocity. Its `TransformComponent` is overwritten from the

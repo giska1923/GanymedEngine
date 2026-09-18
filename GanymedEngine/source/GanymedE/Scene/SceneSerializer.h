@@ -42,9 +42,10 @@ namespace GanymedE {
 		// all exist (see ResolveHierarchy).
 		static Entity DeserializeEntity(const YAML::Node& entityNode, Scene& scene, UUID uuid);
 
-		// Re-points Parent/Children from file UUIDs to the UUIDs the entities were
-		// actually created with, after a batch of DeserializeEntity calls. `created` is in
-		// file order; `fileUUIDs` is the UUID each entry carried in the file.
+		// Re-points Parent/Children (and BoneAttachmentComponent::Target) from file UUIDs
+		// to the UUIDs the entities were actually created with, after a batch of
+		// DeserializeEntity calls. `created` is in file order; `fileUUIDs` is the UUID
+		// each entry carried in the file.
 		static void ResolveHierarchy(Scene& scene, const std::vector<Entity>& created,
 			const std::vector<UUID>& fileUUIDs);
 	private:

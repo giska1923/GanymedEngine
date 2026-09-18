@@ -111,6 +111,39 @@ namespace GanymedE {
 			return scene ? scene->Systems().Get<AudioSystem>() : nullptr;
 		}
 
+		void AttachToBone(Entity& e, Entity& target, const std::string& joint,
+			const glm::vec3& offset, const glm::vec3& rotation)
+		{
+			if (!e || !target || target.GetUUID() == e.GetUUID())
+				return;
+
+			Scene* scene = Context();
+			if (!scene)
+				return;
+
+			if (e.HasComponent<BoneAttachmentComponent>())
+			{
+				auto& attachment = e.GetComponent<BoneAttachmentComponent>();
+				attachment.Target = target.GetUUID();
+				attachment.Joint = joint;
+				attachment.Offset = offset;
+				attachment.Rotation = rotation;
+				attachment.Resolved = -1;
+				return;
+			}
+
+			BoneAttachmentComponent attachment;
+			attachment.Target = target.GetUUID();
+			attachment.Joint = joint;
+			attachment.Offset = offset;
+			attachment.Rotation = rotation;
+
+			if (scene->IsUpdating())
+				scene->Commands().AddComponent<BoneAttachmentComponent>(e, attachment);
+			else
+				e.AddComponent<BoneAttachmentComponent>(attachment);
+		}
+
 		void RegisterVec3(sol::state& lua)
 		{
 			lua.new_usertype<glm::vec3>("Vec3",
@@ -229,6 +262,7 @@ namespace GanymedE {
 
 				"HasRigidBody",      [](Entity& e) { return e.HasComponent<RigidBodyComponent>(); },
 				"HasAnimator",       [](Entity& e) { return e.HasComponent<AnimatorComponent>(); },
+				"HasBoneAttachment", [](Entity& e) { return e.HasComponent<BoneAttachmentComponent>(); },
 				"HasAudioSource",    [](Entity& e) { return e.HasComponent<AudioSourceComponent>(); },
 				"HasParticleEmitter", [](Entity& e) { return e.HasComponent<ParticleEmitterComponent>(); },
 
@@ -297,6 +331,44 @@ namespace GanymedE {
 					return e.HasComponent<AnimatorComponent>()
 						? e.GetComponent<AnimatorComponent>().Clip
 						: std::string{};
+				},
+
+				// --- Bone sockets ---
+				// BoneAttachmentComponent is untracked, so these need no MarkChanged. The system
+				// runs after both script systems, so a same-frame write to an *existing*
+				// component lands on this frame's pose. Adding the component is structural and
+				// queued: the socket appears next frame, the same delay as Scene.Spawn.
+				//
+				// Joint names are not validated here. BoneAttachmentSystem already warns once
+				// per distinct bad name and leaves the entity at its parent transform.
+				"AttachToBone", sol::overload(
+					[](Entity& e, Entity& target, const std::string& joint)
+					{
+						AttachToBone(e, target, joint, glm::vec3(0.0f), glm::vec3(0.0f));
+					},
+					[](Entity& e, Entity& target, const std::string& joint, const glm::vec3& offset)
+					{
+						AttachToBone(e, target, joint, offset, glm::vec3(0.0f));
+					},
+					[](Entity& e, Entity& target, const std::string& joint, const glm::vec3& offset,
+						const glm::vec3& rotation)
+					{
+						AttachToBone(e, target, joint, offset, rotation);
+					}),
+				"DetachFromBone", [](Entity& e)
+				{
+					if (!e.HasComponent<BoneAttachmentComponent>())
+						return;
+
+					auto& attachment = e.GetComponent<BoneAttachmentComponent>();
+					attachment.Joint.clear();
+					attachment.Resolved = -1;
+
+					Scene* scene = Context();
+					if (scene && scene->IsUpdating())
+						scene->Commands().RemoveComponent<BoneAttachmentComponent>(e);
+					else
+						e.RemoveComponent<BoneAttachmentComponent>();
 				},
 
 				// --- Physics: routed through PhysicsScene, never through transforms ---

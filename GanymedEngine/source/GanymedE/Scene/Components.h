@@ -14,6 +14,7 @@
 #include "GanymedE/Math/BoundingVolumes.h"
 #include "GanymedE/Math/Curve.h"
 
+#include <cstdint>
 #include <unordered_map>
 #include <variant>
 
@@ -188,6 +189,41 @@ namespace GanymedE {
 
 		AnimatorComponent() = default;
 		AnimatorComponent(const AnimatorComponent&) = default;
+	};
+
+	// Pins this entity to a joint of a skinned mesh. The joint transform is recovered from
+	// AnimatorComponent::Palette each frame (Palette[i] * inverse(InverseBind[i])) rather than
+	// stored beside it: most entities never attach anything, and keeping a second per-joint
+	// array would add 2-8 KB per animator for Scene::Copy to shuffle on every play.
+	//
+	// Writes WorldTransformComponent directly, after TransformSystem, because feeding a joint
+	// quaternion through TransformComponent's Euler storage is lossy. Local Translation /
+	// Rotation / Scale are ignored while the socket resolves; Offset and Rotation on *this*
+	// component are the authored rest pose in joint space.
+	//
+	// A socket inherits whatever the clip does to the joint chain, including scale. A constant
+	// scale on Hips will grow the attached entity for as long as that clip plays — that is a
+	// clip bug, not something this component papers over.
+	struct BoneAttachmentComponent
+	{
+		// The entity carrying the skinned mesh and its AnimatorComponent. Zero means "my parent",
+		// which is the common case and keeps simple setups from having to name anything. This is
+		// an *entity* UUID, not an asset handle: DuplicateEntity / ResolveHierarchy remap it
+		// through the entity map, which asset handles will not be keys of.
+		UUID Target{ 0 };
+
+		// By name, like AnimatorComponent::Clip — and for the same reason: a rename in the DCC
+		// should fail loudly rather than silently attach to whatever joint 7 happens to be.
+		std::string Joint;
+
+		glm::vec3 Offset{ 0.0f };
+		glm::vec3 Rotation{ 0.0f };   // Euler radians, X·Y·Z, matching TransformComponent
+
+		// Runtime. Not serialized; re-resolved when the target's mesh or this Joint name changes.
+		int32_t Resolved = -1;
+
+		BoneAttachmentComponent() = default;
+		BoneAttachmentComponent(const BoneAttachmentComponent&) = default;
 	};
 
 	struct CameraComponent

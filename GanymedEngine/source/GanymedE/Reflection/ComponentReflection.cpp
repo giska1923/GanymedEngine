@@ -219,6 +219,26 @@ namespace GanymedE::Reflection {
 				.data<&AnimatorComponent::Palette>("Palette")
 					.traits(Trait::Runtime);
 
+			GE_REFLECT_COMPONENT(BoneAttachmentComponent)
+				.custom<Attr>(Attr{}.Label("Bone Attachment")
+					.Tip("Pins this entity to a joint. Local transform is ignored while the socket resolves."))
+				// Entity picker, not a UUID readout: zero means parent, and the type cannot say
+				// that. CustomDrawer, not Custom — on disk this is a uint64 omitted when zero.
+				.data<&BoneAttachmentComponent::Target>("Target")
+					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
+				// Combo over the *target's* skeleton, not this entity's. Same CustomDrawer split
+				// as AnimatorComponent::Clip: the name is an ordinary omitted-when-empty string.
+				.data<&BoneAttachmentComponent::Joint>("Joint")
+					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
+				.data<&BoneAttachmentComponent::Offset>("Offset")
+					.traits(Trait::OmitIfDefault)
+					.custom<Attr>(Attr{}.Speed(0.01f))
+				.data<&BoneAttachmentComponent::Rotation>("Rotation")
+					.traits(Trait::Radians | Trait::OmitIfDefault)
+					.custom<Attr>(Attr{}.Speed(0.1f))
+				.data<&BoneAttachmentComponent::Resolved>("Resolved")
+					.traits(Trait::Runtime);
+
 			// The projection type gates which six of the seven camera fields are meaningful, so
 			// this component keeps a hand-written drawer. That is the editor's decision and needs
 			// no flag here: R2 simply registers a drawer for it.
@@ -579,14 +599,14 @@ namespace GanymedE::Reflection {
 		//
 		// Two honest limits. Padding: a bool dropped into existing padding does not move sizeof -
 		// AudioSourceComponent has three spare bytes right now, so a fifth flag there would slip
-		// through. And these cover 16 of the 21 ComponentList entries - every one with NO
+		// through. And these cover 16 of the 22 ComponentList entries - every one with NO
 		// standard-library container member. sizeof(std::string) is 40 with MSVC's STL and 32 with
 		// libstdc++, and sizeof(std::vector) and sizeof(std::unordered_map) differ likewise, so a
 		// sentinel on TagComponent, RelationshipComponent, StaticMeshComponent, AnimatorComponent,
-		// ScriptComponent or ParticleEmitterComponent would have to be a table of per-platform
-		// numbers - which costs more than it catches, on a codebase that builds for Windows, Linux
-		// and macOS. The rule is mechanical rather than a judgement call per component: library
-		// container member => no sentinel.
+		// BoneAttachmentComponent, ScriptComponent or ParticleEmitterComponent would have to be a
+		// table of per-platform numbers - which costs more than it catches, on a codebase that
+		// builds for Windows, Linux and macOS. The rule is mechanical rather than a judgement
+		// call per component: library container member => no sentinel.
 		//
 		// AssetRef<T> is not a container and keeps its sentinel: it is a UUID, a shared_ptr and a
 		// uint32_t, and sizeof(shared_ptr) is two pointers on every mainstream implementation.

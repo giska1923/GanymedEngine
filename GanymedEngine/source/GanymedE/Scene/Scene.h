@@ -37,7 +37,10 @@ namespace GanymedE {
 		// Deep-copies an entity and its descendants with fresh UUIDs, attaching the copy as a
 		// sibling of the source. Returns the new subtree root, or an invalid Entity.
 		//
-		// Only IDComponent and RelationshipComponent are remapped. That whitelist is the point:
+		// IDComponent is minted fresh. RelationshipComponent is remapped. BoneAttachmentComponent::
+		// Target is remapped when the named entity is inside the copy — it is an entity UUID, so
+		// looking it up in the entity remap is safe: asset handles will not be keys of that map.
+		// Everything else in ComponentList is copied verbatim. That whitelist is the point:
 		// AssetHandle *is* UUID (same C++ type), so a "rewrite every UUID-typed field" pass would
 		// corrupt StaticMesh.Mesh, SkyLight.Environment, Script.Script and AudioSource.Clip into
 		// handles no registry knows.
