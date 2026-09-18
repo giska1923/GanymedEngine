@@ -70,7 +70,6 @@ Entities:
       Parent: 0
       Children:
         - 3000000000000000011
-        - 3000000000000000013
         - 3000000000000000014
     ScriptComponent:
       Script: 3000000000000000090
@@ -97,6 +96,7 @@ Entities:
       Children:
         - 3000000000000000012
         - 3000000000000000015
+        - 3000000000000000013
   - Entity: 3000000000000000012
     TagComponent:
       Tag: Main Camera
@@ -129,7 +129,7 @@ Entities:
       Rotation: [0, 3.14159274, 0]
       Scale: [1, 1, 1]
     RelationshipComponent:
-      Parent: 3000000000000000010
+      Parent: 3000000000000000011
       Children:
         []
     StaticMeshComponent:

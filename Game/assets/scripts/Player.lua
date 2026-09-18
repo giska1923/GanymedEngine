@@ -111,6 +111,8 @@ local Player = {
     -- P8. The mesh child, which carries the skin and the AnimatorComponent.
     body = nil,
     clip = nil,
+    -- World yaw the mesh is turned to. Tracks the velocity, not the camera.
+    meshYaw = nil,
     stepTimer = 0.0,
     steps = 0,
     muzzleBursts = 0,
@@ -257,7 +259,10 @@ function Player:OnCreate()
     if self.yawEntity then
         self.muzzle = self.yawEntity:GetChildByName("Muzzle")
     end
-    self.body = self.entity:GetChildByName("Body")
+    -- Under Yaw, not under the capsule: the capsule is LockRotation and never turns, so a
+    -- mesh parented to it cannot face where the player is aiming. Yaw is the entity the mouse
+    -- drives, and it already carries the camera and the muzzle.
+    self.body = self.yawEntity and self.yawEntity:GetChildByName("Body") or nil
     if not self.footsteps then Log.Warn("Player: no 'Footsteps' child - no step sound") end
     if not self.muzzle then Log.Warn("Player: no 'Muzzle' child under Yaw - no muzzle flash") end
     if not self.body then Log.Warn("Player: no 'Body' child - the player will not animate") end
@@ -604,7 +609,7 @@ function Player:Tick(ts)
     end
 
     self:Step(ts)
-    self:Animate()
+    self:Animate(ts)
     self:PushUI()
 end
 
@@ -617,7 +622,7 @@ end
 -- The character therefore strafes without turning, the same way the placeholder cube did. A
 -- turning mesh needs the Body reparented under Yaw, and that is a change to what the gates
 -- measured, so it is written into docs/ToDo/ rather than folded in here.
-function Player:Animate()
+function Player:Animate(ts)
     if not self.body then
         return
     end
@@ -631,17 +636,40 @@ function Player:Animate()
         speed = 0.0
     end
 
+    -- Turn the mesh to face where it is actually going, rather than playing the stride in
+    -- reverse. Holding S turns the character around and runs it forwards, which is what
+    -- "running in the opposite direction" means, and it covers strafing too - that had no clip
+    -- of its own and used to slide sideways facing forwards.
+    --
+    -- **Aiming is unaffected.** The muzzle hangs off Yaw, not off Body, so shots still leave
+    -- along the camera's forward however the mesh is turned. Only the visual changes.
+    if speed > 0.5 then
+        self.meshYaw = self.meshYaw or self.yaw
+        -- Same convention as Enemy:Chase: -Z is forward at yaw 0.
+        local target = math.atan(-v.x, -v.z)
+        -- Shortest way round, then eased, so tapping S turns through 180 degrees over a couple
+        -- of frames instead of popping.
+        local diff = (target - self.meshYaw + math.pi) % (2 * math.pi) - math.pi
+        self.meshYaw = self.meshYaw + diff * math.min(1.0, ts * 14.0)
+    end
+
     local clip, animSpeed
     if speed < 0.5 then
         clip, animSpeed = "Idle", 1.0
     elseif speed < 4.0 then
         clip, animSpeed = "Casual_Walk", 1.0
     else
-        clip, animSpeed = "RunFast", 0.6
+        clip, animSpeed = "run_fast_4", 1.0
     end
 
     self.body:PlayAnimation(clip)
     self.body:SetAnimationSpeed(animSpeed)
+
+    -- Body is a child of Yaw, so this has to be written in Yaw's frame. The extra pi is the
+    -- rig's own +Z facing, the same correction Enemy.lua carries.
+    local localYaw = (self.meshYaw or self.yaw) - self.yaw + math.pi
+    self.body:SetRotation(Vec3(0, localYaw, 0))
+
     self.clip = clip
 end
 

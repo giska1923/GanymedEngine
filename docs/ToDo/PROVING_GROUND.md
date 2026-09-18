@@ -565,11 +565,67 @@ Two things worth knowing before touching the numbers:
 
 #### What the character import left open
 
-- **The player mesh does not turn with the mouse.** The `Body` child hangs off the capsule, not
-  off `Yaw`, so it inherits no yaw — the character strafes without facing where it aims, exactly
-  as the placeholder cube did. Reparenting it under `Yaw` is a one-line scene change, but `Yaw`
-  is what the camera and the muzzle hang off, and moving the mesh into that frame changes what
-  every P1—P7 gate measured. Worth doing deliberately, not as part of an asset swap.
+- **Three facing/animation defects, three unrelated causes** %s all fixed, all worth remembering
+  because none of them was visible in the asset and each failed differently:
+  - *The player did not turn with the camera.* `Body` hung off the capsule, which is
+    `LockRotation`, so it inherited no yaw. Reparented under `Yaw`. The caution recorded here
+    earlier %s that this would disturb what the gates measured %s was wrong: the gates measure the
+    capsule's position and its raycasts, and reparenting a **mesh** changes neither.
+  - *The orks ran backwards.* `Enemy.lua` writes `SetRotation(0, facing, 0)` onto the Body every
+    frame, which **overwrote** the pi baked into the scene rather than composing with it, so the
+    correction was erased on the first update. The pi belongs in the script. `self.facing` itself
+    must not change, because `Sense()` raycasts along it.
+  - *The player looked smaller when running.* It was the opposite: the **Idle** clip drove a
+    constant scale of **1.1765 on `Hips`**, the root joint, and nothing else %s so the player was
+    17.6%% too large while standing still. A Meshy retarget artifact (1.1765 = 1/0.85). Removing
+    the 24 scale channels from that clip is enough, because `AnimationSystem::BuildPalette`
+    starts from the rest pose and a joint with no channel keeps its authored transform.
+
+  The general lesson: **a mesh whose rig faces +Z needs its correction wherever the rotation is
+  last written.** In the scene for anything static, in the script for anything a script turns.
+
+- **The run clip was the wrong clip, and library clips need checking before they are trusted.**
+  Removing the Idle scale did not fix "the player looks smaller when running", because the run
+  was a second, unrelated problem: library action 16 "Run Fast" is a head-down sprinting lunge.
+  Measured against Idle, its hips sat 16 cm lower and its head 45 cm further forward, so the
+  character really was shorter and hunched. Regenerated with action **532 "Run Fast 4"**, chosen
+  by fetching the library's `preview_url` GIFs and comparing mid-stride frames — free, and far
+  better than guessing from names. Head height across the three clips is now 1.646 / 1.649 /
+  1.604, and hips 1.102 / 1.090 / 1.063.
+
+  Two things the new download needed before it could be used, neither of which the first
+  generation had:
+
+  - **Real root motion.** `run_fast_4` travelled **3.759 m in 0.67 s**. Nothing extracts root
+    motion, so it would have slid forward and snapped back every loop. Fixed by subtracting the
+    straight line from first key to last on the Hips' X and Z — which removes the travel while
+    keeping the sway and bob that make a run read as a run, and leaves the last key equal to the
+    first, which is what a looping clip wants. Y is untouched.
+  - **A 1.53 m authoring offset.** Detrending alone was not enough: the clip *starts* 153 cm
+    forward of the origin, so the mesh rendered a metre and a half in front of its own entity.
+    The keys are re-centred on the rest pose afterwards. Idle and Casual_Walk sit within 3 cm of
+    it, which is how the offset was spotted.
+
+  That clip's own root motion also sets its playback speed: 3.759 m / 0.67 s is 5.6 m/s against
+  the player's 6.0, so it plays at **1.0** rather than the 0.6 the old lunge needed.
+
+- **The mesh faces its velocity, not the camera.** The first attempt at "running backwards"
+  negated the animation speed, which plays the stride in reverse — a moon-walk. What was wanted
+  was the character turning round and running forwards. `Player:Animate` now turns the `Body`
+  toward the velocity heading, eased over a couple of frames so tapping S does not pop.
+
+  This also closed the strafe gap recorded here earlier: A and D used to slide sideways facing
+  forwards, because there is no strafe clip. Facing the movement direction means the forward run
+  is always the right clip, whichever way the stick is pushed.
+
+  **Aiming is unaffected**, which is the only reason this is safe: the muzzle hangs off `Yaw`,
+  not off `Body`, so shots leave along the camera's forward however the mesh is turned. Verified
+  by holding W, S and A in turn and screenshotting — away from camera, toward camera, and in
+  profile.
+
+  The negative-`Speed` trick is still worth knowing: `AnimationSystem` subtracts from `Time` and
+  wraps past zero to the clip's end, so a reversed clip costs nothing. It is just not what
+  backpedalling should look like here.
 - **`Fox.glb` is now unreferenced** and still in the tree. It is the only asset with clips that
   were not generated by Meshy, which makes it the one independent check that the animator is not
   merely agreeing with one exporter. Keep it until there is a second source.

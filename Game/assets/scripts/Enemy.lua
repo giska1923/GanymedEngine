@@ -322,9 +322,14 @@ function Enemy:Move(ts, dist)
 
     -- Face where it is going. Forward is -Z at yaw 0, the engine's camera convention, and what
     -- Player.lua derives its own forward from.
+    --
+    -- `self.facing` stays in engine convention because Sense() raycasts along it. The extra pi
+    -- goes only on the mesh: Meshy's rigs come out facing +Z, and this SetRotation runs every
+    -- frame, so it overwrites any correction baked into the scene rather than composing with it.
+    -- That is why the orks ran backwards - the scene's pi was being erased on the first update.
     self.facing = math.atan(-dx, -dz)
     if self.body then
-        self.body:SetRotation(Vec3(0, self.facing, 0))
+        self.body:SetRotation(Vec3(0, self.facing + math.pi, 0))
     end
 end
 
