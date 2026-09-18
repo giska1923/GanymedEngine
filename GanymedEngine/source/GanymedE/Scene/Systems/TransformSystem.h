@@ -34,6 +34,16 @@ namespace GanymedE {
 		void OnUpdateEditor(Timestep ts) override;
 		const char* Name() const override { return "TransformSystem"; }
 
+		// After the dirty pass: write `world` into this entity's cache and push it down the
+		// subtree, so children of a socketed entity (a muzzle flash parented to a gun) track
+		// the socket rather than the pre-attachment locals.
+		//
+		// This is a second pass. RecomputeDirty fills m_Visited; calling RecomputeSubtree
+		// without clearing it would no-op for every entity TransformSystem already touched,
+		// which is all of them. The cache-stomp risk is real and accepted: BoneAttachmentSystem
+		// is the one caller, and it runs immediately after this system.
+		void OverrideWorld(Entity entity, const glm::mat4& world);
+
 	private:
 		void RecomputeDirty();
 

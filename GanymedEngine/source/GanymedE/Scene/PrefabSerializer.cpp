@@ -80,6 +80,17 @@ namespace GanymedE {
 				// The subtree root's parent lives outside the prefab; it becomes a root here.
 				auto parentIt = remap.find(relationship.Parent);
 				relationship.Parent = parentIt != remap.end() ? parentIt->second : UUID{ 0 };
+
+				if (auto* attachment = canonical->Reg().try_get<BoneAttachmentComponent>(dst))
+				{
+					if (attachment->Target != UUID{ 0 })
+					{
+						auto targetIt = remap.find(attachment->Target);
+						if (targetIt != remap.end())
+							attachment->Target = targetIt->second;
+					}
+					attachment->Resolved = -1;
+				}
 			}
 
 			// Prefab bookkeeping belongs to the INSTANCE the subtree was copied from, never to

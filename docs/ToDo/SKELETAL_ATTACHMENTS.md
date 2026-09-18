@@ -1,12 +1,12 @@
 # Milestone — Skeletal attachments (bone sockets)
 
-**Status: planned, not started.** This is a roadmap. Nothing here is built.
+**Status: A2 implemented. A1 (carry clips) and A3 (Proving Ground wiring) remain.** A1 is
+content — Meshy credits, clip pick, post-process — and is still the cheap disproof that current
+unarmed clips will look worse with a rifle in the hand. A3 lives on the game branch.
 
-Nothing in this engine can be attached to a *joint*. An entity can be parented to another entity,
-never to a bone of one, so a character cannot hold, wear or carry anything. The symptom is small
-and specific — the player is visibly unarmed and cannot be armed — but the cause is a missing
-capability rather than a missing asset, and it is the last thing standing between the Proving
-Ground's characters and looking like characters.
+The engine can pin an entity to a joint (`BoneAttachmentComponent` + `BoneAttachmentSystem`). A
+character still cannot *look* armed until A1 ships carry clips and A3 wires `Rifle.glb` to
+`RightHand`. That remaining gap is content and wiring, not a missing capability.
 
 ---
 
@@ -116,7 +116,7 @@ Feeding a joint's orientation through Euler decomposition is lossy and gimbal-se
 socket passing through ±90° of pitch would pop. Writing the world matrix keeps the whole path in
 matrices and never decomposes anything.
 
-### The open question: descendants
+### Descendants — chosen: `OverrideWorld`
 
 Writing a world matrix after `TransformSystem` has run leaves the attached entity's **children**
 holding matrices composed from the pre-attachment value. A muzzle-flash emitter parented to the
@@ -136,7 +136,10 @@ within a pass — but it is **private**. Three ways out, in order of preference:
    real cost in a codebase where `ValidateOrdering()` depends on those declarations meaning
    something.
 
-**Recommended: (1).** Decide before writing code, not during.
+**Chosen: (1)** — `TransformSystem::OverrideWorld(Entity, const glm::mat4&)`. It clears
+`m_Visited` (the dirty pass has already marked every touched entity, so calling
+`RecomputeSubtree` without that would no-op) and pushes the matrix down the subtree. The
+cache-stomp risk is accepted; `BoneAttachmentSystem` is the one caller.
 
 ---
 
@@ -166,14 +169,18 @@ and run it has now.
 
 ### A2 — The engine feature, on `master`
 
-- **Tests:** a rig with no finger joints; a socket on a moving, animating character; a socket whose
-  target's mesh is swapped at runtime (does `Resolved` re-resolve?); a socket naming a joint that
-  does not exist; a socket with children of its own.
-- **Gate:** an entity parented to `RightHand` tracks the hand through a full run cycle with no
-  visible lag and no drift over several minutes; its own children track it; a bad joint name warns
-  once and leaves the entity at its parent's transform rather than at the origin.
-- **Regeneration:** `BoneAttachmentSystem.{h,cpp}` are new files, so **project regeneration is
-  required** and must be called out in the change.
+**Done on `skeletal-attachments`.** `OverrideWorld` is public; `BoneAttachmentSystem` runs after
+`TransformSystem` and before `CameraSystem`; `Resolved` resets on `Scene::Copy`; a bad joint
+name warns once and restores parent-relative world. New files: `BoneAttachmentSystem.{h,cpp}` —
+**project regeneration is required.**
+
+- **Tests still to run against a character:** a rig with no finger joints; a socket on a moving,
+  animating character; a socket whose target's mesh is swapped at runtime (does `Resolved`
+  re-resolve?); a socket naming a joint that does not exist; a socket with children of its own.
+- **Gate (needs A1 clips + a scene):** an entity parented to `RightHand` tracks the hand through
+  a full run cycle with no visible lag and no drift over several minutes; its own children track
+  it; a bad joint name warns once and leaves the entity at its parent's transform rather than at
+  the origin.
 
 ### A3 — Wiring, on the game branch
 
@@ -218,9 +225,9 @@ system:
 | `Scene/SceneSerializer.cpp`, `Scene/SceneYaml.cpp` | read and write |
 | `Scene/Scene.cpp` | system registration, in the slot named above |
 | `Scene/Systems/BoneAttachmentSystem.{h,cpp}` | **new** — regeneration required |
-| `Scene/Systems/TransformSystem.h` | whichever answer the descendants question gets |
+| `Scene/Systems/TransformSystem.h` | `OverrideWorld` (chosen) |
 | `GanymedEditor/source/Panels/SceneHierarchyPanel.cpp`, `EditorUndo.h` | inspector |
-| `Scripting/ScriptBindings.cpp` | optional: attach and detach at runtime, for pickups |
+| `Scripting/ScriptBindings.cpp` | `AttachToBone` / `DetachFromBone` |
 | `docs/engine/scene.md`, `docs/engine/ecs.md` | **in the same change** |
 
 ## Branch policy

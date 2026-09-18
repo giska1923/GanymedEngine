@@ -45,8 +45,10 @@ almost line for line, and for the same reasons:
 
 Registration order in the `Scene` constructor is
 `PhysicsSystem` → `NativeScriptSystem` → `LuaScriptSystem` → `AnimationSystem` →
-`TransformSystem` → `CameraSystem` → `AudioSystem` → `ParticleSystem` → `RenderSystem`.
-Scripts move things; the transform cache runs after. Particle playback from script is the
+`TransformSystem` → `BoneAttachmentSystem` → `CameraSystem` → `AudioSystem` → `ParticleSystem` →
+`RenderSystem`.
+Scripts move things; the transform cache runs after. Sockets rewrite world after that, so a
+script that calls `AttachToBone` on an existing component is visible this frame. Particle playback from script is the
 same slot as animation: Lua writes the component, `ParticleSystem` consumes it later in
 the same update.
 
@@ -257,6 +259,21 @@ reason is not proof the mesh has a clip by that name.
 There is no `Get/SetAnimationTime`. Clip progress is what an "is this animation finished" query
 would need, and that belongs with animation events — cut from v1 along with blend trees. The
 inspector's Time slider covers the edit-mode scrubbing case.
+
+### Bone attachments
+
+`HasBoneAttachment`, `AttachToBone(target, joint [, offset [, rotation]])`, `DetachFromBone`.
+`BoneAttachmentComponent` is untracked, so these pair with no `MarkChanged`. Rotation is Euler
+radians, X·Y·Z, matching `SetRotation`.
+
+If the entity **already has** the component, the fields update this frame — `BoneAttachmentSystem`
+runs after both script systems. **Adding** the component is structural and queued, so a first-time
+`AttachToBone` becomes visible next frame, the same delay as `Scene.Spawn`. An unknown joint name
+is not an error at the call site; the system warns once and leaves the entity at its parent
+transform. No-op if `target` is missing or is this entity.
+
+`DetachFromBone` clears `Joint` this frame (the entity snaps to its parent transform) and queues
+the component's removal for the next. No-op if there is no attachment.
 
 ### Audio
 

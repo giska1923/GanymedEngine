@@ -25,7 +25,7 @@ Key entry points:
 | `OnRuntimeStart/Stop` | Forwarded to the systems (start runs in reverse registration order — see [ecs.md](ecs.md#systemmanager)) |
 | `OnUpdateRuntime(ts, fallbackCamera)` / `OnUpdateEditor(ts, camera)` | FrameBegin → systems → FrameEnd; the editor camera is passed via the `RenderContext` singleton |
 | `OnViewportResize(w, h)` | Updates all non-fixed-aspect `CameraComponent`s |
-| `DuplicateEntity(source)` | Deep-copies an entity and its descendants with **fresh** UUIDs, attaching the copy as a *sibling* of the source. Only `IDComponent` and `RelationshipComponent` are remapped — see below |
+| `DuplicateEntity(source)` | Deep-copies an entity and its descendants with **fresh** UUIDs, attaching the copy as a *sibling* of the source. `IDComponent` is minted; `RelationshipComponent` and `BoneAttachmentComponent::Target` are remapped when they name entities inside the copy — see below |
 | `CollectSubtree(root, out, visited)` | `root` plus its descendants, depth-first through each `Children` in authored order: the canonical order the scene and prefab formats both save in. The visited set keeps a corrupted hierarchy from becoming an infinite walk |
 | `Copy(other)` | Play-mode snapshot: recreate entities by UUID, then copy every `ComponentList` component via `ForEachType`; script `Instance` pointers are nulled so runtime instances are recreated on play |
 | `GetWorldSpaceTransform(entity)` | Walks the parent chain from locals — for **editor/tooling** (gizmos). Renderable code reads the cached `WorldTransformComponent` instead |
@@ -39,12 +39,13 @@ the entity would render nothing with no diagnostic. The mesh, material and envir
 `AssetRef<T>` now and are no longer even the same type, which narrows the hazard without removing
 it — the three path-resolved references above are still bare handles by design. Here the whitelist is
 structural rather than a list to maintain: `IDComponent` comes from `CreateEntityWithUUID`,
-`RelationshipComponent` is rewritten explicitly afterwards, and every other component is copied
-verbatim by the `ForEachType(ComponentList)` loop. The copy is made in two passes because a
+`RelationshipComponent` is rewritten explicitly afterwards, `BoneAttachmentComponent::Target` is
+looked up in the **entity** remap (asset handles will not be keys of that map), and every other
+component is copied verbatim by the `ForEachType(ComponentList)` loop. The copy is made in two passes because a
 parent's `Children` names entities created later in the walk.
 
 `Scene`'s constructor wires the entt signals for tracked/init/fini component types, creates the
-`RenderContext`, `PhysicsSettings` and `EditorViewFilter` singletons, registers the nine built-in systems, and asserts
+`RenderContext`, `PhysicsSettings` and `EditorViewFilter` singletons, registers the ten built-in systems, and asserts
 `ValidateOrdering()` passes.
 
 ## Entity
@@ -96,6 +97,16 @@ copyable, no behavior beyond small helpers.
   adds a clip on re-export; the cost is that a rename detaches the reference silently, which
   `AnimationSystem` compensates for by warning once and holding the bind pose. `Time` and `Palette`
   are not serialized — a scene loads at the head of its clip, and the palette is rebuilt per frame.
+- **`BoneAttachmentComponent`** — pins this entity to a named joint of another entity's skinned
+  mesh. `Target` is an entity UUID (zero = hierarchy parent); `Joint` is a name, for the same
+  reason clips are; `Offset` / `Rotation` are the rest pose in joint space (Euler radians, X·Y·Z).
+  `Resolved` is a runtime index, not serialized, reset by `Scene::Copy`. The system recovers
+  `jointGlobal` as `Palette[i] * inverse(InverseBind[i])` rather than keeping AnimationSystem's
+  scratch globals on the animator — attachments are counted in ones and twos, and a second
+  per-joint array would add 2–8 KB per animated entity for `Scene::Copy` to shuffle on every play.
+  Writes `WorldTransformComponent` directly: feeding a joint quaternion through
+  `TransformComponent`'s Euler storage is lossy. Local TRS is ignored while the socket resolves.
+  A socket inherits whatever the clip does to the joint chain, including scale.
 - **`CameraComponent`** — a `SceneCamera` (perspective or orthographic) + `Primary` +
   `FixedAspectRatio`. The first primary camera wins (resolved once per update by `CameraSystem`).
 - **`DirectionalLightComponent`** — color/intensity/`CastShadows`; direction is the entity's
@@ -230,7 +241,29 @@ Maintains the `WorldTransformComponent` cache. A `ChangeView` reacting to `Trans
 `RelationshipComponent` yields only entities that actually moved/re-parented; for each, the world
 matrix is recomputed from locals up the parent chain (never from a possibly-stale parent cache) and
 pushed down the subtree, with a visited set making overlapping dirty entries idempotent. Runs in
-both edit and play mode. An idle scene recomputes **zero** matrices.
+both edit and play mode. An idle scene recomputes **zero** matrices. `OverrideWorld(entity, world)`
+is a second pass used by `BoneAttachmentSystem`: it clears the visited set (the dirty pass has
+already marked every touched entity) and pushes `world` down the subtree so children of a socketed
+entity track the socket. The cache-stomp risk is accepted; that system is the one caller.
+
+### BoneAttachmentSystem — [`Systems/BoneAttachmentSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/BoneAttachmentSystem.h)
+Pins entities with `BoneAttachmentComponent` to a joint. Per socket, in hierarchy-depth order
+(so a nested attachment sees its target's already-rewritten world; an explicit `Target` that is
+itself socketed is treated as deeper still): resolve the target (zero = parent), re-resolve
+`Joint` by name against the target's skeleton when `Resolved` is stale, recover
+`jointGlobal = Palette[i] * inverse(InverseBind[i])`, then
+`OverrideWorld(entity, targetWorld * jointGlobal * offset)`. A missing target, a mesh with no
+palette, a singular inverse bind, or a joint name the skeleton does not have warns once per
+distinct failure and leaves the entity at its **parent** transform (parent cache × local), never
+at the origin. An empty joint is quiet — authoring a socket before picking a name.
+
+**Runs in edit mode**, following the pose `AnimationSystem` already sampled. A weapon on a hand,
+or a camera on a head, has to move when the inspector scrubs `Time`.
+
+Its slot after `TransformSystem` and before `CameraSystem` is enforced against `CameraSystem`
+(both declare `WorldTransformComponent`; the later one only reads it). The palette read against
+`AnimationSystem` is also checked. Two writers of world (this and `TransformSystem`) are
+invisible to `ValidateOrdering` by design.
 
 ### CameraSystem — [`Systems/CameraSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/CameraSystem.h)
 Resolves "which camera renders this frame" once into the `RenderContext` singleton: the first
@@ -449,10 +482,10 @@ anyway.
 
 ### What is registered
 
-32 types, 119 members (the boot log prints both — a count far below that is the cheapest signal that a
-registration block was dropped):
+34 types, 129 members (the boot log prints both — a count far below that is the cheapest signal that a
+registration block was dropped by the linker):
 
-- The **23 components** — all 21 `ComponentList` entries plus `IDComponent` and `TagComponent`, which
+- The **25 components** — all 23 `ComponentList` entries plus `IDComponent` and `TagComponent`, which
   `ComponentList` excludes as entity identity but which prefab diffing has to know exist in order to
   skip.
 - **4 supporting types** — `PhysicsMaterial`; `SceneCamera`, whose seven private fields are registered
@@ -489,26 +522,29 @@ What no test can check is whether a type's member list is **complete** — the t
 exactly the thing that is not reflected. The `static_assert(sizeof(T) == N)` sentinels at the bottom of
 `ComponentReflection.cpp` are the only forcing function, and they have two honest limits. Padding: a
 `bool` dropped into existing padding does not move `sizeof` (`AudioSourceComponent` has three spare
-bytes right now). And they cover 16 of the 21 `ComponentList` entries — every one with no
+bytes right now). And they cover 16 of the 23 `ComponentList` entries — every one with no
 standard-library container member. `sizeof(std::string)` is 40 with MSVC's STL and 32 with libstdc++,
 and vector and unordered_map differ likewise, so a sentinel on `TagComponent`,
-`RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `ScriptComponent` or
+`RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `BoneAttachmentComponent`,
+`ScriptComponent` or
 `ParticleEmitterComponent` would have to be a table of per-platform numbers — more cost than it
 catches, on a codebase that builds for Windows, Linux and macOS. The rule is mechanical rather than a
 judgement call per component: library container member ⇒ no sentinel.
 
 ### Current state
 
-**Two consumers: the inspector and the serializer.** Fifteen of the editor's twenty component
+**Two consumers: the inspector and the serializer.** Fifteen of the editor's nineteen component
 sections are drawn from this registration rather than from a hand-written lambda
 ([editor.md](../editor/editor.md#the-generic-reflected-inspector)), and **every** component is
 written and read generically by `SceneSerializer` (below). The Lua bindings still hand-list every
 field and are deliberately out of scope.
 
-The two consumers convert **independently**, which is worth seeing once: Static Mesh, Animator and
-Script are serialized generically while their inspector sections stay hand-written. What blocks them
-from the panel is that their UI is driven by asset or Lua data — a mesh's material slots, its clip
-names, a Lua class's declared fields — which has nothing to do with how the component is stored.
+The two consumers convert **independently**, which is worth seeing once: Static Mesh, Animator,
+Bone Attachment and Script are serialized generically while their inspector sections stay
+hand-written (Bone Attachment's Offset/Rotation rows are reflected; Target and Joint are not).
+What blocks them from the panel is that their UI is driven by asset or Lua data — a mesh's
+material slots, its clip names, a **different entity's** joint names, a Lua class's declared
+fields — which has nothing to do with how the component is stored.
 "Reflected" is per-consumer, not a property of the component.
 
 That independence is what the `CustomDrawer` / `CustomWriter` split makes expressible per *field*
@@ -674,6 +710,9 @@ blocks keyed by component name. Notes:
   only runs on rare input is a path that rots. `Children` is authoritative (a child claimed by a
   parent's list takes that parent); an entity naming a parent that does not list it keeps a
   translated reference and warns.
+- `BoneAttachmentComponent::Target` is translated in the same pass: it is an entity UUID, looked
+  up in the file-to-new map. Zero stays zero. A value that does not name an entity in the batch
+  is left as-is, so a prefab instance can still name a scene entity that was not in the file.
 - `StaticMeshComponent::MaterialOverrides` serializes as a flow sequence of handles, and **only
   when at least one slot is set**. Emitting an empty sequence for every mesh entity would rewrite
   every committed scene for no content change, which is what canonical saves exist to prevent.
@@ -808,9 +847,11 @@ The runtime scene is a disposable deep copy keyed by UUID — physics can knock 
 Stop simply discards the copy. This is why stable UUIDs and the generic `ComponentList` copy exist.
 
 The generic copy is a shallow value copy of every component, so anything that is runtime-only needs
-an explicit fixup sweep after it. There are three: `NativeScriptComponent::Instance` is nulled so
+an explicit fixup sweep after it. There are four: `NativeScriptComponent::Instance` is nulled so
 instances are recreated on play; `AnimatorComponent::Palette` is cleared because carrying a
-per-joint matrix array per entity into the new scene buys one frame of stale data; and
+per-joint matrix array per entity into the new scene buys one frame of stale data;
+`BoneAttachmentComponent::Resolved` is reset to −1 so a stale joint index cannot attach to
+whatever now occupies that slot; and
 `ParticleEmitterComponent::ResetRuntime()` clears pool, accumulator, timer, Playing, burst queue, bounds, and
 RNG together — a copied-then-reset pool with a *not*-reset RNG would double-play the editor's
 stream. Play-mode emitters therefore warm up from empty. Adding a component with runtime-only

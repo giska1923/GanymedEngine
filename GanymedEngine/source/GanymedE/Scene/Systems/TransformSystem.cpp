@@ -74,4 +74,10 @@ namespace GanymedE {
 		(void)ts;
 		RecomputeDirty();
 	}
+
+	void TransformSystem::OverrideWorld(Entity entity, const glm::mat4& world)
+	{
+		m_Visited.clear();
+		RecomputeSubtree(entity, world);
+	}
 }

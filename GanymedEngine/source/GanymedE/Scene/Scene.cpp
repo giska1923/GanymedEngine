@@ -8,6 +8,7 @@
 #include "GanymedE/ECS/System.h"
 #include "GanymedE/Scene/Systems/AnimationSystem.h"
 #include "GanymedE/Scene/Systems/AudioSystem.h"
+#include "GanymedE/Scene/Systems/BoneAttachmentSystem.h"
 #include "GanymedE/Scene/Systems/CameraSystem.h"
 #include "GanymedE/Scene/Systems/LuaScriptSystem.h"
 #include "GanymedE/Scene/Systems/NativeScriptSystem.h"
@@ -62,6 +63,13 @@ namespace GanymedE {
 		// that reads the palette.
 		m_Systems->Add<AnimationSystem>(*this);
 		m_Systems->Add<TransformSystem>(*this);   // after anything that moves entities...
+		// Joint sockets rewrite WorldTransform from the fresh palette and the just-published
+		// target world. CameraSystem is the first reader of world space, so a camera socketed
+		// to a head joint sees this frame's pose. Two writers of WorldTransformComponent
+		// (this and TransformSystem) are invisible to ValidateOrdering; the part that is
+		// checked is staying ahead of CameraSystem, which reads World. The palette read
+		// against AnimationSystem is also checked, because TargetAccess declares it.
+		m_Systems->Add<BoneAttachmentSystem>(*this);
 		m_Systems->Add<CameraSystem>(*this);      // ...and before anything that reads world space
 		// After CameraSystem for a reason ValidateOrdering cannot see: AudioSystem shares no
 		// component with it, but its listener FALLBACK reads the camera pose CameraSystem just
@@ -233,6 +241,15 @@ namespace GanymedE {
 			auto view = dstRegistry.view<AnimatorComponent>();
 			for (auto e : view)
 				view.get<AnimatorComponent>(e).Palette.clear();
+		}
+
+		// Resolved is a joint index into the target's current skeleton. The copy must not
+		// inherit one: a mesh swap or a DCC rename between edit and play would attach to
+		// whatever joint now occupies that slot. BoneAttachmentSystem re-resolves by name.
+		{
+			auto view = dstRegistry.view<BoneAttachmentComponent>();
+			for (auto e : view)
+				view.get<BoneAttachmentComponent>(e).Resolved = -1;
 		}
 
 		// Particle pools persist across frames (unlike Palette), so a copied-then-not-reset
@@ -448,6 +465,19 @@ namespace GanymedE {
 			// re-attached below.
 			auto parentIt = remap.find(relationship.Parent);
 			relationship.Parent = parentIt != remap.end() ? parentIt->second : UUID{ 0 };
+
+			// Target is an entity UUID. Rewrite it when the named entity is inside the copy;
+			// leave it when it points outside (attach-to-this-character, duplicate the gun).
+			if (auto* attachment = m_Registry.try_get<BoneAttachmentComponent>(dst))
+			{
+				if (attachment->Target != UUID{ 0 })
+				{
+					auto targetIt = remap.find(attachment->Target);
+					if (targetIt != remap.end())
+						attachment->Target = targetIt->second;
+				}
+				attachment->Resolved = -1;
+			}
 
 			// A native script instance is owned by the original; two components pointing at one
 			// ScriptableEntity is a double delete waiting for the second teardown. Scene::Copy
