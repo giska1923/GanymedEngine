@@ -136,7 +136,7 @@ Entities:
       Mesh: 17641149922961688873
       MaterialOverrides: [6151183210390514080]
     AnimatorComponent:
-      Clip: Idle
+      Clip: Lower_Weapon_Look_Raise
       Speed: 1
       Playing: true
       Loop: true

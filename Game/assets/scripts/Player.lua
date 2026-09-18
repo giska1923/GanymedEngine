@@ -653,13 +653,23 @@ function Player:Animate(ts)
         self.meshYaw = self.meshYaw + diff * math.min(1.0, ts * 14.0)
     end
 
+    -- A1: the weapon-carry set. Names are Meshy's library entries baked into the glb, and the
+    -- engine resolves clips by name off the mesh asset, so renaming means re-exporting.
     local clip, animSpeed
     if speed < 0.5 then
-        clip, animSpeed = "Idle", 1.0
+        clip, animSpeed = "Lower_Weapon_Look_Raise", 1.0
     elseif speed < 4.0 then
-        clip, animSpeed = "Casual_Walk", 1.0
+        clip, animSpeed = "Walk_Forward_While_Shooting", 1.0
     else
-        clip, animSpeed = "run_fast_4", 1.0
+        -- Run_and_Shoot was authored at 2.57 m/s (its own root motion, measured before that
+        -- motion was stripped). Against this character's 6 m/s, matching the feet to the ground
+        -- exactly would need 2.34, which turns a tactical jog into a sprint on fast-forward.
+        -- 1.7 splits the difference: the feet run at ~4.4 m/s, so some slide remains.
+        --
+        -- The principled fix is the other direction - 6 m/s is 21.6 km/h, which is sprint pace
+        -- for someone carrying a rifle. Dropping `speed` to ~4.0 would let this play at 1.55
+        -- with almost no slide. It also moves every P1-P7 gate number, so it is not done here.
+        clip, animSpeed = "Run_and_Shoot", 1.7
     end
 
     self.body:PlayAnimation(clip)

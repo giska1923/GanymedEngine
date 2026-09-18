@@ -563,6 +563,59 @@ Two things worth knowing before touching the numbers:
   the `autofire` gate measured **`live=67`**. That is the load to watch if projectiles ever get
   cheaper to spawn, and it is worth a frame capture before assuming it is free.
 
+#### A1: the player carries a weapon (clips only, no socket yet)
+
+The player's clip set was regenerated as a **weapon-carry set**, which is step A1 of
+`SKELETAL_ATTACHMENTS.md` on `master`. No engine change is involved and no weapon exists yet: the
+character mimes holding one, which is deliberately the cheap disproof before the socket is wired.
+
+| Role | Library action | Clip name in the glb |
+|---|---|---|
+| idle | `334` Lower Weapon, Look, Raise | `Lower_Weapon_Look_Raise` |
+| walk | `234` Walk Forward While Shooting | `Walk_Forward_While_Shooting` |
+| run | `98` Run and Shoot | `Run_and_Shoot` |
+
+**The selection criterion was grip consistency, not individual quality.** A socket offset is fixed
+relative to the hand joint, so one offset has to work across all three clips. `511` Rifle Charge
+was rejected despite its name because its hands sit low and back, where the other two hold at
+chest height — a rifle placed correctly for those two would be wrong in that one.
+
+Measured on the installed file:
+
+| clip | duration | head y | hips y | head z | right hand y |
+|---|---|---|---|---|---|
+| `Lower_Weapon_Look_Raise` | 5.20 s | 1.501 | 0.965 | +0.070 | 1.149 |
+| `Walk_Forward_While_Shooting` | 3.27 s | 1.526 | 0.970 | -0.023 | 1.432 |
+| `Run_and_Shoot` | 0.67 s | 1.469 | 0.989 | +0.225 | 1.312 |
+
+**Gate: two of three criteria met, and the third was the wrong criterion.** Head height spread is
+5.6 cm and hip height spread 2.4 cm, both at or inside the 5 cm the plan asked for. Forward offset
+spread is 24.7 cm, which the plan would call a failure — but that number is the *head's* lean,
+and a run leaning 22 cm further forward than a walk is what running looks like. What the criterion
+was actually protecting against is the root sitting off-centre, and the root is centred: the
+detrended clip's mean hips XZ is (-1.0, -2.9) cm against a rest pose of (-1.0, -2.9) cm, with
+0.000 m net drift. The plan's wording was written against the previous set, which happened to be
+unusually upright. **Recorded rather than quietly passed.**
+
+Post-processing, from the plan's "not optional" list:
+
+- **No scale artifact this time.** Both previous generations carried a constant `Hips` scale; this
+  one does not. The installer asserts that rather than assuming it, so a silent recurrence fails
+  the build instead of shipping a resizing character.
+- **`Run_and_Shoot` travelled 1.713 m in 0.67 s** and was detrended and re-centred, same as before.
+
+**The character is now visibly shorter than it was.** Head height went from ~1.65 m across the
+unarmed set to ~1.50 m here. That is the braced weapon stance, not a defect — no clip drives a
+scale channel off 1.0, asserted above.
+
+**One number that did not fit, and is worth the argument.** `Run_and_Shoot` was authored at
+**2.57 m/s**, measured from its own root motion before that motion was stripped. The player moves
+at **6.0 m/s**. Matching the feet to the ground exactly would need a 2.34x multiplier, which turns
+a tactical jog into fast-forward; it plays at **1.7** instead, so the feet run at ~4.4 m/s and some
+slide remains. The principled fix is the other direction: 6 m/s is 21.6 km/h, sprint pace for
+someone carrying a rifle, and dropping `Player.Properties.speed` to ~4.0 would let this clip play
+at 1.55 with almost no slide. That moves every P1-P7 gate number, so it is **not** done here.
+
 #### What the character import left open
 
 - **Three facing/animation defects, three unrelated causes** %s all fixed, all worth remembering
