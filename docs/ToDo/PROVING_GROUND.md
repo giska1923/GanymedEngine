@@ -449,8 +449,40 @@ The chain is four billed calls per character — `text-to-3d` preview (20 credit
   drift, ankle-to-toe facing, weight sums, texture dimensions. All free, and all faster than
   noticing in the editor.
 
+Once the maps come from the `.gmat`, the copy Meshy bakes into the glb is dead weight, and it
+costs more than disk: embedded maps bypass the texture manager (`TextureImporter::Upload`, no
+handle) and are decoded and uploaded at mesh apply whether or not anything draws with them — see
+[assets.md](assets.md). Both characters had theirs removed, which is a real glb rewrite (deleting
+an image deletes its bufferView, which renumbers every later one, so accessors get remapped and
+the BIN chunk rebuilt). **5.87 -> 0.93 MB and 6.49 -> 1.15 MB**, with every byte of vertex, index,
+node, skin and animation data diffed identical before and after.
+
 Two things the API does not fix, both corrected on import: the characters face **+Z** where this
 engine's forward is -Z (a pi rotation on the `Body` child), and `doubleSided` is still set.
+
+#### Every `.gmat` in this tree was decorative until now
+
+`StaticMeshComponent::MaterialOverrides` is empty by default, and empty means *use the material
+that came with the mesh*. **No scene in this repository had ever filled a slot**, so every `.gmat`
+— the three buildings' included, which predate all of this — was written, committed, and never
+read by anything.
+
+It is invisible because the generated sidecar is a faithful copy of the imported material: same
+albedo, same maps, same flags. It only starts to matter the moment you *edit* one, and then it
+fails silently — the change is simply ignored, with no warning, because nothing is wrong.
+
+That is exactly what happened here. The grafted normal and metallicRoughness maps and
+`TwoSided: false` sat on disk doing nothing until the eleven scene slots and the prefab's one were
+filled with `MaterialOverrides: [<handle>]`. Confirmed by a cold boot compiling
+`ArmoredHumanoid_textures/albedo_0.jpg` for the first time, and by the orks visibly gaining
+surface relief.
+
+**The three buildings are still in that state.** Their `.gmat` files say `TwoSided: true`, which
+is what Meshy exported, so nothing is being rendered wrong today — but flipping it would do
+nothing until those entities get overrides too. Worth doing as one pass rather than per-asset.
+
+Worth considering on the engine side: a scan-time note when a `.gmat` exists for a mesh that no
+entity overrides. It is the kind of thing that is obvious once seen and invisible before.
 
 #### What the character import left open
 

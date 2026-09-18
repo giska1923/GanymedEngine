@@ -47,6 +47,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 6030618387453150548
+      MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
       Clip: Short_Breathe_and_Look_Around
       Speed: 1

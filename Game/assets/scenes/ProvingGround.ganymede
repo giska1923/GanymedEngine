@@ -133,6 +133,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 17641149922961688873
+      MaterialOverrides: [6151183210390514080]
     AnimatorComponent:
       Clip: Idle
       Speed: 1
@@ -676,6 +677,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 6030618387453150548
+      MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
       Clip: Short_Breathe_and_Look_Around
       Speed: 1
@@ -735,6 +737,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 6030618387453150548
+      MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
       Clip: Short_Breathe_and_Look_Around
       Speed: 1
@@ -794,6 +797,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 6030618387453150548
+      MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
       Clip: Short_Breathe_and_Look_Around
       Speed: 1
@@ -853,6 +857,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 6030618387453150548
+      MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
       Clip: Short_Breathe_and_Look_Around
       Speed: 1
@@ -912,6 +917,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 6030618387453150548
+      MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
       Clip: Short_Breathe_and_Look_Around
       Speed: 1
@@ -971,6 +977,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 6030618387453150548
+      MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
       Clip: Short_Breathe_and_Look_Around
       Speed: 1
@@ -1030,6 +1037,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 6030618387453150548
+      MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
       Clip: Short_Breathe_and_Look_Around
       Speed: 1
@@ -1081,6 +1089,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 9488494331553346510
+      MaterialOverrides: [10582928258056825096]
   - Entity: 3000000000000000101
     TagComponent:
       Tag: Weapon Crate
@@ -1127,6 +1136,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 5842540604746245028
+      MaterialOverrides: [6163099190943935964]
   - Entity: 3000000000000000102
     TagComponent:
       Tag: Upgrade Station
@@ -1173,6 +1183,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 16782465712033431344
+      MaterialOverrides: [12848620036205009364]
   - Entity: 3000000000000000014
     TagComponent:
       Tag: Footsteps
