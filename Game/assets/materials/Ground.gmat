@@ -1,0 +1,7 @@
+Material:
+  Name: Ground
+  Albedo: [0.239999995, 0.234999999, 0.219999999, 1]
+  Metallic: 0
+  Roughness: 0.899999976
+  TwoSided: false
+  Transparent: false

@@ -172,28 +172,29 @@ local FOOTPRINTS = {
 -- plane, which spans +-50. The first attempt at this steered by constant arcs instead; two arcs
 -- of opposite curvature make an S, an S translates, and it wandered off the map at t=80s.
 -- Every point is in OPEN space. The second attempt aimed at the obstacles' centres, which are
--- inside solid boxes: the capsule pressed against Block A's west face for 124 s and the route
+-- inside solid geometry: the capsule pressed against a block's west face for 124 s and the route
 -- never advanced, because a velocity-driven capsule does not slide along a wall - drive it
 -- straight at a surface and the solver cancels the whole velocity, leaving no tangential
 -- component to carry it sideways. That is CharacterVirtual's job, not this flag's.
 --
--- So the route grazes the geometry instead of aiming through it. Footprints, for reference:
---   Block A  x[4.5, 7.5]  z[-5.5, -2.5]   h 1.5
---   Block B  x[-9, -5]    z[4, 6]         h 1.0 (yawed 0.5 rad)
---   Step     x[-4, 4]     z[-8.5, -7.5]   h 0.2   <- the one it is meant to climb
+-- So the route grazes the geometry instead of aiming through it. The three placeholder boxes it
+-- was originally laid out against - two cover blocks and a 0.2 m step at z = -8 - are gone; the
+-- buildings are the only obstacles now, and the waypoints below are kept because the *path* is
+-- what the gate measures, not what it passes. See docs/ToDo/PROVING_GROUND.md for the step-up
+-- coverage that went with the Step.
 -- P2 extends this through the two buildings. Their doorways were measured off the meshes rather
 -- than guessed, and the route aims at each one and then at a point INSIDE, so "walk in and out of
 -- every building" is exercised rather than asserted:
 --   Blockhouse  centre (16, -6),  8.0 x 7.2,  doorway 1.8 m on its -Z wall at local x +2.56
 --   Warehouse   centre (-22, -14), 20 x 11.5, door    0.9 m on its -X wall at local z -1.92
 local ROUTE = {
-    {  0, -7 },    -- head-on at the 0.2 m Step: can the controller ride a kerb?
-    {  9, -4 },    -- along Block A's east face
+    {  0, -7 },    -- open floor (was head-on at the 0.2 m Step, removed with the boxes)
+    {  9, -4 },    -- open floor (was along Block A's east face)
     { 18.6, -11 }, -- line up on the Blockhouse doorway from outside
     { 18.6, -6 },  -- through it, into the middle of the Blockhouse
     { 18.6, -11 }, -- and back out the way it came
     {  4,  6 },    -- open floor, a long run to reach full speed
-    {-11,  5 },    -- past Block B's west end
+    {-11,  5 },    -- open floor (was past Block B's west end)
     {-34, -15.9 }, -- line up on the Warehouse door
     {-22, -15.9 }, -- through it, into the middle of the Warehouse
     {-34, -15.9 }, -- and out
@@ -216,7 +217,7 @@ local ROUTE = {
 --
 -- { x, z, seconds to stand there, what it is for }
 local LOS_ROUTE = {
-    {  2.00, -11.0, 0.5, "staging - clear of Block A, which is on the direct line from spawn" },
+    {  2.00, -11.0, 0.5, "staging - open floor; Block A used to sit on the line from spawn" },
     { 14.00, -12.0, 8.0, "behind the -Z wall: the Sentry must NOT acquire" },
     { 18.56, -12.0, 8.0, "on the doorway's sight line: it must" },
     { 14.00, -12.0, 6.0, "back behind the wall: it must lose me again" },
@@ -746,8 +747,9 @@ function Player:PushPending()
 end
 
 -- A circuit that walks the map and meets every obstacle in it: straight stretches long enough to
--- reach full speed, turns that bring it back around, and headings aimed at Block A (6, -4),
--- Block B (-7, 5) and the 0.2 m Step at z = -8. Walking *into* things is the point - sticking is
+-- reach full speed, turns that bring it back around, and headings that used to aim at the three
+-- placeholder boxes. Those are gone, so the buildings carry that job alone now. Walking *into*
+-- things is the point - sticking is
 -- one of the three failure modes and it only shows up against geometry.
 function Player:AutoTurn()
     local p = self.entity:GetTranslation()

@@ -511,6 +511,58 @@ the same as looking at it before the `.gmat` was wired up.
 The rule is about the mesh, not the exporter: **cull a solid, keep both faces on a shell.** The
 test costs one screenshot from inside.
 
+#### The placeholder boxes are gone, and two things went with them
+
+`BoxTextured.glb` was doing four unrelated jobs. All four references are out of the scene:
+
+- **Block A and Block B** were P1-era cover, superseded by P2's buildings. `ROUTE`'s waypoints
+  were authored against them (*"along Block A's east face"*), so the labels are now marked as
+  history — the path is what the gate measures, not what it passes.
+- **Step** (8 x 0.2 x 1) is deleted on request. It was **the only thing in the scene exercising
+  `CharacterControllerComponent::StepHeight` (0.4)**, and nothing replaces it. Step-up has no
+  coverage now. A ledge or a ramp somewhere in the map would bring it back; a box would not be
+  the only way to do it.
+- **The projectile's 0.15 m cube** is now a particle bolt (below).
+- **The Ground** keeps its 100x1x100 collider and its mesh, but wears a new flat
+  `materials/Ground.gmat` — no maps at all, just a matte albedo.
+
+**Why the ground is a flat colour rather than the tile texture.** `GroundTile1x1x01` cannot tile:
+its top face spans `x[-0.62, 0.82] z[-0.18, 0.49]` out of a +-1 footprint, i.e. it is an
+irregular 15-vertex sculpted pad, and at the scale a floor needs that irregularity becomes a
+metres-wide seam pattern — tried, screenshotted, reverted. The box's own UVs are no better: they
+run `u 0..6`, six faces in a strip, so its top face can only ever wear a sixth of any image,
+which at 4096 is 6.8 px/m across 100 m. With no map the UV layout stops mattering.
+
+There is no UV tiling parameter anywhere — not on `Material`, not in `MaterialSerializer`, not in
+the shaders. That is what a proper tiled floor would need, and it is the cheapest of the three
+ways to get one (the others being a seamless ground texture, or a real terrain/plane asset).
+
+#### Bullets are particles, not sprites and not meshes
+
+A projectile keeps its rigid body and sphere collider untouched — P3's collision behaviour and
+gate are unaffected — and only what draws it changed.
+
+`SpriteRendererComponent` was the obvious answer and it is the wrong one. `RenderSystem::
+SubmitSprites` draws the quad at the entity's own transform, so it is **not billboarded**; and a
+projectile is a dynamic body whose rotation `SyncTransforms` overwrites from Jolt every frame, so
+a script could not aim it at the camera either — the same trap that puts the player's facing on a
+child entity.
+
+Particles are billboarded, unlit and support additive blending, and **additive + bloom is the only
+thing in this engine that can read as a glow**, because there is no emissive channel.
+`WorldSpace: true` is what makes it a trail: particles spawn at the emitter's world position and
+stay there while the bolt moves on, and their sizes are metres rather than being multiplied by
+the projectile's 0.15 scale.
+
+Two things worth knowing before touching the numbers:
+
+- **Additive stacks before bloom sees it.** The first attempt (220/s, colour at 1.0) rendered as
+  a solid white pillar under `autofire`, because 220/s at 60 fps is ~3.7 particles a frame
+  emitted within 0.47 m of each other. Rate and starting colour both had to come well down.
+- **One draw call per live emitter.** Normal fire at a 0.12 s interval keeps roughly 8 alive;
+  the `autofire` gate measured **`live=67`**. That is the load to watch if projectiles ever get
+  cheaper to spawn, and it is worth a frame capture before assuming it is free.
+
 #### What the character import left open
 
 - **The player mesh does not turn with the mouse.** The `Body` child hangs off the capsule, not
