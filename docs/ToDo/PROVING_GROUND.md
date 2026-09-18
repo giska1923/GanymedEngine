@@ -449,6 +449,17 @@ The chain is four billed calls per character — `text-to-3d` preview (20 credit
   drift, ankle-to-toe facing, weight sums, texture dimensions. All free, and all faster than
   noticing in the editor.
 
+The same strip was applied to the three props and the three buildings once their overrides were
+in — 122.3 MB of glb across the eight models became 3.7 MB, with `GroundTile1x1x01` going from
+**18.67 MB to 0.01 MB** for its 102 triangles. Each map was sha256-compared against its extracted
+sidecar first, because the strip is only safe if the sidecar the `.gmat` points at is the same
+bytes. All 15 matched.
+
+Not done, deliberately: capping the buildings' maps with `MaxSize`. Their set is 4096 albedo,
+4096 normal, 2048 metallicRoughness, which is a defensible choice for architecture you walk up
+to — unlike a 4096 two-channel metallicRoughness on a prop, which was pure waste. Capping them
+is a visual-quality decision, and it saves no disk at all, only VRAM.
+
 Once the maps come from the `.gmat`, the copy Meshy bakes into the glb is dead weight, and it
 costs more than disk: embedded maps bypass the texture manager (`TextureImporter::Upload`, no
 handle) and are decoded and uploaded at mesh apply whether or not anything draws with them — see
@@ -477,12 +488,28 @@ filled with `MaterialOverrides: [<handle>]`. Confirmed by a cold boot compiling
 `ArmoredHumanoid_textures/albedo_0.jpg` for the first time, and by the orks visibly gaining
 surface relief.
 
-**The three buildings are still in that state.** Their `.gmat` files say `TwoSided: true`, which
-is what Meshy exported, so nothing is being rendered wrong today — but flipping it would do
-nothing until those entities get overrides too. Worth doing as one pass rather than per-asset.
+All fourteen mesh entities now carry a `MaterialOverrides` slot, buildings included.
 
 Worth considering on the engine side: a scan-time note when a `.gmat` exists for a mesh that no
 entity overrides. It is the kind of thing that is obvious once seen and invisible before.
+
+#### `doubleSided` is not always Meshy being careless
+
+Three times in a row — the buildings, the characters, the props — the advice here was "Meshy sets
+`doubleSided` on everything, flip it". **That is wrong for the buildings, and the way it is wrong
+is invisible from outside.**
+
+Set `TwoSided: false` on the Warehouse and stand inside it: the walls vanish. Only the window
+frames survive, because they are the only part with thickness. These buildings are hollow shells
+whose walls are single-sided, so `doubleSided` is load-bearing geometry information, not an
+exporter default to tidy away. Reverted, and they stay `true`.
+
+The characters and the props are closed solids, so culling is correct there and they keep
+`TwoSided: false` — verified by looking at each one with culling actually active, which is not
+the same as looking at it before the `.gmat` was wired up.
+
+The rule is about the mesh, not the exporter: **cull a solid, keep both faces on a shell.** The
+test costs one screenshot from inside.
 
 #### What the character import left open
 

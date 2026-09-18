@@ -227,6 +227,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 10342787246598626112
+      MaterialOverrides: [12354560174729496246]
     RigidBodyComponent:
       Type: 0
       Mass: 1
@@ -271,6 +272,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 2896349153812140998
+      MaterialOverrides: [6600714185272925268]
   - Entity: 3000000000000000041
     TagComponent:
       Tag: Blockhouse Wall X-
@@ -485,6 +487,7 @@ Entities:
         []
     StaticMeshComponent:
       Mesh: 4660014437392013074
+      MaterialOverrides: [8666195367887103317]
   - Entity: 3000000000000000050
     TagComponent:
       Tag: Warehouse Wall X-
