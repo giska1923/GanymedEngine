@@ -108,6 +108,31 @@ declare interface Entity {
 	 */
 	GetCurrentAnimation(): string;
 
+	HasBoneAttachment(): boolean;
+
+	/**
+	 * Pins this entity to `joint` on `target`'s skeleton. Offset and rotation are in joint
+	 * space; rotation is Euler radians, X·Y·Z, matching `SetRotation`.
+	 *
+	 * If this entity already has a BoneAttachmentComponent, the fields update this frame
+	 * (the attachment system runs after scripts). Adding the component is queued and
+	 * becomes visible next frame, the same delay as `Scene.Spawn`.
+	 *
+	 * An unknown joint name is not an error here. The attachment system warns once and
+	 * leaves the entity at its parent transform.
+	 *
+	 * No-op if `target` is missing or is this entity.
+	 */
+	AttachToBone(target: Entity, joint: string): void;
+	AttachToBone(target: Entity, joint: string, offset: Vec3): void;
+	AttachToBone(target: Entity, joint: string, offset: Vec3, rotation: Vec3): void;
+
+	/**
+	 * Clears the joint this frame (the entity snaps to its parent transform) and removes
+	 * the component on the next frame. No-op if there is no attachment.
+	 */
+	DetachFromBone(): void;
+
 	/**
 	 * True only when this entity has a CharacterControllerComponent and is standing on ground it
 	 * can walk on. A steep slope it is sliding down counts as false, which is what jumping,

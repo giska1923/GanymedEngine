@@ -214,9 +214,11 @@ public:
 - `ISystem` hooks: `OnRuntimeStart/Stop` (play mode), `OnUpdate` (play), `OnUpdateEditor`
   (edit mode — default no-op). Most simulating systems leave `OnUpdateEditor` alone.
   `AnimationSystem` is the exception that samples without advancing (so inspector scrubbing
-  moves the model without running the clock). `ParticleSystem` is the other exception, and
+  moves the model without running the clock). `BoneAttachmentSystem` is the matching exception
+  on the socket side: it has to follow that sampled pose in edit mode or a weapon on a hand
+  would sit at last frame's joint. `ParticleSystem` is the other simulating exception, and
   it *does* advance: a spawn/age sim has no closed form to sample, and visual authoring is
-  blind without a live preview. Two divergences, named against each other.
+  blind without a live preview. Three divergences, named against each other.
 - `Access()` returns the union `ViewDesc` of all declared views — derived, never hand-written.
 - `ViewHolder` type-erases its state tuple behind an interface pointer because
   `Implementation::Views` is not nameable while the derived class is still incomplete.
@@ -225,7 +227,8 @@ public:
 
 Owned by `Scene`; registration order **is** execution order. The built-in registration (in
 `Scene`'s constructor) is: `PhysicsSystem` → `NativeScriptSystem` → `LuaScriptSystem` →
-`AnimationSystem` → `TransformSystem` → `CameraSystem` → `AudioSystem` → `ParticleSystem` → `RenderSystem`.
+`AnimationSystem` → `TransformSystem` → `BoneAttachmentSystem` → `CameraSystem` → `AudioSystem` →
+`ParticleSystem` → `RenderSystem`.
 
 - **Profiling scopes live here, not in the systems.** `OnUpdate`/`OnUpdateEditor` wrap each
   system's call in a `GE_PROFILE_SCOPE_DYNAMIC(system->Name())`, so one span per system per frame
@@ -253,6 +256,10 @@ Owned by `Scene`; registration order **is** execution order. The built-in regist
   palette: move `AnimationSystem` after it and the assert fires. Note what that took — the
   constraint existed from the moment the palette did, but nothing could check it until a reader
   *declared* the component.
+
+  `BoneAttachmentSystem`'s slot after `TransformSystem` and before `CameraSystem` *is* checked:
+  it writes `WorldTransformComponent` and `CameraSystem` only reads it. The palette read against
+  `AnimationSystem` is also checked. Two writers of world (this and `TransformSystem`) are not.
 
   `AudioSystem`'s slot is the same shape one step further out: its read of `WorldTransformComponent`
   after `TransformSystem` *is* checked, but its placement after `CameraSystem` is not — that

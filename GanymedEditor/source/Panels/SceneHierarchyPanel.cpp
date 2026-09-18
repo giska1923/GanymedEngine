@@ -159,6 +159,10 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_BONE;
 			}
+			else if constexpr (std::is_same_v<T, BoneAttachmentComponent>)
+			{
+				icon = ICON_LC_ANCHOR;
+			}
 			else if constexpr (std::is_same_v<T, ScriptComponent>)
 			{
 				icon = ICON_LC_FILE_CODE;
@@ -1430,6 +1434,7 @@ namespace GanymedE {
 			DrawAddComponentEntry<SpotLightComponent>("Spot Light");
 			DrawAddComponentEntry<SkyLightComponent>("Sky Light");
 			DrawAddComponentEntry<AnimatorComponent>("Animator");
+			DrawAddComponentEntry<BoneAttachmentComponent>("Bone Attachment");
 			DrawAddComponentEntry<ScriptComponent>("Script");
 			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");
 			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
@@ -2075,6 +2080,102 @@ namespace GanymedE {
 			if (rigged)
 				ImGui::Text("Joints: %u", mesh->GetSkeleton().JointCount());
 
+			return edited;
+		});
+
+		DrawComponent<BoneAttachmentComponent>("Bone Attachment", entity, [&](auto& component)
+		{
+			bool edited = false;
+
+			// Target is an entity UUID, zero meaning parent. The generic drawer would print
+			// the number; the useful widget is a drop from the outliner plus a Parent button.
+			Entity target;
+			std::string targetLabel = "(parent)";
+			if (component.Target != UUID{ 0 })
+			{
+				target = m_Context ? m_Context->FindEntityByUUID(component.Target) : Entity{};
+				targetLabel = target ? target.GetName() : "<missing>";
+				if (target && targetLabel.empty())
+					targetLabel = "(unnamed)";
+			}
+			else if (m_Context)
+			{
+				const UUID parentID = entity.GetComponent<RelationshipComponent>().Parent;
+				if (parentID != UUID{ 0 })
+					target = m_Context->FindEntityByUUID(parentID);
+			}
+
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Target");
+			ImGui::SameLine();
+			ImGui::Button(targetLabel.c_str(), ImVec2(-1.0f, 0.0f));
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_HIERARCHY_ENTITY"))
+				{
+					UUID droppedID = *(const UUID*)payload->Data;
+					if (droppedID != entity.GetUUID())
+					{
+						component.Target = droppedID;
+						component.Resolved = -1;
+						edited = true;
+					}
+				}
+				ImGui::EndDragDropTarget();
+			}
+
+			if (ImGui::SmallButton("Parent"))
+			{
+				component.Target = UUID{ 0 };
+				component.Resolved = -1;
+				edited = true;
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("Drop an entity, or Parent for the hierarchy parent");
+
+			Ref<Mesh> mesh;
+			if (target && target.HasComponent<StaticMeshComponent>())
+				mesh = target.GetComponent<StaticMeshComponent>().Mesh.Get();
+
+			const bool rigged = mesh && mesh->HasSkeleton();
+			if (!rigged)
+			{
+				ImGui::TextDisabled("Target has no rigged mesh");
+			}
+			else
+			{
+				const auto& names = mesh->GetSkeleton().JointNames;
+				if (ImGui::BeginCombo("Joint",
+					component.Joint.empty() ? "(none)" : component.Joint.c_str()))
+				{
+					if (ImGui::Selectable("(none)", component.Joint.empty()))
+					{
+						component.Joint.clear();
+						component.Resolved = -1;
+						edited = true;
+					}
+
+					for (const std::string& name : names)
+					{
+						const bool selected = component.Joint == name;
+						if (ImGui::Selectable(name.c_str(), selected))
+						{
+							component.Joint = name;
+							component.Resolved = -1;
+							edited = true;
+						}
+						if (selected)
+							ImGui::SetItemDefaultFocus();
+					}
+
+					ImGui::EndCombo();
+				}
+
+				if (names.empty())
+					ImGui::TextDisabled("Mesh is rigged but lists no joint names");
+			}
+
+			edited |= DrawReflected(entity, m_Context.get(), m_Selection, component);
 			return edited;
 		});
 

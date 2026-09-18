@@ -132,6 +132,10 @@ namespace GanymedE {
 		if (entity.HasComponent<AnimatorComponent>())
 			WriteReflectedComponent(out, "AnimatorComponent", entity.GetComponent<AnimatorComponent>());
 
+		if (entity.HasComponent<BoneAttachmentComponent>())
+			WriteReflectedComponent(out, "BoneAttachmentComponent",
+				entity.GetComponent<BoneAttachmentComponent>());
+
 		if (entity.HasComponent<ScriptComponent>())
 		{
 			out << YAML::Key << "ScriptComponent";
@@ -554,6 +558,13 @@ namespace GanymedE {
 			animator.Loop = animatorComponent["Loop"].as<bool>();
 		}
 
+		auto boneAttachmentComponent = entityNode["BoneAttachmentComponent"];
+		if (boneAttachmentComponent)
+		{
+			ReadReflectedComponent(boneAttachmentComponent,
+				deserializedEntity.AddComponent<BoneAttachmentComponent>());
+		}
+
 		auto scriptComponent = entityNode["ScriptComponent"];
 		if (scriptComponent)
 		{
@@ -767,6 +778,24 @@ namespace GanymedE {
 				static_cast<uint64_t>(entity.GetUUID()), static_cast<uint64_t>(relationship.Parent));
 
 			relationship.Parent = it != fileToNew.end() ? it->second.front() : UUID{ 0 };
+		}
+
+		// BoneAttachmentComponent::Target is an entity UUID, the same class of reference as
+		// Parent/Children. Zero stays zero ("my parent"). A non-zero value that names an
+		// entity in this batch is translated; one that does not is left as-is so a socket
+		// can still name something outside the file (a scene entity a prefab instance
+		// attaches to after instantiate, which will not be in this batch).
+		for (Entity entity : created)
+		{
+			auto* attachment = scene.Reg().try_get<BoneAttachmentComponent>((entt::entity)entity);
+			if (!attachment || attachment->Target == UUID{ 0 })
+				continue;
+
+			auto it = fileToNew.find(static_cast<uint64_t>(attachment->Target));
+			if (it != fileToNew.end())
+				attachment->Target = it->second.front();
+
+			attachment->Resolved = -1;
 		}
 	}
 
