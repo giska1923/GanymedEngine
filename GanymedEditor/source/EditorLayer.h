@@ -10,6 +10,7 @@
 #include "GanymedE/Core/Random.h"
 
 #include <filesystem>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -52,11 +53,12 @@ namespace GanymedE {
 		// Seeds a fresh scene with a default sun + sky so meshes are lit immediately
 		void SetupDefaultEnvironment(const Ref<Scene>& scene);
 
-		bool IsPlacing() const { return m_PlaceType != AssetType::None; }
+		bool IsPlacing() const { return m_PlaceType != AssetType::None || !m_PlaceMarkerKind.empty(); }
 		bool IsScattering() const;
 		bool SnapActive() const;
 		void CancelPlacement();
 		void BeginPlacement(AssetHandle handle, AssetType type);
+		void BeginMarkerPlacement(const std::string& kind, const glm::vec4& color, float size);
 		void UpdateSurfaceRaycast();
 		void RefreshPlaceBounds(Entity root);
 		void ApplyPlacementTransform();
@@ -84,6 +86,7 @@ namespace GanymedE {
 		Ref<SceneRenderer> m_SceneRenderer; // owns the HDR target + post stack (bloom, tonemap, FXAA)
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
 		bool m_ShowColliderGizmos = true;
+		bool m_ShowMarkers = true;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;
@@ -148,6 +151,9 @@ namespace GanymedE {
 		AABB m_PlaceBounds;
 		bool m_PlaceHasBounds = false;
 		bool m_PlaceHasTarget = false;
+		std::string m_PlaceMarkerKind;
+		glm::vec4 m_PlaceMarkerColor{ 0.2f, 0.9f, 0.35f, 1.0f };
+		float m_PlaceMarkerSize = 0.5f;
 
 		struct ScatterStroke
 		{

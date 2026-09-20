@@ -39,6 +39,7 @@ namespace GanymedE {
 		// Iterated in Phase 3: billboards go to ParticleRenderer, mesh particles
 		// ride SubmitMesh. The declaration itself was Phase 2 (ordering lock).
 		using ParticleView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<ParticleEmitterComponent>>;
+		using MarkerView   = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<MarkerComponent>>;
 
 		using Views = TypeList<
 			MeshView,
@@ -50,7 +51,8 @@ namespace GanymedE {
 			BoxColliderView,
 			SphereColliderView,
 			CapsuleColliderView,
-			ParticleView
+			ParticleView,
+			MarkerView
 		>;
 
 		using ECS::System<RenderSystem>::System;
@@ -66,6 +68,7 @@ namespace GanymedE {
 			const glm::vec3& cameraUp);
 		void SubmitSprites();
 		void DrawColliderGizmos();
+		void DrawMarkerGizmos();
 
 		void RebuildEditorHidden();
 		bool IsEditorHidden(entt::entity entity) const;

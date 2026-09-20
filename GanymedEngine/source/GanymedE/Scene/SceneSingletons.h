@@ -50,6 +50,12 @@ namespace GanymedE {
 		// used to call DrawColliderGizmos unconditionally; it now reads this flag too.
 		bool ShowColliderGizmos = false;
 
+		// Marker wireframes (sphere + optional forward). Same editor-opt-in shape as
+		// ShowColliderGizmos: engine default off, the editor pushes it every frame because
+		// Scene::Copy does not carry singletons. Lives here rather than a one-bool singleton
+		// because this is already the bag those flags are pushed through; the name is debt.
+		bool ShowMarkers = false;
+
 		float FixedTimestep = 1.0f / 60.0f;
 		int MaxStepsPerFrame = 5;          // spiral-of-death guard
 	};

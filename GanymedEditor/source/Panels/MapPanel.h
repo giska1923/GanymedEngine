@@ -70,6 +70,11 @@ namespace GanymedE {
 		const ScatterSettings& Scatter() const { return m_Scatter; }
 		bool IsPaintArmed() const { return m_PaintArmed; }
 		void SetPaintArmed(bool armed) { m_PaintArmed = armed; }
+
+		void SetMarkerHandler(std::function<void(const std::string&, const glm::vec4&, float)> handler)
+		{
+			m_OnPlaceMarker = std::move(handler);
+		}
 	private:
 		void DrawPalette(bool editing);
 		void DrawPlacementOptions(MapSnapSettings& snap);
@@ -78,7 +83,7 @@ namespace GanymedE {
 		void DrawParityAudit(bool editing, Scene* scene, EditorUndoStack* undo,
 			SceneHierarchyPanel* hierarchy, EditorCamera* camera, UUID excludeFromAudit);
 		void DrawScatter(bool editing);
-		void DrawUpcomingSections();
+		void DrawMarkers(bool editing);
 
 		void RebuildAudit(Scene* scene, SceneHierarchyPanel* hierarchy, UUID excludeFromAudit);
 		void RefreshFocusOverlay(Scene* scene);
@@ -93,9 +98,18 @@ namespace GanymedE {
 		void Unpin(const std::string& relativePath);
 
 		std::function<void(AssetHandle, AssetType)> m_OnPlace;
+		std::function<void(const std::string&, const glm::vec4&, float)> m_OnPlaceMarker;
 		std::vector<std::string> m_Pinned;
 		bool m_PaletteLoaded = false;
 		char m_PinSearch[128] = {};
+
+		struct MarkerKind
+		{
+			std::string Kind = "Spawn";
+			glm::vec4 Color{ 0.2f, 0.9f, 0.35f, 1.0f };
+			float Size = 0.5f;
+		};
+		std::vector<MarkerKind> m_Markers;
 
 		int m_DupCount = 6;
 		float m_DupSpacing = 2.0f;

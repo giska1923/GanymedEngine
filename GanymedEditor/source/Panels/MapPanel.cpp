@@ -25,6 +25,7 @@
 #include <cctype>
 #include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -78,6 +79,55 @@ namespace GanymedE {
 		}
 
 		constexpr glm::vec4 kMeshOverlay{ 0.25f, 0.85f, 1.0f, 1.0f };
+
+		bool ParseColor4(const std::string& text, glm::vec4& out)
+		{
+			std::string compact;
+			compact.reserve(text.size());
+			for (char c : text)
+			{
+				if (!std::isspace(static_cast<unsigned char>(c)))
+					compact.push_back(c);
+			}
+
+			if (compact.size() < 5 || compact.front() != '[' || compact.back() != ']')
+				return false;
+
+			float values[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+			int count = 0;
+			const char* p = compact.c_str() + 1;
+			const char* end = compact.c_str() + compact.size() - 1;
+			while (count < 4 && p < end)
+			{
+				char* next = nullptr;
+				values[count] = std::strtof(p, &next);
+				if (next == p)
+					return false;
+				count++;
+				p = next;
+				if (p < end && *p == ',')
+					p++;
+				else
+					break;
+			}
+
+			if (count < 3)
+				return false;
+
+			out = { values[0], values[1], values[2], values[3] };
+			return true;
+		}
+
+		bool SplitKeyValue(const std::string& s, std::string& key, std::string& value)
+		{
+			const size_t colon = s.find(':');
+			if (colon == std::string::npos)
+				return false;
+			key = TrimCopy(s.substr(0, colon));
+			value = TrimCopy(s.substr(colon + 1));
+			return !key.empty();
+		}
+
 		constexpr glm::vec4 kColliderOverlay{ 1.0f, 0.55f, 0.15f, 1.0f };
 
 		glm::mat4 WorldOf(Entity entity, Scene& scene)
@@ -315,7 +365,7 @@ namespace GanymedE {
 		DrawDuplicateAlongAxis(editing, placing, scene, undo, hierarchy);
 		DrawParityAudit(editing, scene, undo, hierarchy, camera, excludeFromAudit);
 		DrawScatter(editing);
-		DrawUpcomingSections();
+		DrawMarkers(editing);
 
 		EndPanelBody();
 		EndPanel();
@@ -939,25 +989,98 @@ namespace GanymedE {
 		ImGui::TextDisabled("Each instance is an entity. Cap exists because of that, not draw calls.");
 	}
 
-	void MapPanel::DrawUpcomingSections()
+	void MapPanel::DrawMarkers(bool editing)
 	{
-		ImGui::BeginDisabled();
-		if (ImGui::CollapsingHeader("Markers"))
-			ImGui::TextUnformatted("M4.");
-		ImGui::EndDisabled();
+		if (!ImGui::CollapsingHeader("Markers", ImGuiTreeNodeFlags_DefaultOpen))
+			return;
+
+		ImGui::TextDisabled("Known kinds from the project palette. Unknown kinds still round-trip.");
+
+		if (m_Markers.empty())
+			ImGui::TextDisabled("No kinds listed. Add a markers: block to map_palette.yaml.");
+
+		std::string placeKind;
+		glm::vec4 placeColor{ 1.0f };
+		float placeSize = 0.5f;
+
+		for (int i = 0; i < (int)m_Markers.size(); i++)
+		{
+			const MarkerKind& marker = m_Markers[i];
+			ImGui::PushID(i);
+			ImGui::ColorButton("##c", ImVec4(marker.Color.r, marker.Color.g, marker.Color.b, 1.0f),
+				ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2(14.0f, 14.0f));
+			ImGui::SameLine();
+			ImGui::BeginDisabled(!editing);
+			if (ImGui::Selectable(marker.Kind.c_str()) && editing)
+			{
+				placeKind = marker.Kind;
+				placeColor = marker.Color;
+				placeSize = marker.Size;
+			}
+			ImGui::EndDisabled();
+			ImGui::PopID();
+		}
+
+		if (!placeKind.empty() && m_OnPlaceMarker)
+			m_OnPlaceMarker(placeKind, placeColor, placeSize);
 	}
 
 	void MapPanel::LoadPalette()
 	{
 		m_Pinned.clear();
+		m_Markers = {
+			{ "Spawn",   { 0.2f, 0.9f, 0.35f, 1.0f }, 0.5f },
+			{ "Patrol",  { 0.3f, 0.7f, 1.0f,  1.0f }, 0.5f },
+			{ "Trigger", { 1.0f, 0.55f, 0.2f, 1.0f }, 0.5f },
+		};
 		m_PaletteLoaded = true;
 
 		std::ifstream in(PalettePath());
 		if (!in)
 			return;
 
+		enum class Section { None, Pinned, Markers };
+		Section section = Section::None;
+		bool sawMarkers = false;
+		std::vector<MarkerKind> parsed;
+		MarkerKind current;
+		bool haveCurrent = false;
+
+		auto flushMarker = [&]()
+		{
+			if (haveCurrent && !current.Kind.empty())
+				parsed.push_back(current);
+			haveCurrent = false;
+			current = MarkerKind{};
+		};
+
+		auto applyField = [&](const std::string& key, const std::string& value) -> bool
+		{
+			const std::string k = ToLowerAscii(key);
+			if (k == "kind")
+			{
+				current.Kind = value;
+				return true;
+			}
+			if (k == "color")
+			{
+				glm::vec4 color;
+				if (ParseColor4(value, color))
+					current.Color = color;
+				return true;
+			}
+			if (k == "size")
+			{
+				char* end = nullptr;
+				const float size = std::strtof(value.c_str(), &end);
+				if (end != value.c_str())
+					current.Size = size;
+				return true;
+			}
+			return false;
+		};
+
 		std::string line;
-		bool inPinned = false;
 		while (std::getline(in, line))
 		{
 			const std::string trimmed = TrimCopy(line);
@@ -966,23 +1089,70 @@ namespace GanymedE {
 
 			if (trimmed.rfind("pinned:", 0) == 0)
 			{
-				inPinned = true;
+				flushMarker();
+				section = Section::Pinned;
 				continue;
 			}
-
-			if (!inPinned)
-				continue;
-
-			if (trimmed.front() != '-')
+			if (trimmed.rfind("markers:", 0) == 0)
 			{
-				inPinned = false;
+				flushMarker();
+				section = Section::Markers;
+				sawMarkers = true;
 				continue;
 			}
 
-			const std::string path = TrimCopy(trimmed.substr(1));
-			if (!path.empty())
-				m_Pinned.push_back(path);
+			if (section == Section::Pinned)
+			{
+				if (trimmed.front() != '-')
+				{
+					section = Section::None;
+					continue;
+				}
+				const std::string path = TrimCopy(trimmed.substr(1));
+				if (!path.empty())
+					m_Pinned.push_back(path);
+				continue;
+			}
+
+			if (section != Section::Markers)
+				continue;
+
+			const bool dashed = trimmed.front() == '-';
+			const std::string body = dashed ? TrimCopy(trimmed.substr(1)) : trimmed;
+			std::string key, value;
+			if (SplitKeyValue(body, key, value))
+			{
+				if (dashed)
+					flushMarker();
+				if (!haveCurrent)
+				{
+					haveCurrent = true;
+					current = MarkerKind{};
+				}
+				if (!applyField(key, value))
+				{
+					flushMarker();
+					section = Section::None;
+				}
+				continue;
+			}
+
+			if (dashed && !body.empty())
+			{
+				flushMarker();
+				haveCurrent = true;
+				current = MarkerKind{};
+				current.Kind = body;
+				continue;
+			}
+
+			flushMarker();
+			section = Section::None;
 		}
+
+		flushMarker();
+		if (sawMarkers)
+			m_Markers = std::move(parsed);
 	}
 
 	void MapPanel::SavePalette() const
@@ -1004,10 +1174,18 @@ namespace GanymedE {
 			return;
 		}
 
-		out << "# Ganymed map palette — pinned asset paths relative to the asset root.\n";
+		out << "# Ganymed map palette — pinned asset paths and marker kinds.\n";
 		out << "pinned:\n";
 		for (const std::string& pin : m_Pinned)
 			out << "  - " << pin << "\n";
+		out << "markers:\n";
+		for (const MarkerKind& marker : m_Markers)
+		{
+			out << "  - Kind: " << marker.Kind << "\n";
+			out << "    Color: [" << marker.Color.r << ", " << marker.Color.g << ", "
+				<< marker.Color.b << ", " << marker.Color.a << "]\n";
+			out << "    Size: " << marker.Size << "\n";
+		}
 	}
 
 	void MapPanel::Pin(const std::string& relativePath)

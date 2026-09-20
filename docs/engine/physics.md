@@ -358,6 +358,8 @@ Jolt debug draw on, `RenderSystem` draws Jolt's view of the world *instead of* t
 collider gizmos — a divergence between the two is itself diagnostic (it means components and
 bodies disagree). Authored gizmos (`DrawColliderGizmos`) run in Edit and in Play-with-Jolt-off
 when `ShowColliderGizmos` is set; the editor defaults that checkbox on and pushes it every frame.
+Marker wire-spheres use the same singleton (`ShowMarkers`); the editor's Icons toggle pushes that
+one. Both default **false** in the engine so a shipped game draws neither.
 
 ## Extending
 

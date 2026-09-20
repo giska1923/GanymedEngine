@@ -266,6 +266,13 @@ namespace GanymedE {
 				"HasAudioSource",    [](Entity& e) { return e.HasComponent<AudioSourceComponent>(); },
 				"HasParticleEmitter", [](Entity& e) { return e.HasComponent<ParticleEmitterComponent>(); },
 
+				"GetMarkerKind", [](Entity& e) -> sol::optional<std::string>
+				{
+					if (!e.HasComponent<MarkerComponent>())
+						return sol::nullopt;
+					return e.GetComponent<MarkerComponent>().Kind;
+				},
+
 				// --- Animation ---
 				// AnimatorComponent is untracked, so unlike the transform setters these need no
 				// MarkChanged: AnimationSystem reads the component every frame regardless.
@@ -792,6 +799,27 @@ namespace GanymedE {
 
 				// int64, for the reason GetUUID returns int64 - see the comment there.
 				return sol::optional<int64_t>(static_cast<int64_t>(static_cast<uint64_t>(id)));
+			};
+
+			// Linear scan, same posture as FindEntityByName: setup, not per-frame. Kind is an
+			// exact string match. Omit kind (or pass empty) to get every marker in the scene.
+			scene["FindMarkers"] = [&lua](sol::optional<std::string> kind) -> sol::table
+			{
+				sol::table out = lua.create_table();
+				Scene* context = Context();
+				if (!context)
+					return out;
+
+				const bool all = !kind || kind->empty();
+				auto view = context->Reg().view<MarkerComponent>();
+				int index = 1; // Lua arrays are 1-based
+				for (auto handle : view)
+				{
+					if (!all && view.get<MarkerComponent>(handle).Kind != *kind)
+						continue;
+					out[index++] = Entity{ handle, context };
+				}
+				return out;
 			};
 		}
 

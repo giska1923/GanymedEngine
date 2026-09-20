@@ -184,6 +184,12 @@ precedent.
   entity) and a seed note, not a foliage instance array. Each child is an ordinary entity. Not
   in the Add Component menu; the Map panel creates it. See
   [editor.md](../editor/editor.md#map-panel).
+- **`MarkerComponent`** — spawn / patrol / trigger (or whatever string the game invents). `Kind`
+  is a string because the branch policy forbids the game from touching engine headers; an enum
+  would make "Patrol" an engine change. `Color`, `Size` and `DrawForward` are editor
+  visualization. Inert at runtime except as the query target for `Scene.FindMarkers` / 
+  `Entity:GetMarkerKind()`. Wait times and teams stay on `ScriptComponent`. In Add Component.
+  See [editor.md](../editor/editor.md#map-panel) and [scripting.md](scripting.md).
 
 ### Physics (pure data — Jolt never appears here)
 
@@ -359,11 +365,11 @@ script tick is consumed this frame. Remainder past `MaxParticles` stays queued.
 Pure submission — everything that used to be inlined in `Scene::OnUpdate*`. Reads `RenderContext`,
 begins Renderer3D with the main camera (or the editor fallback), submits lights, sky/environment,
 meshes, **particles** (billboards queued into `ParticleRenderer`, mesh particles as ordinary
-`SubmitMesh` opaques), collider gizmos (or Jolt debug draw when enabled during play), ends the
-scene, then does the 2D pass (sprites) in its own render view. The editor path additionally draws
-the grid, and looks through `RenderContext::PreviewCamera` when the viewport dropdown has selected
-a scene camera (otherwise `EditorViewCamera`). Its ten view declarations are live documentation of
-exactly what rendering reads.
+`SubmitMesh` opaques), collider gizmos (or Jolt debug draw when enabled during play), marker
+gizmos, ends the scene, then does the 2D pass (sprites) in its own render view. The editor path
+additionally draws the grid, and looks through `RenderContext::PreviewCamera` when the viewport
+dropdown has selected a scene camera (otherwise `EditorViewCamera`). Its eleven view declarations
+are live documentation of exactly what rendering reads.
 `SkyView` includes `EntityId` so the editor hide filter can skip a hidden sky light.
 
 The editor outliner eye is honoured only on the editor path: `EditorViewFilter::HiddenEntities`
@@ -380,6 +386,12 @@ Two policies live in this system:
   frame (Edit and Play) because `Scene::Copy` does not carry singletons. (Play used to fall through
   unconditionally, which meant any non-editor front-end drew collider wireframes over the game.
   Edit used to call `DrawColliderGizmos()` with no flag at all.)
+- **Marker gizmos are the same opt-in.** `DrawMarkerGizmos` reads `PhysicsSettings::ShowMarkers`
+  (engine default false; editor Icons toggle, default on). A wire sphere (16 segments) plus an
+  optional world −Z forward (`DrawForward`, the light convention). `DrawWireSphere` / `DrawLine`
+  accumulate and flush as one debug-line batch in `EndScene` — 100 markers are not 100 draws.
+  The flag lives on `PhysicsSettings` next to `ShowColliderGizmos` rather than a one-bool
+  singleton; the name is debt.
 - **No camera is loud, not silent.** With no primary camera *and* no fallback, the frame is the
   scene target's clear colour and the system logs an error at most once every 5 s. Throttled rather
   than per-frame: a 60 Hz error would bury everything else in the log to say the same thing.
@@ -408,12 +420,13 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
   *Known misnomer:* now that a non-editor host exists, `EditorViewCamera` is really "fallback view
   camera" and is simply null there. Flagged as debt rather than renamed — the rename ripples
   through docs and editor for zero behaviour change.
-- **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `FixedTimestep` (1/60),
-  `MaxStepsPerFrame` (5).
+- **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `ShowMarkers`, `FixedTimestep` (1/60),
+  `MaxStepsPerFrame` (5). `ShowMarkers` is editor visualization, not a physics flag; it sits here
+  because this is already the bag those per-frame editor pushes go through.
 - **`EditorViewFilter`** — editor-only. A pointer to the outliner's hidden-UUID set, asserted each
   edit frame by `EditorLayer`. Null means draw everything. `RenderSystem::OnUpdateEditor` expands
   each hidden UUID to its subtree via `CollectSubtree` and skips those submits (meshes, sprites,
-  lights, sky, particles, collider gizmos). Play/runtime ignore it, so a hidden entity still
+  lights, sky, particles, collider gizmos, marker gizmos). Play/runtime ignore it, so a hidden entity still
   simulates and draws in Play. Not serialized; `Scene::Copy` does not carry it.
 - **`EditorBoundsOverlay`** — editor-only extra wire geometry, drawn after collider gizmos in
   `OnUpdateEditor`. The Map panel's parity audit fills `Boxes` with the focused finding's mesh AABB
@@ -423,7 +436,7 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
 **Singletons are not carried by `Scene::Copy`.** The copy constructs a fresh `Scene`, whose
 constructor default-constructs its own `ctx()` entries, and then copies entities and components only.
 Anything a host needs true on the play-mode scene must be (re)written after the copy — which is why
-`EditorLayer` pushes `DebugDraw` *and* `ShowColliderGizmos` onto the active scene every Edit and
+`EditorLayer` pushes `DebugDraw`, `ShowColliderGizmos` and `ShowMarkers` onto the active scene every Edit and
 Play frame rather than once on play.
 
 ## Member reflection
@@ -774,6 +787,9 @@ blocks keyed by component name. Notes:
   handle that resolves to nothing, and the editor reports it when you try to Apply or Revert.
 - `ScatterGroupComponent` serializes `Source` (omitted when unset) and `LastSeed`. It is a folder
   marker, not an instance array — the children are ordinary entities written as themselves.
+- `MarkerComponent` serializes through the generic reflected writer (`Kind`, `Color`, `Size`,
+  `DrawForward`). An unknown kind is still a string and round-trips; the Map-panel palette is not
+  a whitelist.
 - **`AudioGroup` serializes as a name, not an ordinal** (`Group: Music`). It is not persisted by
   ordinal the way `AssetType` was, so nothing forces stable numbering on it, and an unknown
   name warns and falls back rather than throwing. Both audio components read every field guarded

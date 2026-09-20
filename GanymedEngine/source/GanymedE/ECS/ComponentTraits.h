@@ -103,6 +103,7 @@ namespace GanymedE {
 		PrefabInstanceComponent,
 		PrefabMemberComponent,
 		ScatterGroupComponent,
+		MarkerComponent,
 		ParticleEmitterComponent
 	>;
 }

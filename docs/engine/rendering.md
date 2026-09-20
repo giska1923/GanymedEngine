@@ -336,7 +336,7 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    that means injecting into the transparent sort.
 8. **Debug lines** — accumulated `DrawLine/DrawWireBox/DrawWireSphere/DrawWireCapsule` calls flush
    as one lines draw (20k-vertex dynamic buffer), depth-tested but not written. Used by collider
-   gizmos and Jolt debug draw.
+   gizmos, marker gizmos (`DrawWireSphere` + optional forward `DrawLine`), and Jolt debug draw.
 
 Also owned here: the procedural **skybox** (fullscreen quad, sky/ground gradient + sun) or the
 **cubemap skybox** when an environment is active; the editor **grid** (fragment-shader infinite

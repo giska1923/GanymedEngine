@@ -425,6 +425,11 @@ namespace GanymedE {
 			if (m_SceneState == SceneState::Edit)
 				BeginPlacement(handle, type);
 		});
+		m_MapPanel.SetMarkerHandler([this](const std::string& kind, const glm::vec4& color, float size)
+		{
+			if (m_SceneState == SceneState::Edit)
+				BeginMarkerPlacement(kind, color, size);
+		});
 
 		// Optional scene on the command line: GanymedEditor [--renderer=<backend>] [path/to/scene.ganymede]
 		// FirstPositional, not Args[1]: an option may come first.
@@ -496,6 +501,7 @@ namespace GanymedE {
 				m_ActiveScene->GetSingleton<RenderContext>().PreviewCamera = m_ViewportCamera;
 				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowColliderGizmos =
 					m_ShowColliderGizmos;
+				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowMarkers = m_ShowMarkers;
 
 				// Raycast and write the placement transform before TransformSystem so the
 				// preview renders this frame at the hover pose, not last frame's.
@@ -532,10 +538,12 @@ namespace GanymedE {
 
 				PhysicsSettings& physicsSettings = m_ActiveScene->GetSingleton<PhysicsSettings>();
 				physicsSettings.DebugDraw = m_PhysicsDebugDraw;
-				// Editor-only opt-in: the engine defaults this off so a shipped game never
-				// draws authored collider wireframes. Edit and Play both push the Visualizers
-				// checkbox every frame because Scene::Copy does not carry singletons.
+				// Editor-only opt-in: the engine defaults these off so a shipped game never
+				// draws authored collider wireframes or marker gizmos. Edit and Play both push
+				// the Visualizers / Icons checkboxes every frame because Scene::Copy does not
+				// carry singletons.
 				physicsSettings.ShowColliderGizmos = m_ShowColliderGizmos;
+				physicsSettings.ShowMarkers = m_ShowMarkers;
 
 				m_ActiveScene->OnUpdateRuntime(ts, &m_EditorCamera);
 
@@ -1245,7 +1253,7 @@ namespace GanymedE {
 
 			const float gap = ImGui::GetStyle().ItemSpacing.x;
 			const char* spaceLabel = m_GizmoWorldSpace ? "World" : "Local";
-			const float rightWidth = 24.0f + gap + 24.0f + gap + 9.0f + gap + 72.0f;
+			const float rightWidth = 24.0f + gap + 24.0f + gap + 24.0f + gap + 9.0f + gap + 72.0f;
 			const float rightX = row.x + availX - rightWidth;
 			if (rightX > ImGui::GetCursorPosX() + gap)
 				ImGui::SetCursorPos(ImVec2(rightX, row.y));
@@ -1284,6 +1292,10 @@ namespace GanymedE {
 				ImGui::TextDisabled("Jolt debug draw is Play-only (live body state).");
 				ImGui::EndPopup();
 			}
+
+			ImGui::SameLine();
+			if (IconButton(ICON_LC_MAP_PIN, "Icons (marker gizmos)", m_ShowMarkers))
+				m_ShowMarkers = !m_ShowMarkers;
 
 			ImGui::SameLine();
 			ToolbarSeparator();
@@ -1831,6 +1843,7 @@ namespace GanymedE {
 		m_PlaceType = AssetType::None;
 		m_PlaceHasTarget = false;
 		m_PlaceHasBounds = false;
+		m_PlaceMarkerKind.clear();
 	}
 
 	void EditorLayer::BeginPlacement(AssetHandle handle, AssetType type)
@@ -1865,6 +1878,40 @@ namespace GanymedE {
 		m_PlaceBaseEuler = root.GetComponent<TransformComponent>().Rotation;
 		m_PlaceBaseScale = root.GetComponent<TransformComponent>().Scale;
 		RefreshPlaceBounds(root);
+		m_SceneHierarchyPanel.SetSelectedEntity(root);
+		ApplyPlacementTransform();
+	}
+
+	void EditorLayer::BeginMarkerPlacement(const std::string& kind, const glm::vec4& color, float size)
+	{
+		if (!m_ActiveScene || m_SceneState != SceneState::Edit)
+			return;
+		if (kind.empty())
+			return;
+
+		CancelScatterMode();
+
+		const float keepYaw = (kind == m_PlaceMarkerKind) ? m_PlaceYaw : 0.0f;
+		CancelPlacement();
+		m_PlaceYaw = keepYaw;
+
+		Entity root = m_ActiveScene->CreateEntity(kind);
+		auto& marker = root.AddComponent<MarkerComponent>();
+		marker.Kind = kind;
+		marker.Color = color;
+		marker.Size = glm::clamp(size, 0.05f, 20.0f);
+		marker.DrawForward = true;
+
+		m_PlaceMarkerKind = kind;
+		m_PlaceMarkerColor = marker.Color;
+		m_PlaceMarkerSize = marker.Size;
+		m_PlaceHandle = InvalidAssetHandle;
+		m_PlaceType = AssetType::None;
+		m_PlacePreview = root.GetUUID();
+		m_PlaceBaseEuler = root.GetComponent<TransformComponent>().Rotation;
+		m_PlaceBaseScale = root.GetComponent<TransformComponent>().Scale;
+		m_PlaceHasBounds = false;
+		m_PlaceBounds = {};
 		m_SceneHierarchyPanel.SetSelectedEntity(root);
 		ApplyPlacementTransform();
 	}
@@ -1948,13 +1995,14 @@ namespace GanymedE {
 			m_PlacePreview = UUID{ 0 };
 			m_PlaceType = AssetType::None;
 			m_PlaceHandle = InvalidAssetHandle;
+			m_PlaceMarkerKind.clear();
 			return;
 		}
 
 		if (!preview.HasComponent<TransformComponent>())
 			return;
 
-		if (!m_PlaceHasBounds)
+		if (!m_PlaceHasBounds && m_PlaceMarkerKind.empty())
 			RefreshPlaceBounds(preview);
 
 		const bool alt = Input::IsKeyPressed(Key::LeftAlt) || Input::IsKeyPressed(Key::RightAlt);
@@ -1990,7 +2038,7 @@ namespace GanymedE {
 		const glm::mat4 rotation = glm::mat4_cast(align * yaw) * EulerRotationMatrix(m_PlaceBaseEuler);
 
 		glm::vec3 origin = point;
-		if (m_SnapSettings.SitOnBounds && m_PlaceHasBounds)
+		if (m_SnapSettings.SitOnBounds && m_PlaceHasBounds && m_PlaceMarkerKind.empty())
 		{
 			const glm::vec3 sitLocal(0.0f, -m_PlaceBounds.Min.y * m_PlaceBaseScale.y, 0.0f);
 			origin += glm::vec3(rotation * glm::vec4(sitLocal, 0.0f));
@@ -2040,6 +2088,9 @@ namespace GanymedE {
 
 		const AssetHandle handle = m_PlaceHandle;
 		const AssetType type = m_PlaceType;
+		const std::string markerKind = m_PlaceMarkerKind;
+		const glm::vec4 markerColor = m_PlaceMarkerColor;
+		const float markerSize = m_PlaceMarkerSize;
 		const float yaw = m_PlaceYaw;
 
 		m_PlacePreview = UUID{ 0 };
@@ -2047,12 +2098,16 @@ namespace GanymedE {
 		m_PlaceType = AssetType::None;
 		m_PlaceHasTarget = false;
 		m_PlaceHasBounds = false;
+		m_PlaceMarkerKind.clear();
 
 		m_SceneHierarchyPanel.SetSelectedEntity(preview);
 
 		if (chain)
 		{
-			BeginPlacement(handle, type);
+			if (!markerKind.empty())
+				BeginMarkerPlacement(markerKind, markerColor, markerSize);
+			else
+				BeginPlacement(handle, type);
 			m_PlaceYaw = yaw;
 			ApplyPlacementTransform();
 		}

@@ -250,6 +250,41 @@ namespace GanymedE {
 		}
 	}
 
+	void RenderSystem::DrawMarkerGizmos()
+	{
+		GE_PROFILE_FUNCTION();
+
+		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
+		if (!settingsView.Get()->ShowMarkers)
+			return;
+
+		for (auto [entity, worldTransform, marker] : View<MarkerView>())
+		{
+			if (IsEditorHidden(entity))
+				continue;
+
+			const glm::mat4& world = worldTransform.World;
+			const glm::vec3 center = glm::vec3(world[3]);
+			const float scale = glm::max(glm::length(glm::vec3(world[0])),
+				glm::max(glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))));
+			const float radius = marker.Size * glm::max(scale, 1.0e-6f);
+
+			// 16 segments: three rings still flush as one debug-line batch in EndScene.
+			Renderer3D::DrawWireSphere(center, radius, marker.Color, 16);
+
+			if (!marker.DrawForward)
+				continue;
+
+			glm::vec3 axis = glm::vec3(world[2]);
+			const float length = glm::length(axis);
+			if (length < 1.0e-6f)
+				continue;
+
+			const glm::vec3 forward = -axis / length;
+			Renderer3D::DrawLine(center, center + forward * radius, marker.Color);
+		}
+	}
+
 	void RenderSystem::DrawPhysicsDebugOrGizmos(const glm::vec3& cameraPosition)
 	{
 		GE_PROFILE_FUNCTION();
@@ -284,6 +319,7 @@ namespace GanymedE {
 			SubmitMeshes();
 			SubmitParticles(cameraPosition, cameraRight, cameraUp);
 			DrawPhysicsDebugOrGizmos(cameraPosition);
+			DrawMarkerGizmos();
 			Renderer3D::EndScene();
 		};
 
@@ -386,6 +422,8 @@ namespace GanymedE {
 		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
 		if (settingsView.Get()->ShowColliderGizmos)
 			DrawColliderGizmos();
+
+		DrawMarkerGizmos();
 
 		if (const EditorBoundsOverlay* overlay = m_Scene.FindSingleton<EditorBoundsOverlay>())
 		{

@@ -79,6 +79,12 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_SPRAY_CAN;
 			}
+			else if (entity.HasComponent<MarkerComponent>())
+			{
+				icon = ICON_LC_MAP_PIN;
+				const glm::vec4& c = entity.GetComponent<MarkerComponent>().Color;
+				tint = ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
+			}
 			else if (entity.HasComponent<CameraComponent>())
 			{
 				icon = ICON_LC_CAMERA;
@@ -148,6 +154,10 @@ namespace GanymedE {
 			else if constexpr (std::is_same_v<T, ScatterGroupComponent>)
 			{
 				icon = ICON_LC_SPRAY_CAN;
+			}
+			else if constexpr (std::is_same_v<T, MarkerComponent>)
+			{
+				icon = ICON_LC_MAP_PIN;
 			}
 			else if constexpr (std::is_same_v<T, CameraComponent>)
 			{
@@ -1449,6 +1459,7 @@ namespace GanymedE {
 			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");
 			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
 			DrawAddComponentEntry<ParticleEmitterComponent>("Particle Emitter");
+			DrawAddComponentEntry<MarkerComponent>("Marker");
 			DrawAddComponentEntry<RigidBodyComponent>("Rigid Body");
 			DrawAddComponentEntry<BoxColliderComponent>("Box Collider");
 			DrawAddComponentEntry<SphereColliderComponent>("Sphere Collider");
@@ -1906,6 +1917,11 @@ namespace GanymedE {
 		});
 
 		DrawComponent<ScatterGroupComponent>("Scatter Group", entity, [&](auto& component)
+		{
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
+		});
+
+		DrawComponent<MarkerComponent>("Marker", entity, [&](auto& component)
 		{
 			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});

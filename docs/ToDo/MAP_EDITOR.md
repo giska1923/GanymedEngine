@@ -1,6 +1,6 @@
 # Milestone — Map Editor
 
-**Status: M0–M3 landed. M4–M6 planned.**
+**Status: M0–M4 landed. M5–M6 planned.**
 
 An in-editor toolset for authoring maps: a palette, a surface-snapping placement mode, a snap model
 shared with the gizmo, a collider-versus-mesh audit, a scatter brush, gameplay markers, and a
@@ -88,7 +88,7 @@ a synchronous ray. After that the order is by value, not by dependency.
 | **M1** | Snap model + palette + placement mode | done | High. This is "the map tool" to a user |
 | **M2** | Collider ↔ mesh parity | ~1.5 days | **Highest value per line in the milestone** |
 | **M3** | Scatter brush | done | High for dressing, none for structure |
-| **M4** | Gameplay markers | ~1.5 days | Medium; the only phase touching engine + Lua |
+| **M4** | Gameplay markers | done | Medium; the only phase touching engine + Lua |
 | **M5** | Top-down orthographic view | ~2 days, riskiest | Lowest. Cut this first |
 | **M6** | Prove it on the Proving Ground | ~1 day | Closes two open gates |
 
@@ -488,6 +488,15 @@ min-spacing hash does the packing. Density is the per-disc occupancy target that
 
 ## Phase M4 — gameplay markers
 
+**Done.** `MarkerComponent` is a reflected, serialized component (`Kind` string, `Color`, `Size`,
+`DrawForward`). The Map panel places kinds from `map_palette.yaml` (defaults Spawn / Patrol /
+Trigger). Viewport Icons (default on) pushes `PhysicsSettings::ShowMarkers`. Lua has
+`Scene.FindMarkers` and `Entity:GetMarkerKind()`. Save/reload and undo go through the generic
+reflected writer and `ComponentList` snapshots. The 100-marker `DrawCalls` probe and a live Lua
+`FindMarkers` call were not run this landing — `DrawLine`/`DrawWireSphere` already share one
+`EndScene` flush, and this branch has no game scripts to query against. Those stay verification,
+not claimed numbers.
+
 ### Goal
 
 Spawn points, patrol nodes and triggers are visible while editing and queryable from Lua, instead
@@ -678,7 +687,7 @@ The milestone's own gate. Not "the tool works" — *the tool fixed something tha
 `GanymedE/Math/` has no row in AGENTS.md's doc-mapping table; M0 is the first thing to notice it.
 Treat `core.md` as its home and say so there, or add the row.
 
-**New source files in M0, M1 and M4 mean premake regeneration** — `GanymedEditor/premake5.lua`
+**New source files in M0 and M1 mean premake regeneration** — `GanymedEditor/premake5.lua`
 globs `source/**`, and globs are expanded at generation time, not at build time.
 
 ## Found while planning, out of scope

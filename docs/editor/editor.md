@@ -194,14 +194,14 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
    scatter stroke **before** `OnUpdateEditor`, so `TransformSystem` this frame sees the hover pose
    and the preview renders where the cursor is, not where it was last frame. Then
    `OnUpdateEditor(ts, editorCamera)` (and `RenderContext::PreviewCamera` from the viewport camera
-   combo). `ShowColliderGizmos` and the Map-panel `EditorBoundsOverlay` (audit boxes plus the
-   scatter brush sphere) are pushed on this branch too. In Play:
+   combo). `ShowColliderGizmos`, `ShowMarkers`, and the Map-panel `EditorBoundsOverlay` (audit boxes
+   plus the scatter brush sphere) are pushed on this branch too. In Play:
    `OnUpdateRuntime(ts, &editorCamera)` (the editor camera is the fallback when the scene
-   has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos`**
-   are pushed into the scene's `PhysicsSettings` each frame from the Visualizers checkbox). The
-   gizmo flag is engine-default **false** so a non-editor front-end draws no collider wireframes —
-   the editor opts in, and it has to do so every frame because `Scene::Copy` does not carry
-   singletons onto the play-mode scene.
+   has no primary `CameraComponent`; the physics-debug toggles, **`ShowColliderGizmos`** (Visualizers)
+   and **`ShowMarkers`** (Icons) are pushed into the scene's `PhysicsSettings` each frame). Those
+   gizmo flags are engine-default **false** so a non-editor front-end draws no collider wireframes
+   or marker spheres — the editor opts in, and it has to do so every frame because `Scene::Copy`
+   does not carry singletons onto the play-mode scene.
 4. **Hover picking**: mouse position → viewport-local coordinates (Y flipped only when
    `bgfx::getCaps()->originBottomLeft` — render-target origin is backend-dependent), then
    `RequestEntityID` + `PollEntityID`. Picking is asynchronous under bgfx (~3 frames latency),
@@ -236,10 +236,11 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 - **Header, right:** magnet (opens `MapSnapSettings`; accent-filled while snapping is enabled) ·
   Visualizers popup (`Collider gizmos`, default on — authored box/sphere/capsule wireframes in
   Edit and Play — plus the Jolt debug-draw toggles, still Play-only because they read live body
-  state) · Local / World combo wired to `ImGuizmo::Manipulate`'s mode.
+  state) · Icons (`ICON_LC_MAP_PIN`, default on — `MarkerComponent` wire-spheres) · Local / World
+  combo wired to `ImGuizmo::Manipulate`'s mode.
   Previously LOCAL was hard-coded. The magnet is the same snap struct placement reads.
-- **Omitted, no backing feature:** Quality tiers, selection filters, billboard-gizmo Icons
-  toggle. Lit / Unlit / Wireframe: Unlit needs shader variants that do not exist; a global
+- **Omitted, no backing feature:** Quality tiers, selection filters.
+  Lit / Unlit / Wireframe: Unlit needs shader variants that do not exist; a global
   wireframe fill is not "one bgfx flag" — every `SubmitMesh` packs its own state from the
   material. A dropdown whose only working item is Lit is dead furniture.
 - Shows the composite target via `ImGui::Image`; UVs flip vertically per
@@ -328,6 +329,7 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 | `[` / `]` while placing                 | Yaw by `MapSnapSettings::Rotate`                                                                                                             |
 | Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
 | Local / World combo (viewport header)   | ImGuizmo LOCAL (default) / WORLD                                                                                                             |
+| Icons (viewport header)                 | Toggle `MarkerComponent` gizmos (`ShowMarkers`). Default on. Independent of Visualizers                                                      |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z          | Undo / redo (Edit state only)                                                                                                                |
 | Ctrl+D / Delete                         | Duplicate / delete the selected entity, subtree included (Edit state only). While placing, Delete cancels instead                            |
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene. New, Open and Play cancel an uncommitted preview and abort scatter                                        |
@@ -564,7 +566,7 @@ Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culle
 transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
 and live post-processing settings (exposure, bloom threshold/knee/intensity/radius, FXAA).
 Jolt debug-draw toggles and the collider-gizmo checkbox live on the viewport header's Visualizers
-popup, not here.
+popup, not here. Marker gizmos are the separate Icons toggle on that same header.
 
 A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
 many came out of `assets/.compiled/` instead. A second run over an unchanged project must read
@@ -1010,7 +1012,7 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
 
 [`MapPanel`](../../GanymedEditor/source/Panels/MapPanel.h) — `BeginPanel("Map")`, docked with Stats
 on the right (dock-layout version 3). Palette, placement options, duplicate-along-axis, parity
-audit, scatter, and a disabled stub for M4 (markers). There is no thumbnail system; rows are
+audit, scatter, and markers. There is no thumbnail system; rows are
 `AssetTint` icon + filename.
 
 **Snap model.** `MapSnapSettings` is owned by `EditorLayer` and read by both placement and
@@ -1024,9 +1026,10 @@ Unreal/Blender default is the one that matches the failure mode.
 **Palette.** `AssetManager::ForEachAsset` filtered to `Prefab` and `StaticMesh`. The pinned subset
 is what the panel shows. Persistence is `<asset-root>/.editor/map_palette.yaml` — a fact about the
 content, not window layout, so it does not live in `imgui.ini`. The editor does not link yaml-cpp;
-the file is a hand-written `pinned:` list. `.editor/` starts with a dot, so the Content Browser
-already hides it. A palette click while the scatter brush is armed sets the scatter source rather
-than entering placement.
+the file is a hand-written `pinned:` list plus a `markers:` list (`Kind`, `Color`, `Size`). Missing
+file or missing `markers:` section uses in-memory defaults (Spawn / Patrol / Trigger). `.editor/`
+starts with a dot, so the Content Browser already hides it. A palette click while the scatter brush
+is armed sets the scatter source rather than entering placement.
 
 **Placement.** Clicking a pinned row instantiates **once** (`InstantiatePrefab(..., recordUndo=false)`
 or `MeshImporter::Instantiate`) and then only writes the root transform. The preview is a real
@@ -1043,7 +1046,9 @@ local space, `q * (0, -bounds.Min.y * scale.y, 0)` → rotation `align * yaw * a
 around its centre land *on* the floor rather than through it.
 
 LMB pushes one `AddEntitiesCommand` **after** that transform is final, then either exits or (Shift)
-instantiates a fresh preview. Alt+LMB is unsnapped. `[` / `]` step yaw by `Rotate`.
+instantiates a fresh preview. Alt+LMB is unsnapped. `[` / `]` step yaw by `Rotate`. Marker placement
+is the same path with no mesh: `CreateEntity(kind)` plus `MarkerComponent`, sit-on-bounds skipped
+(there is no AABB to sit on). Esc / RMB / New / Open / Play cancel either kind of preview.
 
 **Duplicate along axis** in the panel: count (includes the original), spacing, axis. `count - 1`
 calls to `Scene::DuplicateEntity`, world-axis offsets, one `CompositeCommand`.
@@ -1097,6 +1102,18 @@ uses the Map snap setting; scatter does not quantize to the translate grid.
 
 The brush is a cyan (paint) or red (erase) `EditorBoundsOverlay` sphere. Esc / RMB / New / Open /
 Play abort. Gizmos are suppressed while the brush is armed.
+
+**Markers.** A `MarkerComponent` is a gameplay query target (`Scene.FindMarkers`), not an editor
+tag convention. The panel lists kinds from `map_palette.yaml` (`Kind`, `Color`, `Size`); defaults
+are Spawn (green), Patrol (blue), Trigger (orange) when that section is absent. Clicking a kind
+enters placement: an empty entity tagged with the kind, plus the component. The outliner name is
+the tag; `FindMarkers` matches `Kind` — renaming the entity does not change the query. Unknown
+kinds typed in the inspector still round-trip — the palette is a convenience, not a whitelist.
+Viewport Icons (default on) pushes `PhysicsSettings::ShowMarkers` every frame, the same
+editor-opt-in shape as collider gizmos; the engine default is false. Drawing is `DrawWireSphere`
+(16 segments) plus an optional world −Z arrow (`DrawForward`), flushed with the rest of the
+debug-line batch in `EndScene`. Wait times and teams stay on `ScriptComponent`. Marker is in Add
+Component; scatter groups are not.
 
 ## Typed drag-drop
 

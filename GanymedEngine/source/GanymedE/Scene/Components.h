@@ -177,6 +177,22 @@ namespace GanymedE {
 		ScatterGroupComponent(const ScatterGroupComponent&) = default;
 	};
 
+	// Gameplay marker: spawn points, patrol nodes, triggers. Kind is a string so a game can
+	// invent "Patrol" without an engine change (the branch policy forbids the game from
+	// touching this header). Color / Size / DrawForward are editor visualization, not gameplay
+	// data — wait times and teams stay on ScriptComponent. Inert at runtime except as a query
+	// target for Scene.FindMarkers. See docs/engine/scene.md.
+	struct MarkerComponent
+	{
+		std::string Kind = "Spawn";
+		glm::vec4 Color{ 0.2f, 0.9f, 0.35f, 1.0f };
+		float Size = 0.5f;
+		bool DrawForward = true;
+
+		MarkerComponent() = default;
+		MarkerComponent(const MarkerComponent&) = default;
+	};
+
 	// Plays one of the clips carried by the entity's StaticMeshComponent mesh. There is no
 	// SkinnedMeshComponent: an entity is skinned iff its mesh asset HasSkeleton() and it has an
 	// animator, so a second mesh component would duplicate drag-drop, serialization, inspector and

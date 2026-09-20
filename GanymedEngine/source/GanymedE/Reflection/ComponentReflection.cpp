@@ -473,6 +473,17 @@ namespace GanymedE::Reflection {
 					.traits(Trait::ReadOnly | Trait::OmitIfDefault)
 				.data<&ScatterGroupComponent::LastSeed>("LastSeed")
 					.custom<Attr>(Attr{}.Label("Last Seed"));
+
+			GE_REFLECT_COMPONENT(MarkerComponent)
+				.custom<Attr>(Attr{}.Label("Marker")
+					.Tip("Spawn / patrol / trigger. Kind is a string so games define their own."))
+				.data<&MarkerComponent::Kind>("Kind")
+				.data<&MarkerComponent::Color>("Color")
+					.traits(Trait::Color)
+				.data<&MarkerComponent::Size>("Size")
+					.custom<Attr>(Attr{}.Range(0.05f, 20.0f).Speed(0.05f))
+				.data<&MarkerComponent::DrawForward>("DrawForward")
+					.custom<Attr>(Attr{}.Label("Draw Forward"));
 		}
 
 		// ---- Particles --------------------------------------------------------------------
