@@ -105,8 +105,14 @@ copyable, no behavior beyond small helpers.
   scratch globals on the animator — attachments are counted in ones and twos, and a second
   per-joint array would add 2–8 KB per animated entity for `Scene::Copy` to shuffle on every play.
   Writes `WorldTransformComponent` directly: feeding a joint quaternion through
-  `TransformComponent`'s Euler storage is lossy. Local TRS is ignored while the socket resolves.
-  A socket inherits whatever the clip does to the joint chain, including scale.
+  `TransformComponent`'s Euler storage is lossy. Local translation and rotation are ignored while
+  the socket resolves — `Offset`/`Rotation` are what replace them — but local **`Scale`** is kept:
+  nothing on this component replaces it, and reading one field on both the attached and the
+  restored path means a socket that fails to resolve shows a correctly *sized* prop rather than a
+  compensated one. `Offset` is in the target mesh's own units — metres for a mesh authored that
+  way — whatever unit the *rig* uses; the system folds in the skinned submesh's `LocalTransform`
+  and divides the bind pose's basis scale back out (below). What the clip does to the joint chain
+  still carries, scale included.
 - **`CameraComponent`** — a `SceneCamera` (perspective or orthographic) + `Primary` +
   `FixedAspectRatio`. The first primary camera wins (resolved once per update by `CameraSystem`).
 - **`DirectionalLightComponent`** — color/intensity/`CastShadows`; direction is the entity's
@@ -251,11 +257,34 @@ Pins entities with `BoneAttachmentComponent` to a joint. Per socket, in hierarch
 (so a nested attachment sees its target's already-rewritten world; an explicit `Target` that is
 itself socketed is treated as deeper still): resolve the target (zero = parent), re-resolve
 `Joint` by name against the target's skeleton when `Resolved` is stale, recover
-`jointGlobal = Palette[i] * inverse(InverseBind[i])`, then
-`OverrideWorld(entity, targetWorld * jointGlobal * offset)`. A missing target, a mesh with no
+`jointGlobal = skinnedSubmesh.LocalTransform * Palette[i] * inverse(InverseBind[i])`, **divide the
+bind pose's basis scale out of it**, then
+`OverrideWorld(entity, targetWorld * jointGlobal * offset * localScale)`.
+A missing target, a mesh with no
 palette, a singular inverse bind, or a joint name the skeleton does not have warns once per
 distinct failure and leaves the entity at its **parent** transform (parent cache × local), never
 at the origin. An empty joint is quiet — authoring a socket before picking a name.
+
+**Why `LocalTransform` is in there.** `Renderer3D` draws a skinned submesh as
+`entityWorld * LocalTransform * Palette * v` — the importer deliberately keeps the mesh node's
+transform on skinned submeshes because `RootTransform` carries its inverse, and the two cancel.
+A socket has to ride that same chain or it is not in the same space as the mesh it is pinned to.
+`Palette[i] * inverse(InverseBind[i])` recovers the joint global *alone*, which is in whatever
+unit the **joints** were authored in — and that need not be the unit the **vertices** are in.
+Measured on a Meshy rig: vertices 1.797 units tall (metres), `RightHand` at y = 141.4
+(centimetres), `LocalTransform` = 0.01 bridging them. Omitting it put the socket at 141 *metres*
+instead of 1.41 — a correctly sized prop, far enough away to look tiny, which is an easy thing to
+misread as a scale bug and "fix" with a compensating scale.
+
+**Why the basis is then divided back out.** `inverse(InverseBind[i])` *is*
+`LocalTransform * bindGlobal`, so it is exactly this frame in the bind pose: translation in the
+mesh's units, basis carrying `LocalTransform`'s scale. For vertices that scale is cancelled by the
+matching factor inside the palette; for a socket nothing cancels it, so left in, an attached entity
+renders at 1% with `Offset` silently in centimetres. Each basis column is therefore divided by the
+length of the matching column of `inverse(InverseBind[i])`. Dividing by the *bind* scale rather
+than normalising to unit length is what keeps animated scale: the palette's scale is relative to
+bind, so only the bind part is the artifact, and a clip that scales a hand still scales what the
+hand is holding. When the mesh node is identity every column is already 1 and the loop is a no-op.
 
 **Runs in edit mode**, following the pose `AnimationSystem` already sampled. A weapon on a hand,
 or a camera on a head, has to move when the inspector scrubs `Time`.
