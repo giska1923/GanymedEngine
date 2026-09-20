@@ -75,6 +75,10 @@ namespace GanymedE {
 				icon = ICON_LC_PACKAGE;
 				tint = theme.AssetTint[static_cast<int>(AssetType::Prefab)];
 			}
+			else if (entity.HasComponent<ScatterGroupComponent>())
+			{
+				icon = ICON_LC_SPRAY_CAN;
+			}
 			else if (entity.HasComponent<CameraComponent>())
 			{
 				icon = ICON_LC_CAMERA;
@@ -140,6 +144,10 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_PACKAGE;
 				tint = theme.AssetTint[static_cast<int>(AssetType::Prefab)];
+			}
+			else if constexpr (std::is_same_v<T, ScatterGroupComponent>)
+			{
+				icon = ICON_LC_SPRAY_CAN;
 			}
 			else if constexpr (std::is_same_v<T, CameraComponent>)
 			{
@@ -1893,6 +1901,11 @@ namespace GanymedE {
 		// used to return false by hand for the same reason. ReadOnly also suppresses the drop
 		// target, which BeginDisabled alone would not: a payload drop is not an item click.
 		DrawComponent<PrefabInstanceComponent>("Prefab Instance", entity, [&](auto& component)
+		{
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
+		});
+
+		DrawComponent<ScatterGroupComponent>("Scatter Group", entity, [&](auto& component)
 		{
 			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});

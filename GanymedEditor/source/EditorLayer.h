@@ -5,8 +5,14 @@
 #include "Panels/ContentBrowserPanel.h"
 #include "Panels/MapPanel.h"
 #include "EditorPicking.h"
+#include "EditorUndo.h"
+
+#include "GanymedE/Core/Random.h"
 
 #include <filesystem>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace GanymedE {
 	class EditorLayer : public Layer
@@ -47,6 +53,7 @@ namespace GanymedE {
 		void SetupDefaultEnvironment(const Ref<Scene>& scene);
 
 		bool IsPlacing() const { return m_PlaceType != AssetType::None; }
+		bool IsScattering() const;
 		bool SnapActive() const;
 		void CancelPlacement();
 		void BeginPlacement(AssetHandle handle, AssetType type);
@@ -54,6 +61,18 @@ namespace GanymedE {
 		void RefreshPlaceBounds(Entity root);
 		void ApplyPlacementTransform();
 		void CommitPlacement(bool chain);
+
+		void TickScatter();
+		void BeginScatterStroke(bool erase);
+		void EndScatterStroke();
+		void AbortScatterStroke();
+		void CancelScatterMode();
+		void RebuildScatterExclude();
+		Entity EnsureScatterGroup();
+		bool ScatterTooClose(const glm::vec3& p) const;
+		void ScatterRememberPoint(const glm::vec3& p);
+		void ScatterPlaceOne(const glm::vec3& point, const glm::vec3& normal);
+		void ScatterEraseAt(const glm::vec3& point);
 
 		// UI
 		void UI_Toolbar();
@@ -129,6 +148,32 @@ namespace GanymedE {
 		AABB m_PlaceBounds;
 		bool m_PlaceHasBounds = false;
 		bool m_PlaceHasTarget = false;
+
+		struct ScatterStroke
+		{
+			bool Active = false;
+			bool Erase = false;
+			bool CreatedGroup = false;
+			UUID Group{ 0 };
+			Random Rng{ 1 };
+			uint32_t StrokeSeed = 1;
+			AssetHandle FilterMesh = InvalidAssetHandle;
+			bool FilterWorkPlane = false;
+			bool FilterLocked = false;
+			std::vector<EntitySnapshot> GroupSnapshot;
+			std::vector<std::vector<EntitySnapshot>> Batches;
+			std::vector<glm::vec3> Placed;
+			std::unordered_map<uint64_t, std::vector<uint32_t>> Cells;
+			std::unordered_set<UUID> Exclude;
+			int Count = 0;
+			bool HitCap = false;
+			bool HitSceneWarn = false;
+			AABB SourceBounds;
+			bool SourceHasBounds = false;
+			glm::vec3 SourceEuler{ 0.0f };
+			glm::vec3 SourceScale{ 1.0f };
+		};
+		ScatterStroke m_ScatterStroke;
 
 		bool m_ResetDockLayout = false;
 

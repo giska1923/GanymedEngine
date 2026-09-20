@@ -34,6 +34,22 @@ namespace GanymedE {
 
 	void DrawMapSnapControls(MapSnapSettings& snap);
 
+	struct ScatterSettings
+	{
+		AssetHandle Source = InvalidAssetHandle;
+		AssetType SourceType = AssetType::None;
+		float Radius = 2.0f;
+		float Density = 4.0f;       // instances / m²
+		float MinSpacing = 0.5f;
+		float YawJitter = 180.0f;   // degrees
+		float ScaleMin = 1.0f;
+		float ScaleMax = 1.0f;
+		bool AlignToNormal = false;
+		bool FilterToStartSurface = true;
+		uint32_t Seed = 1;
+		int MaxInstancesPerStroke = 500;
+	};
+
 	class MapPanel
 	{
 	public:
@@ -49,6 +65,11 @@ namespace GanymedE {
 		// Copied into EditorBoundsOverlay before OnUpdateEditor. One-frame lag on click is
 		// expected: ImGui runs after the 3D submit.
 		void FillOverlay(EditorBoundsOverlay& overlay) const;
+
+		ScatterSettings& Scatter() { return m_Scatter; }
+		const ScatterSettings& Scatter() const { return m_Scatter; }
+		bool IsPaintArmed() const { return m_PaintArmed; }
+		void SetPaintArmed(bool armed) { m_PaintArmed = armed; }
 	private:
 		void DrawPalette(bool editing);
 		void DrawPlacementOptions(MapSnapSettings& snap);
@@ -56,6 +77,7 @@ namespace GanymedE {
 			EditorUndoStack* undo, SceneHierarchyPanel* hierarchy);
 		void DrawParityAudit(bool editing, Scene* scene, EditorUndoStack* undo,
 			SceneHierarchyPanel* hierarchy, EditorCamera* camera, UUID excludeFromAudit);
+		void DrawScatter(bool editing);
 		void DrawUpcomingSections();
 
 		void RebuildAudit(Scene* scene, SceneHierarchyPanel* hierarchy, UUID excludeFromAudit);
@@ -112,6 +134,9 @@ namespace GanymedE {
 			glm::vec4 Color{ 1.0f };
 		};
 		std::vector<OverlayBox> m_OverlayBoxes;
+
+		ScatterSettings m_Scatter;
+		bool m_PaintArmed = false;
 	};
 
 }

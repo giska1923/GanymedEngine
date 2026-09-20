@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -313,6 +314,7 @@ namespace GanymedE {
 		DrawPlacementOptions(snap);
 		DrawDuplicateAlongAxis(editing, placing, scene, undo, hierarchy);
 		DrawParityAudit(editing, scene, undo, hierarchy, camera, excludeFromAudit);
+		DrawScatter(editing);
 		DrawUpcomingSections();
 
 		EndPanelBody();
@@ -379,7 +381,9 @@ namespace GanymedE {
 		}
 
 		ImGui::SameLine();
-		ImGui::TextDisabled("Prefabs and meshes. Click to place.");
+		ImGui::TextDisabled(m_PaintArmed
+			? "Prefabs and meshes. Click to set the scatter source."
+			: "Prefabs and meshes. Click to place.");
 
 		if (m_Pinned.empty())
 		{
@@ -431,8 +435,18 @@ namespace GanymedE {
 		if (!toUnpin.empty())
 			Unpin(toUnpin);
 
-		if (IsAssetHandleValid(placeHandle) && m_OnPlace)
-			m_OnPlace(placeHandle, placeType);
+		if (IsAssetHandleValid(placeHandle))
+		{
+			if (m_PaintArmed)
+			{
+				m_Scatter.Source = placeHandle;
+				m_Scatter.SourceType = placeType;
+			}
+			else if (m_OnPlace)
+			{
+				m_OnPlace(placeHandle, placeType);
+			}
+		}
 	}
 
 	void MapPanel::DrawPlacementOptions(MapSnapSettings& snap)
@@ -530,6 +544,7 @@ namespace GanymedE {
 	void MapPanel::FillOverlay(EditorBoundsOverlay& overlay) const
 	{
 		overlay.Boxes.clear();
+		overlay.Spheres.clear();
 		overlay.Boxes.reserve(m_OverlayBoxes.size());
 		for (const OverlayBox& box : m_OverlayBoxes)
 			overlay.Boxes.push_back({ box.Transform, box.Color });
@@ -859,11 +874,74 @@ namespace GanymedE {
 		}
 	}
 
+	void MapPanel::DrawScatter(bool editing)
+	{
+		using EditorUI::IconButton;
+
+		if (!ImGui::CollapsingHeader("Scatter", ImGuiTreeNodeFlags_DefaultOpen))
+			return;
+
+		if (m_PaintArmed)
+		{
+			ImGui::TextWrapped("Painting. LMB paints, Shift+LMB erases the active group, "
+				"Esc / RMB cancels. Palette clicks set the source.");
+			ImGui::Separator();
+		}
+
+		const AssetMetadata* sourceMeta = AssetManager::GetMetadata(m_Scatter.Source);
+		if (sourceMeta)
+			ImGui::Text("Source: %s", sourceMeta->FilePath.c_str());
+		else
+			ImGui::TextDisabled("Source: click a pinned prefab or mesh.");
+
+		ImGui::BeginDisabled(!editing);
+		if (IconButton(ICON_LC_SPRAY_CAN, m_PaintArmed ? "Stop painting" : "Paint", m_PaintArmed))
+		{
+			if (!m_PaintArmed && !IsAssetHandleValid(m_Scatter.Source))
+				GE_WARN("Scatter: pin a prefab or mesh and click it before painting.");
+			else
+				m_PaintArmed = !m_PaintArmed;
+		}
+		ImGui::EndDisabled();
+
+		ImGui::SetNextItemWidth(96.0f);
+		ImGui::DragFloat("Radius", &m_Scatter.Radius, 0.05f, 0.1f, 50.0f, "%.2f m");
+		ImGui::SetNextItemWidth(96.0f);
+		ImGui::DragFloat("Density", &m_Scatter.Density, 0.1f, 0.1f, 100.0f, "%.1f /m2");
+		ImGui::SetNextItemWidth(96.0f);
+		ImGui::DragFloat("Min spacing", &m_Scatter.MinSpacing, 0.05f, 0.0f, 20.0f, "%.2f m");
+		ImGui::SetNextItemWidth(96.0f);
+		ImGui::DragFloat("Yaw jitter", &m_Scatter.YawJitter, 1.0f, 0.0f, 180.0f, "%.0f deg");
+		ImGui::SetNextItemWidth(96.0f);
+		ImGui::DragFloat("Scale min", &m_Scatter.ScaleMin, 0.01f, 0.05f, 10.0f, "%.2f");
+		ImGui::SetNextItemWidth(96.0f);
+		ImGui::DragFloat("Scale max", &m_Scatter.ScaleMax, 0.01f, 0.05f, 10.0f, "%.2f");
+		if (m_Scatter.ScaleMax < m_Scatter.ScaleMin)
+			m_Scatter.ScaleMax = m_Scatter.ScaleMin;
+
+		ImGui::Checkbox("Align to normal", &m_Scatter.AlignToNormal);
+		ImGui::Checkbox("Filter to starting surface", &m_Scatter.FilterToStartSurface);
+		ImGui::SetItemTooltip("Drop rays must hit the same mesh asset as the stroke's first hit "
+			"(or the work plane). Tiled ground shares a mesh, so one tile starts the stroke "
+			"for the whole floor.");
+
+		ImGui::SetNextItemWidth(96.0f);
+		int seed = static_cast<int>(m_Scatter.Seed);
+		if (ImGui::DragInt("Seed", &seed, 1.0f, 1, INT_MAX))
+			m_Scatter.Seed = static_cast<uint32_t>(seed);
+		ImGui::SameLine();
+		if (ImGui::Button("Randomize"))
+			m_Scatter.Seed = static_cast<uint32_t>(ImGui::GetTime() * 1000.0) ^ 0xA5A5u;
+
+		ImGui::SetNextItemWidth(96.0f);
+		ImGui::DragInt("Max per stroke", &m_Scatter.MaxInstancesPerStroke, 1.0f, 1, 2000);
+
+		ImGui::TextDisabled("Each instance is an entity. Cap exists because of that, not draw calls.");
+	}
+
 	void MapPanel::DrawUpcomingSections()
 	{
 		ImGui::BeginDisabled();
-		if (ImGui::CollapsingHeader("Scatter"))
-			ImGui::TextUnformatted("M3.");
 		if (ImGui::CollapsingHeader("Markers"))
 			ImGui::TextUnformatted("M4.");
 		ImGui::EndDisabled();

@@ -276,6 +276,8 @@ namespace GanymedE {
 			const UUID id = entity.GetUUID();
 			if (id == filter.Exclude)
 				continue;
+			if (filter.ExcludeSet && filter.ExcludeSet->count(id) != 0)
+				continue;
 			if (filter.HiddenEntities && filter.HiddenEntities->count(id) != 0)
 				continue;
 

@@ -27,6 +27,7 @@ namespace GanymedE {
 	{
 		const std::unordered_set<UUID>* HiddenEntities = nullptr;
 		UUID Exclude{ 0 };          // placement preview; UUID() is random, so this is UUID{0}
+		const std::unordered_set<UUID>* ExcludeSet = nullptr; // scatter group / in-stroke instances
 		float GridHeight = 0.0f;
 		uint32_t TriangleBudget = 250000;
 	};

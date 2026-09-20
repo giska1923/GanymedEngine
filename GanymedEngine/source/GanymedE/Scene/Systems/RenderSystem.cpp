@@ -391,6 +391,8 @@ namespace GanymedE {
 		{
 			for (const EditorBoundsOverlay::Box& box : overlay->Boxes)
 				Renderer3D::DrawWireBox(box.Transform, box.Color);
+			for (const EditorBoundsOverlay::Sphere& sphere : overlay->Spheres)
+				Renderer3D::DrawWireSphere(sphere.Center, sphere.Radius, sphere.Color);
 		}
 
 		Renderer3D::EndScene();

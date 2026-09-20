@@ -176,6 +176,15 @@ precedent.
   `ParticleSystem` has already run that frame. `EmitBurst` accumulates into `BurstPending` and
   does not auto-play; consume is this tick while `Playing` and is not gated by `Duration`.
 
+### Map authoring
+
+- **`ScatterGroupComponent`** — folder entity for Map-panel scatter. `Source` is the prefab or
+  mesh handle that was painted; `LastSeed` is the last paint stroke's seed so it can be typed
+  back into the brush. Inert at runtime: identity for the eraser (direct children of this
+  entity) and a seed note, not a foliage instance array. Each child is an ordinary entity. Not
+  in the Add Component menu; the Map panel creates it. See
+  [editor.md](../editor/editor.md#map-panel).
+
 ### Physics (pure data — Jolt never appears here)
 
 - **`CharacterControllerComponent`** — a walking character (Jolt `CharacterVirtual`): max slope,
@@ -406,9 +415,10 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
   each hidden UUID to its subtree via `CollectSubtree` and skips those submits (meshes, sprites,
   lights, sky, particles, collider gizmos). Play/runtime ignore it, so a hidden entity still
   simulates and draws in Play. Not serialized; `Scene::Copy` does not carry it.
-- **`EditorBoundsOverlay`** — editor-only extra wire boxes, drawn after collider gizmos in
-  `OnUpdateEditor`. The Map panel's parity audit fills it with the focused finding's mesh AABB
-  (cyan) and box collider (orange). Not serialized, not copied, ignored by play/runtime.
+- **`EditorBoundsOverlay`** — editor-only extra wire geometry, drawn after collider gizmos in
+  `OnUpdateEditor`. The Map panel's parity audit fills `Boxes` with the focused finding's mesh AABB
+  (cyan) and box collider (orange). Scatter fills `Spheres` with the brush (cyan paint, red erase).
+  Not serialized, not copied, ignored by play/runtime.
 
 **Singletons are not carried by `Scene::Copy`.** The copy constructs a fresh `Scene`, whose
 constructor default-constructs its own `ctx()` entries, and then copies entities and components only.
@@ -515,10 +525,12 @@ anyway.
 
 ### What is registered
 
-34 types, 129 members (the boot log prints both — a count far below that is the cheapest signal that a
+34 types, 129 members → wait I need the current text
+
+35 types, 131 members (the boot log prints both — a count far below that is the cheapest signal that a
 registration block was dropped by the linker):
 
-- The **25 components** — all 23 `ComponentList` entries plus `IDComponent` and `TagComponent`, which
+- The **26 components** — all 24 `ComponentList` entries plus `IDComponent` and `TagComponent`, which
   `ComponentList` excludes as entity identity but which prefab diffing has to know exist in order to
   skip.
 - **4 supporting types** — `PhysicsMaterial`; `SceneCamera`, whose seven private fields are registered
@@ -555,7 +567,7 @@ What no test can check is whether a type's member list is **complete** — the t
 exactly the thing that is not reflected. The `static_assert(sizeof(T) == N)` sentinels at the bottom of
 `ComponentReflection.cpp` are the only forcing function, and they have two honest limits. Padding: a
 `bool` dropped into existing padding does not move `sizeof` (`AudioSourceComponent` has three spare
-bytes right now). And they cover 16 of the 23 `ComponentList` entries — every one with no
+bytes right now). And they cover 17 of the 24 `ComponentList` entries — every one with no
 standard-library container member. `sizeof(std::string)` is 40 with MSVC's STL and 32 with libstdc++,
 and vector and unordered_map differ likewise, so a sentinel on `TagComponent`,
 `RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `BoneAttachmentComponent`,
@@ -566,7 +578,7 @@ judgement call per component: library container member ⇒ no sentinel.
 
 ### Current state
 
-**Two consumers: the inspector and the serializer.** Fifteen of the editor's nineteen component
+**Two consumers: the inspector and the serializer.** Sixteen of the editor's twenty component
 sections are drawn from this registration rather than from a hand-written lambda
 ([editor.md](../editor/editor.md#the-generic-reflected-inspector)), and **every** component is
 written and read generically by `SceneSerializer` (below). The Lua bindings still hand-list every
@@ -760,6 +772,8 @@ blocks keyed by component name. Notes:
 - `PrefabInstanceComponent` serializes its `Source` handle, omitted when unset. A scene whose
   prefab file has since been deleted still loads: the instances become plain entities carrying a
   handle that resolves to nothing, and the editor reports it when you try to Apply or Revert.
+- `ScatterGroupComponent` serializes `Source` (omitted when unset) and `LastSeed`. It is a folder
+  marker, not an instance array — the children are ordinary entities written as themselves.
 - **`AudioGroup` serializes as a name, not an ordinal** (`Group: Music`). It is not persisted by
   ordinal the way `AssetType` was, so nothing forces stable numbering on it, and an unknown
   name warns and falls back rather than throwing. Both audio components read every field guarded

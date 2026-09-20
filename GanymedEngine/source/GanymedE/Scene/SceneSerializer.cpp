@@ -77,6 +77,12 @@ namespace GanymedE {
 				entity.GetComponent<PrefabMemberComponent>());
 		}
 
+		if (entity.HasComponent<ScatterGroupComponent>())
+		{
+			WriteReflectedComponent(out, "ScatterGroupComponent",
+				entity.GetComponent<ScatterGroupComponent>());
+		}
+
 		// SceneCamera is a reflected struct with no codec, so it writes as a nested MAP under
 		// "Camera" - the shape every scene already has. Its seven fields are registered against
 		// accessors, which is why a private projection matrix never reaches the file.
@@ -493,6 +499,13 @@ namespace GanymedE {
 		{
 			ReadReflectedComponent(prefabMemberComponent,
 				deserializedEntity.AddComponent<PrefabMemberComponent>());
+		}
+
+		auto scatterGroupComponent = entityNode["ScatterGroupComponent"];
+		if (scatterGroupComponent)
+		{
+			ReadReflectedComponent(scatterGroupComponent,
+				deserializedEntity.AddComponent<ScatterGroupComponent>());
 		}
 
 		// The nested "Camera" map reads through SceneCamera's registered SETTERS, so

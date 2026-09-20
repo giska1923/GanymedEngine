@@ -190,11 +190,12 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 1. Resize the scene renderer / editor camera / scene cameras when the viewport panel size changed.
 2. `SceneRenderer::BeginFrame` (bind + clear HDR target, entity IDs to −1).
-3. Update the scene. In Edit: surface-raycast and write the placement preview transform **before**
-   `OnUpdateEditor`, so `TransformSystem` this frame sees the hover pose and the preview renders
-   where the cursor is, not where it was last frame. Then `OnUpdateEditor(ts, editorCamera)` (and
-   `RenderContext::PreviewCamera` from the viewport camera combo). `ShowColliderGizmos` and the
-   Map-panel `EditorBoundsOverlay` are pushed on this branch too. In Play:
+3. Update the scene. In Edit: surface-raycast, write the placement preview transform, and tick the
+   scatter stroke **before** `OnUpdateEditor`, so `TransformSystem` this frame sees the hover pose
+   and the preview renders where the cursor is, not where it was last frame. Then
+   `OnUpdateEditor(ts, editorCamera)` (and `RenderContext::PreviewCamera` from the viewport camera
+   combo). `ShowColliderGizmos` and the Map-panel `EditorBoundsOverlay` (audit boxes plus the
+   scatter brush sphere) are pushed on this branch too. In Play:
    `OnUpdateRuntime(ts, &editorCamera)` (the editor camera is the fallback when the scene
    has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos`**
    are pushed into the scene's `PhysicsSettings` each frame from the Visualizers checkbox). The
@@ -211,10 +212,12 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
    `Math::ScreenPointToRay` through the active viewport camera's `inverse(viewProjection)`, then
    `RaycastScene` against resident static-mesh triangles. Result is `m_SurfaceHit` (world point,
    normal facing the ray, entity or work-plane fallback), shown on the Stats panel as `Surface:`
-   plus the per-ray ms. GPU picking stays the click-select path; placement reads this. Hidden
-   outliner entities, the placement preview (`RaycastFilter::Exclude`), and anything with an
-   `AnimatorComponent` are skipped; a miss against a ray that still hits `y = MapSnapSettings::GridHeight`
-   is `FromWorkPlane`, a ray into empty sky is no hit at all.
+   plus the per-ray ms. GPU picking stays the click-select path; placement and scatter read this.
+   Hidden outliner entities, the placement preview (`RaycastFilter::Exclude`), the scatter group's
+   subtree (`RaycastFilter::ExcludeSet`, so the brush keeps hitting the ground rather than last
+   frame's pebbles), and anything with an `AnimatorComponent` are skipped; a miss against a ray
+   that still hits `y = MapSnapSettings::GridHeight` is `FromWorkPlane`, a ray into empty sky is
+   no hit at all.
 6. `SceneRenderer::EndFrame` — bloom → tonemap → FXAA → composite.
 
 ### Viewport
@@ -317,15 +320,17 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 | Input                                   | Action                                                                                                                                       |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera                                                                                                         |
-| LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, or while placing)                                                              |
+| LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed)                            |
 | LMB while placing                       | Commit the preview (`AddEntitiesCommand` after the transform is final). Shift+LMB chains; Alt+LMB places unsnapped                           |
+| LMB while scatter-painting              | Paint instances into the active group. Shift+LMB erases that group's instances inside the brush radius. Mode (paint vs erase) is locked at mouse-down |
 | Esc / RMB while placing                 | Cancel and destroy the preview (no undo entry)                                                                                               |
+| Esc / RMB while scatter-painting        | Abort an in-progress stroke (no undo entry) and disarm the brush. New / Open / Play do the same                                              |
 | `[` / `]` while placing                 | Yaw by `MapSnapSettings::Rotate`                                                                                                             |
 | Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
 | Local / World combo (viewport header)   | ImGuizmo LOCAL (default) / WORLD                                                                                                             |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z          | Undo / redo (Edit state only)                                                                                                                |
 | Ctrl+D / Delete                         | Duplicate / delete the selected entity, subtree included (Edit state only). While placing, Delete cancels instead                            |
-| Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene. New, Open and Play cancel an uncommitted preview                                                          |
+| Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene. New, Open and Play cancel an uncommitted preview and abort scatter                                        |
 | Ctrl (held while dragging gizmo)        | **Inverts** snap. Snapping is on by default; steps are `MapSnapSettings`                                                                     |
 | Ctrl+U                                  | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only)                                                          |
 | View → Reset Layout                     | Rebuild the default dock tree. Existing `imgui.ini` otherwise hides layout work                                                              |
@@ -334,7 +339,7 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 
 **Two shortcut layers, on purpose.** Q/W/E/R and Ctrl+U go through the engine event path
 (`EditorLayer::OnKeyPressed`), which `ImGuiLayer::BlockEvents` gates on viewport focus/hover.
-Everything else - undo, redo, duplicate, delete, placement yaw / Esc, and the file shortcuts - is polled inside the
+Everything else - undo, redo, duplicate, delete, placement yaw / Esc, scatter Esc, and the file shortcuts - is polled inside the
 ImGui frame by `EditorLayer::HandleShortcuts` using `ImGui::IsKeyChordPressed`, so it fires
 wherever the mouse is.
 
@@ -1005,8 +1010,8 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
 
 [`MapPanel`](../../GanymedEditor/source/Panels/MapPanel.h) — `BeginPanel("Map")`, docked with Stats
 on the right (dock-layout version 3). Palette, placement options, duplicate-along-axis, parity
-audit, and disabled stubs for M3–M4. There is no thumbnail system; rows are `AssetTint` icon +
-filename.
+audit, scatter, and a disabled stub for M4 (markers). There is no thumbnail system; rows are
+`AssetTint` icon + filename.
 
 **Snap model.** `MapSnapSettings` is owned by `EditorLayer` and read by both placement and
 ImGuizmo. Defaults: enabled, translate 0.5 m, rotate 15° (45° is a preset), scale 0.1, snap to
@@ -1020,7 +1025,8 @@ Unreal/Blender default is the one that matches the failure mode.
 is what the panel shows. Persistence is `<asset-root>/.editor/map_palette.yaml` — a fact about the
 content, not window layout, so it does not live in `imgui.ini`. The editor does not link yaml-cpp;
 the file is a hand-written `pinned:` list. `.editor/` starts with a dot, so the Content Browser
-already hides it.
+already hides it. A palette click while the scatter brush is armed sets the scatter source rather
+than entering placement.
 
 **Placement.** Clicking a pinned row instantiates **once** (`InstantiatePrefab(..., recordUndo=false)`
 or `MeshImporter::Instantiate`) and then only writes the root transform. The preview is a real
@@ -1061,6 +1067,36 @@ world AABBs, and fills `EditorBoundsOverlay` (cyan mesh box, orange collider box
 entities that already have a sphere or capsule are skipped. Footprint roll-up is per scene root
 that has mesh descendants: `vol(intersection(meshUnion, colliderUnion)) / vol(meshUnion)`. The
 panel says in its own text that this does not detect a hole between two correctly-sized colliders.
+
+**Scatter.** One pinned prefab or mesh, not a weighted list. Arm **Paint** (spray-can), then LMB
+in the viewport. Each frame samples candidate points in a disc around the M0 hit (tangent frame),
+drops world −Y from 8 m above, and instantiates whatever survives min-spacing (spatial hash, this
+group's existing children included) and the optional starting-surface filter. Filter matches
+**mesh asset handle**, not entity UUID — tiled `GroundTile`s share a mesh, so one tile starts the
+stroke for the whole floor. Drop rays are capped at **12 per frame**; a naïve `density × area`
+burst of M0 rays would hitch. Density is "how many in the disc before we stop trying this
+frame", spacing is the packing constraint.
+
+Instances are ordinary entities, parented under a lazily created `Scatter/<name>` folder that
+carries `ScatterGroupComponent { Source, LastSeed }`. Unity foliage and Unreal HISMs are instance
+arrays precisely because one entity per pebble does not scale; Ganymed has no such component, so
+the 500-per-stroke cap and the ~1500-entity scene warning exist because of that, not because of
+draw calls (`Renderer3D` already batches shared mesh+material). Shift+LMB erases **direct
+children of that group** inside the 3D brush radius.
+
+One undo entry per stroke: `CompositeCommand` of `AddEntitiesCommand`s (or `DeleteEntitiesCommand`s
+for erase). `RestoreSubtree` only re-links `snapshots.front()` to a surviving parent, so several
+sibling instance roots cannot share one snapshot vector — duplicate-along-axis already learned
+this. An empty stroke creates no undo entry; a newly created empty group is destroyed.
+
+The seed is PCG32 (`Core/Random.h`), stored on the group as `LastSeed`, then incremented on the
+panel so the next stroke differs unless you type the old seed back. **Same seed plus the same
+path is not hash-stable.** Samples are consumed per frame as the cursor moves, so a slower drag
+or a dropped frame draws a different sequence. Undo snapshots are the real replay. Sit-on-bounds
+uses the Map snap setting; scatter does not quantize to the translate grid.
+
+The brush is a cyan (paint) or red (erase) `EditorBoundsOverlay` sphere. Esc / RMB / New / Open /
+Play abort. Gizmos are suppressed while the brush is armed.
 
 ## Typed drag-drop
 

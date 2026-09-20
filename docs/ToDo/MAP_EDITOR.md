@@ -1,6 +1,6 @@
 # Milestone — Map Editor
 
-**Status: M0–M2 landed. M3–M6 planned.**
+**Status: M0–M3 landed. M4–M6 planned.**
 
 An in-editor toolset for authoring maps: a palette, a surface-snapping placement mode, a snap model
 shared with the gizmo, a collider-versus-mesh audit, a scatter brush, gameplay markers, and a
@@ -87,7 +87,7 @@ a synchronous ray. After that the order is by value, not by dependency.
 | **M0** | Synchronous edit-mode surface raycast | done | None on its own — it is the primitive |
 | **M1** | Snap model + palette + placement mode | done | High. This is "the map tool" to a user |
 | **M2** | Collider ↔ mesh parity | ~1.5 days | **Highest value per line in the milestone** |
-| **M3** | Scatter brush | ~2 days | High for dressing, none for structure |
+| **M3** | Scatter brush | done | High for dressing, none for structure |
 | **M4** | Gameplay markers | ~1.5 days | Medium; the only phase touching engine + Lua |
 | **M5** | Top-down orthographic view | ~2 days, riskiest | Lowest. Cut this first |
 | **M6** | Prove it on the Proving Ground | ~1 day | Closes two open gates |
@@ -405,6 +405,10 @@ asset-format consequence and it is not folded in here — it is written into
 
 ## Phase M3 — scatter brush
 
+**Done.** The Map panel paints one pinned prefab or mesh under a `Scatter/<name>` group, Shift-erases
+that group's children, and commits one undo entry per stroke. Weighted palettes and a
+`ScatterVolumeComponent` were skipped — see below. 200/500-instance measurements stay M6.
+
 ### Goal
 
 Paint rubble, crates and props in strokes, reproducibly, with one undo entry per stroke.
@@ -440,11 +444,26 @@ The renderer *does* batch — `Renderer3D` reports `InstancedDraws`, and instanc
 material will collapse into few draw calls — so the pain is CPU-side per-entity work and scene file
 size, not draw calls. **Measure both and record where the wall is**; the follow-up, a
 `ScatterVolumeComponent` holding a transform array submitted through the existing instanced path,
-belongs in ToDo and not in this milestone.
+belongs in ToDo and not in this milestone. That follow-up is the "Instance-array scattering" row
+under *Explicitly not doing* — it does not get a fake live doc.
 
-**A fixed seed per stroke, stored on the group.** Re-running a stroke with the same seed, radius and
-density must reproduce it. Without that, "the scatter looks wrong, undo and redo it slightly
-differently" is not a workflow.
+**One source from the palette, not a weighted list.** A weighted palette is a second authoring
+model (weights, normalisation, a UI that lies when the weights sum to zero) for a brush that has
+not been used on a real map yet. Pin a crate, paint crates.
+
+**A stored seed, but not a hash-stable replay.** Re-running a stroke with the same seed, radius and
+density *and the same cursor path at the same frame rate* reproduces it, because PCG32 is
+deterministic. Samples are drawn per frame as the mouse moves, so a slower drag consumes more of
+the stream before the next drop. Undo snapshots are the real replay; typing `LastSeed` back into
+the brush is a way to start from the same stream, not a promise that two freehand strokes match.
+
+**Surface filter is mesh handle, not entity UUID.** The Proving Ground floor is tiled
+`GroundTile`s that share one mesh asset. Filtering on the entity you clicked would paint one tile
+and refuse the neighbours.
+
+**12 drop rays per frame, not `density × πr²`.** Each drop is a full M0 CPU triangle walk.
+Sixty-four of those in one frame would hitch; twelve fills a disc over a few frames while the
+min-spacing hash does the packing. Density is the per-disc occupancy target that stops us trying.
 
 ### Risks
 
@@ -459,10 +478,10 @@ differently" is not a workflow.
 | Probe | Expected |
 |---|---|
 | Paint ~200 instances in one stroke | One undo entry; Ctrl+Z removes all 200 |
-| Same seed, same path, twice | Identical transforms (compare the serialized blocks) |
-| Draw-call count with 200 instances of one prefab | `InstancedDraws` rises; `DrawCalls` roughly flat |
-| Frame time in Release, before/after 500 instances | Logged; the delta is the honest cost of the entity model |
-| Scene file size and load time, before/after | Logged |
+| Same seed, same path, twice | Identical transforms *only if* the cursor path and frame count match; otherwise the RNG stream diverges. Undo/redo is the reliable replay |
+| Draw-call count with 200 instances of one prefab | `InstancedDraws` rises; `DrawCalls` roughly flat. **Not measured here — M6** |
+| Frame time in Release, before/after 500 instances | Logged; the delta is the honest cost of the entity model. **Not measured here — M6** |
+| Scene file size and load time, before/after | Logged. **Not measured here — M6** |
 | Erase stroke | Removes only the active group's instances; one undo entry |
 
 ---
@@ -651,7 +670,7 @@ The milestone's own gate. Not "the tool works" — *the tool fixed something tha
 | M0 | [engine/core.md](../engine/core.md) for `Math::ScreenPointToRay`; [editor/editor.md](../editor/editor.md) for the editor-side raycast |
 | M1 | [editor/editor.md](../editor/editor.md) — the Map panel, the snap model (**and the changed gizmo-snap semantics in the Controls table**), placement |
 | M2 | [editor/editor.md](../editor/editor.md); [engine/rendering.md](../engine/rendering.md) for edit-mode collider gizmos; [engine/physics.md](../engine/physics.md) if the collider-seeding rule is described there |
-| M3 | [editor/editor.md](../editor/editor.md) |
+| M3 | [editor/editor.md](../editor/editor.md); [engine/scene.md](../engine/scene.md) for `ScatterGroupComponent` and overlay spheres |
 | M4 | [engine/scene.md](../engine/scene.md) for `MarkerComponent`; [engine/scripting.md](../engine/scripting.md) for the Lua surface; [editor/editor.md](../editor/editor.md) for the palette and the Icons toggle |
 | M5 | [engine/rendering.md](../engine/rendering.md) for the camera mode and the grid; [editor/editor.md](../editor/editor.md) for the viewport combo |
 | M6 | [PROVING_GROUND.md](PROVING_GROUND.md), and strike the closed entries from [README.md](README.md) |
@@ -683,3 +702,18 @@ Found while implementing M1, still out of scope:
   modifier, two consumers. A drag-threshold on the place click would separate them.
 - **Viewport mesh drop still does not record undo.** Prefab drop does. Pre-existing; placement
   of meshes from the Map panel *does* record undo on commit.
+
+Found while implementing M3, still out of scope:
+
+- **`RestoreSubtree` only re-links `snapshots.front()` to a surviving parent.** Several sibling
+  instance roots therefore cannot share one `AddEntitiesCommand` snapshot vector. Scatter uses a
+  `CompositeCommand` of per-instance commands, matching duplicate-along-axis. Fixing
+  `RestoreSubtree` to re-link every snapshot whose parent is outside the captured set would
+  collapse both call sites; it is an undo-core change, not a scatter one.
+- **LastSeed on a pre-existing group is not undone.** New groups are captured, so undo deletes
+  the seed with them. Reusing a group, Ctrl+Z removes the instances and leaves `LastSeed` at the
+  stroke that just vanished. A `ComponentEditCommand` for that one uint32 is the honest fix if
+  it starts to matter.
+- **Same-seed freehand strokes are not hash-stable.** Documented in the phase and in
+  [editor.md](../editor/editor.md#map-panel); do not "fix" it by hashing the stroke polyline
+  unless someone is actually comparing serialized blocks as a workflow.

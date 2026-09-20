@@ -164,6 +164,19 @@ namespace GanymedE {
 			: Source(source) {}
 	};
 
+	// Folder entity for Map-panel scatter. Inert at runtime: identity for the eraser
+	// (children of this entity, matching Source) and the last stroke seed so a noted
+	// seed can be typed back into the brush. Not a foliage instance array — each child
+	// is an ordinary entity. See docs/ToDo/MAP_EDITOR.md M3.
+	struct ScatterGroupComponent
+	{
+		AssetHandle Source = InvalidAssetHandle;
+		uint32_t LastSeed = 0;
+
+		ScatterGroupComponent() = default;
+		ScatterGroupComponent(const ScatterGroupComponent&) = default;
+	};
+
 	// Plays one of the clips carried by the entity's StaticMeshComponent mesh. There is no
 	// SkinnedMeshComponent: an entity is skinned iff its mesh asset HasSkeleton() and it has an
 	// animator, so a second mesh component would duplicate drag-drop, serialization, inspector and

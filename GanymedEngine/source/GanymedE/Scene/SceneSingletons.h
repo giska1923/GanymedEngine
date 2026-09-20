@@ -64,6 +64,14 @@ namespace GanymedE {
 			glm::vec4 Color{ 1.0f };
 		};
 		std::vector<Box> Boxes;
+
+		struct Sphere
+		{
+			glm::vec3 Center{ 0.0f };
+			float Radius = 1.0f;
+			glm::vec4 Color{ 1.0f };
+		};
+		std::vector<Sphere> Spheres;
 	};
 
 	// Editor outliner eye-toggle. Pointer into editor-owned state; never serialized,

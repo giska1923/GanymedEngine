@@ -42,12 +42,16 @@
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace GanymedE {
 
@@ -263,6 +267,58 @@ namespace GanymedE {
 			}
 		}
 
+		Entity FindScatterGroup(Scene& scene, AssetHandle source)
+		{
+			if (!IsAssetHandleValid(source))
+				return {};
+
+			auto view = scene.Reg().view<ScatterGroupComponent>();
+			for (auto handle : view)
+			{
+				if (view.get<ScatterGroupComponent>(handle).Source == source)
+					return Entity{ handle, &scene };
+			}
+			return {};
+		}
+
+		AssetHandle MeshHandleOf(Entity entity)
+		{
+			if (entity && entity.HasComponent<StaticMeshComponent>())
+				return entity.GetComponent<StaticMeshComponent>().Mesh.Handle();
+			return InvalidAssetHandle;
+		}
+
+		void CollectSubtreeUUIDs(Scene& scene, Entity root, std::unordered_set<UUID>& out)
+		{
+			std::vector<Entity> subtree;
+			std::unordered_set<UUID> visited;
+			scene.CollectSubtree(root, subtree, visited);
+			for (Entity entity : subtree)
+				out.insert(entity.GetUUID());
+		}
+
+		uint64_t ScatterCellKey(int x, int y, int z)
+		{
+			const auto pack = [](int v) -> uint64_t
+			{
+				return (uint64_t)((uint32_t)(v + 0x100000) & 0x1FFFFFu);
+			};
+			return pack(x) | (pack(y) << 21) | (pack(z) << 42);
+		}
+
+		void TangentAxes(const glm::vec3& normal, glm::vec3& tangent, glm::vec3& bitangent)
+		{
+			const glm::vec3 n = glm::normalize(normal);
+			tangent = (std::abs(n.y) < 0.99f)
+				? glm::normalize(glm::cross(n, glm::vec3(0.0f, 1.0f, 0.0f)))
+				: glm::normalize(glm::cross(n, glm::vec3(1.0f, 0.0f, 0.0f)));
+			bitangent = glm::cross(n, tangent);
+		}
+
+		constexpr int kScatterMaxDropRays = 12;
+		constexpr size_t kScatterSceneWarn = 1500;
+		constexpr float kScatterDropLift = 8.0f;
+
 	}
 
 	EditorLayer::EditorLayer()
@@ -440,13 +496,31 @@ namespace GanymedE {
 				m_ActiveScene->GetSingleton<RenderContext>().PreviewCamera = m_ViewportCamera;
 				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowColliderGizmos =
 					m_ShowColliderGizmos;
-				m_MapPanel.FillOverlay(m_ActiveScene->GetSingleton<EditorBoundsOverlay>());
 
 				// Raycast and write the placement transform before TransformSystem so the
 				// preview renders this frame at the hover pose, not last frame's.
 				UpdateSurfaceRaycast();
 				if (IsPlacing())
 					ApplyPlacementTransform();
+				TickScatter();
+
+				EditorBoundsOverlay& overlay = m_ActiveScene->GetSingleton<EditorBoundsOverlay>();
+				m_MapPanel.FillOverlay(overlay);
+				overlay.Spheres.clear();
+				if (IsScattering() && m_SurfaceHit.IsHit())
+				{
+					const bool erase = m_ScatterStroke.Active
+						? m_ScatterStroke.Erase
+						: (Input::IsKeyPressed(Key::LeftShift)
+							|| Input::IsKeyPressed(Key::RightShift));
+					overlay.Spheres.push_back({
+						m_SurfaceHit.Point,
+						m_MapPanel.Scatter().Radius,
+						erase
+							? glm::vec4(0.95f, 0.40f, 0.35f, 1.0f)
+							: glm::vec4(0.35f, 0.85f, 1.0f, 1.0f)
+					});
+				}
 
 				m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 				break;
@@ -876,6 +950,9 @@ namespace GanymedE {
 			}
 		}
 
+		if (IsScattering() && ImGui::IsKeyPressed(ImGuiKey_Escape))
+			CancelScatterMode();
+
 		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
 			m_UndoStack.Undo(*m_EditorScene);
 
@@ -891,6 +968,9 @@ namespace GanymedE {
 				CancelPlacement();
 			return;
 		}
+
+		if (IsScattering())
+			return;
 
 		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D))
 			m_SceneHierarchyPanel.DuplicateSelectedEntity();
@@ -1271,7 +1351,7 @@ namespace GanymedE {
 		Entity gizmoEntity = selectedEntity;
 		if (gizmoEntity && m_SceneHierarchyPanel.IsLocked(gizmoEntity))
 			gizmoEntity = {};
-		if (gizmoEntity && m_GizmoType != -1 && editing && !IsPlacing())
+		if (gizmoEntity && m_GizmoType != -1 && editing && !IsPlacing() && !IsScattering())
 		{
 			glm::mat4 cameraProjection = m_EditorCamera.GetProjection();
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
@@ -1510,10 +1590,18 @@ namespace GanymedE {
 
 	bool EditorLayer::OnMouseButtonPressed(MouseButtonPressedEvent& e)
 	{
-		if (e.GetMouseButton() == Mouse::ButtonRight && IsPlacing() && m_ViewportHovered)
+		if (e.GetMouseButton() == Mouse::ButtonRight && m_ViewportHovered)
 		{
-			CancelPlacement();
-			return false;
+			if (IsPlacing())
+			{
+				CancelPlacement();
+				return false;
+			}
+			if (IsScattering())
+			{
+				CancelScatterMode();
+				return false;
+			}
 		}
 
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
@@ -1526,6 +1614,17 @@ namespace GanymedE {
 					const bool chain = Input::IsKeyPressed(Key::LeftShift)
 						|| Input::IsKeyPressed(Key::RightShift);
 					CommitPlacement(chain);
+				}
+				return false;
+			}
+
+			if (m_MapPanel.IsPaintArmed() && m_SceneState == SceneState::Edit)
+			{
+				if (m_ViewportHovered && !ImGuizmo::IsOver())
+				{
+					const bool erase = Input::IsKeyPressed(Key::LeftShift)
+						|| Input::IsKeyPressed(Key::RightShift);
+					BeginScatterStroke(erase);
 				}
 				return false;
 			}
@@ -1558,6 +1657,7 @@ namespace GanymedE {
 
 	void EditorLayer::NewScene()
 	{
+		CancelScatterMode();
 		CancelPlacement();
 		m_EditorScene = CreateRef<Scene>();
 		SetupDefaultEnvironment(m_EditorScene);
@@ -1615,6 +1715,7 @@ namespace GanymedE {
 		if (m_SceneState != SceneState::Edit)
 			OnSceneStop();
 
+		CancelScatterMode();
 		CancelPlacement();
 
 		if (path.extension().string() != ".ganymede")
@@ -1668,6 +1769,7 @@ namespace GanymedE {
 
 	void EditorLayer::OnScenePlay()
 	{
+		CancelScatterMode();
 		CancelPlacement();
 
 		m_EditorScene = m_ActiveScene;
@@ -1737,6 +1839,8 @@ namespace GanymedE {
 			return;
 		if (type != AssetType::Prefab && type != AssetType::StaticMesh)
 			return;
+
+		CancelScatterMode();
 
 		const float keepYaw = (handle == m_PlaceHandle && type == m_PlaceType) ? m_PlaceYaw : 0.0f;
 		CancelPlacement();
@@ -1809,6 +1913,11 @@ namespace GanymedE {
 		RaycastFilter filter;
 		filter.HiddenEntities = &m_SceneHierarchyPanel.HiddenEntities();
 		filter.Exclude = m_PlacePreview;
+		if (IsScattering())
+		{
+			RebuildScatterExclude();
+			filter.ExcludeSet = &m_ScatterStroke.Exclude;
+		}
 		filter.GridHeight = m_SnapSettings.GridHeight;
 
 		const auto t0 = std::chrono::high_resolution_clock::now();
@@ -1946,6 +2055,523 @@ namespace GanymedE {
 			BeginPlacement(handle, type);
 			m_PlaceYaw = yaw;
 			ApplyPlacementTransform();
+		}
+	}
+
+	bool EditorLayer::IsScattering() const
+	{
+		return m_MapPanel.IsPaintArmed() || m_ScatterStroke.Active;
+	}
+
+	void EditorLayer::TickScatter()
+	{
+		if (m_SceneState != SceneState::Edit || !m_ActiveScene)
+			return;
+
+		if (m_MapPanel.IsPaintArmed() && IsPlacing())
+			CancelPlacement();
+
+		if (m_ScatterStroke.Active && !m_MapPanel.IsPaintArmed())
+		{
+			EndScatterStroke();
+			return;
+		}
+
+		if (!m_ScatterStroke.Active)
+			return;
+
+		if (!Input::IsMouseButtonPressed(Mouse::ButtonLeft))
+		{
+			EndScatterStroke();
+			return;
+		}
+
+		if (!m_SurfaceHit.IsHit())
+			return;
+
+		const ScatterSettings& settings = m_MapPanel.Scatter();
+
+		if (!m_ScatterStroke.Erase
+			&& settings.FilterToStartSurface
+			&& !m_ScatterStroke.FilterLocked)
+		{
+			m_ScatterStroke.FilterWorkPlane = m_SurfaceHit.FromWorkPlane;
+			m_ScatterStroke.FilterMesh = MeshHandleOf(m_SurfaceHit.Hit);
+			m_ScatterStroke.FilterLocked = true;
+		}
+
+		if (m_ScatterStroke.Erase)
+		{
+			ScatterEraseAt(m_SurfaceHit.Point);
+			return;
+		}
+
+		if (m_ScatterStroke.Count >= settings.MaxInstancesPerStroke)
+		{
+			if (!m_ScatterStroke.HitCap)
+			{
+				GE_WARN("Scatter: hit MaxInstancesPerStroke ({0}).", settings.MaxInstancesPerStroke);
+				m_ScatterStroke.HitCap = true;
+			}
+			return;
+		}
+
+		const float radius = std::max(settings.Radius, 0.0f);
+		const float area = glm::pi<float>() * radius * radius;
+		const int want = std::max(1, (int)std::lround((double)settings.Density * (double)area));
+
+		int inDisc = 0;
+		const float radius2 = radius * radius;
+		for (const glm::vec3& p : m_ScatterStroke.Placed)
+		{
+			const glm::vec3 d = p - m_SurfaceHit.Point;
+			if (glm::dot(d, d) <= radius2)
+				inDisc++;
+		}
+
+		int attempts = want - inDisc;
+		attempts = std::min(attempts, kScatterMaxDropRays);
+		attempts = std::min(attempts, settings.MaxInstancesPerStroke - m_ScatterStroke.Count);
+		if (attempts <= 0)
+			return;
+
+		glm::vec3 tangent, bitangent;
+		TangentAxes(m_SurfaceHit.Normal, tangent, bitangent);
+
+		RaycastFilter filter;
+		filter.HiddenEntities = &m_SceneHierarchyPanel.HiddenEntities();
+		filter.ExcludeSet = &m_ScatterStroke.Exclude;
+		filter.GridHeight = m_SnapSettings.GridHeight;
+
+		for (int i = 0; i < attempts; i++)
+		{
+			if (m_ScatterStroke.Count >= settings.MaxInstancesPerStroke)
+				break;
+
+			const float u = m_ScatterStroke.Rng.Float01();
+			const float v = m_ScatterStroke.Rng.Float01();
+			const float discR = radius * std::sqrt(u);
+			const float theta = v * glm::two_pi<float>();
+			const glm::vec3 candidate = m_SurfaceHit.Point
+				+ tangent * (discR * std::cos(theta))
+				+ bitangent * (discR * std::sin(theta));
+
+			Math::Ray drop;
+			drop.Origin = candidate + glm::vec3(0.0f, kScatterDropLift, 0.0f);
+			drop.Direction = glm::vec3(0.0f, -1.0f, 0.0f);
+			drop.MaxDistance = 256.0f;
+
+			const SurfaceHit hit = RaycastScene(m_ActiveScene, drop, filter);
+			if (!hit.IsHit())
+				continue;
+
+			if (settings.FilterToStartSurface && m_ScatterStroke.FilterLocked)
+			{
+				if (m_ScatterStroke.FilterWorkPlane)
+				{
+					if (!hit.FromWorkPlane)
+						continue;
+				}
+				else if (IsAssetHandleValid(m_ScatterStroke.FilterMesh))
+				{
+					if (MeshHandleOf(hit.Hit) != m_ScatterStroke.FilterMesh)
+						continue;
+				}
+			}
+
+			if (ScatterTooClose(hit.Point))
+				continue;
+
+			ScatterPlaceOne(hit.Point, hit.Normal);
+		}
+	}
+
+	void EditorLayer::BeginScatterStroke(bool erase)
+	{
+		if (m_ScatterStroke.Active)
+			return;
+		if (!m_ActiveScene || m_SceneState != SceneState::Edit)
+			return;
+
+		const ScatterSettings& settings = m_MapPanel.Scatter();
+		if (!IsAssetHandleValid(settings.Source)
+			|| (settings.SourceType != AssetType::Prefab && settings.SourceType != AssetType::StaticMesh))
+		{
+			GE_WARN("Scatter: pin a prefab or mesh and click it before painting.");
+			return;
+		}
+
+		if (IsPlacing())
+			CancelPlacement();
+
+		m_ScatterStroke = ScatterStroke{};
+		m_ScatterStroke.Active = true;
+		m_ScatterStroke.Erase = erase;
+		m_ScatterStroke.StrokeSeed = settings.Seed;
+		m_ScatterStroke.Rng = Random(settings.Seed);
+
+		if (erase)
+		{
+			Entity group = FindScatterGroup(*m_ActiveScene, settings.Source);
+			if (group)
+				m_ScatterStroke.Group = group.GetUUID();
+			return;
+		}
+
+		Entity group = FindScatterGroup(*m_ActiveScene, settings.Source);
+		if (!group)
+			return;
+
+		m_ScatterStroke.Group = group.GetUUID();
+		if (!group.HasComponent<RelationshipComponent>())
+			return;
+
+		for (UUID childID : group.GetComponent<RelationshipComponent>().Children)
+		{
+			Entity child = m_ActiveScene->FindEntityByUUID(childID);
+			if (child)
+				ScatterRememberPoint(glm::vec3(m_ActiveScene->GetWorldSpaceTransform(child)[3]));
+		}
+	}
+
+	void EditorLayer::EndScatterStroke()
+	{
+		if (!m_ScatterStroke.Active)
+			return;
+
+		const bool erase = m_ScatterStroke.Erase;
+		const int placed = m_ScatterStroke.Count;
+		const UUID groupID = m_ScatterStroke.Group;
+		const uint32_t seed = m_ScatterStroke.StrokeSeed;
+
+		if (m_ActiveScene)
+		{
+			if (erase)
+			{
+				std::vector<Scope<EditorCommand>> steps;
+				steps.reserve(m_ScatterStroke.Batches.size());
+				for (std::vector<EntitySnapshot>& batch : m_ScatterStroke.Batches)
+				{
+					if (!batch.empty())
+						steps.push_back(CreateScope<DeleteEntitiesCommand>("Scatter instance", std::move(batch)));
+				}
+
+				if (steps.size() == 1)
+					m_UndoStack.Push(std::move(steps.front()));
+				else if (!steps.empty())
+					m_UndoStack.Push(CreateScope<CompositeCommand>("Scatter erase", std::move(steps)));
+			}
+			else if (placed > 0)
+			{
+				std::vector<Scope<EditorCommand>> steps;
+				if (!m_ScatterStroke.GroupSnapshot.empty())
+				{
+					steps.push_back(CreateScope<AddEntitiesCommand>(
+						"Scatter group", std::move(m_ScatterStroke.GroupSnapshot)));
+				}
+				for (std::vector<EntitySnapshot>& batch : m_ScatterStroke.Batches)
+				{
+					if (!batch.empty())
+						steps.push_back(CreateScope<AddEntitiesCommand>("Scatter instance", std::move(batch)));
+				}
+
+				if (steps.size() == 1)
+					m_UndoStack.Push(std::move(steps.front()));
+				else if (!steps.empty())
+					m_UndoStack.Push(CreateScope<CompositeCommand>("Scatter paint", std::move(steps)));
+
+				if (Entity group = m_ActiveScene->FindEntityByUUID(groupID))
+				{
+					if (group.HasComponent<ScatterGroupComponent>())
+						group.GetComponent<ScatterGroupComponent>().LastSeed = seed;
+				}
+				m_MapPanel.Scatter().Seed = seed + 1u;
+			}
+			else if (!m_ScatterStroke.GroupSnapshot.empty())
+			{
+				RemoveSubtree(*m_ActiveScene, m_ScatterStroke.GroupSnapshot);
+			}
+
+			if ((erase && !m_ScatterStroke.Batches.empty()) || placed > 0)
+			{
+				if (Entity group = m_ActiveScene->FindEntityByUUID(groupID))
+					m_SceneHierarchyPanel.SetSelectedEntity(group);
+			}
+		}
+
+		m_ScatterStroke = ScatterStroke{};
+	}
+
+	void EditorLayer::AbortScatterStroke()
+	{
+		if (!m_ScatterStroke.Active)
+			return;
+
+		if (m_ActiveScene)
+		{
+			if (m_ScatterStroke.Erase)
+			{
+				for (auto it = m_ScatterStroke.Batches.rbegin(); it != m_ScatterStroke.Batches.rend(); ++it)
+					RestoreSubtree(*m_ActiveScene, *it);
+			}
+			else
+			{
+				for (auto it = m_ScatterStroke.Batches.rbegin(); it != m_ScatterStroke.Batches.rend(); ++it)
+					RemoveSubtree(*m_ActiveScene, *it);
+				if (!m_ScatterStroke.GroupSnapshot.empty())
+					RemoveSubtree(*m_ActiveScene, m_ScatterStroke.GroupSnapshot);
+			}
+		}
+
+		m_ScatterStroke = ScatterStroke{};
+	}
+
+	void EditorLayer::CancelScatterMode()
+	{
+		if (m_ScatterStroke.Active)
+			AbortScatterStroke();
+		m_MapPanel.SetPaintArmed(false);
+	}
+
+	void EditorLayer::RebuildScatterExclude()
+	{
+		m_ScatterStroke.Exclude.clear();
+		if (!m_ActiveScene)
+			return;
+
+		Entity group;
+		if (m_ScatterStroke.Group != UUID{ 0 })
+			group = m_ActiveScene->FindEntityByUUID(m_ScatterStroke.Group);
+		if (!group)
+			group = FindScatterGroup(*m_ActiveScene, m_MapPanel.Scatter().Source);
+		if (group)
+			CollectSubtreeUUIDs(*m_ActiveScene, group, m_ScatterStroke.Exclude);
+	}
+
+	Entity EditorLayer::EnsureScatterGroup()
+	{
+		if (!m_ActiveScene)
+			return {};
+
+		if (m_ScatterStroke.Group != UUID{ 0 })
+		{
+			Entity existing = m_ActiveScene->FindEntityByUUID(m_ScatterStroke.Group);
+			if (existing)
+				return existing;
+			m_ScatterStroke.Group = UUID{ 0 };
+			m_ScatterStroke.CreatedGroup = false;
+			m_ScatterStroke.GroupSnapshot.clear();
+		}
+
+		const ScatterSettings& settings = m_MapPanel.Scatter();
+		Entity existing = FindScatterGroup(*m_ActiveScene, settings.Source);
+		if (existing)
+		{
+			m_ScatterStroke.Group = existing.GetUUID();
+			return existing;
+		}
+
+		const AssetMetadata* metadata = AssetManager::GetMetadata(settings.Source);
+		std::string stem = metadata
+			? std::filesystem::path(metadata->FilePath).stem().string()
+			: "Untitled";
+		if (stem.empty())
+			stem = "Untitled";
+
+		Entity group = m_ActiveScene->CreateEntity("Scatter/" + stem);
+		auto& component = group.AddComponent<ScatterGroupComponent>();
+		component.Source = settings.Source;
+		component.LastSeed = m_ScatterStroke.StrokeSeed;
+
+		m_ScatterStroke.Group = group.GetUUID();
+		m_ScatterStroke.CreatedGroup = true;
+		CaptureSubtree(*m_ActiveScene, group, m_ScatterStroke.GroupSnapshot);
+		return group;
+	}
+
+	bool EditorLayer::ScatterTooClose(const glm::vec3& p) const
+	{
+		const float spacing = m_MapPanel.Scatter().MinSpacing;
+		if (spacing <= 0.0f)
+			return false;
+
+		const float spacing2 = spacing * spacing;
+		const int cx = (int)std::floor(p.x / spacing);
+		const int cy = (int)std::floor(p.y / spacing);
+		const int cz = (int)std::floor(p.z / spacing);
+
+		for (int dz = -1; dz <= 1; dz++)
+		for (int dy = -1; dy <= 1; dy++)
+		for (int dx = -1; dx <= 1; dx++)
+		{
+			auto it = m_ScatterStroke.Cells.find(ScatterCellKey(cx + dx, cy + dy, cz + dz));
+			if (it == m_ScatterStroke.Cells.end())
+				continue;
+			for (uint32_t index : it->second)
+			{
+				const glm::vec3 d = m_ScatterStroke.Placed[index] - p;
+				if (glm::dot(d, d) < spacing2)
+					return true;
+			}
+		}
+		return false;
+	}
+
+	void EditorLayer::ScatterRememberPoint(const glm::vec3& p)
+	{
+		const uint32_t index = (uint32_t)m_ScatterStroke.Placed.size();
+		m_ScatterStroke.Placed.push_back(p);
+
+		const float spacing = m_MapPanel.Scatter().MinSpacing;
+		if (spacing <= 0.0f)
+			return;
+
+		const int cx = (int)std::floor(p.x / spacing);
+		const int cy = (int)std::floor(p.y / spacing);
+		const int cz = (int)std::floor(p.z / spacing);
+		m_ScatterStroke.Cells[ScatterCellKey(cx, cy, cz)].push_back(index);
+	}
+
+	void EditorLayer::ScatterPlaceOne(const glm::vec3& point, const glm::vec3& normal)
+	{
+		if (!m_ActiveScene)
+			return;
+
+		const ScatterSettings& settings = m_MapPanel.Scatter();
+		const AssetMetadata* metadata = AssetManager::GetMetadata(settings.Source);
+		if (!metadata)
+			return;
+
+		Entity root;
+		if (settings.SourceType == AssetType::Prefab)
+			root = PrefabSerializer::InstantiateFromAsset(settings.Source, *m_ActiveScene);
+		else if (settings.SourceType == AssetType::StaticMesh)
+			root = MeshImporter::Instantiate(m_ActiveScene.get(), GetAssetRoot() / metadata->FilePath);
+		if (!root)
+			return;
+
+		if (!m_ScatterStroke.SourceHasBounds)
+		{
+			const glm::mat4 invRoot = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(root));
+			AccumulateMeshBounds(*m_ActiveScene, root, invRoot,
+				m_ScatterStroke.SourceBounds, m_ScatterStroke.SourceHasBounds);
+			m_ScatterStroke.SourceEuler = root.GetComponent<TransformComponent>().Rotation;
+			m_ScatterStroke.SourceScale = root.GetComponent<TransformComponent>().Scale;
+		}
+
+		Entity group = EnsureScatterGroup();
+		if (!group)
+		{
+			std::vector<EntitySnapshot> failed;
+			CaptureSubtree(*m_ActiveScene, root, failed);
+			RemoveSubtree(*m_ActiveScene, failed);
+			return;
+		}
+
+		m_ActiveScene->SetParent(root, group);
+
+		glm::quat align(1.0f, 0.0f, 0.0f, 0.0f);
+		if (settings.AlignToNormal)
+			align = RotationBetween(glm::vec3(0.0f, 1.0f, 0.0f), normal);
+
+		const float yawDeg = m_ScatterStroke.Rng.Range(-settings.YawJitter, settings.YawJitter);
+		const glm::quat yaw = glm::angleAxis(glm::radians(yawDeg), glm::vec3(0.0f, 1.0f, 0.0f));
+		const glm::mat4 rotation = glm::mat4_cast(align * yaw)
+			* EulerRotationMatrix(m_ScatterStroke.SourceEuler);
+
+		float uniform = 1.0f;
+		if (settings.ScaleMax > settings.ScaleMin)
+			uniform = m_ScatterStroke.Rng.Range(settings.ScaleMin, settings.ScaleMax);
+		else
+			uniform = settings.ScaleMin;
+		const glm::vec3 scale = m_ScatterStroke.SourceScale * uniform;
+
+		glm::vec3 origin = point;
+		if (m_SnapSettings.SitOnBounds && m_ScatterStroke.SourceHasBounds)
+		{
+			const glm::vec3 sitLocal(0.0f, -m_ScatterStroke.SourceBounds.Min.y * scale.y, 0.0f);
+			origin += glm::vec3(rotation * glm::vec4(sitLocal, 0.0f));
+		}
+
+		glm::mat4 world = glm::translate(glm::mat4(1.0f), origin)
+			* rotation
+			* glm::scale(glm::mat4(1.0f), scale);
+
+		const UUID parentID = root.HasComponent<RelationshipComponent>()
+			? root.GetComponent<RelationshipComponent>().Parent : UUID{ 0 };
+		if (parentID != UUID{ 0 })
+		{
+			Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
+			if (parent)
+				world = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * world;
+		}
+
+		glm::vec3 translation, euler, decomposedScale;
+		if (!Math::DecomposeTransform(world, translation, euler, decomposedScale))
+		{
+			std::vector<EntitySnapshot> failed;
+			CaptureSubtree(*m_ActiveScene, root, failed);
+			RemoveSubtree(*m_ActiveScene, failed);
+			return;
+		}
+
+		auto& tc = root.GetComponent<TransformComponent>();
+		tc.Translation = translation;
+		tc.Rotation = euler;
+		tc.Scale = scale;
+		m_ActiveScene->MarkChanged<TransformComponent>(root);
+
+		std::vector<EntitySnapshot> batch;
+		CaptureSubtree(*m_ActiveScene, root, batch);
+		m_ScatterStroke.Batches.push_back(std::move(batch));
+		CollectSubtreeUUIDs(*m_ActiveScene, root, m_ScatterStroke.Exclude);
+		ScatterRememberPoint(point);
+		m_ScatterStroke.Count++;
+
+		if (!m_ScatterStroke.HitSceneWarn
+			&& m_ActiveScene->Reg().view<IDComponent>().size() >= kScatterSceneWarn)
+		{
+			GE_WARN("Scatter: scene has {0} entities. The cap exists because each instance is an entity.",
+				(uint32_t)m_ActiveScene->Reg().view<IDComponent>().size());
+			m_ScatterStroke.HitSceneWarn = true;
+		}
+	}
+
+	void EditorLayer::ScatterEraseAt(const glm::vec3& point)
+	{
+		if (!m_ActiveScene)
+			return;
+
+		Entity group;
+		if (m_ScatterStroke.Group != UUID{ 0 })
+			group = m_ActiveScene->FindEntityByUUID(m_ScatterStroke.Group);
+		if (!group)
+			group = FindScatterGroup(*m_ActiveScene, m_MapPanel.Scatter().Source);
+		if (!group || !group.HasComponent<RelationshipComponent>())
+			return;
+
+		m_ScatterStroke.Group = group.GetUUID();
+
+		const float radius = std::max(m_MapPanel.Scatter().Radius, 0.0f);
+		const float radius2 = radius * radius;
+		const std::vector<UUID> children = group.GetComponent<RelationshipComponent>().Children;
+
+		for (UUID childID : children)
+		{
+			Entity child = m_ActiveScene->FindEntityByUUID(childID);
+			if (!child)
+				continue;
+
+			const glm::vec3 worldPos = glm::vec3(m_ActiveScene->GetWorldSpaceTransform(child)[3]);
+			const glm::vec3 d = worldPos - point;
+			if (glm::dot(d, d) > radius2)
+				continue;
+
+			std::vector<EntitySnapshot> batch;
+			CaptureSubtree(*m_ActiveScene, child, batch);
+			RemoveSubtree(*m_ActiveScene, batch);
+			if (!batch.empty())
+				m_ScatterStroke.Batches.push_back(std::move(batch));
 		}
 	}
 }
