@@ -201,23 +201,20 @@ Still open:
   an `Enabled`/`Visible` bit that `RenderSystem` honours (useful well beyond sockets) or a
   socket-local suppression. Worth deciding which before building either.
 
-### A3 — Wiring, on the game branch
+### A3 — Wiring, on the game branch — **done**
 
-Attach `Rifle.glb` to the player's `RightHand`, offset by hand against the new clips. Either retire
-the hovering rifle pickup at the Weapon Crate or keep it and attach on collect — the latter is more
-interesting and costs nothing extra, since `Pickup.lua` already knows when the crate is consumed.
+The rifle is socketed to the player's `RightHand`: one entity, `Scale: 0.45`, `Offset` in metres.
+Recorded with the derivation and its measured gate in
+[PROVING_GROUND.md](PROVING_GROUND.md), which is where content work belongs.
 
-With the A2 follow-up above landed this is **one entity**, not a socket plus a child holding a
-compensating scale: `Offset` is in metres and `Scale` is the real size of the rifle. The rotation
-is the part worth being careful with — a first attempt composed `J·M` where it wanted `Jᵀ·M`, which
-looked plausible on screen. Derive it, then assert the barrel axis lands where it should before
-believing the picture.
+Two things from it worth keeping here, because they are about the feature rather than the game:
 
-- **Gate:** the rifle stays in the hand through idle, walk, run and the backpedal turn, and the
-  muzzle particle emitter can be moved from `Yaw` onto the gun's barrel without changing where
-  shots go.
-
----
+- **A rig's joints and its vertices need not share a unit.** This one has joints in centimetres
+  and vertices in metres. That is what the `LocalTransform` fold-in above exists for, and it is
+  invisible until something rigid is pinned to a joint.
+- **A wrong premise costs as much as wrong maths.** The first attempt derived the barrel axis from
+  `LeftHand - RightHand`, assuming the support hand rides the handguard. At idle this rig's hands
+  are 0.937 m apart. The maths was right and the answer was 40 deg off.
 
 ## Hazards found while scoping
 

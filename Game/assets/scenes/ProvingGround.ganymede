@@ -131,7 +131,7 @@ Entities:
     RelationshipComponent:
       Parent: 3000000000000000011
       Children:
-        []
+        - 3000000000000000017
     StaticMeshComponent:
       Mesh: 17641149922961688873
       MaterialOverrides: [6151183210390514080]
@@ -140,6 +140,25 @@ Entities:
       Speed: 1
       Playing: true
       Loop: true
+  - Entity: 3000000000000000017
+    TagComponent:
+      Tag: Rifle
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.449999988, 0.449999988, 0.449999988]
+    RelationshipComponent:
+      Parent: 3000000000000000013
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 5842540604746245028
+      MaterialOverrides: [6163099190943935964]
+    BoneAttachmentComponent:
+      Target: 0
+      Joint: RightHand
+      Offset: [-0.188499998, 0.0962980017, -0.0362339988]
+      Rotation: [-2.71431017, 0.254526004, 0.885160983]
   - Entity: 3000000000000000032
     TagComponent:
       Tag: GroundTile

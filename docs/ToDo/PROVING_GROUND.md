@@ -616,20 +616,116 @@ slide remains. The principled fix is the other direction: 6 m/s is 21.6 km/h, sp
 someone carrying a rifle, and dropping `Player.Properties.speed` to ~4.0 would let this clip play
 at 1.55 with almost no slide. That moves every P1-P7 gate number, so it is **not** done here.
 
+#### A3 — the rifle is in the player's hand
+
+Entity `3000000000000000017`, a child of the player's `Body`, mesh `Rifle.glb` at `Scale: 0.45`
+(0.856 m), `BoneAttachmentComponent` on `RightHand` with `Target: 0` (= my parent). One entity —
+no compensating child — which is only possible because of the engine fix recorded in
+[SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md): before it, the socket frame was 100x out and a
+`Scale: 45` workaround produced an 86 m rifle with a level-sized shadow whenever the socket failed
+to resolve.
+
+**How the numbers were derived, because the first two attempts were both wrong on screen.**
+
+The barrel is the rifle's **-X**, established from the vertex profile rather than assumed: a
+uniform tube from x -0.95 to -0.24 with nothing hanging below it, the magazine at x -0.21..0.00,
+the trigger gap, then the pistol grip at x +0.21..+0.55. Up is +Y.
+
+The first attempt took the barrel axis to be `LeftHand - RightHand`, on the reasoning that the
+support hand sits on the handguard. **Measured, that is false for this animation library** — at
+idle the hands are 0.937 m apart. The rifle came out 40 deg across the chest, which is exactly
+what rendered. The lesson is not about matrices: a premise about what a pose *means* is as much a
+thing to measure as the maths is.
+
+What is true is that the two shooting clips hold the right hand at a stable orientation relative
+to the character (14 deg and 22 deg of spread, and 16 deg between the clips). So the barrel is
+anchored to **mesh-space +Z** — the direction the rig faces — averaged over those two clips only,
+with `Lower_Weapon_Look_Raise` deliberately excluded: that clip swings the hand up to 108 deg,
+because lowering and raising the weapon is what it is *for*, and a socketed gun should follow it.
+
+Verified by sweeping every clip rather than one frame:
+
+| Clip | barrel elevation | yaw off forward |
+|---|---|---|
+| `Run_and_Shoot` | -0.8 to -2.7 deg | 6.9-8.5 deg |
+| `Walk_Forward_While_Shooting` | +0.5 to +1.7 deg | 7.6-8.2 deg |
+| `Lower_Weapon_Look_Raise` | +16 to -78 deg | swings — the weapon is being lowered |
+
+And in the engine, from a temporary probe: joint basis `(1.0000, 1.0000, 1.0000)`, joint
+translation `(0.015, 1.043, -0.422)` **metres**, socket basis `(0.45, 0.45, 0.45)`, and the rifle
+origin 0.216 m from the hand joint against a derived `|Offset|` of 0.215 m.
+
+- **Gate: met.** The rifle stays in the hand through idle, walk, run and the backpedal turn, at the
+  right size, aimed where the player faces while shooting and lowered while idle. 0 errors in the
+  log; one `BoneAttachment` warning, once, while the skinned mesh streams (see the open item in
+  [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)).
+
+**Not done, deliberately:** the hovering rifle at the Weapon Crate is untouched. Now that the
+player always carries a rifle, that pickup wants either retiring or converting to attach-on-collect
+— a gameplay decision, not part of wiring the socket.
+
+**Known rough edge:** during the deepest part of `Lower_Weapon_Look_Raise` the barrel points down
+~78 deg and the rifle can clip the thigh. No constant offset fixes that without breaking the
+shooting pose; it is a property of socketing a weapon onto generic library animation.
+
+#### The sheet of geometry on the player's leg — a rig defect, not a socket one
+
+Visible while running **and** standing: a flat sheet fanning from the right hip out to the knee.
+It survived three wrong diagnoses of mine (the oversized rifle, then the correctly-sized rifle
+clipping edge-on, then a specular highlight) before being measured properly.
+
+**Cause.** Meshy rigged this model in an A-pose, where the hands hang beside the thighs. A
+proximity-based weight solver cannot tell a knuckle from a hip there, and it bound ~850 hip and
+upper-thigh vertices to `RightHand`. They are dragged to the hand whenever the arm raises. The
+rig has been like this since it was generated; nothing about sockets was involved.
+
+**Why the obvious checks missed it.** Weights sum to exactly 1.0, every joint index is in range,
+there is one influence set and no vertex exceeds four influences — the data is *well-formed*, just
+wrong. Nor does distance from the bound joint catch it: in the bind pose the hand really is 27 cm
+from the hip, and some offenders sit only 12 cm from the wrist along the forearm axis, inside any
+envelope a real hand also has to fit in.
+
+**What does separate them is connectivity.** Reaching a mis-bound hip vertex from the forearm
+means walking up the arm, across the shoulder and down the torso. With the mesh welded by position
+(UV seams duplicate vertices and would cut the graph) and a BFS out from each forearm, the two
+sides separate cleanly — and the **left hand, which this same rig got right, is the control**:
+
+| | welded verts | hops from forearm (median / 99th / max) |
+|---|---|---|
+| `LeftHand` | 209 | 5 / 8 / **8** |
+| `RightHand` | 272 | 5 / 28 / **28** |
+
+A hop limit of 12 — generous against the left hand's own maximum of 8 — re-weighted 847 vertices.
+Weight goes back to each vertex's other influences, which are already `RightUpLeg` and `Hips`;
+the 10 with no other influence were assigned by nearest bone *segment*, not nearest joint origin,
+which on a limb picks the wrong end.
+
+**Measured result**, by skinning the mesh in Python and comparing triangle areas against bind:
+
+| | triangles >100 cm² | worst blow-up | total skinned area (bind 2.825 m²) |
+|---|---|---|---|
+| before | 7 | 144 cm², **47x** bind | 3.26 m² (+15%) |
+| after | **0** | — | 2.885 m² (+2%, normal deformation) |
+
+`ArmoredHumanoid.glb` is edited in place, handle unchanged, original kept at
+`archive_unrigged/ArmoredHumanoid.glb.preweights`. The left hand has a milder version of the same
+contamination which is below the threshold and currently invisible; if a left-hand sheet ever
+appears, lower the hop limit rather than re-rigging.
+
 #### What the character import left open
 
-- **Three facing/animation defects, three unrelated causes** %s all fixed, all worth remembering
+- **Three facing/animation defects, three unrelated causes** — all fixed, all worth remembering
   because none of them was visible in the asset and each failed differently:
   - *The player did not turn with the camera.* `Body` hung off the capsule, which is
     `LockRotation`, so it inherited no yaw. Reparented under `Yaw`. The caution recorded here
-    earlier %s that this would disturb what the gates measured %s was wrong: the gates measure the
+    earlier — that this would disturb what the gates measured — was wrong: the gates measure the
     capsule's position and its raycasts, and reparenting a **mesh** changes neither.
   - *The orks ran backwards.* `Enemy.lua` writes `SetRotation(0, facing, 0)` onto the Body every
     frame, which **overwrote** the pi baked into the scene rather than composing with it, so the
     correction was erased on the first update. The pi belongs in the script. `self.facing` itself
     must not change, because `Sense()` raycasts along it.
   - *The player looked smaller when running.* It was the opposite: the **Idle** clip drove a
-    constant scale of **1.1765 on `Hips`**, the root joint, and nothing else %s so the player was
+    constant scale of **1.1765 on `Hips`**, the root joint, and nothing else — so the player was
     17.6%% too large while standing still. A Meshy retarget artifact (1.1765 = 1/0.85). Removing
     the 24 scale channels from that clip is enough, because `AnimationSystem::BuildPalette`
     starts from the rest pose and a joint with no channel keeps its authored transform.
