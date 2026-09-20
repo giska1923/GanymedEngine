@@ -353,9 +353,11 @@ enkiTS workers with none falling back inline — the check that separates "corre
 When built with `JPH_DEBUG_RENDERER` (Debug/Release, not Dist), `PhysicsScene::DebugDraw` pipes
 Jolt's own body/constraint visualization into `Renderer3D::DrawLine`. Toggles live in the
 `PhysicsSettings` singleton's `PhysicsDebugDrawSettings` (wireframe, bounding boxes, velocities,
-center of mass, constraints), editable in the editor Stats panel. During play with the toggle on,
-`RenderSystem` draws Jolt's view of the world *instead of* the authored collider gizmos — a
-divergence between the two is itself diagnostic (it means components and bodies disagree).
+center of mass, constraints), editable from the viewport Visualizers popup. During play with
+Jolt debug draw on, `RenderSystem` draws Jolt's view of the world *instead of* the authored
+collider gizmos — a divergence between the two is itself diagnostic (it means components and
+bodies disagree). Authored gizmos (`DrawColliderGizmos`) run in Edit and in Play-with-Jolt-off
+when `ShowColliderGizmos` is set; the editor defaults that checkbox on and pushes it every frame.
 
 ## Extending
 

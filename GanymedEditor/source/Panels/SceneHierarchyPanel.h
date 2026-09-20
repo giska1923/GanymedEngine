@@ -15,6 +15,8 @@
 
 namespace GanymedE {
 
+	struct BoxColliderComponent;
+
 	class SceneHierarchyPanel
 	{
 	public:
@@ -51,6 +53,11 @@ namespace GanymedE {
 		// so the preview is not an undo entry; commit pushes AddEntitiesCommand after the
 		// transform is final.
 		Entity InstantiatePrefab(const std::filesystem::path& relativePath, bool recordUndo = true);
+
+		// HalfExtents / Offset from a resident mesh's local AABB. Leaves Material alone.
+		// Returns false when there is no mesh or it is not loaded yet — the collider stays
+		// at its current (usually unit) values.
+		static bool SeedBoxColliderFromMesh(Entity entity, BoxColliderComponent& collider);
 
 		// Editor-only outliner flags. Keyed by UUID so they survive play/stop (same IDs on
 		// the copied scene) and are not cleared by RetargetPanels. New/Open must call

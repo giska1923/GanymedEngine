@@ -1,6 +1,6 @@
 # Milestone — Map Editor
 
-**Status: M0–M1 landed. M2–M6 planned.**
+**Status: M0–M2 landed. M3–M6 planned.**
 
 An in-editor toolset for authoring maps: a palette, a surface-snapping placement mode, a snap model
 shared with the gizmo, a collider-versus-mesh audit, a scatter brush, gameplay markers, and a
@@ -33,8 +33,8 @@ That is not a careless-author story. Three things in the editor make it close to
 
 | Cause | Verified at |
 |---|---|
-| **Collider wireframes are drawn in Play mode only.** `ShowColliderGizmos` is pushed into `PhysicsSettings` inside the `SceneState::Play` branch and nowhere else, so while you are authoring a wall you cannot see its collider | `EditorLayer.cpp:355` |
-| **A new `BoxColliderComponent` defaults to unit half-extents** regardless of the mesh it sits on, so every collider starts wrong and is corrected by typing | `Components.h:494` |
+| **Collider wireframes used to be Play-only, then Edit-unconditional.** `ShowColliderGizmos` was pushed only in Play; Edit later called `DrawColliderGizmos` with no flag. M2 gates both paths on the Visualizers checkbox (default on in the editor; engine default stays false) | `EditorLayer.cpp`, `RenderSystem.cpp` |
+| **A new `BoxColliderComponent` defaults to unit half-extents** regardless of the mesh it sits on, so every collider starts wrong and is corrected by typing. M2 seeds from the mesh AABB on add-component and generate-from-mesh | `Components.h:494` |
 | **There is no way to ask "what world point is under the cursor".** GPU picking returns an entity ID, asynchronously, with no depth — so placement is done by typing numbers into the inspector or by dragging a gizmo against nothing | `SceneRenderer.h:69`, `EditorLayer.cpp:1113` |
 
 A map tool that fixes those three is not a convenience feature. It removes a class of bug that has
@@ -316,6 +316,15 @@ object to itself.
 ---
 
 ## Phase M2 — collider ↔ mesh parity
+
+**Done.** Collider gizmos are gated on `ShowColliderGizmos` in Edit as well as Play (the Visualizers
+checkbox defaults on; the engine default stays false). Adding a box collider seeds from the mesh
+AABB. The Map panel audit lists findings, frames them, and generate-from-mesh is one
+`CompositeCommand`. The Proving Ground walk-the-buildings probe still needs that scene — it is
+M6's job, not a reason to keep M2 open.
+
+Edit mode already called `DrawColliderGizmos()` unconditionally before this phase. The plan's
+"Play only" premise was stale; the work was the toggle + gate, not turning gizmos on.
 
 ### Goal
 

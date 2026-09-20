@@ -72,6 +72,7 @@ namespace GanymedE {
 
 		// Jolt's own debug view when physics is running and enabled, otherwise authored
 		// gizmos - and those only when PhysicsSettings::ShowColliderGizmos is set.
+		// Edit used to call DrawColliderGizmos unconditionally; it now reads the same flag.
 		void DrawPhysicsDebugOrGizmos(const glm::vec3& cameraPosition);
 
 		// Reused across entities within one SubmitMeshes pass, so resolving material overrides

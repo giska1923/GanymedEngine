@@ -438,6 +438,9 @@ namespace GanymedE {
 				m_ActiveScene->GetSingleton<EditorViewFilter>().HiddenEntities =
 					&m_SceneHierarchyPanel.HiddenEntities();
 				m_ActiveScene->GetSingleton<RenderContext>().PreviewCamera = m_ViewportCamera;
+				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowColliderGizmos =
+					m_ShowColliderGizmos;
+				m_MapPanel.FillOverlay(m_ActiveScene->GetSingleton<EditorBoundsOverlay>());
 
 				// Raycast and write the placement transform before TransformSystem so the
 				// preview renders this frame at the hover pose, not last frame's.
@@ -456,10 +459,9 @@ namespace GanymedE {
 				PhysicsSettings& physicsSettings = m_ActiveScene->GetSingleton<PhysicsSettings>();
 				physicsSettings.DebugDraw = m_PhysicsDebugDraw;
 				// Editor-only opt-in: the engine defaults this off so a shipped game never
-				// draws authored collider wireframes. Pushed every frame for the same reason
-				// DebugDraw is - Scene::Copy does not carry singletons, so the play scene
-				// starts each run with engine defaults.
-				physicsSettings.ShowColliderGizmos = true;
+				// draws authored collider wireframes. Edit and Play both push the Visualizers
+				// checkbox every frame because Scene::Copy does not carry singletons.
+				physicsSettings.ShowColliderGizmos = m_ShowColliderGizmos;
 
 				m_ActiveScene->OnUpdateRuntime(ts, &m_EditorCamera);
 
@@ -616,7 +618,9 @@ namespace GanymedE {
 		m_ContentBrowserPanel.OnImGuiRender();
 		m_MapPanel.OnImGuiRender(m_SnapSettings, m_SceneState == SceneState::Edit, IsPlacing(),
 			m_ActiveScene.get(), m_SceneState == SceneState::Edit ? &m_UndoStack : nullptr,
-			&m_SceneHierarchyPanel);
+			&m_SceneHierarchyPanel,
+			m_ViewportCamera == UUID{ 0 } ? &m_EditorCamera : nullptr,
+			m_PlacePreview);
 
 		ImGui::Begin("Stats");
 
@@ -1181,10 +1185,14 @@ namespace GanymedE {
 			}
 
 			ImGui::SameLine();
-			if (IconButton(ICON_LC_BOXES, "Visualizers", m_PhysicsDebugDraw.Enabled))
+			if (IconButton(ICON_LC_BOXES, "Visualizers",
+				m_ShowColliderGizmos || m_PhysicsDebugDraw.Enabled))
 				ImGui::OpenPopup("##Visualizers");
 			if (ImGui::BeginPopup("##Visualizers"))
 			{
+				ImGui::Checkbox("Collider gizmos", &m_ShowColliderGizmos);
+				ImGui::SetItemTooltip("Authored box/sphere/capsule wireframes. Edit and Play.");
+				ImGui::Separator();
 				ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
 				ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
 				ImGui::Checkbox("Wireframe Shapes", &m_PhysicsDebugDraw.Wireframe);
@@ -1193,7 +1201,7 @@ namespace GanymedE {
 				ImGui::Checkbox("Center of Mass", &m_PhysicsDebugDraw.CenterOfMass);
 				ImGui::Checkbox("Constraints", &m_PhysicsDebugDraw.Constraints);
 				ImGui::EndDisabled();
-				ImGui::TextDisabled("Visible during Play (Jolt body state)");
+				ImGui::TextDisabled("Jolt debug draw is Play-only (live body state).");
 				ImGui::EndPopup();
 			}
 

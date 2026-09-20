@@ -8,6 +8,7 @@
 #include "GanymedE/Renderer/EditorCamera.h"
 
 #include <unordered_set>
+#include <vector>
 
 // Scene-wide state that is genuinely singular. These used to be either members of Scene (which
 // made Scene the dumping ground for anything a system needed) or "first one wins" scans over a
@@ -45,11 +46,24 @@ namespace GanymedE {
 		// Default false because a shipped game must not draw them over the scene; the
 		// editor opts in. Nothing carries this across Scene::Copy (singletons are not
 		// copied - the new Scene's ctor default-constructs its own), so the editor
-		// re-asserts it on the play scene every frame alongside DebugDraw.
+		// re-asserts it on the play scene every frame alongside DebugDraw. Edit mode
+		// used to call DrawColliderGizmos unconditionally; it now reads this flag too.
 		bool ShowColliderGizmos = false;
 
 		float FixedTimestep = 1.0f / 60.0f;
 		int MaxStepsPerFrame = 5;          // spiral-of-death guard
+	};
+
+	// Editor-only extra wire boxes (collider audit overlay). Not serialized, not copied.
+	// RenderSystem::OnUpdateEditor draws them; play/runtime ignore the singleton.
+	struct EditorBoundsOverlay
+	{
+		struct Box
+		{
+			glm::mat4 Transform{ 1.0f };
+			glm::vec4 Color{ 1.0f };
+		};
+		std::vector<Box> Boxes;
 	};
 
 	// Editor outliner eye-toggle. Pointer into editor-owned state; never serialized,

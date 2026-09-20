@@ -64,6 +64,7 @@ namespace GanymedE {
 	private:
 		Ref<SceneRenderer> m_SceneRenderer; // owns the HDR target + post stack (bloom, tonemap, FXAA)
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
+		bool m_ShowColliderGizmos = true;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;

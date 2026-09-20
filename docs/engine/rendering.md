@@ -128,6 +128,8 @@ automatically.
   viewport.
 - [`EditorCamera`](../../GanymedEngine/source/GanymedE/Renderer/EditorCamera.h) — the viewport
   camera: orbit (Alt+LMB rotate, MMB pan, scroll zoom) around a focal point; perspective.
+  `Frame(center, radius)` keeps the current pitch/yaw and sets the focal point so a sphere of
+  that radius fits the vertical FOV — used by the Map panel's collider audit.
 - `OrthographicCamera(+Controller)` — legacy 2D-era pair with **no application callers** since
   Sandbox was removed. `Renderer2D`/`Renderer3D` still carry `BeginScene` overloads taking the
   camera; `OrthographicCameraController` and `SubTexture2D` have no callers at all. See

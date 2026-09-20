@@ -171,4 +171,14 @@ namespace GanymedE {
 	{
 		return glm::quat(glm::vec3(-m_Pitch, -m_Yaw, 0.0f));
 	}
+
+	void EditorCamera::Frame(const glm::vec3& center, float radius)
+	{
+		m_FocalPoint = center;
+		const float halfFov = glm::radians(m_FOV) * 0.5f;
+		const float s = glm::sin(halfFov);
+		m_Distance = (s > 1.0e-4f) ? (glm::max(radius, 0.05f) / s) : 10.0f;
+		m_Distance = glm::clamp(m_Distance, 1.0f, m_FarClip * 0.5f);
+		UpdateView();
+	}
 }

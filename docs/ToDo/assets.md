@@ -107,3 +107,9 @@ backwards. Recorded so the shape of the limit is known before something hits it.
 - **The sRGB pipeline** is scoped in [rendering.md](../engine/rendering.md) and is a rendering
   change. Note that Phase 4 dropped the `sRGB` config key rather than reserving it, because there is
   no sRGB handling to configure yet.
+- **Collision default on a mesh `.meta` sidecar.** Ganymed colliders are per-entity, so the same
+  crate mesh can carry different collision per placement — which is also why a new box collider
+  used to start at unit half-extents. The Map editor seeds from the mesh AABB when the component
+  is added, but a collision default stored on the asset (copied onto a new `BoxColliderComponent`
+  at instantiate) is the long-term fix so placement never types extents. That is an asset-format
+  change; it was deliberately not folded into [MAP_EDITOR.md](MAP_EDITOR.md) M2.

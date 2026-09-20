@@ -382,7 +382,17 @@ namespace GanymedE {
 		Renderer3D::DrawGrid();
 		SubmitMeshes();
 		SubmitParticles(camPos, camRight, camUp);
-		DrawColliderGizmos();
+
+		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
+		if (settingsView.Get()->ShowColliderGizmos)
+			DrawColliderGizmos();
+
+		if (const EditorBoundsOverlay* overlay = m_Scene.FindSingleton<EditorBoundsOverlay>())
+		{
+			for (const EditorBoundsOverlay::Box& box : overlay->Boxes)
+				Renderer3D::DrawWireBox(box.Transform, box.Color);
+		}
+
 		Renderer3D::EndScene();
 
 		if (previewCam)

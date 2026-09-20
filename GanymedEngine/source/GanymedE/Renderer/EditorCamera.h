@@ -37,6 +37,10 @@ namespace GanymedE {
 
 		float GetPitch() const { return m_Pitch; }
 		float GetYaw() const { return m_Yaw; }
+
+		// Orbit the existing pitch/yaw so `center` is the focal point and the sphere of
+		// `radius` fits the vertical FOV. Used by the collider audit to frame a finding.
+		void Frame(const glm::vec3& center, float radius);
 	private:
 		void UpdateProjection();
 		void UpdateView();

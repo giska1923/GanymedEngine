@@ -1397,6 +1397,8 @@ namespace GanymedE {
 			return;
 
 		T& component = m_SelectionContext.AddComponent<T>();
+		if constexpr (std::is_same_v<T, BoxColliderComponent>)
+			SeedBoxColliderFromMesh(m_SelectionContext, component);
 		if (Recording())
 		{
 			m_UndoStack->Push(CreateScope<AddComponentCommand<T>>(
@@ -1686,6 +1688,21 @@ namespace GanymedE {
 			PushAddedEntities("Instantiate '" + root.GetComponent<TagComponent>().Tag + "'", root);
 		SelectSingle(root);
 		return root;
+	}
+
+	bool SceneHierarchyPanel::SeedBoxColliderFromMesh(Entity entity, BoxColliderComponent& collider)
+	{
+		if (!entity || !entity.HasComponent<StaticMeshComponent>())
+			return false;
+
+		const Ref<Mesh>& mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
+		if (!mesh)
+			return false;
+
+		const AABB& bounds = mesh->GetBounds();
+		collider.HalfExtents = (bounds.Max - bounds.Min) * 0.5f;
+		collider.Offset = (bounds.Max + bounds.Min) * 0.5f;
+		return true;
 	}
 
 	// The inspector half of the instance UI: where the source came from, and the two propagation

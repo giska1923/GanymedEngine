@@ -363,13 +363,14 @@ The editor outliner eye is honoured only on the editor path: `EditorViewFilter::
 and the runtime draw everything. Hidden entities therefore vanish from the entity-ID buffer and
 cannot be picked. This is an editor filter, not a runtime visibility component.
 
-Two play-mode policies live in this system:
+Two policies live in this system:
 
-- **Collider gizmos are opt-in.** With Jolt debug draw off, the authored-collider wireframes are
-  drawn only when `PhysicsSettings::ShowColliderGizmos` is set. It defaults **false**, so a shipped
-  game never draws them; the editor sets it true. (This used to fall through unconditionally, which
-  meant any non-editor front-end drew collider wireframes over the game.) Edit mode calls
-  `DrawColliderGizmos()` directly and is unaffected.
+- **Collider gizmos are opt-in on both paths.** With Jolt debug draw off, the authored-collider
+  wireframes are drawn only when `PhysicsSettings::ShowColliderGizmos` is set. It defaults
+  **false**, so a shipped game never draws them; the editor pushes the Visualizers checkbox every
+  frame (Edit and Play) because `Scene::Copy` does not carry singletons. (Play used to fall through
+  unconditionally, which meant any non-editor front-end drew collider wireframes over the game.
+  Edit used to call `DrawColliderGizmos()` with no flag at all.)
 - **No camera is loud, not silent.** With no primary camera *and* no fallback, the frame is the
   scene target's clear colour and the system logs an error at most once every 5 s. Throttled rather
   than per-frame: a 60 Hz error would bury everything else in the log to say the same thing.
@@ -405,12 +406,15 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
   each hidden UUID to its subtree via `CollectSubtree` and skips those submits (meshes, sprites,
   lights, sky, particles, collider gizmos). Play/runtime ignore it, so a hidden entity still
   simulates and draws in Play. Not serialized; `Scene::Copy` does not carry it.
+- **`EditorBoundsOverlay`** — editor-only extra wire boxes, drawn after collider gizmos in
+  `OnUpdateEditor`. The Map panel's parity audit fills it with the focused finding's mesh AABB
+  (cyan) and box collider (orange). Not serialized, not copied, ignored by play/runtime.
 
 **Singletons are not carried by `Scene::Copy`.** The copy constructs a fresh `Scene`, whose
 constructor default-constructs its own `ctx()` entries, and then copies entities and components only.
 Anything a host needs true on the play-mode scene must be (re)written after the copy — which is why
-`EditorLayer` pushes `DebugDraw` *and* `ShowColliderGizmos` onto the active scene every play frame
-rather than once on play.
+`EditorLayer` pushes `DebugDraw` *and* `ShowColliderGizmos` onto the active scene every Edit and
+Play frame rather than once on play.
 
 ## Member reflection
 

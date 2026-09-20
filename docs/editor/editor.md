@@ -193,12 +193,14 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 3. Update the scene. In Edit: surface-raycast and write the placement preview transform **before**
    `OnUpdateEditor`, so `TransformSystem` this frame sees the hover pose and the preview renders
    where the cursor is, not where it was last frame. Then `OnUpdateEditor(ts, editorCamera)` (and
-   `RenderContext::PreviewCamera` from the viewport camera combo). In Play:
+   `RenderContext::PreviewCamera` from the viewport camera combo). `ShowColliderGizmos` and the
+   Map-panel `EditorBoundsOverlay` are pushed on this branch too. In Play:
    `OnUpdateRuntime(ts, &editorCamera)` (the editor camera is the fallback when the scene
-   has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos = true`**
-   are pushed into the scene's `PhysicsSettings` each frame). The gizmo flag is engine-default
-   **false** so a non-editor front-end draws no collider wireframes — the editor opts in, and it has
-   to do so every frame because `Scene::Copy` does not carry singletons onto the play-mode scene.
+   has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos`**
+   are pushed into the scene's `PhysicsSettings` each frame from the Visualizers checkbox). The
+   gizmo flag is engine-default **false** so a non-editor front-end draws no collider wireframes —
+   the editor opts in, and it has to do so every frame because `Scene::Copy` does not carry
+   singletons onto the play-mode scene.
 4. **Hover picking**: mouse position → viewport-local coordinates (Y flipped only when
    `bgfx::getCaps()->originBottomLeft` — render-target origin is backend-dependent), then
    `RequestEntityID` + `PollEntityID`. Picking is asynchronous under bgfx (~3 frames latency),
@@ -229,8 +231,9 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   panel — the 44 px header is excluded so the render target matches what picking and RmlUi
   see). There is no aspect lock, so this is a readout, not a dropdown.
 - **Header, right:** magnet (opens `MapSnapSettings`; accent-filled while snapping is enabled) ·
-  Visualizers popup (the Jolt debug-draw toggles that used to live in Stats — still Play-only,
-  they read Jolt body state) · Local / World combo wired to `ImGuizmo::Manipulate`'s mode.
+  Visualizers popup (`Collider gizmos`, default on — authored box/sphere/capsule wireframes in
+  Edit and Play — plus the Jolt debug-draw toggles, still Play-only because they read live body
+  state) · Local / World combo wired to `ImGuizmo::Manipulate`'s mode.
   Previously LOCAL was hard-coded. The magnet is the same snap struct placement reads.
 - **Omitted, no backing feature:** Quality tiers, selection filters, billboard-gizmo Icons
   toggle. Lit / Unlit / Wireframe: Unlit needs shader variants that do not exist; a global
@@ -555,7 +558,8 @@ are omitted for the same reason.
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
 transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
 and live post-processing settings (exposure, bloom threshold/knee/intensity/radius, FXAA).
-Jolt debug-draw toggles live on the viewport header's Visualizers popup, not here.
+Jolt debug-draw toggles and the collider-gizmo checkbox live on the viewport header's Visualizers
+popup, not here.
 
 A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
 many came out of `assets/.compiled/` instead. A second run over an unchanged project must read
@@ -643,7 +647,12 @@ Tag edit (full-width `InputText`, one undo command per typing session). One sect
 component type every selected entity has. **Add Component** is a full-width accent-outlined
 button at the **bottom** of the stack (every type not already present — camera, sprite, lights,
 sky light, animator, script, audio source, audio listener, particle emitter, rigid body,
-colliders; one `DrawAddComponentEntry<T>` line each).
+colliders; one `DrawAddComponentEntry<T>` line each). Adding a `BoxColliderComponent` seeds
+`HalfExtents` / `Offset` from a resident `StaticMeshComponent` AABB (mesh local space, no
+division by entity scale — the world matrix already scales at draw and at body creation). No
+mesh, or a handle that is not loaded yet, leaves the unit default. Sphere and capsule are not
+seeded. This is editor-only: `OnComponentAdded` does not do it, because deserialize would then
+overwrite authored extents.
 
 Each section is a 26 px `ChromeBg` row (`Theme().RowHeight`): chevron (`ICON_LC_CHEVRON_RIGHT` /
 `_DOWN`), a per-type Lucide icon (not the entity's dominant-component icon), the name in Inter
@@ -995,8 +1004,8 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
 ## Map panel
 
 [`MapPanel`](../../GanymedEditor/source/Panels/MapPanel.h) — `BeginPanel("Map")`, docked with Stats
-on the right (dock-layout version 3). Palette, placement options, duplicate-along-axis, and
-disabled stubs for the M2–M4 sections. There is no thumbnail system; rows are `AssetTint` icon +
+on the right (dock-layout version 3). Palette, placement options, duplicate-along-axis, parity
+audit, and disabled stubs for M3–M4. There is no thumbnail system; rows are `AssetTint` icon +
 filename.
 
 **Snap model.** `MapSnapSettings` is owned by `EditorLayer` and read by both placement and
@@ -1032,6 +1041,26 @@ instantiates a fresh preview. Alt+LMB is unsnapped. `[` / `]` step yaw by `Rotat
 
 **Duplicate along axis** in the panel: count (includes the original), spacing, axis. `count - 1`
 calls to `Scene::DuplicateEntity`, world-axis offsets, one `CompositeCommand`.
+
+**Parity audit.** On demand (and whenever the undo stamp, hidden set, tolerance, or scene pointer
+changes), walks every entity with a resident static mesh. Hidden outliner subtrees and the
+placement preview are skipped. Findings:
+
+| Finding | Test |
+|---|---|
+| No collider | Mesh, no box/sphere/capsule |
+| Collider smaller than mesh | Per-axis world-AABB delta > tolerance (default 0.02 m) |
+| Collider larger than mesh | Same test, other sign |
+| Offset mismatch | Centres differ by > tolerance while extents agree |
+
+Sphere/capsule entities with a mesh are not "no collider" and are not AABB-compared. Clicking a
+row selects the entity, orbits `EditorCamera::Frame` around the union of its mesh and collider
+world AABBs, and fills `EditorBoundsOverlay` (cyan mesh box, orange collider box) for the next
+`OnUpdateEditor`. **Generate collider from mesh** on the selection is one `CompositeCommand` of
+`ComponentEditCommand<BoxColliderComponent>` and/or `AddComponentCommand<BoxColliderComponent>`;
+entities that already have a sphere or capsule are skipped. Footprint roll-up is per scene root
+that has mesh descendants: `vol(intersection(meshUnion, colliderUnion)) / vol(meshUnion)`. The
+panel says in its own text that this does not detect a hole between two correctly-sized colliders.
 
 ## Typed drag-drop
 
