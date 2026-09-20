@@ -129,8 +129,12 @@ namespace GanymedE {
 				submesh.Bounds = AABB(submesh.Bounds.Min - pad, submesh.Bounds.Max + pad);
 			}
 
-			// Whole-mesh bounds include the submesh's local transform
-			AABB worldish = submesh.Bounds.Transformed(submesh.LocalTransform);
+			// Whole-mesh bounds include the submesh's local transform - except for a
+			// skinned one, whose palette cancels it at draw time. Same reasoning as
+			// Renderer3D's PushDrawCommand, and wrong the same way if folded in here.
+			AABB worldish = submesh.IsSkinned
+				? submesh.Bounds
+				: submesh.Bounds.Transformed(submesh.LocalTransform);
 			if (meshFirst)
 			{
 				m_Bounds = worldish;

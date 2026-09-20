@@ -388,11 +388,18 @@ namespace GanymedE {
 
 	// Returns the pushed command so a skinned submit can attach its palette. Only
 	// valid until the next push, which is all the one caller needs.
+	//
+	// paletteApplied is whether this draw will run the palette, NOT whether the submesh
+	// carries skin data. They differ on the bind-pose fallback in SubmitSkinnedMesh, and
+	// the bounds below depend on which one is true.
 	static DrawCommand* PushDrawCommand(const Ref<Mesh>& mesh, uint32_t submeshIndex,
-		const Ref<Material>& material, const glm::mat4& transform, int entityID)
+		const Ref<Material>& material, const glm::mat4& transform, int entityID,
+		bool paletteApplied = false)
 	{
 		if (!mesh || submeshIndex >= mesh->GetSubmeshes().size())
 			return nullptr;
+
+		const Submesh& submesh = mesh->GetSubmeshes()[submeshIndex];
 
 		DrawCommand cmd;
 		cmd.Mesh = mesh;
@@ -402,12 +409,24 @@ namespace GanymedE {
 		// LocalTransform applies to skinned submeshes too, which reads wrong against
 		// glTF's "the skinned mesh node's transform MUST be ignored" until you notice
 		// that Skeleton::RootTransform carries the inverse of that same node's world
-		// matrix (see BuildSkeleton). The two cancel, and the bounds below ride the
-		// same matrix as the vertices. Drop either one alone and a Y-up-corrected
-		// character renders on its side.
-		cmd.Transform = transform * mesh->GetSubmeshes()[submeshIndex].LocalTransform;
+		// matrix (see BuildSkeleton). The two cancel. Drop either one alone and a
+		// Y-up-corrected character renders on its side.
+		cmd.Transform = transform * submesh.LocalTransform;
 		cmd.EntityID = entityID;
-		cmd.WorldBounds = mesh->GetSubmeshes()[submeshIndex].Bounds.Transformed(cmd.Transform);
+
+		// And because they cancel, the culling box must NOT ride that same matrix.
+		// A skinned submesh's positions are bind-space, and a palette composed from
+		// RootTransform puts them back at `transform * v` - so folding LocalTransform
+		// into the bounds applies the node matrix a second time, with nothing to undo
+		// it. It is invisible while that matrix is identity, which every fixture in
+		// this tree was. On a Meshy character, whose skinned node carries a 0.01
+		// scale, it is a 1.8 cm culling box around a 1.8 m character: the mesh is
+		// culled the moment the camera pitches far enough to take that box off
+		// screen, while the shadow pass, which skips camera culling, keeps drawing it.
+		//
+		// The bind-pose fallback takes the other branch on purpose. With no palette,
+		// LocalTransform really is applied to the vertices, so the box has to match.
+		cmd.WorldBounds = submesh.Bounds.Transformed(paletteApplied ? transform : cmd.Transform);
 
 		glm::vec3 center = (cmd.WorldBounds.Min + cmd.WorldBounds.Max) * 0.5f;
 		cmd.SortKey = glm::dot(center - s_Data.CameraBuffer.CameraPosition, center - s_Data.CameraBuffer.CameraPosition);
@@ -463,7 +482,8 @@ namespace GanymedE {
 		{
 			Ref<Material> material = ResolveMaterial(mesh, submeshes[i].MaterialIndex,
 				materialOverrides, overrideCount);
-			DrawCommand* cmd = PushDrawCommand(mesh, i, material, transform, entityID);
+			DrawCommand* cmd = PushDrawCommand(mesh, i, material, transform, entityID,
+				submeshes[i].IsSkinned);
 
 			// A file can mix rigged and rigid primitives under one skin; only the
 			// rigged ones need the palette, the rest keep instancing.

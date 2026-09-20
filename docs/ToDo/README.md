@@ -31,7 +31,7 @@ documented.** A file here is a promise, not a description.
 |---|---|---|
 | [PROVING_GROUND.md](PROVING_GROUND.md) | **Milestone plan** — the test game, and the engine work that must land first | Phase 0 + P1-P7 |
 | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something | A2 done; A1, A3 remain |
-| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL | 3 |
+| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback | 4 |
 | [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
 | [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
 | [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, an unchecked collider-vs-mesh gap, and two shipping gaps | 18 |
