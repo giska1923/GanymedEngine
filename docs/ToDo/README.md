@@ -30,7 +30,8 @@ documented.** A file here is a promise, not a description.
 | Document | Covers | Items |
 |---|---|---|
 | [PROVING_GROUND.md](PROVING_GROUND.md) | **Milestone plan** — the test game, and the engine work that must land first | Phase 0 + P1-P7 |
-| [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something | A2 done; A1, A3 remain |
+| [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something | A1–A3 landed; gates + 1 follow-up |
+| [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) | **Milestone plan** — seeing and selecting joints: a skeleton visualizer, joint picking, a socket gizmo, and a clip inspector that measures the artifacts every download has had | S1–S6, nothing built |
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL | 3 |
 | [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
 | [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |

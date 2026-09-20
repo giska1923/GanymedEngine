@@ -1,12 +1,22 @@
 # Milestone — Skeletal attachments (bone sockets)
 
-**Status: A2 implemented. A1 (carry clips) and A3 (Proving Ground wiring) remain.** A1 is
-content — Meshy credits, clip pick, post-process — and is still the cheap disproof that current
-unarmed clips will look worse with a rifle in the hand. A3 lives on the game branch.
+**Status: A1, A2 and A3 have all landed. What is open is their verification, plus one follow-up.**
+The engine can pin an entity to a joint (`BoneAttachmentComponent` + `BoneAttachmentSystem`), the
+character runs a weapon-carry clip, and the rifle is socketed to `RightHand`.
 
-The engine can pin an entity to a joint (`BoneAttachmentComponent` + `BoneAttachmentSystem`). A
-character still cannot *look* armed until A1 ships carry clips and A3 wires `Rifle.glb` to
-`RightHand`. That remaining gap is content and wiring, not a missing capability.
+Evidence, on `first-game`, in `Game/assets/scenes/ProvingGround.ganymede`: the player body carries
+`AnimatorComponent { Clip: Lower_Weapon_Look_Raise }` and its `Rifle` child carries a
+`BoneAttachmentComponent` naming `RightHand` with a hand-tuned offset and rotation.
+
+Still open:
+
+- **The A2 and A3 gates were never written up.** Both sections below still read as plans. Closing
+  them honestly means running the gates, not restating that the wiring exists.
+- **The A2 follow-up** — hiding an entity whose socket does not resolve — is undecided; see that
+  section.
+- **The offsets were placed by hand, which is the bottleneck this plan said to watch for.** That
+  evidence became [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md): a visualizer, joint picking and a
+  socket gizmo.
 
 ---
 
@@ -38,11 +48,18 @@ engine of this kind provides: Unreal's sockets, Unity's bone transforms, Godot's
 - **Not a socket editor.** No named socket assets authored onto a skeleton, no gizmo for placing
   them. A joint name plus an offset, typed into the inspector. If placing offsets by hand becomes
   the bottleneck, that is the evidence for building more.
+  — **It did.** The rifle's offset and rotation were placed by dragging sliders, and the committed
+  values say so. That evidence is [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md); this bullet stands as
+  the scope decision it was, not as a claim about what should exist now.
 - **Not IK, not look-at, not procedural aim.** Attachment reads the pose; it never writes to it.
 - **Not clip blending.** There is still no crossfade — `PlayAnimation` restarts on a clip change.
   A weapon on a socket does not need blending; it only makes the lack more visible.
-- **Not the separate clip asset.** That is its own item in [cross-cutting.md](cross-cutting.md)
-  and is independent of this one.
+- **Not a separate clip asset.** A rigged `.glb` ships mesh, skin and clips in one file, and the
+  engine keeps them there on purpose — separate clip assets would buy identity surgery and nothing
+  else (see [assets.md](../engine/assets.md#skinning-data)). Clips therefore have to be generated
+  as one `action_ids` set rather than downloaded one at a time. *(This bullet and the note under A1
+  both used to cite an item in `cross-cutting.md`; no such item exists there, so the constraint is
+  stated here against the doc that actually records it.)*
 
 ---
 
@@ -147,6 +164,9 @@ cache-stomp risk is accepted; `BoneAttachmentSystem` is the one caller.
 
 ### A1 — Rifle-carry clips, before any engine work
 
+**Done — the clip set shipped.** The player body runs `Lower_Weapon_Look_Raise`. The gate below was
+never written up, so the section stays in its planning tense until someone measures it.
+
 Regenerate the player's clip set with weapon-carry animations rather than the unarmed idle, walk
 and run it has now.
 
@@ -158,8 +178,8 @@ and run it has now.
   Turn Right, `686` Walk Backward with Gun 1, `425` Vault with Rifle. Pick by fetching each
   `preview_url` GIF and comparing mid-stride frames — that is free, and it is how the current run
   clip was chosen after the first one turned out to be a head-down lunge.
-- **Cost:** 3 credits per action, re-issued as one `action_ids` set (clips must ship in one file;
-  see [cross-cutting.md](cross-cutting.md)).
+- **Cost:** 3 credits per action, re-issued as one `action_ids` set — clips must ship in one file,
+  because they live inside the `Mesh` asset ([assets.md](../engine/assets.md#skinning-data)).
 - **Post-processing is not optional.** Every download so far has needed the same two fixes, and
   both recurred on the second generation: a constant scale artifact on `Hips` in at least one
   clip, and real root motion that has to be detrended *and* re-centred. Measure before installing.
@@ -203,6 +223,11 @@ Still open:
 
 ### A3 — Wiring, on the game branch
 
+**Done — the rifle is socketed.** `Rifle` is a child of the player body with
+`BoneAttachmentComponent { Target: 0, Joint: RightHand }` and a `0.45` local scale. The gate below
+was never written up; [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S2 makes it observable rather than
+a judgement call.
+
 Attach `Rifle.glb` to the player's `RightHand`, offset by hand against the new clips. Either retire
 the hovering rifle pickup at the Weapon Crate or keep it and attach on collect — the latter is more
 interesting and costs nothing extra, since `Pickup.lua` already knows when the crate is consumed.
@@ -230,10 +255,12 @@ believing the picture.
   weapon attaches at the wrist and the hand cannot close around it. With a carry clip the grip pose
   is baked into the animation, which is why A1 comes first. Without one, no socket offset will make
   it look held.
-- **The editor needs the *target's* skeleton to populate a joint dropdown.** The clip combo in
-  `SceneHierarchyPanel` reads `mesh->GetClips()` off the same entity; this reads
-  `mesh->GetSkeleton().JointNames` off a different one, which the inspector does not currently do
-  for any component.
+- ~~**The editor needs the *target's* skeleton to populate a joint dropdown.**~~ **Built.** The
+  `BoneAttachmentComponent` section resolves the target entity (drop from the outliner, or the
+  hierarchy parent when `Target` is zero) and fills a combo from
+  `mesh->GetSkeleton().JointNames` on *that* entity — the first inspector section to read a
+  component off a different entity than the one selected. What it still cannot do is show where any
+  of those joints *is*; that is [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S2.
 - **`Scene::Copy` runs on play.** `Resolved` is a runtime index and must reset, the same way
   `AnimatorComponent::Time` and `Palette` already do.
 
