@@ -1,4 +1,5 @@
 #include "EditorLayer.h"
+#include "EditorPicking.h"
 #include "EditorPrefabOverrides.h"
 #include "AssetDragDrop.h"
 #include "EditorFonts.h"
@@ -28,6 +29,7 @@
 #include "GanymedE/Math/Math.h"
 #include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/UI/UIEngine.h"
 #include "GanymedE/Scene/SceneSingletons.h"
@@ -36,6 +38,7 @@
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -366,11 +369,15 @@ namespace GanymedE {
 			}
 		}
 
-		// Mouse picking: read back the entity ID under the cursor
+		// Mouse picking: GPU entity-ID (click-select / hover highlight) plus the CPU
+		// surface ray (world point + normal, this frame). The GPU path is async and
+		// has no depth; the CPU path is what placement will use.
 		auto [mx, my] = ImGui::GetMousePos();
 		mx -= m_ViewportBounds[0].x;
 		my -= m_ViewportBounds[0].y;
 		glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		const float localX = mx;
+		const float localY = my;
 
 		// Render-target origin differs per backend: GL addresses from the bottom
 		// left, D3D/Vulkan/Metal from the top left. Ask bgfx rather than assume,
@@ -381,10 +388,13 @@ namespace GanymedE {
 		int mouseX = (int)mx;
 		int mouseY = (int)my;
 
+		const bool pointerInViewport = mouseX >= 0 && mouseY >= 0
+			&& mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y;
+
 		// Picking is asynchronous now: queue this frame's pick and take whatever
 		// has landed. The result trails the cursor by a frame or two, which is
 		// invisible for hover highlighting.
-		if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
+		if (pointerInViewport)
 		{
 			m_SceneRenderer->RequestEntityID(mouseX, mouseY);
 
@@ -395,6 +405,40 @@ namespace GanymedE {
 		else
 		{
 			m_HoveredEntity = {};
+		}
+
+		m_SurfaceHit = {};
+		m_SurfaceRaycastMs = 0.0f;
+		if (m_SceneState == SceneState::Edit && pointerInViewport && viewportSize.x > 0.0f && viewportSize.y > 0.0f)
+		{
+			glm::mat4 viewProjection = m_EditorCamera.GetViewProjection();
+			if (m_ViewportCamera != UUID{ 0 })
+			{
+				Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+				if (preview && preview.HasComponent<CameraComponent>())
+				{
+					const auto& cc = preview.GetComponent<CameraComponent>();
+					const glm::mat4 view = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
+					viewProjection = cc.Camera.GetProjection() * view;
+				}
+			}
+
+			// Clip-space Y is up; ImGui's panel Y is down. This conversion is independent
+			// of render-target origin — we are not sampling a texture.
+			const glm::vec2 ndc = {
+				(localX / viewportSize.x) * 2.0f - 1.0f,
+				1.0f - (localY / viewportSize.y) * 2.0f
+			};
+			const float nearClipZ = Projection::HomogeneousDepth() ? -1.0f : 0.0f;
+			const Math::Ray ray = Math::ScreenPointToRay(glm::inverse(viewProjection), ndc, nearClipZ, 1.0f);
+
+			RaycastFilter filter;
+			filter.HiddenEntities = &m_SceneHierarchyPanel.HiddenEntities();
+
+			const auto t0 = std::chrono::high_resolution_clock::now();
+			m_SurfaceHit = RaycastScene(m_ActiveScene, ray, filter);
+			const auto t1 = std::chrono::high_resolution_clock::now();
+			m_SurfaceRaycastMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 		}
 
 		// Post stack: bloom -> tonemap -> FXAA into the composite shown in the viewport
@@ -503,6 +547,26 @@ namespace GanymedE {
 		if (m_HoveredEntity)
 			hoveredEntityName = m_HoveredEntity.GetComponent<TagComponent>().Tag;
 		ImGui::Text("Hovered Entity: %s", hoveredEntityName.c_str());
+
+		if (m_SurfaceHit.FromWorkPlane)
+		{
+			ImGui::Text("Surface: work plane  (%.3f, %.3f, %.3f)  n=(%.2f, %.2f, %.2f)  %.3f ms",
+				m_SurfaceHit.Point.x, m_SurfaceHit.Point.y, m_SurfaceHit.Point.z,
+				m_SurfaceHit.Normal.x, m_SurfaceHit.Normal.y, m_SurfaceHit.Normal.z,
+				m_SurfaceRaycastMs);
+		}
+		else if (m_SurfaceHit.Hit)
+		{
+			ImGui::Text("Surface: %s  (%.3f, %.3f, %.3f)  n=(%.2f, %.2f, %.2f)  %.3f ms",
+				m_SurfaceHit.Hit.GetName().c_str(),
+				m_SurfaceHit.Point.x, m_SurfaceHit.Point.y, m_SurfaceHit.Point.z,
+				m_SurfaceHit.Normal.x, m_SurfaceHit.Normal.y, m_SurfaceHit.Normal.z,
+				m_SurfaceRaycastMs);
+		}
+		else
+		{
+			ImGui::Text("Surface: none  %.3f ms", m_SurfaceRaycastMs);
+		}
 
 		auto stats = Renderer2D::GetStats();
 		ImGui::Text("Renderer2D Stats:");

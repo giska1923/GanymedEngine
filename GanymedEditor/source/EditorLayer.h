@@ -3,6 +3,7 @@
 #include "GanymedE.h"
 #include "Panels/SceneHierarchyPanel.h"
 #include "Panels/ContentBrowserPanel.h"
+#include "EditorPicking.h"
 
 #include <filesystem>
 
@@ -66,6 +67,8 @@ namespace GanymedE {
 		EditorCamera m_EditorCamera;
 
 		Entity m_HoveredEntity;
+		SurfaceHit m_SurfaceHit;
+		float m_SurfaceRaycastMs = 0.0f;
 
 		Ref<Texture2D> m_CheckerboardTexture;
 

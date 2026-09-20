@@ -31,7 +31,7 @@ documented.** A file here is a promise, not a description.
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7        |
 | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something                                                                                                                                                    | A2 done; A1, A3 remain |
-| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6, nothing built   |
+| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0 done; M1–M6 remain  |
 | [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback; the frustum's near-plane depth convention                                                            | 5                      |
 | [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                      |
 | [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                      |
@@ -49,13 +49,12 @@ before this moves to `docs/history/`:
 - The merge direction is master → game, so nothing written on the branch ever arrives here. The
   milestone has to be assembled from `first-game` when it is retired.
 
-**[MAP_EDITOR.md](MAP_EDITOR.md) was written on `first-game` and plans work that is not allowed to
-live there.** Every phase of it touches `GanymedEditor/source/` or `GanymedEngine/source/`, which
-the branch policy above puts on `master`. The file has to be cherry-picked to `master` before any
-phase is executed, or the plan and the code end up on opposite sides of a one-way merge. The
-milestone exists because the Proving Ground's buildings were hand-assembled from typed-in box
-colliders, which is what produced the wall holes above — two of its gates (P2's interiors, P4's
-`+Z` occlusion re-run) are the milestone's own closing verification.
+**[MAP_EDITOR.md](MAP_EDITOR.md) executes on `map-editor`, which is based on `master`.** The plan
+started on `first-game`, which the branch policy forbids from touching editor or engine source;
+the file was moved here before M0. M0 (synchronous surface ray) has landed. The milestone exists
+because the Proving Ground's buildings were hand-assembled from typed-in box colliders, which is
+what produced the wall holes above — two of its gates (P2's interiors, P4's `+Z` occlusion re-run)
+are the milestone's own closing verification.
 
 **Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
 managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three

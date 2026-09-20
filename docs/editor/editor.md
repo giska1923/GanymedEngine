@@ -200,7 +200,16 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
    `RequestEntityID` + `PollEntityID`. Picking is asynchronous under bgfx (~3 frames latency),
    invisible for hover highlighting. The result feeds `m_HoveredEntity` (shown in Stats,
    click-to-select).
-5. `SceneRenderer::EndFrame` — bloom → tonemap → FXAA → composite.
+5. **Surface ray** (Edit only): the same pointer, but clip-space Y-up with **no** render-target
+   origin flip — this is projection algebra, not a texture sample. `Math::ScreenPointToRay`
+   through the active viewport camera's `inverse(viewProjection)`, then `RaycastScene` against
+   resident static-mesh triangles. Result is `m_SurfaceHit` (world point, normal facing the ray,
+   entity or work-plane fallback), shown on the Stats panel as `Surface:` plus the per-ray ms.
+   GPU picking stays the click-select path; this is the primitive placement (M1) will use. Hidden
+   outliner entities and anything with an `AnimatorComponent` are skipped; a miss against a ray
+   that still hits `y = GridHeight` (currently `0`) is `FromWorkPlane`, a ray into empty sky is
+   no hit at all.
+6. `SceneRenderer::EndFrame` — bloom → tonemap → FXAA → composite.
 
 ### Viewport
 
@@ -257,6 +266,39 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   translation when the gizmo is in World space, so the numbers match the handles. Nothing
   selected → nothing drawn. Entity/draw/FPS counters live on the status bar rather than being
   duplicated here.
+
+### Surface raycast
+
+[`EditorPicking.cpp`](../../GanymedEditor/source/EditorPicking.cpp) is the edit-mode primitive
+that GPU picking cannot be: a **synchronous** world point, normal and entity, this frame, with
+no physics world.
+
+Unity and Unreal trace an editor physics world for this. Ganymed has no edit-mode bodies —
+`PhysicsScene::CreateBodies` runs from `Start()` — and building a shadow body set just to place
+objects would be a second source of truth, for a feature whose point is that authored colliders
+are untrustworthy. So the ray walks render geometry: `Mesh` keeps its CPU vertices after upload.
+
+`RaycastScene(scene, ray, filter)`:
+
+1. Broad phase: `(WorldTransformComponent, StaticMeshComponent)`, excluding `AnimatorComponent`,
+   the filter's `Exclude` UUID (the placement preview, once M1 exists), and
+   `SceneHierarchyPanel::HiddenEntities()`. World AABB vs the ray, collect `tMin`.
+2. Sort near→far; stop when the next candidate's `tMin` exceeds the best confirmed hit.
+3. Narrow phase: transform the ray by `inverse(world * Submesh::LocalTransform)` (cheaper than
+   transforming triangles; leave the direction un-normalised so `t` stays in world metres), skip
+   a submesh whose local AABB misses, Möller–Trumbore over its index range.
+4. Normal is `cross(e1, e2)` through `transpose(inverse(meshLocal))`, then flipped to oppose the
+   ray. Flip by ray direction, not winding — a negative scale inverts winding.
+5. Miss: intersect the horizontal plane at `RaycastFilter::GridHeight` (`FromWorkPlane = true`).
+   A ray pointing at empty sky (`t < 0` on that plane) returns no hit, so placement can refuse
+   rather than put something 400 m behind the camera.
+6. A mesh that is not resident yet is skipped (async load); a miss is not cached. A single mesh
+   over `TriangleBudget` (250 000) falls back to the AABB hit and warns once — there is no BVH.
+
+Skinned meshes with an animator are excluded: CPU vertices are the bind pose. `ScreenPointToRay`
+clamps length to the unprojected far plane, which is the far clip along that ray.
+
+The Stats `Surface:` line is the live probe. It does not replace GPU hover for click-select.
 
 ### Controls
 

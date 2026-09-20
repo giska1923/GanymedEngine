@@ -2,7 +2,7 @@
 
 The application skeleton: program entry, the run loop, layers, events, input, and the small
 utilities everything else builds on. Files under `GanymedEngine/source/GanymedE/main/`,
-`Core/` and `events/`.
+`Core/`, `events/` and `Math/`.
 
 ## Entry point & Application
 
@@ -352,6 +352,32 @@ are all assert-time failures.
 - `BIT(x)` — bit flags (event categories).
 - `PlatformDetection.h` — defines exactly one of `GE_PLATFORM_WINDOWS/LINUX/MACOS` (and errors on
   everything else).
+
+## Math
+
+[`GanymedE/Math/`](../../GanymedEngine/source/GanymedE/Math/) is projection algebra and small
+geometric types, not editor policy. AGENTS.md's doc-mapping table had no row for it; this section
+is the home.
+
+- [`Math::DecomposeTransform`](../../GanymedEngine/source/GanymedE/Math/Math.h) — affine TRS split
+  used by the gizmo when writing a world matrix back into `TransformComponent`'s Euler storage.
+- [`Math::Ray`](../../GanymedEngine/source/GanymedE/Math/Math.h) + `Math::ScreenPointToRay` —
+  clip-space xy through `inverse(viewProjection)` onto the near and far planes. Origin is the
+  unprojected **near point**, not the camera position, so an orthographic projection produces
+  parallel rays (M5 of the map editor) instead of a pinhole. `MaxDistance` is the near-to-far
+  length, which is the far clip expressed along this ray.
+
+  Clip-space z of those planes is passed in: `0`/`1` under zero-to-one depth (D3D, Vulkan, Metal)
+  and `-1`/`1` under OpenGL's homogeneous depth. That matches
+  [`Projection::HomogeneousDepth()`](rendering.md#projection-matrices) rather than
+  `GLM_FORCE_DEPTH_ZERO_TO_ONE`, because `Projection::Perspective` already emits the backend's
+  matrix and a hardcoded `[0,1]` unproject would miss the near plane on GL. Math does not call
+  the renderer for that fact — the editor passes it — so this file does not depend on bgfx.
+- [`AABB` / `Frustum`](../../GanymedEngine/source/GanymedE/Math/BoundingVolumes.h) — world-AABB from
+  eight transformed corners; Gribb–Hartmann frustum extract. See [rendering.md](rendering.md) for
+  the near-plane depth-convention bug on the frustum (conservative, not a miss).
+- [`FloatCurve` / `ColorGradient`](../../GanymedEngine/source/GanymedE/Math/Curve.h) — keyframed
+  scalars and colours, sampled by the particle system.
 
 ## Profiling
 

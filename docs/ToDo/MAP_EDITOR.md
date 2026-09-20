@@ -1,12 +1,6 @@
 # Milestone — Map Editor
 
-**Status: planned. Nothing here is built.**
-
-> **This document is on `first-game`, and the work it plans is not allowed to be.** Per
-> [PROVING_GROUND.md](PROVING_GROUND.md)'s branch policy, everything under `GanymedEditor/source/`
-> and `GanymedEngine/source/` lands on `master` first, and the merge direction is master → game — so
-> nothing written on this branch ever arrives there. **Cherry-pick this file to `master` before
-> executing any phase**, and delete this note when you do.
+**Status: M0 landed. M1–M6 planned.**
 
 An in-editor toolset for authoring maps: a palette, a surface-snapping placement mode, a snap model
 shared with the gizmo, a collider-versus-mesh audit, a scatter brush, gameplay markers, and a
@@ -90,7 +84,7 @@ a synchronous ray. After that the order is by value, not by dependency.
 
 | Phase | What | Size | Standalone value |
 |---|---|---|---|
-| **M0** | Synchronous edit-mode surface raycast | ~1 day | None on its own — it is the primitive |
+| **M0** | Synchronous edit-mode surface raycast | done | None on its own — it is the primitive |
 | **M1** | Snap model + palette + placement mode | ~3 days | High. This is "the map tool" to a user |
 | **M2** | Collider ↔ mesh parity | ~1.5 days | **Highest value per line in the milestone** |
 | **M3** | Scatter brush | ~2 days | High for dressing, none for structure |
@@ -115,6 +109,11 @@ volume. Keep it last, and drop it without ceremony if M1–M4 run long.
 ---
 
 ## Phase M0 — a synchronous surface ray in edit mode
+
+**Done.** `Math::ScreenPointToRay` and `RaycastScene` are live; Edit-mode Stats shows `Surface:`
+plus the per-ray milliseconds. The Proving Ground probes below (GroundTile, Warehouse wall, 1 000
+rays in Release) still need that scene, which lives on `first-game` — they are M6's job, not a
+reason to keep M0 open.
 
 ### Goal
 
