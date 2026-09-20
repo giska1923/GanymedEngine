@@ -423,6 +423,37 @@ Worth doing as its own milestone; explicitly **not** worth building a keyframe o
 alongside it. Authoring animation by hand would produce worse results than a library gives free,
 and the tool is not the bottleneck.
 
+## Nothing checks a hand-placed collider against the mesh it was placed on
+
+There are no mesh colliders, so every building is a set of boxes positioned by eye against a
+`StaticMeshComponent`. Nothing in the editor compares the two. A box in the wrong place produces a
+wall you walk through or a wall you walk into, and **both look correct from every angle** - the
+only way to find out is to touch it in play.
+
+Both Proving Ground buildings were wrong for the whole of P2 through P7 and no gate caught it,
+including one whose whole subject was a wall: a raycast gate queries colliders, so it can only ever
+prove the box set self-consistent, never that it agrees with the mesh drawn over it
+([PROVING_GROUND.md](PROVING_GROUND.md)).
+
+The check that found it is not expensive and does not need new engine concepts: rasterize the
+mesh's triangles into a horizontal grid over a height band, rasterize the entity's descendant box
+colliders into the same grid, and report cells that differ. Run over a selection it is an editor
+action; run over a scene it is a validation pass.
+
+Two decisions it would need, neither of them obvious:
+
+- **A tolerance.** Colliders are deliberately coarser than meshes - windows are not cut out of
+  them, and a wall collider 0.30 m thick stands in for a 0.60 m sculpted one. A useful check
+  reports *apertures* - a difference wide enough for the player capsule to pass, and tall enough
+  to stand in - rather than every cell that disagrees.
+- **Which band.** The interesting one is the player's, but a projectile's is different and a
+  sight line's different again. The player's is the right default and the only one worth having
+  first.
+
+Worth weighing against just doing it by hand again: the script version took about an hour and
+reads any glb. The editor version earns its keep once someone who is not the person who placed the
+boxes has to trust them.
+
 ## A shipped Dist build is not self-contained
 
 `staticruntime "off"` in both `GanymedEngine/premake5.lua` and `GanymedRuntime/premake5.lua`, in

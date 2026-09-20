@@ -184,45 +184,56 @@ local FOOTPRINTS = {
 -- buildings are the only obstacles now, and the waypoints below are kept because the *path* is
 -- what the gate measures, not what it passes. See docs/ToDo/PROVING_GROUND.md for the step-up
 -- coverage that went with the Step.
--- P2 extends this through the two buildings. Their doorways were measured off the meshes rather
--- than guessed, and the route aims at each one and then at a point INSIDE, so "walk in and out of
--- every building" is exercised rather than asserted:
---   Blockhouse  centre (16, -6),  8.0 x 7.2,  doorway 1.8 m on its -Z wall at local x +2.56
---   Warehouse   centre (-22, -14), 20 x 11.5, door    0.9 m on its -X wall at local z -1.92
+-- P2 extends this through the buildings. The doorways these waypoints originally aimed at were
+-- NOT measured off the meshes - they were holes in the box sets, on walls the meshes draw solid,
+-- and the route walked through them. Re-derived from the geometry (docs/ToDo/PROVING_GROUND.md):
+--   Blockhouse  centre (16, -6),  8.0 x 7.2,  the only doorway is 1.87 m wide on its +Z wall,
+--                                             world x 15.53..17.40 at z = -2.57
+--   Warehouse   centre (-22, -14), 20 x 11.5, SEALED - no opening on any face, at any height
+--
+-- So one building is walked through and one is walked into, which is the honest version of the
+-- gate: "walk inside and out of every building that has a door, and bounce off the one that does
+-- not."
 local ROUTE = {
-    {  0, -7 },    -- open floor (was head-on at the 0.2 m Step, removed with the boxes)
-    {  9, -4 },    -- open floor (was along Block A's east face)
-    { 18.6, -11 }, -- line up on the Blockhouse doorway from outside
-    { 18.6, -6 },  -- through it, into the middle of the Blockhouse
-    { 18.6, -11 }, -- and back out the way it came
-    {  4,  6 },    -- open floor, a long run to reach full speed
-    {-11,  5 },    -- open floor (was past Block B's west end)
-    {-34, -15.9 }, -- line up on the Warehouse door
-    {-22, -15.9 }, -- through it, into the middle of the Warehouse
-    {-34, -15.9 }, -- and out
-    {  0,  0 },    -- back through the middle
+    {  0,   -7 },   -- open floor (was head-on at the 0.2 m Step, removed with the boxes)
+    {  9,   -4 },   -- open floor (was along Block A's east face)
+    { 16.5,  1.5 }, -- line up on the Blockhouse doorway from outside, on its +Z face
+    { 16.5, -6 },   -- through it, into the middle of the Blockhouse, past the Sentry
+    { 16.5,  1.5 }, -- and back out the way it came
+    {  4,    6 },   -- open floor, a long run to reach full speed
+    {-11,    5 },   -- open floor (was past Block B's west end)
+    {-33,  -14 },   -- a long run west, at full speed, ending clear of the Warehouse's -X wall
+    {-22,   -6 },   -- cut back northeast. This line meets the sealed -X wall at speed, so the leg
+                    -- is the no-tunnelling test and the wall-slide test in one: the capsule has to
+                    -- slide north along the wall, round the corner at (-32, -8.2) and arrive.
+    {  0,    0 },   -- back through the middle
 }
 
 -- P4's gate route. Not a circuit - a sequence of marked spots to stand on, because the question
 -- "does the wall occlude" only has a clean answer while nothing is moving.
 --
--- The geometry it is built on, read off the scene rather than guessed. The Blockhouse's -Z wall
--- is two collider segments at world z = -9.43: one spanning x 12.00..17.66, one spanning
--- x 19.46..20.00, leaving the 1.8 m doorway at x 17.66..19.46. The Sentry stands inside at
--- (18.4, -6) and never turns, so its eye is fixed.
+-- The geometry it is built on. The first version of this route ran on the -Z side, through what
+-- was believed to be a 1.8 m doorway at x 17.66..19.46 and was in fact a hole in the box set on a
+-- wall the mesh draws solid. That hole is closed; the real doorway is on +Z, so the probe line
+-- moved with it.
 --
--- A sight line from (18.4, -6) to a player at (px, -12) crosses z = -9.43 at
---     x = 18.4 + 0.5717 * (px - 18.4)
--- so the wall's inner edge at x = 17.66 predicts the crossover at **px = 17.11**. That is the
--- falsifiable part: the Sentry should acquire the player within a body-width of x = 17.1 on the
--- way east, and lose it again near the same x on the way back.
+-- The Blockhouse's +Z wall is two collider segments at world z = -2.57, spanning x 12.00..15.53
+-- and x 17.40..20.00, with the 1.87 m doorway between them and a lintel above it from y = 3.11.
+-- The Sentry stands inside at (18.4, -6) and never turns, so its eye is fixed, and at 1.5 m it
+-- passes well under the lintel.
+--
+-- A sight line from (18.4, -6) to a player at (px, 1.0) crosses z = -2.57 at
+--     x = 18.4 + 0.49 * (px - 18.4)
+-- so the doorway's east jamb at x = 17.40 predicts the crossover at **px = 16.36**. That is the
+-- falsifiable part: the Sentry should acquire the player within a body-width of x = 16.4 on the
+-- way west, and lose it again near the same x on the way back.
 --
 -- { x, z, seconds to stand there, what it is for }
 local LOS_ROUTE = {
-    {  2.00, -11.0, 0.5, "staging - open floor; Block A used to sit on the line from spawn" },
-    { 14.00, -12.0, 8.0, "behind the -Z wall: the Sentry must NOT acquire" },
-    { 18.56, -12.0, 8.0, "on the doorway's sight line: it must" },
-    { 14.00, -12.0, 6.0, "back behind the wall: it must lose me again" },
+    {  2.00, -11.0, 0.5, "staging - open floor, off the Blockhouse's sight lines" },
+    { 20.00,   1.0, 8.0, "behind the +Z wall's east segment: the Sentry must NOT acquire" },
+    { 15.50,   1.0, 8.0, "on the doorway's sight line: it must" },
+    { 20.00,   1.0, 6.0, "back behind the wall: it must lose me again" },
 }
 
 -- P5's gate route. Each stop exercises one mechanism, in the order that makes the next one mean

@@ -34,7 +34,7 @@ documented.** A file here is a promise, not a description.
 | [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL | 3 |
 | [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
 | [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
-| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, and two shipping gaps | 17 |
+| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, an unchecked collider-vs-mesh gap, and two shipping gaps | 18 |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
@@ -45,6 +45,21 @@ before this moves to `docs/history/`:
 - **P2 and P3 have no record on either branch.** They were built and gated; the runs were never
   written up, and both sections are still only their plan. Reconstructing that honestly means
   re-running the gates, not copying numbers out of a transcript.
+- **The buildings' colliders disagreed with their meshes, and two gates rest on the old geometry.**
+  Found on `first-game` and fixed in the scene: the Warehouse had a 0.90 m hole in a wall of a
+  building that has no door, and the Blockhouse had three holes, none of them at its one real
+  doorway, which was itself walled off. P2's gate ("walk inside and out of every building") has
+  therefore never been met for the Warehouse and is open. P4's occlusion probe was authored against
+  one of the Blockhouse holes in the belief that it was the doorway; its conclusion stands but its
+  probe positions do not, and it wants a re-run on the `+Z` side. Both are written up in
+  [PROVING_GROUND.md](PROVING_GROUND.md).
+- **Step-up is covered only by accident, and never near its limit.** The P1-era `Step` box was
+  deleted and nothing was authored to replace it, but the `GroundTile` pad's 0.19 m collider lip
+  turns out to do the job every lap of the autopilot. Nothing in the map sits between 0.2 m and
+  `CharacterControllerComponent::StepHeight` (0.4), so where step-up actually stops working has
+  never been measured. The Blockhouse doorway's 0.12 m threshold is deliberately left uncollided
+  and is not the answer: collide it and the flat-bottomed enemy boxes can no longer follow the
+  player through the door. A ledge near 0.4 m, or a ramp, would settle it.
 - The merge direction is master → game, so nothing written on the branch ever arrives here. The
   milestone has to be assembled from `first-game` when it is retired.
 

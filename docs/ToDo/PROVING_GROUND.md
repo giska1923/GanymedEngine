@@ -368,7 +368,9 @@ Several buildings from box colliders, enterable, with interiors. Lighting.
 
 - **Tests:** static mesh rendering at scene scale, box colliders, the four light types, shadows,
   and the asset pipeline under a real content load rather than the eight committed fixtures.
-- **Gate:** walk inside and out of every building; no tunnelling through a wall at full speed.
+- **Gate:** walk inside and out of every building that has a door; no tunnelling through a wall
+  at full speed. **Open** - the box sets were wrong on both buildings, and the corrected sets
+  below have not been walked yet.
 
 #### Content layout
 
@@ -518,10 +520,14 @@ test costs one screenshot from inside.
 - **Block A and Block B** were P1-era cover, superseded by P2's buildings. `ROUTE`'s waypoints
   were authored against them (*"along Block A's east face"*), so the labels are now marked as
   history — the path is what the gate measures, not what it passes.
-- **Step** (8 x 0.2 x 1) is deleted on request. It was **the only thing in the scene exercising
-  `CharacterControllerComponent::StepHeight` (0.4)**, and nothing replaces it. Step-up has no
-  coverage now. A ledge or a ramp somewhere in the map would bring it back; a box would not be
-  the only way to do it.
+- **Step** (8 x 0.2 x 1) is deleted on request. It was the thing in the scene deliberately
+  exercising `CharacterControllerComponent::StepHeight` (0.4), and nothing was authored to
+  replace it. ~~Step-up has no coverage now.~~ **Corrected:** the `GroundTile` pad does it by
+  accident - 16 x 16 m at `x [-8, 8] z [2, 18]`, collider top at `y = 0.19`, so every approach to
+  it from the surrounding ground is a 0.19 m step, and `ROUTE`'s leg to `(4, 6)` crosses its edge
+  once a lap. What is genuinely uncovered is the *limit*: nothing in the map is between 0.2 m and
+  0.4 m, so the difference between "steps up" and "stops dead" has never been located. A ledge or
+  a ramp would pin it down; a box would not be the only way to do it.
 - **The projectile's 0.15 m cube** is now a particle bolt (below).
 - **The Ground** keeps its 100x1x100 collider and its mesh, but wears a new flat
   `materials/Ground.gmat` — no maps at all, just a matte albedo.
@@ -652,13 +658,27 @@ Verified by sweeping every clip rather than one frame:
 | `Lower_Weapon_Look_Raise` | +16 to -78 deg | swings — the weapon is being lowered |
 
 And in the engine, from a temporary probe: joint basis `(1.0000, 1.0000, 1.0000)`, joint
-translation `(0.015, 1.043, -0.422)` **metres**, socket basis `(0.45, 0.45, 0.45)`, and the rifle
-origin 0.216 m from the hand joint against a derived `|Offset|` of 0.215 m.
+translation `(0.015, 1.043, -0.422)` **metres**, socket basis `(0.45, 0.45, 0.45)`.
+
+**`Offset` is the two points that have to coincide, both measured — neither estimated.** The first
+pass guessed them off a slice profile (grip at `[0.34, -0.19, 0]`) and a rule of thumb (the hand
+4.5 cm past the wrist along the finger direction). Both were wrong — by 4 cm and 7.7 cm — and
+compounded into a rifle floating a hand's width clear of the grip, correctly aimed the whole time,
+which is what makes that kind of error easy to accept. What they should be:
+
+| | measured | how |
+|---|---|---|
+| hand centre | `(-0.0553, +0.0777, +0.0206)` joint space, 9.8 cm from the wrist | weighted centroid of the vertices bound to `RightHand` — only meaningful once the mis-bound hip vertices were gone |
+| grip centroid | `(+0.3664, -0.2754, -0.0037)` rifle local | centroid of the geometry below the receiver, between the trigger gap and the butt plate |
+
+`Offset = handCentre - R * (Scale * grip)`, asserted to land the grip on the hand centre
+(err 2e-17). That moved the rifle 8.2 cm to `[-0.2487, 0.1440, -0.0064]`. The muzzle then sits
+0.606 m from the hand centre and the butt 0.291 m — consistent with an 0.856 m rifle held at its
+grip.
 
 - **Gate: met.** The rifle stays in the hand through idle, walk, run and the backpedal turn, at the
-  right size, aimed where the player faces while shooting and lowered while idle. 0 errors in the
-  log; one `BoneAttachment` warning, once, while the skinned mesh streams (see the open item in
-  [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)).
+  right size, aimed where the player faces while shooting and lowered while idle, with the grip in
+  contact with the hand rather than near it. 0 errors and 0 warnings in the log.
 
 **Not done, deliberately:** the hovering rifle at the Weapon Crate is untouched. Now that the
 player always carries a rifle, that pickup wants either retiring or converting to attach-on-collect
@@ -791,6 +811,85 @@ appears, lower the hop limit rather than re-rigging.
   so every one of these binaries goes in as a plain blob, permanently. The characters are ~6 MB
   each now rather than ~30 MB, which buys time rather than fixing it.
 
+#### The colliders did not match the meshes, on either building
+
+Nothing keeps a hand-placed box set honest. The editor does not compare the boxes to the mesh they
+were eyeballed against, there is no warning when they disagree, and the disagreement is invisible
+from outside - a wall you walk through and a wall you walk into look identical until you touch
+them. Both buildings were wrong, in opposite directions.
+
+The audit is worth recording because it is cheap and repeats on any box-composed building.
+Rasterize the glb's triangles into a 5 cm grid over the horizontal plane, keeping only what falls
+inside the capsule's height band (floor+0.15 m to floor+1.85 m). Do the same for the box set. Diff
+them: a cell with mesh and no box is a wall you walk through, a cell with a box and no mesh is an
+invisible wall. Then flood-fill the grid inward from outside the footprint with the capsule's
+0.35 m radius, once for the mesh and once for the colliders - "is the interior reachable" is the
+only question either representation has to answer, and the two answers have to agree.
+
+**The two meshes have exactly one walkable opening between them.** The Blockhouse has a single
+doorway in its `+Z` wall, local `x [-0.47, 1.40]`, 1.87 m wide, open from 0.12 m above the floor
+(a threshold) to 3.11 m. Nothing else on either building is open at walking height: the
+Blockhouse's two other apertures are windows whose sills sit at 2.5 m, and the Warehouse has no
+aperture at all, at any height, on any face. **It is a sealed shell and was always meant to be
+one** - `doubleSided` is what lets you see its interior, not a way in.
+
+The box sets said something else entirely:
+
+| Building | Wall | Mesh | Collider set |
+|---|---|---|---|
+| Warehouse | `X-` | solid | 0.90 m gap at `z [-2.35, -1.45]` |
+| Blockhouse | `X+` | solid | 1.40 m gap at `z [-0.71, 0.69]` |
+| Blockhouse | `Z-` | solid | 1.80 m gap at `x [1.68, 3.48]` |
+| Blockhouse | `Z+` | **the 1.87 m doorway** | 1.00 m gap at `x [-3.67, -2.67]`, and the doorway itself walled off |
+
+The Blockhouse had three holes, not one of them where its door is, and its one real door was solid
+wall. The Warehouse had a 0.90 m hole against a 0.70 m capsule - wide enough, and only just, which
+is why it reads as an intermittent bug rather than an open gate. Every gap is the right *sort* of
+gap, roughly door-sized and centred on a wall face, so this looks less like a series of slips than
+like one door plan applied to the wrong faces.
+
+The corrected sets, local to each building's parent, are scene data only - no engine change is
+implied and none was made:
+
+| Entity | Translation | Half extents |
+|---|---|---|
+| `Blockhouse Wall X-` | `[-3.85, 0, 0]` | `[0.15, 2.28, 3.58]` (unchanged) |
+| `Blockhouse Wall X+` | `[3.85, 0, 0]` | `[0.15, 2.28, 3.58]` |
+| `Blockhouse Wall Z-` | `[0, 0, -3.43]` | `[4, 2.28, 0.15]` |
+| `Blockhouse Wall Z+ Left` | `[-2.235, 0, 3.43]` | `[1.765, 2.28, 0.15]` |
+| `Blockhouse Wall Z+ Right` | `[2.7, 0, 3.43]` | `[1.3, 2.28, 0.15]` |
+| `Blockhouse Door Lintel` | `[0.465, 1.555, 3.43]` | `[0.935, 0.725, 0.15]` |
+| `Warehouse Wall X-` | `[-9.85, 0, 0]` | `[0.15, 4.23, 5.775]` |
+
+Two entities went away with the merges, so the Blockhouse carries eight children and the
+Warehouse six. The jamb pieces are named `Left`/`Right` rather than duplicating one tag, because the tag is what
+`Enemy.lua` prints in `blocked-by=` and two walls with the same name make that line ambiguous.
+
+The lintel is the one box that is not a wall segment. The doorway is 2.99 m tall in a 4.56 m wall,
+so leaving the gap full height would have left a metre and a half of open air above the door that
+the mesh draws as solid. It costs one box and it keeps the shell's silhouette true to the mesh for
+raycasts, which is the only thing that can tell the difference.
+
+**The 0.12 m threshold in the doorway is deliberately not collided.** The player would walk over it
+- `CharacterControllerComponent::StepHeight` is 0.4 - but P4 measured the other half of that: the
+enemies are flat-bottomed boxes, and a box stops dead at a kerb a capsule rides over. Collide the
+threshold and the door becomes passable for the player and impassable for everything chasing them,
+which is worse than a capsule clipping 12 cm of doorstep. A 0.12 m threshold would not have added
+much anyway - the `GroundTile` pad's 0.19 m lip already covers step-up at that scale, and what is
+missing is a ledge near the 0.4 m limit, which is a [ToDo](README.md) item rather than a doorstep.
+
+**What this costs P4.** Its occlusion probe was authored against the Blockhouse's `-Z` hole, in the
+belief that it was the doorway, and it is now solid; the Sentry at `(18.4, -6)` is still inside,
+but the only way to it is the `+Z` door at world `x [15.53, 17.40]`, `z = -2.57`. The gate's
+numbers were never wrong - acquisition at `px = 17.2` against a predicted 17.11 is exactly what a
+collider edge at `x = 17.66` produces - and its conclusion that buildings occlude where their
+colliders are still holds. The sentence after it does not: *"which also says the colliders
+hand-placed in P2 line up with the mesh they were measured from."* They did not, and that gate
+could not have found out, because **a raycast gate against colliders can only ever prove the
+collider set self-consistent.** Nothing that queries physics can see a box that disagrees with the
+mesh drawn over it; that needs the mesh, which is what the audit above reads. Re-running the probe
+means new positions on the `+Z` side.
+
 #### The measurement P2 exists to take
 
 The pipeline has only ever been exercised on eight committed fixtures. Before importing a set,
@@ -813,7 +912,7 @@ Projectile weapon. Enemies with health that despawn on death.
 - **Gate:** fire continuously for a minute; entity count returns to baseline; no leaked Jolt
   bodies.
 
-### P4 — Enemies with eyes — **PASSED**
+### P4 — Enemies with eyes — **PASSED**, on geometry since corrected
 
 Waypoint patrol, line-of-sight acquisition via raycast, charge. Animation on the enemies.
 
@@ -860,8 +959,13 @@ the far end to hit. Cheap, correct today, and silently load-bearing — written 
 
 The geometry, read off the scene rather than guessed. The Blockhouse's `-Z` wall is two collider
 segments at world `z = -9.43`, spanning `x 12.00..17.66` and `x 19.46..20.00`, leaving the 1.8 m
-doorway between them. The Sentry stands at `(18.4, -6)` and never turns. A sight line from there
-to a player at `(px, -12)` crosses `z = -9.43` at `x = 18.4 + 0.5717 * (px - 18.4)`, so the wall's
+doorway between them. **That gap was not a doorway.** The `-Z` wall is unbroken in the mesh, and
+the 1.8 m was a hole in the box set - see
+[P2](#the-colliders-did-not-match-the-meshes-on-either-building). It is closed now, the real door
+is on `+Z`, and the run below is not reproducible as written. What it measured is unaffected: the
+probe only ever queried colliders, and every number in it is a correct measurement of the
+colliders that existed at the time. The Sentry stands at `(18.4, -6)` and never turns. A sight
+line from there to a player at `(px, -12)` crosses `z = -9.43` at `x = 18.4 + 0.5717 * (px - 18.4)`, so the wall's
 inner edge at `x = 17.66` **predicts acquisition at `px = 17.11`**.
 
 ```
@@ -911,13 +1015,18 @@ without a character controller is the *shape*, not the body type, and P1's findi
 as being about capsules specifically.
 
 **The player was pinned for 40 s, and it is not an engine bug.** From `t=40s` to `t=80s` the
-capsule sat at `x = -12.7` with `z` sliding between `-8.9` and `-10.8`. The Warehouse's `X+` wall
+capsule sat at `x = -12.7` with `z` sliding between `-8.9` and `-10.8` - **inside the Warehouse**,
+which it had entered through the `X-` hole P2 describes above, and which is sealed now. The `X+` wall
 is at world `x = -12.15` with a 0.15 m half-extent and the capsule's radius is 0.35, which puts a
 body pressed against its inner face at exactly `-12.65`. The controller was working — it slid along
 the wall the whole time. What failed is the autopilot's stuck escape: it advances to the *next
 waypoint*, with no notion of whether that waypoint is reachable, so once it was inside a building
 with every remaining target outside it, it simply leaned on the nearest wall until a later waypoint
 happened to line up with the door. **Decision 5's cost, arriving where Decision 5 said it would.**
+The building it was trapped in has no door, so "a later waypoint lined up" was the autopilot leaving
+through the same hole it came in by. The failure that demonstrates - escaping to the next waypoint
+with no notion of whether it is reachable - is real and unchanged; the Blockhouse is now the only
+building that can stage it.
 
 #### Gate run 3 — P3 does not regress on dynamic enemies
 
