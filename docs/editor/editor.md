@@ -224,15 +224,20 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 - `BeginPanel("Viewport")` so the header row reaches the window edges. A 44 px
   `PanelToolbarRow` sits above the image.
-- **Header, left:** camera combo (Editor Camera, plus every `CameraComponent` in the scene).
-  Selecting a scene camera writes `RenderContext::PreviewCamera`; `RenderSystem::OnUpdateEditor`
-  then `BeginScene`s with that camera's projection and world transform. The editor camera is
-  not orbited while looking through a scene camera — switch back to move it. The combo is
-  disabled in Play and shows the primary camera's tag (the runtime path already uses that
-  camera, with the editor camera as fallback).
+- **Header, left:** camera combo (Editor Camera, **Top (Ortho)**, plus every `CameraComponent` in
+  the scene). Selecting a scene camera writes `RenderContext::PreviewCamera`;
+  `RenderSystem::OnUpdateEditor` then `BeginScene`s with that camera's projection and world
+  transform. The editor camera is not orbited while looking through a scene camera — switch back
+  to move it. **Top (Ortho)** is the same `EditorCamera` in orthographic mode: pitch locked to
+  −90°, scroll changes `OrthoHeight` (vertical world metres), Alt+LMB yaws around world Y, RMB
+  fly is disabled. Entering matches `OrthoHeight` to the current perspective ground coverage;
+  leaving restores pitch and orbit distance. The combo is disabled in Play and shows the primary
+  camera's tag (the runtime path already uses that camera, with the editor camera as fallback).
 - **Header, centre:** `Free Aspect: WxH` from `m_ViewportSize` (the _image_ size, not the
   panel — the 44 px header is excluded so the render target matches what picking and RmlUi
-  see). There is no aspect lock, so this is a readout, not a dropdown.
+  see). There is no aspect lock, so this is a readout, not a dropdown. In an orthographic view
+  (Top (Ortho) or a scene camera with an ortho projection) a **metres-per-pixel** readout sits
+  next to it: `OrthoHeight / viewportHeight`.
 - **Header, right:** magnet (opens `MapSnapSettings`; accent-filled while snapping is enabled) ·
   Visualizers popup (`Collider gizmos`, default on — authored box/sphere/capsule wireframes in
   Edit and Play — plus the Jolt debug-draw toggles, still Play-only because they read live body
@@ -264,8 +269,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   (select / translate / rotate / scale): Q/W/E/R still go through `OnKeyPressed` (viewport-gated
   so a name containing W does not switch tools), and the toolbar icon cluster writes the same
   int. The active tool is accent-filled. View/projection follow the camera dropdown;
-  `SetOrthographic` follows a scene camera's projection type. The gizmo is hidden while placement
-  is active so it cannot fight the preview.
+  `SetOrthographic` is true for Top (Ortho) and for a scene camera with an orthographic
+  projection. The gizmo is hidden while placement is active so it cannot fight the preview.
 
   **It drives the whole selection.** The gizmo manipulates the primary, and the world-space change
   it made — `after * inverse(before)` — is applied to every other selected entity through
@@ -320,7 +325,8 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 
 | Input                                   | Action                                                                                                                                       |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera                                                                                                         |
+| Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera. In Top (Ortho): Alt+LMB yaws only, scroll changes `OrthoHeight`, RMB fly is off |
+| Viewport combo → Top (Ortho)            | Pitch-locked orthographic plan view. Metres-per-pixel readout appears beside Free Aspect                             |
 | LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed)                            |
 | LMB while placing                       | Commit the preview (`AddEntitiesCommand` after the transform is final). Shift+LMB chains; Alt+LMB places unsnapped                           |
 | LMB while scatter-painting              | Paint instances into the active group. Shift+LMB erases that group's instances inside the brush radius. Mode (paint vs erase) is locked at mouse-down |

@@ -1,6 +1,6 @@
 # Milestone — Map Editor
 
-**Status: M0–M4 landed. M5–M6 planned.**
+**Status: M0–M5 landed. M6 planned.**
 
 An in-editor toolset for authoring maps: a palette, a surface-snapping placement mode, a snap model
 shared with the gizmo, a collider-versus-mesh audit, a scatter brush, gameplay markers, and a
@@ -89,7 +89,7 @@ a synchronous ray. After that the order is by value, not by dependency.
 | **M2** | Collider ↔ mesh parity | ~1.5 days | **Highest value per line in the milestone** |
 | **M3** | Scatter brush | done | High for dressing, none for structure |
 | **M4** | Gameplay markers | done | Medium; the only phase touching engine + Lua |
-| **M5** | Top-down orthographic view | ~2 days, riskiest | Lowest. Cut this first |
+| **M5** | Top-down orthographic view | done | Lowest. Cut this first |
 | **M6** | Prove it on the Proving Ground | ~1 day | Closes two open gates |
 
 **Two pieces of pushback, stated before the plan rather than after it.**
@@ -568,6 +568,17 @@ up carrying it as loose strings.
 ---
 
 ## Phase M5 — top-down orthographic view
+
+**Done.** Viewport combo **Top (Ortho)** puts `EditorCamera` in orthographic mode (pitch −90°,
+`OrthoHeight` from scroll, yaw free). ImGuizmo `SetOrthographic(true)` follows that mode.
+`DrawGrid` sizes the quad and `u_GridFade` from the current projection so a 200 m view still has
+a grid. Metres-per-pixel sits beside Free Aspect. Shadow cascades fit **real ortho box slices**,
+far-capped at `min(200, 2 × view extent)` — the existing fake-50° ortho fallback is gone. A
+separate shadow camera was the cut criterion; it was not needed.
+
+Not run this landing (no Proving Ground on this branch): 10 m span vs readout, cascade
+pixel-compare against perspective, `CulledMeshes` under a tight ortho view. The near-plane
+frustum convention remains the known conservative bug in [ToDo/rendering.md](rendering.md).
 
 ### Goal
 

@@ -370,6 +370,6 @@ than the camera's: culling is **conservative**. Nothing renders incorrectly, whi
 never shown up — it only means `Renderer3D::FrustumIntersects` keeps a few objects that are behind
 the camera and could have been rejected. `CulledMeshes` is correspondingly a slight under-count.
 
-One line. Worth doing next time frustum culling is touched, and worth knowing before anyone tunes
-culling numbers or adds an orthographic editor camera
-([MAP_EDITOR.md](MAP_EDITOR.md) M5), where the near plane sits much closer to real geometry.
+One line. Worth doing next time frustum culling is touched. The map editor's Top (Ortho) camera
+(MAP_EDITOR M5) uses this frustum as-is: culling stays conservative, which is why that phase did
+not wait on this fix. The near plane is still close to the camera (0.1 m), not to the ground.

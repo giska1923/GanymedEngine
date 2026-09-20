@@ -1173,6 +1173,12 @@ namespace GanymedE {
 		ImGui::PopStyleColor();
 	}
 
+	void EditorLayer::SetEditorTopOrtho(bool enabled)
+	{
+		m_EditorTopOrtho = enabled;
+		m_EditorCamera.SetOrthographic(enabled);
+	}
+
 	void EditorLayer::UI_Viewport()
 	{
 		using EditorUI::BeginPanel;
@@ -1199,13 +1205,19 @@ namespace GanymedE {
 			const float availX = ImGui::GetContentRegionAvail().x;
 
 			std::string cameraLabel = "Editor Camera";
-			if (editing && m_ViewportCamera != UUID{ 0 })
+			if (editing && m_EditorTopOrtho && m_ViewportCamera == UUID{ 0 })
+				cameraLabel = "Top (Ortho)";
+			else if (editing && m_ViewportCamera != UUID{ 0 })
 			{
 				Entity preview = m_ActiveScene ? m_ActiveScene->FindEntityByUUID(m_ViewportCamera) : Entity{};
 				if (preview && preview.HasComponent<CameraComponent>())
 					cameraLabel = preview.GetComponent<TagComponent>().Tag;
 				else
+				{
 					m_ViewportCamera = UUID{ 0 };
+					if (m_EditorTopOrtho)
+						cameraLabel = "Top (Ortho)";
+				}
 			}
 			else if (!editing && m_ActiveScene)
 			{
@@ -1218,8 +1230,18 @@ namespace GanymedE {
 			ImGui::SetNextItemWidth(200.0f);
 			if (ImGui::BeginCombo("##ViewportCam", cameraLabel.c_str()))
 			{
-				if (ImGui::Selectable("Editor Camera", m_ViewportCamera == UUID{ 0 }))
+				if (ImGui::Selectable("Editor Camera",
+					m_ViewportCamera == UUID{ 0 } && !m_EditorTopOrtho))
+				{
 					m_ViewportCamera = UUID{ 0 };
+					SetEditorTopOrtho(false);
+				}
+				if (ImGui::Selectable("Top (Ortho)",
+					m_ViewportCamera == UUID{ 0 } && m_EditorTopOrtho))
+				{
+					m_ViewportCamera = UUID{ 0 };
+					SetEditorTopOrtho(true);
+				}
 
 				if (m_ActiveScene)
 				{
@@ -1249,6 +1271,31 @@ namespace GanymedE {
 				m_ViewportSize.x, m_ViewportSize.y);
 			ImGui::PushStyleColor(ImGuiCol_Text, Color(theme.TextDim));
 			ImGui::TextUnformatted(aspect);
+
+			float metresPerPixel = 0.0f;
+			if (m_ViewportSize.y > 0.0f)
+			{
+				if (m_ViewportCamera == UUID{ 0 } && m_EditorCamera.IsOrthographic())
+					metresPerPixel = m_EditorCamera.GetOrthoHeight() / m_ViewportSize.y;
+				else if (m_ViewportCamera != UUID{ 0 } && m_ActiveScene)
+				{
+					Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+					if (preview && preview.HasComponent<CameraComponent>())
+					{
+						const auto& cam = preview.GetComponent<CameraComponent>().Camera;
+						if (cam.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
+							metresPerPixel = cam.GetOrthographicSize() / m_ViewportSize.y;
+					}
+				}
+			}
+			if (metresPerPixel > 0.0f)
+			{
+				ImGui::SameLine();
+				char mpp[32];
+				std::snprintf(mpp, sizeof(mpp), "%.3f m/px", metresPerPixel);
+				ImGui::TextUnformatted(mpp);
+				ImGui::SetItemTooltip("Metres per pixel in the current orthographic view");
+			}
 			ImGui::PopStyleColor();
 
 			const float gap = ImGui::GetStyle().ItemSpacing.x;
@@ -1367,7 +1414,7 @@ namespace GanymedE {
 		{
 			glm::mat4 cameraProjection = m_EditorCamera.GetProjection();
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
-			bool ortho = false;
+			bool ortho = m_EditorCamera.IsOrthographic();
 			if (m_ViewportCamera != UUID{ 0 })
 			{
 				Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);

@@ -364,8 +364,8 @@ is the home.
 - [`Math::Ray`](../../GanymedEngine/source/GanymedE/Math/Math.h) + `Math::ScreenPointToRay` —
   clip-space xy through `inverse(viewProjection)` onto the near and far planes. Origin is the
   unprojected **near point**, not the camera position, so an orthographic projection produces
-  parallel rays (M5 of the map editor) instead of a pinhole. `MaxDistance` is the near-to-far
-  length, which is the far clip expressed along this ray.
+  parallel rays (the map editor's Top (Ortho) view) instead of a pinhole. `MaxDistance` is the
+  near-to-far length, which is the far clip expressed along this ray.
 
   Clip-space z of those planes is passed in: `0`/`1` under zero-to-one depth (D3D, Vulkan, Metal)
   and `-1`/`1` under OpenGL's homogeneous depth. That matches

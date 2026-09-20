@@ -82,6 +82,8 @@ namespace GanymedE {
 		void UI_Menus();
 		void UI_StatusBar();
 		void UI_Viewport();
+
+		void SetEditorTopOrtho(bool enabled);
 	private:
 		Ref<SceneRenderer> m_SceneRenderer; // owns the HDR target + post stack (bloom, tonemap, FXAA)
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
@@ -116,6 +118,11 @@ namespace GanymedE {
 		// Viewport camera dropdown. UUID{0} = EditorCamera. Any other value is a scene
 		// CameraComponent looked through in edit mode (RenderContext::PreviewCamera).
 		UUID m_ViewportCamera{ 0 };
+
+		// Viewport combo "Top (Ortho)": EditorCamera in orthographic mode, pitch locked.
+		// Independent of m_ViewportCamera so looking through a scene camera does not
+		// forget the editor's last projection mode.
+		bool m_EditorTopOrtho = false;
 
 		// A gizmo drag writes the transform every frame and accumulates rotation as a delta, so
 		// the pre-drag value cannot be reconstructed after the fact - it is snapshotted on the

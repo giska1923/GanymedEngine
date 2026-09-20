@@ -11,7 +11,8 @@
 #include <utility>
 
 namespace GanymedE {
-	// In-editor viewport camera: orbit (Alt+LMB/MMB/scroll) and fly (RMB + WASD/QE)
+	// In-editor viewport camera: orbit (Alt+LMB/MMB/scroll) and fly (RMB + WASD/QE),
+	// plus a pitch-locked orthographic top-down mode for map layout.
 	class EditorCamera : public Camera
 	{
 	public:
@@ -38,8 +39,16 @@ namespace GanymedE {
 		float GetPitch() const { return m_Pitch; }
 		float GetYaw() const { return m_Yaw; }
 
+		// Top-down map view. Pitch is locked to -90°; scroll changes OrthoHeight (the
+		// vertical world extent) rather than orbit distance. Yaw is kept so the map can
+		// still be spun to a building axis.
+		void SetOrthographic(bool enabled);
+		bool IsOrthographic() const { return m_Orthographic; }
+		float GetOrthoHeight() const { return m_OrthoHeight; }
+
 		// Orbit the existing pitch/yaw so `center` is the focal point and the sphere of
-		// `radius` fits the vertical FOV. Used by the collider audit to frame a finding.
+		// `radius` fits the vertical FOV (or OrthoHeight, in ortho). Used by the collider
+		// audit to frame a finding.
 		void Frame(const glm::vec3& center, float radius);
 	private:
 		void UpdateProjection();
@@ -69,5 +78,10 @@ namespace GanymedE {
 		float m_Pitch = 0.0f, m_Yaw = 0.0f;
 
 		float m_ViewportWidth = 1280.0f, m_ViewportHeight = 720.0f;
+
+		bool m_Orthographic = false;
+		float m_OrthoHeight = 40.0f;
+		float m_SavedPitch = 0.0f;
+		float m_SavedDistance = 10.0f;
 	};
 }

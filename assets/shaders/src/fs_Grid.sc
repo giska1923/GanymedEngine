@@ -6,6 +6,7 @@ $input v_worldpos
 // u_CameraPosition is supplied every draw by FrameUniforms.
 
 uniform vec4 u_CameraPosition; // .xyz
+uniform vec4 u_GridFade;       // .x start, .y end (world-XZ metres from camera)
 
 float gridLine(vec2 uv)
 {
@@ -27,7 +28,7 @@ void main()
 	float alpha = max(minor * 0.35, major * 0.55);
 
 	float dist = length(u_CameraPosition.xz - v_worldpos.xz);
-	float fade = 1.0 - smoothstep(20.0, 80.0, dist);
+	float fade = 1.0 - smoothstep(u_GridFade.x, u_GridFade.y, dist);
 	alpha *= fade;
 
 	if (alpha < 0.01)
