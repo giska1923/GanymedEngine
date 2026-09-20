@@ -6,20 +6,20 @@ belong in this folder.
 
 ## Where things live
 
-| Folder | Holds | Tense |
-|---|---|---|
-| `docs/ToDo/` | What is planned, broken, or deferred | future |
-| `docs/engine/`, `docs/editor/`, `docs/runtime/` | What the code does **now** | present |
-| `docs/history/` | Why it got that way — completed milestone records, with the rationale and the verification evidence | past |
+| Folder                                          | Holds                                                                                               | Tense   |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------- |
+| `docs/ToDo/`                                    | What is planned, broken, or deferred                                                                | future  |
+| `docs/engine/`, `docs/editor/`, `docs/runtime/` | What the code does **now**                                                                          | present |
+| `docs/history/`                                 | Why it got that way — completed milestone records, with the rationale and the verification evidence | past    |
 
 ## The lifecycle of an item
 
 1. **Plan it here.** A milestone plan, a bug, or a one-line follow-up — whichever the work is.
-2. **Build it**, updating the matching `docs/engine`/`editor`/`runtime` doc *in the same change*.
+2. **Build it**, updating the matching `docs/engine`/`editor`/`runtime` doc _in the same change_.
    A code change with no doc update is incomplete work, not a follow-up.
 3. **Close it.** Delete the item from this folder. If it was a milestone with execution notes and
    verification evidence worth keeping, move that record to `docs/history/` and link it from
-   [`docs/README.md`](../README.md). If it was a small fix, the live doc update *is* the record —
+   [`docs/README.md`](../README.md). If it was a small fix, the live doc update _is_ the record —
    do not manufacture history for it.
 
 The rule that makes this work: **an item leaves this folder only when the thing is actually done and
@@ -27,14 +27,16 @@ documented.** A file here is a promise, not a description.
 
 ## Open items
 
-| Document | Covers | Items |
-|---|---|---|
-| [PROVING_GROUND.md](PROVING_GROUND.md) | **Milestone plan** — the test game, and the engine work that must land first | Phase 0 + P1-P7 |
-| [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something | A2 done; A1, A3 remain |
-| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL | 3 |
-| [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
-| [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
-| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, and two shipping gaps | 17 |
+| Document                                           | Covers                                                                                                                                                                                                                                  | Items                  |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7        |
+| [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something                                                                                                                                                    | A2 done; A1, A3 remain |
+| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6, nothing built   |
+| [MODEL_EDITOR.md](MODEL_EDITOR.md)                 | **Milestone plan** — an inspector for assets rather than entities: readouts, import settings written to `.meta`, a collision default, a preview renderer, thumbnails                                                                    | P1–P7, nothing built   |
+| [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback; the frustum's near-plane depth convention                                                            | 5                      |
+| [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                      |
+| [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                      |
+| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, and two shipping gaps | 17                     |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
@@ -47,6 +49,21 @@ before this moves to `docs/history/`:
   re-running the gates, not copying numbers out of a transcript.
 - The merge direction is master → game, so nothing written on the branch ever arrives here. The
   milestone has to be assembled from `first-game` when it is retired.
+
+**[MAP_EDITOR.md](MAP_EDITOR.md) and [MODEL_EDITOR.md](MODEL_EDITOR.md) are editor milestones, so
+they live off `master`, not off the game branch.** Every phase of either touches
+`GanymedEditor/source/` or `GanymedEngine/source/`, which the branch policy above puts on `master`;
+the game branch receives that work by merge and never sends anything back. Both were drafted on
+`first-game` and moved to a branch off `master` for exactly that reason.
+
+The map editor exists because the Proving Ground's buildings were hand-assembled from typed-in box
+colliders, which is what produced the wall holes above — two of its gates (P2's interiors, P4's
+`+Z` occlusion re-run) are the milestone's own closing verification. The model editor is the
+other half of the same problem: a mesh asset carries no collision default, so every placement
+types its own box. It also picks up two gaps found while planning it — import settings that are
+plumbed end-to-end but reachable only by hand-editing a `.meta`, and the fact that
+`RenderPassIDs.h` holds absolute view IDs, so a second `SceneRenderer` cannot exist and nothing
+can render an asset outside the scene.
 
 **Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
 managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three
