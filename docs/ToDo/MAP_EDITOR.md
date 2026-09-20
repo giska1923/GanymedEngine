@@ -1,6 +1,6 @@
 # Milestone — Map Editor
 
-**Status: M0 landed. M1–M6 planned.**
+**Status: M0–M1 landed. M2–M6 planned.**
 
 An in-editor toolset for authoring maps: a palette, a surface-snapping placement mode, a snap model
 shared with the gizmo, a collider-versus-mesh audit, a scatter brush, gameplay markers, and a
@@ -85,7 +85,7 @@ a synchronous ray. After that the order is by value, not by dependency.
 | Phase | What | Size | Standalone value |
 |---|---|---|---|
 | **M0** | Synchronous edit-mode surface raycast | done | None on its own — it is the primitive |
-| **M1** | Snap model + palette + placement mode | ~3 days | High. This is "the map tool" to a user |
+| **M1** | Snap model + palette + placement mode | done | High. This is "the map tool" to a user |
 | **M2** | Collider ↔ mesh parity | ~1.5 days | **Highest value per line in the milestone** |
 | **M3** | Scatter brush | ~2 days | High for dressing, none for structure |
 | **M4** | Gameplay markers | ~1.5 days | Medium; the only phase touching engine + Lua |
@@ -214,6 +214,11 @@ from a silent hitch into a logged, visible limit. Revisit when a real scene trip
 ---
 
 ## Phase M1 — the snap model, the palette, and placement
+
+**Done.** `MapSnapSettings` is live (gizmo snap is on by default; Ctrl disables it), the Map panel
+pins prefabs/meshes to `<asset-root>/.editor/map_palette.yaml`, and placement instantiates once
+then moves the transform. Duplicate-along-axis is one `CompositeCommand`. The Proving Ground
+place-10-crates probes still need that scene — they are M6's job, not a reason to keep M1 open.
 
 ### Goal
 
@@ -659,3 +664,13 @@ hard-coded gizmo snap) and one it did not:
   `z ≥ 0` — `row(2)` alone. The plane it computes is therefore behind the true near plane, making
   the frustum strictly larger: culling is **conservative**, so nothing renders incorrectly, and it
   has been invisible for that reason. Written into [rendering.md](rendering.md).
+
+Found while implementing M1, still out of scope:
+
+- **Save while placing writes the preview into the `.ganymede` file.** It is a real entity.
+  New/Open/Play cancel it; Save does not. Filtering it out of the serializer is a serializer
+  change, not a placement one.
+- **Alt+LMB while placing both commits unsnapped and starts an editor-camera orbit.** Same
+  modifier, two consumers. A drag-threshold on the place click would separate them.
+- **Viewport mesh drop still does not record undo.** Prefab drop does. Pre-existing; placement
+  of meshes from the Map panel *does* record undo on commit.

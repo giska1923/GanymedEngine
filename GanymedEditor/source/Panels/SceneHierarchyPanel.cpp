@@ -1668,7 +1668,8 @@ namespace GanymedE {
 		GE_INFO("Reverted instance from '{0}'", metadata->FilePath);
 	}
 
-	Entity SceneHierarchyPanel::InstantiatePrefab(const std::filesystem::path& relativePath)
+	Entity SceneHierarchyPanel::InstantiatePrefab(const std::filesystem::path& relativePath,
+		bool recordUndo)
 	{
 		if (!m_Context)
 			return {};
@@ -1681,7 +1682,8 @@ namespace GanymedE {
 		if (!root)
 			return {};
 
-		PushAddedEntities("Instantiate '" + root.GetComponent<TagComponent>().Tag + "'", root);
+		if (recordUndo)
+			PushAddedEntities("Instantiate '" + root.GetComponent<TagComponent>().Tag + "'", root);
 		SelectSingle(root);
 		return root;
 	}

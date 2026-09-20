@@ -47,8 +47,10 @@ namespace GanymedE {
 		void DeleteSelectedEntity();
 
 		// Instantiates a .gprefab into the current scene (viewport drop, or the hierarchy's
-		// blank-space menu) and selects the new instance root.
-		Entity InstantiatePrefab(const std::filesystem::path& relativePath);
+		// blank-space menu) and selects the new instance root. Placement passes recordUndo=false
+		// so the preview is not an undo entry; commit pushes AddEntitiesCommand after the
+		// transform is final.
+		Entity InstantiatePrefab(const std::filesystem::path& relativePath, bool recordUndo = true);
 
 		// Editor-only outliner flags. Keyed by UUID so they survive play/stop (same IDs on
 		// the copied scene) and are not cleared by RetargetPanels. New/Open must call

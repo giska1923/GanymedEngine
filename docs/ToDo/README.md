@@ -31,7 +31,7 @@ documented.** A file here is a promise, not a description.
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7        |
 | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something                                                                                                                                                    | A2 done; A1, A3 remain |
-| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0 done; M1–M6 remain  |
+| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M1 done; M2–M6 remain |
 | [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback; the frustum's near-plane depth convention                                                            | 5                      |
 | [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                      |
 | [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                      |
@@ -51,7 +51,8 @@ before this moves to `docs/history/`:
 
 **[MAP_EDITOR.md](MAP_EDITOR.md) executes on `map-editor`, which is based on `master`.** The plan
 started on `first-game`, which the branch policy forbids from touching editor or engine source;
-the file was moved here before M0. M0 (synchronous surface ray) has landed. The milestone exists
+the file was moved here before M0. M0 (synchronous surface ray) and M1 (snap, palette, placement)
+have landed. The milestone exists
 because the Proving Ground's buildings were hand-assembled from typed-in box colliders, which is
 what produced the wall holes above — two of its gates (P2's interiors, P4's `+Z` occlusion re-run)
 are the milestone's own closing verification.

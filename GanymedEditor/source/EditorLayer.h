@@ -3,6 +3,7 @@
 #include "GanymedE.h"
 #include "Panels/SceneHierarchyPanel.h"
 #include "Panels/ContentBrowserPanel.h"
+#include "Panels/MapPanel.h"
 #include "EditorPicking.h"
 
 #include <filesystem>
@@ -45,6 +46,15 @@ namespace GanymedE {
 		// Seeds a fresh scene with a default sun + sky so meshes are lit immediately
 		void SetupDefaultEnvironment(const Ref<Scene>& scene);
 
+		bool IsPlacing() const { return m_PlaceType != AssetType::None; }
+		bool SnapActive() const;
+		void CancelPlacement();
+		void BeginPlacement(AssetHandle handle, AssetType type);
+		void UpdateSurfaceRaycast();
+		void RefreshPlaceBounds(Entity root);
+		void ApplyPlacementTransform();
+		void CommitPlacement(bool chain);
+
 		// UI
 		void UI_Toolbar();
 		void UI_TitleBar();
@@ -69,6 +79,7 @@ namespace GanymedE {
 		Entity m_HoveredEntity;
 		SurfaceHit m_SurfaceHit;
 		float m_SurfaceRaycastMs = 0.0f;
+		Math::Ray m_EditRay;
 
 		Ref<Texture2D> m_CheckerboardTexture;
 
@@ -103,6 +114,20 @@ namespace GanymedE {
 		// Panels
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
+		MapPanel m_MapPanel;
+		MapSnapSettings m_SnapSettings;
+
+		// Placement preview is a real entity, excluded from the surface ray so it cannot
+		// snap to itself. UUID rather than a handle: handles are not validity-checked.
+		AssetHandle m_PlaceHandle = InvalidAssetHandle;
+		AssetType m_PlaceType = AssetType::None;
+		UUID m_PlacePreview{ 0 };
+		float m_PlaceYaw = 0.0f;
+		glm::vec3 m_PlaceBaseEuler{ 0.0f };
+		glm::vec3 m_PlaceBaseScale{ 1.0f };
+		AABB m_PlaceBounds;
+		bool m_PlaceHasBounds = false;
+		bool m_PlaceHasTarget = false;
 
 		bool m_ResetDockLayout = false;
 
