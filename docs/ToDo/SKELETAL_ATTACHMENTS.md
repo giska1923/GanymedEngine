@@ -182,11 +182,36 @@ name warns once and restores parent-relative world. New files: `BoneAttachmentSy
   it; a bad joint name warns once and leaves the entity at its parent's transform rather than at
   the origin.
 
+### A2 follow-up — one item left
+
+The socket frame left out the skinned submesh's `LocalTransform`, which `Renderer3D` applies and
+the socket did not — so a socket on a rig whose joints are centimetres and whose vertices are
+metres landed at 141 **metres** rather than 1.41. A correctly sized prop that far away looks tiny,
+which invites a compensating `Scale` and produces an 86 m rifle the moment the socket fails to
+resolve. `OverrideWorld` also discarded the attached entity's `Scale`, so that compensation had
+nowhere honest to live. Both are **fixed**: `LocalTransform` is folded in, the bind pose's basis
+scale is divided back out, and local `Scale` is composed. See `docs/engine/scene.md`.
+
+Still open:
+
+- **Hide an entity whose socket does not resolve**, rather than leaving it at its parent transform.
+  The window is short — the frames before a skinned mesh finishes streaming, on every load — and
+  now that scale is no longer compensated it is only a brief pop rather than a wrong-sized prop.
+  There is no visibility flag on any component today, so this is new surface, not a tweak: either
+  an `Enabled`/`Visible` bit that `RenderSystem` honours (useful well beyond sockets) or a
+  socket-local suppression. Worth deciding which before building either.
+
 ### A3 — Wiring, on the game branch
 
 Attach `Rifle.glb` to the player's `RightHand`, offset by hand against the new clips. Either retire
 the hovering rifle pickup at the Weapon Crate or keep it and attach on collect — the latter is more
 interesting and costs nothing extra, since `Pickup.lua` already knows when the crate is consumed.
+
+With the A2 follow-up above landed this is **one entity**, not a socket plus a child holding a
+compensating scale: `Offset` is in metres and `Scale` is the real size of the rifle. The rotation
+is the part worth being careful with — a first attempt composed `J·M` where it wanted `Jᵀ·M`, which
+looked plausible on screen. Derive it, then assert the barrel axis lands where it should before
+believing the picture.
 
 - **Gate:** the rifle stays in the hand through idle, walk, run and the backpedal turn, and the
   muzzle particle emitter can be moved from `Yaw` onto the gun's barrel without changing where

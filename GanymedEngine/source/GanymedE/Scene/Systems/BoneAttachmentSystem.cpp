@@ -13,13 +13,19 @@ namespace GanymedE {
 
 	namespace {
 
-		glm::mat4 OffsetMatrix(const BoneAttachmentComponent& attachment)
+		// Offset and Rotation replace the entity's local translation and rotation, which is why
+		// those two are ignored. Scale has no counterpart on the component, so the local one is
+		// kept: a socketed prop is sized in the inspector like any other entity, and - the point -
+		// it is sized the SAME way on the Restore() path. A compensation factor that only applies
+		// while the socket resolves is how a 1.9 m rifle became an 86 m one on every load.
+		glm::mat4 OffsetMatrix(const BoneAttachmentComponent& attachment, const glm::vec3& scale)
 		{
 			glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), attachment.Rotation.x, { 1, 0, 0 })
 				* glm::rotate(glm::mat4(1.0f), attachment.Rotation.y, { 0, 1, 0 })
 				* glm::rotate(glm::mat4(1.0f), attachment.Rotation.z, { 0, 0, 1 });
 
-			return glm::translate(glm::mat4(1.0f), attachment.Offset) * rotation;
+			return glm::translate(glm::mat4(1.0f), attachment.Offset) * rotation
+				* glm::scale(glm::mat4(1.0f), scale);
 		}
 
 		int32_t ResolveJointIndex(const std::vector<std::string>& names, const std::string& joint,
@@ -259,12 +265,46 @@ namespace GanymedE {
 				continue;
 			}
 
-			const glm::mat4 jointGlobal =
-				animator->Palette[(size_t)attachment.Resolved] * glm::inverse(inverseBind);
+			// Renderer3D draws a skinned submesh as entityWorld * LocalTransform * Palette * v, and
+			// a socket has to ride the same chain or it is not in the same space as the mesh it is
+			// pinned to. Palette * inverse(InverseBind) recovers the joint global alone, which is in
+			// whatever unit the JOINTS were authored in - for a Meshy rig, centimetres, while the
+			// vertices are metres. LocalTransform (the skinned mesh node's world, which the importer
+			// deliberately keeps) is the factor between the two. Omit it and a socket lands at 141
+			// *metres* instead of 1.41: a correctly sized prop, far enough away to look tiny.
+			glm::mat4 skinTransform{ 1.0f };
+			for (const Submesh& submesh : mesh.GetSubmeshes())
+			{
+				if (submesh.IsSkinned)
+				{
+					skinTransform = submesh.LocalTransform;
+					break;
+				}
+			}
+
+			// inverse(InverseBind) is LocalTransform * bindGlobal, so it is exactly this frame in
+			// the bind pose: translation in metres, basis carrying LocalTransform's scale. That
+			// scale is cancelled for *vertices* by the 1/scale inside the palette, and nothing
+			// cancels it for a socket - left in, an attached entity renders at 1% and Offset
+			// silently means centimetres.
+			const glm::mat4 bindGlobal = glm::inverse(inverseBind);
+			glm::mat4 jointGlobal = skinTransform
+				* animator->Palette[(size_t)attachment.Resolved] * bindGlobal;
+
+			// Divided out per column rather than normalised to unit length, so a clip that scales
+			// the joint still scales what is attached to it - the palette's scale is relative to
+			// bind, and only the bind part is the authoring artifact. For a rig whose mesh node is
+			// identity every column is already 1 and this loop does nothing.
+			for (int column = 0; column < 3; column++)
+			{
+				const float bindScale = glm::length(glm::vec3(bindGlobal[column]));
+				if (bindScale > 1e-6f)
+					jointGlobal[column] /= bindScale;
+			}
 
 			m_Warned.erase(item.second);
-			transforms->OverrideWorld(entity,
-				targetWorld->World * jointGlobal * OffsetMatrix(attachment));
+			transforms->OverrideWorld(entity, targetWorld->World * jointGlobal
+				* OffsetMatrix(attachment, entity.GetComponent<TransformComponent>().Scale));
 		}
 	}
 

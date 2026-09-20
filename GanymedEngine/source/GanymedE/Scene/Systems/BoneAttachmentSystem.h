@@ -17,6 +17,15 @@ namespace GanymedE {
 	// and twos, and a second per-joint array on every animator is 2-8 KB for Scene::Copy to
 	// shuffle on every play.
 	//
+	// That frame alone is NOT the space the mesh is drawn in. Renderer3D draws a skinned
+	// submesh as entityWorld * LocalTransform * Palette * v, and the joints may be authored in
+	// a different unit than the vertices - a Meshy rig has joints in centimetres and vertices
+	// in metres, with LocalTransform (0.01) the factor between them. So the skinned submesh's
+	// LocalTransform is folded in, and the bind pose's own column scales are then divided out:
+	// that scale is cancelled for vertices by the palette and cancelled for nothing else, so
+	// left in it renders an attached entity at 1%. Dividing by the BIND scale rather than
+	// normalising keeps animated scale, and is a no-op when the mesh node is identity.
+	//
 	// Writes WorldTransformComponent after TransformSystem (never TransformComponent: Euler
 	// decomposition of a joint quaternion is lossy). CameraSystem is the first reader of
 	// world space, so a camera socketed to a head joint sees this frame's pose.

@@ -197,13 +197,18 @@ namespace GanymedE {
 	// array would add 2-8 KB per animator for Scene::Copy to shuffle on every play.
 	//
 	// Writes WorldTransformComponent directly, after TransformSystem, because feeding a joint
-	// quaternion through TransformComponent's Euler storage is lossy. Local Translation /
-	// Rotation / Scale are ignored while the socket resolves; Offset and Rotation on *this*
-	// component are the authored rest pose in joint space.
+	// quaternion through TransformComponent's Euler storage is lossy. Local Translation and
+	// Rotation are ignored while the socket resolves — Offset and Rotation on *this* component
+	// replace them, as the authored rest pose in joint space. Local **Scale** is kept: there is
+	// no counterpart here, and using the same field on both paths means a socket that fails to
+	// resolve shows a correctly sized prop rather than a compensated one.
 	//
-	// A socket inherits whatever the clip does to the joint chain, including scale. A constant
-	// scale on Hips will grow the attached entity for as long as that clip plays — that is a
-	// clip bug, not something this component papers over.
+	// Offset is in the target mesh's own units — metres for any mesh authored that way — whatever
+	// unit the *rig* uses: the system folds in the skinned submesh's LocalTransform and divides the
+	// bind pose's basis scale back out (see BoneAttachmentSystem.h). What the *clip* does to the
+	// joint chain still carries, scale included — a constant scale on Hips will grow the attached
+	// entity for as long as that clip plays, which is a clip bug, not something this component
+	// papers over.
 	struct BoneAttachmentComponent
 	{
 		// The entity carrying the skinned mesh and its AnimatorComponent. Zero means "my parent",
