@@ -2,7 +2,8 @@
 
 The editor application (`GanymedEditor/source/`). It is a thin client of the engine: one
 `Application` subclass ([`GanymedEditorApp.cpp`](../../GanymedEditor/source/GanymedEditorApp.cpp))
-pushing a single [`EditorLayer`](../../GanymedEditor/source/EditorLayer.h), plus two panels.
+pushing a single [`EditorLayer`](../../GanymedEditor/source/EditorLayer.h), plus the hierarchy,
+content browser, and Map panels.
 Run it with `GanymedEditor/` as the working directory — the editor's *own* assets (Inter, Lucide,
 the checkerboard, its HUD document) resolve relative to CWD. A scene path may be passed
 positionally, and `--renderer=<backend>` selects the graphics backend (see
@@ -39,8 +40,9 @@ and shows a host scrollbar. The host itself is `NoScrollbar`. None of those stri
 docked window: they cannot be resized, undocked, or given a tab. On Wayland the title bar is
 omitted and the ImGui menu bar stays, because an undecorated window cannot be moved. On first
 run, after **View → Reset Layout**, or when the dock-layout version in `imgui.ini` mismatches
-(`[GanymedEditor][Dock] Version`, currently 2), `EditorLayer` builds a default DockBuilder
-tree: Scene Hierarchy left, Properties below it, Viewport center, Stats right, Content
+(`[GanymedEditor][Dock] Version`, currently 3), `EditorLayer` builds a default DockBuilder
+tree: Scene Hierarchy left, Properties below it, Viewport center, Stats and Map tabbed on the
+right, Content
 Browser bottom. After that, panel layout persists in `GanymedEditor/imgui.ini`. Later chrome
 changes that alter the default tree bump that version so an existing ini does not keep a
 stale split. The title bar and status bar sit outside the dock tree, so they did not need a
@@ -160,7 +162,7 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-The outliner, Properties, Content Browser, and Viewport are wrapped (`BeginPanel`). The host
+The outliner, Properties, Content Browser, Map, and Viewport are wrapped (`BeginPanel`). The host
 title bar is `EditorTitleBar.cpp`, not a furniture helper — it has to talk to `Window` hit-testing.
 
 ### Title bar
@@ -188,38 +190,62 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 1. Resize the scene renderer / editor camera / scene cameras when the viewport panel size changed.
 2. `SceneRenderer::BeginFrame` (bind + clear HDR target, entity IDs to −1).
-3. Update the scene: `OnUpdateEditor(ts, editorCamera)` in Edit (and
-   `RenderContext::PreviewCamera` from the viewport camera combo),
-   `OnUpdateRuntime(ts, &editorCamera)` in Play (the editor camera is the fallback when the scene
-   has no primary `CameraComponent`; the physics-debug toggles **and `ShowColliderGizmos = true`**
-   are pushed into the scene's `PhysicsSettings` each frame). The gizmo flag is engine-default
-   **false** so a non-editor front-end draws no collider wireframes — the editor opts in, and it has
-   to do so every frame because `Scene::Copy` does not carry singletons onto the play-mode scene.
+3. Update the scene. In Edit: surface-raycast, write the placement preview transform, and tick the
+   scatter stroke **before** `OnUpdateEditor`, so `TransformSystem` this frame sees the hover pose
+   and the preview renders where the cursor is, not where it was last frame. Then
+   `OnUpdateEditor(ts, editorCamera)` (and `RenderContext::PreviewCamera` from the viewport camera
+   combo). `ShowColliderGizmos`, `ShowMarkers`, and the Map-panel `EditorBoundsOverlay` (audit boxes
+   plus the scatter brush sphere) are pushed on this branch too. In Play:
+   `OnUpdateRuntime(ts, &editorCamera)` (the editor camera is the fallback when the scene
+   has no primary `CameraComponent`; the physics-debug toggles, **`ShowColliderGizmos`** (Visualizers)
+   and **`ShowMarkers`** (Icons) are pushed into the scene's `PhysicsSettings` each frame). Those
+   gizmo flags are engine-default **false** so a non-editor front-end draws no collider wireframes
+   or marker spheres — the editor opts in, and it has to do so every frame because `Scene::Copy`
+   does not carry singletons onto the play-mode scene.
 4. **Hover picking**: mouse position → viewport-local coordinates (Y flipped only when
    `bgfx::getCaps()->originBottomLeft` — render-target origin is backend-dependent), then
    `RequestEntityID` + `PollEntityID`. Picking is asynchronous under bgfx (~3 frames latency),
    invisible for hover highlighting. The result feeds `m_HoveredEntity` (shown in Stats,
    click-to-select).
-5. `SceneRenderer::EndFrame` — bloom → tonemap → FXAA → composite.
+5. **Surface ray** (Edit only, before `OnUpdateEditor`): the same pointer, but clip-space Y-up with
+   **no** render-target origin flip — this is projection algebra, not a texture sample.
+   `Math::ScreenPointToRay` through the active viewport camera's `inverse(viewProjection)`, then
+   `RaycastScene` against resident static-mesh triangles. Result is `m_SurfaceHit` (world point,
+   normal facing the ray, entity or work-plane fallback), shown on the Stats panel as `Surface:`
+   plus the per-ray ms. GPU picking stays the click-select path; placement and scatter read this.
+   Hidden outliner entities, the placement preview (`RaycastFilter::Exclude`), the scatter group's
+   subtree (`RaycastFilter::ExcludeSet`, so the brush keeps hitting the ground rather than last
+   frame's pebbles), and anything with an `AnimatorComponent` are skipped; a miss against a ray
+   that still hits `y = MapSnapSettings::GridHeight` is `FromWorkPlane`, a ray into empty sky is
+   no hit at all.
+6. `SceneRenderer::EndFrame` — bloom → tonemap → FXAA → composite.
 
 ### Viewport
 
 - `BeginPanel("Viewport")` so the header row reaches the window edges. A 44 px
   `PanelToolbarRow` sits above the image.
-- **Header, left:** camera combo (Editor Camera, plus every `CameraComponent` in the scene).
-  Selecting a scene camera writes `RenderContext::PreviewCamera`; `RenderSystem::OnUpdateEditor`
-  then `BeginScene`s with that camera's projection and world transform. The editor camera is
-  not orbited while looking through a scene camera — switch back to move it. The combo is
-  disabled in Play and shows the primary camera's tag (the runtime path already uses that
-  camera, with the editor camera as fallback).
+- **Header, left:** camera combo (Editor Camera, **Top (Ortho)**, plus every `CameraComponent` in
+  the scene). Selecting a scene camera writes `RenderContext::PreviewCamera`;
+  `RenderSystem::OnUpdateEditor` then `BeginScene`s with that camera's projection and world
+  transform. The editor camera is not orbited while looking through a scene camera — switch back
+  to move it. **Top (Ortho)** is the same `EditorCamera` in orthographic mode: pitch locked to
+  −90°, scroll changes `OrthoHeight` (vertical world metres), Alt+LMB yaws around world Y, RMB
+  fly is disabled. Entering matches `OrthoHeight` to the current perspective ground coverage;
+  leaving restores pitch and orbit distance. The combo is disabled in Play and shows the primary
+  camera's tag (the runtime path already uses that camera, with the editor camera as fallback).
 - **Header, centre:** `Free Aspect: WxH` from `m_ViewportSize` (the _image_ size, not the
   panel — the 44 px header is excluded so the render target matches what picking and RmlUi
-  see). There is no aspect lock, so this is a readout, not a dropdown.
-- **Header, right:** Visualizers popup (the Jolt debug-draw toggles that used to live in
-  Stats — still Play-only, they read Jolt body state) and a Local / World combo wired to
-  `ImGuizmo::Manipulate`'s mode. Previously LOCAL was hard-coded.
-- **Omitted, no backing feature:** Quality tiers, selection filters, billboard-gizmo Icons
-  toggle. Lit / Unlit / Wireframe: Unlit needs shader variants that do not exist; a global
+  see). There is no aspect lock, so this is a readout, not a dropdown. In an orthographic view
+  (Top (Ortho) or a scene camera with an ortho projection) a **metres-per-pixel** readout sits
+  next to it: `OrthoHeight / viewportHeight`.
+- **Header, right:** magnet (opens `MapSnapSettings`; accent-filled while snapping is enabled) ·
+  Visualizers popup (`Collider gizmos`, default on — authored box/sphere/capsule wireframes in
+  Edit and Play — plus the Jolt debug-draw toggles, still Play-only because they read live body
+  state) · Icons (`ICON_LC_MAP_PIN`, default on — `MarkerComponent` wire-spheres) · Local / World
+  combo wired to `ImGuizmo::Manipulate`'s mode.
+  Previously LOCAL was hard-coded. The magnet is the same snap struct placement reads.
+- **Omitted, no backing feature:** Quality tiers, selection filters.
+  Lit / Unlit / Wireframe: Unlit needs shader variants that do not exist; a global
   wireframe fill is not "one bgfx flag" — every `SubmitMesh` packs its own state from the
   material. A dropdown whose only working item is Lit is dead furniture.
 - Shows the composite target via `ImGui::Image`; UVs flip vertically per
@@ -237,11 +263,14 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   rotation as a delta to avoid gimbal jumps — and then calls
   **`Scene::MarkChanged<TransformComponent>`**, because a direct component write is invisible to
   change tracking and the world-transform cache would go stale (the entity would keep rendering at
-  its pre-drag position). Ctrl snaps (0.5 units, 45° for rotation). Mode is `m_GizmoType`
+  its pre-drag position). Snapping is **on by default**; **Ctrl inverts it**. Steps come from
+  `MapSnapSettings` (`Translate` 0.5 m, `Rotate` 15°, `Scale` 0.1) rather than the old hard-coded
+  0.5 / 45°. A 45° preset sits next to the rotate field. Mode is `m_GizmoType`
   (select / translate / rotate / scale): Q/W/E/R still go through `OnKeyPressed` (viewport-gated
   so a name containing W does not switch tools), and the toolbar icon cluster writes the same
   int. The active tool is accent-filled. View/projection follow the camera dropdown;
-  `SetOrthographic` follows a scene camera's projection type.
+  `SetOrthographic` is true for Top (Ortho) and for a scene camera with an orthographic
+  projection. The gizmo is hidden while placement is active so it cannot fight the preview.
 
   **It drives the whole selection.** The gizmo manipulates the primary, and the world-space change
   it made — `after * inverse(before)` — is applied to every other selected entity through
@@ -258,18 +287,59 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   selected → nothing drawn. Entity/draw/FPS counters live on the status bar rather than being
   duplicated here.
 
+### Surface raycast
+
+[`EditorPicking.cpp`](../../GanymedEditor/source/EditorPicking.cpp) is the edit-mode primitive
+that GPU picking cannot be: a **synchronous** world point, normal and entity, this frame, with
+no physics world.
+
+Unity and Unreal trace an editor physics world for this. Ganymed has no edit-mode bodies —
+`PhysicsScene::CreateBodies` runs from `Start()` — and building a shadow body set just to place
+objects would be a second source of truth, for a feature whose point is that authored colliders
+are untrustworthy. So the ray walks render geometry: `Mesh` keeps its CPU vertices after upload.
+
+`RaycastScene(scene, ray, filter)`:
+
+1. Broad phase: `(WorldTransformComponent, StaticMeshComponent)`, excluding `AnimatorComponent`,
+   the filter's `Exclude` UUID (the placement preview), and
+   `SceneHierarchyPanel::HiddenEntities()`. World AABB vs the ray, collect `tMin`.
+2. Sort near→far; stop when the next candidate's `tMin` exceeds the best confirmed hit.
+3. Narrow phase: transform the ray by `inverse(world * Submesh::LocalTransform)` (cheaper than
+   transforming triangles; leave the direction un-normalised so `t` stays in world metres), skip
+   a submesh whose local AABB misses, Möller–Trumbore over its index range.
+4. Normal is `cross(e1, e2)` through `transpose(inverse(meshLocal))`, then flipped to oppose the
+   ray. Flip by ray direction, not winding — a negative scale inverts winding.
+5. Miss: intersect the horizontal plane at `RaycastFilter::GridHeight` (`FromWorkPlane = true`),
+   which placement feeds from `MapSnapSettings::GridHeight`.
+   A ray pointing at empty sky (`t < 0` on that plane) returns no hit, so placement can refuse
+   rather than put something 400 m behind the camera.
+6. A mesh that is not resident yet is skipped (async load); a miss is not cached. A single mesh
+   over `TriangleBudget` (250 000) falls back to the AABB hit and warns once — there is no BVH.
+
+Skinned meshes with an animator are excluded: CPU vertices are the bind pose. `ScreenPointToRay`
+clamps length to the unprojected far plane, which is the far clip along that ray.
+
+The Stats `Surface:` line is the live probe. It does not replace GPU hover for click-select.
+
 ### Controls
 
 | Input                                   | Action                                                                                                                                       |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera                                                                                                         |
-| LMB in viewport                         | Select hovered entity (ignored over the gizmo or with Alt held)                                                                              |
+| Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera. In Top (Ortho): Alt+LMB yaws only, scroll changes `OrthoHeight`, RMB fly is off |
+| Viewport combo → Top (Ortho)            | Pitch-locked orthographic plan view. Metres-per-pixel readout appears beside Free Aspect                             |
+| LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed)                            |
+| LMB while placing                       | Commit the preview (`AddEntitiesCommand` after the transform is final). Shift+LMB chains; Alt+LMB places unsnapped                           |
+| LMB while scatter-painting              | Paint instances into the active group. Shift+LMB erases that group's instances inside the brush radius. Mode (paint vs erase) is locked at mouse-down |
+| Esc / RMB while placing                 | Cancel and destroy the preview (no undo entry)                                                                                               |
+| Esc / RMB while scatter-painting        | Abort an in-progress stroke (no undo entry) and disarm the brush. New / Open / Play do the same                                              |
+| `[` / `]` while placing                 | Yaw by `MapSnapSettings::Rotate`                                                                                                             |
 | Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
 | Local / World combo (viewport header)   | ImGuizmo LOCAL (default) / WORLD                                                                                                             |
+| Icons (viewport header)                 | Toggle `MarkerComponent` gizmos (`ShowMarkers`). Default on. Independent of Visualizers                                                      |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z          | Undo / redo (Edit state only)                                                                                                                |
-| Ctrl+D / Delete                         | Duplicate / delete the selected entity, subtree included (Edit state only)                                                                   |
-| Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene                                                                                                            |
-| Ctrl (held while dragging gizmo)        | Snapping                                                                                                                                     |
+| Ctrl+D / Delete                         | Duplicate / delete the selected entity, subtree included (Edit state only). While placing, Delete cancels instead                            |
+| Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene. New, Open and Play cancel an uncommitted preview and abort scatter                                        |
+| Ctrl (held while dragging gizmo)        | **Inverts** snap. Snapping is on by default; steps are `MapSnapSettings`                                                                     |
 | Ctrl+U                                  | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only)                                                          |
 | View → Reset Layout                     | Rebuild the default dock tree. Existing `imgui.ini` otherwise hides layout work                                                              |
 | View → Theme                            | Dark (default) or Light — same lilac accent, inverted chrome. Not persisted                                                                  |
@@ -277,7 +347,7 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 **Two shortcut layers, on purpose.** Q/W/E/R and Ctrl+U go through the engine event path
 (`EditorLayer::OnKeyPressed`), which `ImGuiLayer::BlockEvents` gates on viewport focus/hover.
-Everything else - undo, redo, duplicate, delete, and the file shortcuts - is polled inside the
+Everything else - undo, redo, duplicate, delete, placement yaw / Esc, scatter Esc, and the file shortcuts - is polled inside the
 ImGui frame by `EditorLayer::HandleShortcuts` using `ImGui::IsKeyChordPressed`, so it fires
 wherever the mouse is.
 
@@ -297,7 +367,8 @@ Ctrl+Z is ImGui's own text undo, which is what every editor does.
 and the command types. `EditorLayer` owns the stack; the hierarchy panel records into it.
 
 **Scope: scene edits only.** Inspector property edits, add/remove component, create / delete /
-duplicate entity, re-parenting and gizmo drags are undoable. Asset-level edits are deliberately
+duplicate entity, re-parenting, gizmo drags, map placement commits and duplicate-along-axis are
+undoable. Asset-level edits are deliberately
 not - a scene-local stack would lie about their scope, since undoing one would silently change
 every scene using that asset. Unity draws the same line for most asset properties; Unreal's
 transaction system does cover assets, and Ganymed diverges toward Unity's model because it has no
@@ -311,7 +382,8 @@ mirrors how `EditorCamera` lives engine-side while the _editing model_ does not.
 | `EditorUndoStack`                                      | Linear, capped at 100, `Push` clears the redo stack. `MarkSaved`/`IsDirtySinceSave` track dirtiness by stack _position_, so undoing back to the saved state correctly clears it |
 | `ComponentEditCommand<T>`                              | Before/after values. The after-value is filled in at the commit boundary, not at construction                                                                                   |
 | `AddComponentCommand<T>` / `RemoveComponentCommand<T>` | Remove stores the whole value, so undo is a re-add rather than a default-construct                                                                                              |
-| `AddEntitiesCommand` / `DeleteEntitiesCommand`         | One subtree-snapshot mechanism, differing only in which way `Undo` runs. Create, duplicate and delete are all built on it                                                       |
+| `AddEntitiesCommand` / `DeleteEntitiesCommand`         | One subtree-snapshot mechanism, differing only in which way `Undo` runs. Create, duplicate, prefab instantiate and map placement are all built on it |
+| `CompositeCommand`                                     | Several commands that undo as one. Gizmo group-drags and duplicate-along-axis are both this: N entities, one Ctrl+Z                                                              |
 | `ReparentCommand`                                      | Records the **old sibling index** explicitly - `Scene::SetParent` push_backs, and since the canonical save order is a hierarchy DFS, sibling order is content                   |
 
 **Every command keys entities by UUID**, resolved through `Scene::FindEntityByUUID`. `entt::entity`
@@ -499,7 +571,8 @@ are omitted for the same reason.
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
 transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
 and live post-processing settings (exposure, bloom threshold/knee/intensity/radius, FXAA).
-Jolt debug-draw toggles live on the viewport header's Visualizers popup, not here.
+Jolt debug-draw toggles and the collider-gizmo checkbox live on the viewport header's Visualizers
+popup, not here. Marker gizmos are the separate Icons toggle on that same header.
 
 A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
 many came out of `assets/.compiled/` instead. A second run over an unchanged project must read
@@ -587,7 +660,12 @@ Tag edit (full-width `InputText`, one undo command per typing session). One sect
 component type every selected entity has. **Add Component** is a full-width accent-outlined
 button at the **bottom** of the stack (every type not already present — camera, sprite, lights,
 sky light, animator, script, audio source, audio listener, particle emitter, rigid body,
-colliders; one `DrawAddComponentEntry<T>` line each).
+colliders; one `DrawAddComponentEntry<T>` line each). Adding a `BoxColliderComponent` seeds
+`HalfExtents` / `Offset` from a resident `StaticMeshComponent` AABB (mesh local space, no
+division by entity scale — the world matrix already scales at draw and at body creation). No
+mesh, or a handle that is not loaded yet, leaves the unit default. Sphere and capsule are not
+seeded. This is editor-only: `OnComponentAdded` does not do it, because deserialize would then
+overwrite authored extents.
 
 Each section is a 26 px `ChromeBg` row (`Theme().RowHeight`): chevron (`ICON_LC_CHEVRON_RIGHT` /
 `_DOWN`), a per-type Lucide icon (not the entity's dominant-component icon), the name in Inter
@@ -935,6 +1013,113 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
   because the action is not undoable: see
   [assets.md](../engine/assets.md#orphaned-sidecars) for why the editor asks a person rather than
   reaping at boot.
+
+## Map panel
+
+[`MapPanel`](../../GanymedEditor/source/Panels/MapPanel.h) — `BeginPanel("Map")`, docked with Stats
+on the right (dock-layout version 3). Palette, placement options, duplicate-along-axis, parity
+audit, scatter, and markers. There is no thumbnail system; rows are
+`AssetTint` icon + filename.
+
+**Snap model.** `MapSnapSettings` is owned by `EditorLayer` and read by both placement and
+ImGuizmo. Defaults: enabled, translate 0.5 m, rotate 15° (45° is a preset), scale 0.1, snap to
+surface, sit-on-bounds, align-to-normal off, grid height 0. **Ctrl inverts `Enabled`.** That is a
+behaviour change from the old "Ctrl enables 0.5 / 45°". Modular kit pieces only line up if
+snapping is the resting state; a wall 0.03 m off its neighbour is worse than an accidentally
+snapped drag. Unity defaults snapping off; Unreal and Blender default it on. For a map tool the
+Unreal/Blender default is the one that matches the failure mode.
+
+**Palette.** `AssetManager::ForEachAsset` filtered to `Prefab` and `StaticMesh`. The pinned subset
+is what the panel shows. Persistence is `<asset-root>/.editor/map_palette.yaml` — a fact about the
+content, not window layout, so it does not live in `imgui.ini`. The editor does not link yaml-cpp;
+the file is a hand-written `pinned:` list plus a `markers:` list (`Kind`, `Color`, `Size`). Missing
+file or missing `markers:` section uses in-memory defaults (Spawn / Patrol / Trigger). `.editor/`
+starts with a dot, so the Content Browser already hides it. A palette click while the scatter brush
+is armed sets the scatter source rather than entering placement.
+
+**Placement.** Clicking a pinned row instantiates **once** (`InstantiatePrefab(..., recordUndo=false)`
+or `MeshImporter::Instantiate`) and then only writes the root transform. The preview is a real
+entity — it appears in the outliner — because there is no translucent mesh shader to ghost it
+with. It is `RaycastFilter::Exclude` so it cannot snap to itself. Esc / RMB / New / Open / Play
+destroy it without an undo entry. Save while a preview exists will persist it — it is a real
+entity, and the serializer has no notion of "not yet committed". Cancel first.
+
+Per-frame, in order: M0 hit (or the work plane at `GridHeight` when Snap to surface is off) →
+quantize the **hit point** on all axes when snap is on (never the final origin, or sit-on-bounds
+gets rounded too) → sit offset along local Y from the union of descendant mesh AABBs in root
+local space, `q * (0, -bounds.Min.y * scale.y, 0)` → rotation `align * yaw * authoredBase`, then
+`Scene::MarkChanged<TransformComponent>`. Sit-on-bounds is the setting that makes a crate authored
+around its centre land *on* the floor rather than through it.
+
+LMB pushes one `AddEntitiesCommand` **after** that transform is final, then either exits or (Shift)
+instantiates a fresh preview. Alt+LMB is unsnapped. `[` / `]` step yaw by `Rotate`. Marker placement
+is the same path with no mesh: `CreateEntity(kind)` plus `MarkerComponent`, sit-on-bounds skipped
+(there is no AABB to sit on). Esc / RMB / New / Open / Play cancel either kind of preview.
+
+**Duplicate along axis** in the panel: count (includes the original), spacing, axis. `count - 1`
+calls to `Scene::DuplicateEntity`, world-axis offsets, one `CompositeCommand`.
+
+**Parity audit.** On demand (and whenever the undo stamp, hidden set, tolerance, or scene pointer
+changes), walks every entity with a resident static mesh. Hidden outliner subtrees and the
+placement preview are skipped. Findings:
+
+| Finding | Test |
+|---|---|
+| No collider | Mesh, no box/sphere/capsule |
+| Collider smaller than mesh | Per-axis world-AABB delta > tolerance (default 0.02 m) |
+| Collider larger than mesh | Same test, other sign |
+| Offset mismatch | Centres differ by > tolerance while extents agree |
+
+Sphere/capsule entities with a mesh are not "no collider" and are not AABB-compared. Clicking a
+row selects the entity, orbits `EditorCamera::Frame` around the union of its mesh and collider
+world AABBs, and fills `EditorBoundsOverlay` (cyan mesh box, orange collider box) for the next
+`OnUpdateEditor`. **Generate collider from mesh** on the selection is one `CompositeCommand` of
+`ComponentEditCommand<BoxColliderComponent>` and/or `AddComponentCommand<BoxColliderComponent>`;
+entities that already have a sphere or capsule are skipped. Footprint roll-up is per scene root
+that has mesh descendants: `vol(intersection(meshUnion, colliderUnion)) / vol(meshUnion)`. The
+panel says in its own text that this does not detect a hole between two correctly-sized colliders.
+
+**Scatter.** One pinned prefab or mesh, not a weighted list. Arm **Paint** (spray-can), then LMB
+in the viewport. Each frame samples candidate points in a disc around the M0 hit (tangent frame),
+drops world −Y from 8 m above, and instantiates whatever survives min-spacing (spatial hash, this
+group's existing children included) and the optional starting-surface filter. Filter matches
+**mesh asset handle**, not entity UUID — tiled `GroundTile`s share a mesh, so one tile starts the
+stroke for the whole floor. Drop rays are capped at **12 per frame**; a naïve `density × area`
+burst of M0 rays would hitch. Density is "how many in the disc before we stop trying this
+frame", spacing is the packing constraint.
+
+Instances are ordinary entities, parented under a lazily created `Scatter/<name>` folder that
+carries `ScatterGroupComponent { Source, LastSeed }`. Unity foliage and Unreal HISMs are instance
+arrays precisely because one entity per pebble does not scale; Ganymed has no such component, so
+the 500-per-stroke cap and the ~1500-entity scene warning exist because of that, not because of
+draw calls (`Renderer3D` already batches shared mesh+material). Shift+LMB erases **direct
+children of that group** inside the 3D brush radius.
+
+One undo entry per stroke: `CompositeCommand` of `AddEntitiesCommand`s (or `DeleteEntitiesCommand`s
+for erase). `RestoreSubtree` only re-links `snapshots.front()` to a surviving parent, so several
+sibling instance roots cannot share one snapshot vector — duplicate-along-axis already learned
+this. An empty stroke creates no undo entry; a newly created empty group is destroyed.
+
+The seed is PCG32 (`Core/Random.h`), stored on the group as `LastSeed`, then incremented on the
+panel so the next stroke differs unless you type the old seed back. **Same seed plus the same
+path is not hash-stable.** Samples are consumed per frame as the cursor moves, so a slower drag
+or a dropped frame draws a different sequence. Undo snapshots are the real replay. Sit-on-bounds
+uses the Map snap setting; scatter does not quantize to the translate grid.
+
+The brush is a cyan (paint) or red (erase) `EditorBoundsOverlay` sphere. Esc / RMB / New / Open /
+Play abort. Gizmos are suppressed while the brush is armed.
+
+**Markers.** A `MarkerComponent` is a gameplay query target (`Scene.FindMarkers`), not an editor
+tag convention. The panel lists kinds from `map_palette.yaml` (`Kind`, `Color`, `Size`); defaults
+are Spawn (green), Patrol (blue), Trigger (orange) when that section is absent. Clicking a kind
+enters placement: an empty entity tagged with the kind, plus the component. The outliner name is
+the tag; `FindMarkers` matches `Kind` — renaming the entity does not change the query. Unknown
+kinds typed in the inspector still round-trip — the palette is a convenience, not a whitelist.
+Viewport Icons (default on) pushes `PhysicsSettings::ShowMarkers` every frame, the same
+editor-opt-in shape as collider gizmos; the engine default is false. Drawing is `DrawWireSphere`
+(16 segments) plus an optional world −Z arrow (`DrawForward`), flushed with the rest of the
+debug-line batch in `EndScene`. Wait times and teams stay on `ScriptComponent`. Marker is in Add
+Component; scatter groups are not.
 
 ## Typed drag-drop
 

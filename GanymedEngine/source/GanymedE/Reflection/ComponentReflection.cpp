@@ -465,6 +465,25 @@ namespace GanymedE::Reflection {
 				.data<&PrefabInstanceComponent::Source>("Source")
 					.traits(Trait::ReadOnly | Trait::OmitIfDefault)
 					.custom<Attr>(Attr{}.Asset(AssetType::Prefab));
+
+			GE_REFLECT_COMPONENT(ScatterGroupComponent)
+				.custom<Attr>(Attr{}.Label("Scatter Group")
+					.Tip("Map-panel scatter folder. Children are ordinary entities."))
+				.data<&ScatterGroupComponent::Source>("Source")
+					.traits(Trait::ReadOnly | Trait::OmitIfDefault)
+				.data<&ScatterGroupComponent::LastSeed>("LastSeed")
+					.custom<Attr>(Attr{}.Label("Last Seed"));
+
+			GE_REFLECT_COMPONENT(MarkerComponent)
+				.custom<Attr>(Attr{}.Label("Marker")
+					.Tip("Spawn / patrol / trigger. Kind is a string so games define their own."))
+				.data<&MarkerComponent::Kind>("Kind")
+				.data<&MarkerComponent::Color>("Color")
+					.traits(Trait::Color)
+				.data<&MarkerComponent::Size>("Size")
+					.custom<Attr>(Attr{}.Range(0.05f, 20.0f).Speed(0.05f))
+				.data<&MarkerComponent::DrawForward>("DrawForward")
+					.custom<Attr>(Attr{}.Label("Draw Forward"));
 		}
 
 		// ---- Particles --------------------------------------------------------------------
@@ -629,6 +648,7 @@ namespace GanymedE::Reflection {
 		static_assert(sizeof(CapsuleColliderComponent) == 28, "CapsuleColliderComponent changed - reflect the new field");
 		static_assert(sizeof(PrefabInstanceComponent) == 8, "PrefabInstanceComponent changed - reflect the new field");
 		static_assert(sizeof(PrefabMemberComponent) == 8, "PrefabMemberComponent changed - reflect the new field");
+		static_assert(sizeof(ScatterGroupComponent) == 16, "ScatterGroupComponent changed - reflect the new field");
 
 		// Not in ComponentList, but reflected here and equally worth guarding.
 		static_assert(sizeof(IDComponent) == 8, "IDComponent changed - reflect the new field");

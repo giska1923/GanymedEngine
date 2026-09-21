@@ -127,7 +127,11 @@ automatically.
   component payload: perspective (FOV/near/far) or orthographic (size/near/far), aspect from the
   viewport.
 - [`EditorCamera`](../../GanymedEngine/source/GanymedE/Renderer/EditorCamera.h) — the viewport
-  camera: orbit (Alt+LMB rotate, MMB pan, scroll zoom) around a focal point; perspective.
+  camera: orbit (Alt+LMB rotate, MMB pan, scroll zoom) around a focal point, or a pitch-locked
+  **orthographic** top-down mode (`SetOrthographic`, `OrthoHeight` = vertical world metres).
+  `Frame(center, radius)` keeps the current pitch/yaw (or −90° in ortho) and sets the focal
+  point so a sphere of that radius fits the vertical FOV / `OrthoHeight` — used by the Map
+  panel's collider audit.
 - `OrthographicCamera(+Controller)` — legacy 2D-era pair with **no application callers** since
   Sandbox was removed. `Renderer2D`/`Renderer3D` still carry `BeginScene` overloads taking the
   camera; `OrthographicCameraController` and `SubTexture2D` have no callers at all. See
@@ -306,7 +310,12 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    one view per cascade (`RenderPass::Shadow + n`). Cascade fitting is stable (bounding-sphere) and
    texel-snapped to kill edge shimmer; front-face culling reduces acne. Color writes are disabled
    (a depth-only FB rejects draws whose write mask targets missing attachments). Split scheme:
-   log/linear blend (λ=0.7) capped at 200 units. Skinned casters are split out of the instanced
+   log/linear blend (λ=0.7) capped at 200 units. An **orthographic** camera (the editor's Top
+   (Ortho) view, or a scene camera with an ortho projection) fits each cascade to the actual
+   ortho box slice rather than a fake 50° perspective frustum. Far is further capped at twice
+   the larger view extent so a 20 m plan view does not spend its texel budget on 200 m of
+   unused depth. That is the alternative to a separate shadow camera — MAP_EDITOR M5. Skinned
+   casters are split out of the instanced
    caster list and redrawn through `ShadowDepthSkinned` in **every** cascade — a character standing
    in cascade 0 casting into cascade 2 is ordinary, and a bind-pose shadow under a moving character
    reads as a bug even though nothing errored.
@@ -334,13 +343,16 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    that means injecting into the transparent sort.
 8. **Debug lines** — accumulated `DrawLine/DrawWireBox/DrawWireSphere/DrawWireCapsule` calls flush
    as one lines draw (20k-vertex dynamic buffer), depth-tested but not written. Used by collider
-   gizmos and Jolt debug draw.
+   gizmos, marker gizmos (`DrawWireSphere` + optional forward `DrawLine`), and Jolt debug draw.
 
 Also owned here: the procedural **skybox** (fullscreen quad, sky/ground gradient + sun) or the
 **cubemap skybox** when an environment is active; the editor **grid** (fragment-shader infinite
 grid on a scaled quad — its transform goes through `bgfx::setTransform`, and it must not set
-`u_CameraPosition` because `FrameUniforms` already does, one-uniform-per-draw). The active
-environment is whatever `SubmitEnvironment` set this frame — caching environments by path is
+`u_CameraPosition` because `FrameUniforms` already does, one-uniform-per-draw). Quad scale and
+fade (`u_GridFade`) follow the current projection: perspective keeps the old 100 / 20–80 m
+numbers; ortho sizes both to the visible XZ extent so a 200 m plan view still has a grid at the
+corners. The active environment is whatever `SubmitEnvironment` set this frame — caching
+environments by path is
 `AssetManager`'s job, not the renderer's. `GetStats()` reports
 draws/meshes/culled/instanced/transparent/skinned plus particle emitters/billboards/draws/culled
 (shown in the editor Stats panel). Per-emitter frustum cull uses the CPU AABB `ParticleSystem`

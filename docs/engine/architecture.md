@@ -19,7 +19,7 @@ GanymedE/
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
 ├── UI/          UIEngine (RmlUi game UI; the editor's own UI is ImGui — see ui.md)
-├── Math/        Transform decomposition, AABB + Frustum, FloatCurve + ColorGradient
+├── Math/        Transform decomposition, ScreenPointToRay, AABB + Frustum, FloatCurve + ColorGradient
 ├── ImGui/       ImGuiLayer (docking UI host)
 ├── Debug/       Instrumentor (chrome://tracing profiler)
 └── Utils/       PlatformUtils (file dialogs)
