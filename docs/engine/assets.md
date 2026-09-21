@@ -84,7 +84,7 @@ one derived index plus a registry of per-type managers (see *Managers and cachin
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
 | `GetAsset<T>(handle)` | Cached load through the type’s manager. Available for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those, enforced by an `IsAssetType<T>` `static_assert`. Prefer an [`AssetRef<T>`](#assetreft) member; this is for one-shot lookups |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
-| `SetAssetConfig(handle, config)` | Overlay keys onto the sidecar’s Config (unknown keys on disk survive), write atomically, update the index, `Reload`. Writing a `.meta` does not trip `AssetWatcher` — it stamps the asset file, not the sidecar — so this has to Reload itself |
+| `SetAssetConfig(handle, config)` | Overlay keys onto the sidecar’s Config (unknown keys on disk survive), write atomically, update the index, `Reload` only when `CompiledCache::HashConfig` moved. Authoring keys (`Collision`) share the bag but do not evict the live asset. Writing a `.meta` does not trip `AssetWatcher` — it stamps the asset file, not the sidecar — so a compile-affecting write has to Reload itself |
 | `GetCacheStats()` | One `{TypeName, Resident, Retained}` row per registered manager, for the editor’s Stats panel |
 | `OrphanedMetaCount()` / `CleanOrphanedMeta()` | `.meta` sidecars the last scan found with no asset beside them, and the action that deletes them. Split because detection is safe and deletion is not — see [Orphaned sidecars](#orphaned-sidecars) |
 | `IsAssetsWritable()` | "This process may write into `assets/`" — one flag, one meaning, for sidecars and every other asset-file writer |
@@ -1221,7 +1221,8 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 [`MeshSource`](../../GanymedEngine/source/GanymedE/Renderer/MeshSource.h) — **CPU data only, no bgfx
 call anywhere below it**, which is what lets it run on a worker. `BuildMesh` is the main-thread half
 that turns one into a live `Mesh`. `MeshCompiler` passes the sidecar Config through; the epoch
-already hashes Config, so a changed key invalidates the blob with no new machinery. Defaults live
+hashes the compile-affecting keys (`ConfigAffectsCompile`), so a changed importer key invalidates
+the blob with no new machinery and an authoring key (`Collision`) does not. Defaults live
 in `MeshImportSettings` and match what the importer did before the keys existed — an empty sidecar
 does not change a mesh. Compiler `Version()` is therefore not bumped.
 
@@ -1230,6 +1231,7 @@ does not change a mesh. Compiler `Version()` is therefore not bumped.
 | `ImportScale` | float > 0 | `1.0` | Uniform scale baked at import. Static verts bake it; skinned verts keep bind space and the same matrix rides `Submesh::LocalTransform`, because the draw is `entity * LocalTransform * Palette * v` |
 | `TangentPolicy` | `WhenMissing`, `Always`, `Never` | `WhenMissing` | `WhenMissing` is the previous hard-coded rule. `Always` regenerates even when the file shipped tangents. `Never` trusts the file and, if it has none, leaves the pre-generation constant +X |
 | `UpAxis` | `Y`, `Z` | `Y` | glTF is Y-up by spec. `Z` applies a −90° rotation about X (Z-up DCC → Y-up) through the same import matrix as `ImportScale` |
+| `Collision` | `None`, `Box` | `None` | Placement seed, not an importer input. `Box` makes `MeshImporter::Instantiate` add a `BoxColliderComponent` fitted from `Mesh::GetBounds()`. Existing entities keep the component they already have. `ConfigAffectsCompile` excludes this key, so flipping it does not invalidate the blob |
 
 The Asset Inspector writes these keys. A bad `ImportScale` rescales every existing placement and
 is not undoable — the panel says so in the same words the `.gmat` editor uses.
@@ -1403,7 +1405,7 @@ a cold import. `MeshSource` split that in Phase 5; both compilers honour the con
 ### Epoch invalidation
 
 The `.dep` holds compiler version, source size, source mtime, source **content hash**, a hash of
-the `.meta` Config block, and a `{path, hash}` pair per declared dependency. `EpochDiff` is a
+the `.meta` Config block (keys `ConfigAffectsCompile` accepts — `Collision` is skipped), and a `{path, hash}` pair per declared dependency. `EpochDiff` is a
 bitflag set naming which of those moved, and it is in the recompile log line because "why did this
 rebuild" is the question an invalidation bug makes you ask:
 

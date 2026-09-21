@@ -267,7 +267,18 @@ namespace GanymedE {
 	{
 		if (!AssetManager::SetAssetConfig(m_Handle, keys))
 			return;
-		m_Mesh.Ready = false;
+
+		// Collision is authoring metadata: SetAssetConfig does not Reload, so the
+		// resident mesh is still valid. Import settings do Reload, and the cache
+		// has to drop so the next frame picks up the new bounds.
+		for (const auto& [key, value] : keys)
+		{
+			if (ConfigAffectsCompile(key))
+			{
+				m_Mesh.Ready = false;
+				break;
+			}
+		}
 		ResolveSelection();
 	}
 
@@ -408,6 +419,36 @@ namespace GanymedE {
 					CommitConfig({ { "UpAxis", axes[i] } });
 			}
 			ImGui::EndCombo();
+		}
+
+		ImGui::Separator();
+		const char* collisions[] = { "None", "Box" };
+		std::string collision = ConfigString(config, "Collision", MeshImportSettings::Collision);
+		int collisionIndex = (collision == "Box") ? 1 : 0;
+		if (ImGui::BeginCombo("Collision", collisions[collisionIndex]))
+		{
+			for (int i = 0; i < 2; i++)
+			{
+				if (ImGui::Selectable(collisions[i], collisionIndex == i))
+					CommitConfig({ { "Collision", collisions[i] } });
+			}
+			ImGui::EndCombo();
+		}
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip(
+				"Seed for new placements, not an override.\n"
+				"Box: drag-drop / map place / scatter add a fitted BoxCollider.\n"
+				"Existing entities keep the component they already have.");
+
+		EnsureMeshCache();
+		if (m_Mesh.Ready)
+		{
+			glm::vec3 halfExtents, offset;
+			MeshCollision::FitFromAABB(m_Mesh.Bounds, halfExtents, offset);
+			ImGui::Text("Fitted box: half (%.3f, %.3f, %.3f)  offset (%.3f, %.3f, %.3f)",
+				halfExtents.x, halfExtents.y, halfExtents.z,
+				offset.x, offset.y, offset.z);
+			ImGui::TextDisabled("From Mesh::GetBounds(), computed at import. No 3D overlay until P5.");
 		}
 	}
 

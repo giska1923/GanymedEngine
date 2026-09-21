@@ -832,10 +832,14 @@ namespace GanymedE {
 		if (!AssetMetaSerializer::Write(fullPath, meta))
 			return false;
 
-		// Index before Reload: Open hashes metadata.Config into the epoch, and Reload
-		// is what deletes the old blob so the next GetAsset recompiles.
+		// Index first. Reload only when the compile-affecting hash moved — Collision
+		// lives in this bag but is not an input to MeshCompiler, and evicting the live
+		// mesh because a crate's default flipped is a hitch for no compiled-byte change.
+		const bool compileChanged =
+			CompiledCache::HashConfig(it->second.Config) != CompiledCache::HashConfig(meta.Config);
 		it->second.Config = meta.Config;
-		Reload(handle);
+		if (compileChanged)
+			Reload(handle);
 		return true;
 	}
 

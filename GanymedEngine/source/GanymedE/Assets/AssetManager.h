@@ -141,10 +141,12 @@ namespace GanymedE {
 		static void Reload(AssetHandle handle);
 
 		// Overlay `config` onto the sidecar's Config map, write it (atomic tmp+rename),
-		// update the in-memory index, then Reload. Unknown keys already on disk are kept:
-		// the incoming map is merged, not a replacement, which is what makes a sidecar from
-		// a newer engine survive a rewrite. Writing a `.meta` does not trip AssetWatcher
-		// (it stamps the asset file, not the sidecar), so this has to Reload itself.
+		// update the in-memory index, then Reload if a compile-affecting key changed.
+		// Authoring keys (`Collision`) share the bag but do not evict the live asset.
+		// Unknown keys already on disk are kept: the incoming map is merged, not a
+		// replacement, which is what makes a sidecar from a newer engine survive a rewrite.
+		// Writing a `.meta` does not trip AssetWatcher (it stamps the asset file, not the
+		// sidecar), so a compile-affecting write has to Reload itself.
 		// Returns false when the handle is unknown, assets/ is read-only, or the write failed.
 		static bool SetAssetConfig(AssetHandle handle, const AssetConfig& config);
 

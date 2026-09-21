@@ -23,6 +23,7 @@
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Scene/PrefabSerializer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 #include "GanymedE/Utils/PlatformUtils.h"
@@ -1612,14 +1613,8 @@ namespace GanymedE {
 		if (!entity || !entity.HasComponent<StaticMeshComponent>())
 			return false;
 
-		const Ref<Mesh>& mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
-		if (!mesh)
-			return false;
-
-		const AABB& bounds = mesh->GetBounds();
-		collider.HalfExtents = (bounds.Max - bounds.Min) * 0.5f;
-		collider.Offset = (bounds.Max + bounds.Min) * 0.5f;
-		return true;
+		return MeshCollision::SeedBoxCollider(
+			collider, entity.GetComponent<StaticMeshComponent>().Mesh.Get());
 	}
 
 	// The inspector half of the instance UI: where the source came from, and the two propagation

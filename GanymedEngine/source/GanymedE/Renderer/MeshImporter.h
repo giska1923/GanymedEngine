@@ -33,7 +33,25 @@ namespace GanymedE {
 		static constexpr float ImportScale = 1.0f;
 		static constexpr const char* TangentPolicy = "WhenMissing";
 		static constexpr const char* UpAxis = "Y";
+		// Placement seed, not an import setting. Lives in the same Config bag;
+		// ConfigAffectsCompile excludes it so flipping the default does not recompile.
+		static constexpr const char* Collision = "None";
 	};
+
+	struct BoxColliderComponent;
+
+	// Shared by MeshImporter::Instantiate, add-component, and M2 generate-from-mesh.
+	// The asset Collision key is a seed: Instantiate adds a BoxCollider when it is Box.
+	// Extents always come from Mesh::GetBounds() (computed at import). They are not a
+	// second Config key — writing derived extents into a hashed bag would recompile
+	// the mesh, and the live AABB already is the import-time cache.
+	namespace MeshCollision {
+
+		bool WantsBoxCollider(const AssetConfig& config);
+		void FitFromAABB(const AABB& bounds, glm::vec3& halfExtents, glm::vec3& offset);
+		bool SeedBoxCollider(BoxColliderComponent& collider, const Ref<Mesh>& mesh);
+
+	}
 
 	class MeshImporter
 	{

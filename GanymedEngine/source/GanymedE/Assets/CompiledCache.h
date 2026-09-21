@@ -76,6 +76,11 @@ namespace GanymedE {
 
 		static OutputStatus QueryOutput(const AssetMetadata& metadata);
 
+		// Epoch hash of the sidecar Config, skipping keys that do not change compiled
+		// bytes (`ConfigAffectsCompile`). SetAssetConfig uses the same hash to decide
+		// whether a write must Reload.
+		static uint64_t HashConfig(const AssetConfig& config);
+
 		// Delete this asset's compiled output and its epoch record, so the next Open recompiles.
 		// This is "reimport now" - the epoch already catches an edited source on its own.
 		static bool Invalidate(const AssetMetadata& metadata);

@@ -1,6 +1,6 @@
 # Milestone — Model Asset Editor
 
-**Status: P1–P2 done. P3–P7 planned.**
+**Status: P1–P3 done. P4–P7 planned.**
 
 > **Same branch rule as [MAP_EDITOR.md](MAP_EDITOR.md).** Every phase touches
 > `GanymedEditor/source/` or `GanymedEngine/source/`, which the
@@ -45,7 +45,7 @@ and before the two phases that need it.
 |---|---|---|---|
 | **P1** | Asset Inspector panel — readouts, no preview | **done** | — |
 | **P2** | Import settings written to `AssetMeta::Config` | **done** | P1 |
-| **P3** | Collision default on the mesh asset | ~0.5 day | P2, and pairs with [MAP_EDITOR](MAP_EDITOR.md) M2 |
+| **P3** | Collision default on the mesh asset | **done** | P2, and pairs with [MAP_EDITOR](MAP_EDITOR.md) M2 |
 | **P4** | Multi-target rendering: view-ID bases | ~1.5 days | — (**the risk**) |
 | **P5** | The asset preview renderer | ~2 days | P4 |
 | **P6** | Thumbnails: Content Browser and map palette | ~1.5 days | P5 |
@@ -207,18 +207,11 @@ restating them, or an unset sidecar and a UI-default sidecar start behaving diff
 
 ## Phase P3 — a collision default on the mesh asset
 
-### Goal
-
-A crate brings its collider. The map editor stops repairing what should not have been broken.
-
-### Steps
-
-1. Two config keys: `Collision` (`None` | `Box`, default `None`) and the fitted extents cached
-   alongside, so the fit is computed at import rather than per placement.
-2. The editor's add-component path and
-   [MAP_EDITOR](MAP_EDITOR.md#phase-m2--collider--mesh-parity) M2's *generate collider from mesh*
-   both read it, falling back to a live bounds fit when the asset has no default.
-3. The Asset Inspector shows the fitted box over the preview once P5 exists.
+**Done.** `Collision` (`None` | `Box`, default `None`) lives on the mesh sidecar. `MeshImporter::Instantiate`
+(viewport drop, map place, scatter) adds a fitted `BoxColliderComponent` when it is `Box`. Add-component
+and M2 generate-from-mesh share `MeshCollision::SeedBoxCollider`, which reads `Mesh::GetBounds()`.
+`Collision = None` is today's behaviour. The inspector combo shows the fitted half-extents / offset as
+numbers; the 3D overlay waits on P5.
 
 ### Decisions, with reasoning
 
@@ -231,6 +224,18 @@ What the asset default removes is only the *typing*, which is where the wrong nu
 **`Box` only.** Sphere and capsule are placement decisions, not properties of a mesh, and convex
 hulls do not exist — [PROVING_GROUND](PROVING_GROUND.md#what-it-deliberately-is-not) cut mesh
 colliders on purpose and nothing has changed that.
+
+**One Config key, not two.** The plan asked for fitted extents cached alongside `Collision`. Those
+extents are already on the compiled mesh: `Mesh::ComputeBounds` runs at `BuildMesh`, and
+`GetBounds()` is O(1). Writing them back into Config would hash into the epoch and force a
+recompile every time the cache was refreshed (and go stale the moment `ImportScale` changed).
+`Collision` itself is authoring metadata, not an importer input — `ConfigAffectsCompile` excludes
+it, and `SetAssetConfig` skips `Reload` when only that hash is unchanged, so flipping a crate to
+`Box` does not evict the live mesh.
+
+**Add-component and generate still live-fit.** They do not wait on `Collision = Box`. A mesh with
+no default must still get a sensible collider when the user asks for one; the key only decides
+whether *placement* brings one unasked.
 
 ### Verification
 

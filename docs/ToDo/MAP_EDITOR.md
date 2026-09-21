@@ -379,10 +379,12 @@ audit that implies a guarantee it does not make is worse than no audit.
 it on the static mesh asset; Unity computes bounds when a `BoxCollider` is added to a renderer.
 Ganymed's colliders live on components, so the same crate mesh can carry different collision per
 placement — more flexible, and the reason the wrong value can be typed in the first place.
-**The better long-term answer is a collision default in the mesh's `.meta` sidecar**, so a crate
-brings its collider with it and placement never types anything. That is a real design change with an
-asset-format consequence and it is not folded in here — it is written into
-[assets.md](assets.md) as a follow-up instead.
+The mesh sidecar now carries a `Collision` seed (`None` | `Box`) from
+[MODEL_EDITOR](MODEL_EDITOR.md) P3: placement copies a fitted `BoxColliderComponent` onto the new
+entity and stops there. Generate-from-mesh is the repair for entities that arrived before the
+default existed, or for a mesh that still says `None`; it shares `MeshCollision::SeedBoxCollider`
+with add-component and still live-fits from `Mesh::GetBounds()`. The component remains the
+override — two placements of the same crate can still disagree.
 
 ### Risks
 

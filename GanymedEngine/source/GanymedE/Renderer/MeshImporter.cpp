@@ -957,6 +957,26 @@ namespace GanymedE {
 		return out.IsValid();
 	}
 
+	bool MeshCollision::WantsBoxCollider(const AssetConfig& config)
+	{
+		return ConfigString(config, "Collision", MeshImportSettings::Collision) == "Box";
+	}
+
+	void MeshCollision::FitFromAABB(const AABB& bounds, glm::vec3& halfExtents, glm::vec3& offset)
+	{
+		halfExtents = (bounds.Max - bounds.Min) * 0.5f;
+		offset = (bounds.Max + bounds.Min) * 0.5f;
+	}
+
+	bool MeshCollision::SeedBoxCollider(BoxColliderComponent& collider, const Ref<Mesh>& mesh)
+	{
+		if (!mesh)
+			return false;
+
+		FitFromAABB(mesh->GetBounds(), collider.HalfExtents, collider.Offset);
+		return true;
+	}
+
 	Entity MeshImporter::Instantiate(Scene* scene, const std::filesystem::path& path)
 	{
 		std::filesystem::path relativePath = MakeAssetRelative(path);
@@ -1001,6 +1021,17 @@ namespace GanymedE {
 
 			smc.MaterialOverrides.emplace_back(std::filesystem::exists(GetAssetRoot() / sidecar)
 				? AssetManager::ImportAsset(sidecar) : InvalidAssetHandle);
+		}
+
+		// Asset default is a seed, not an override: existing placements keep whatever
+		// collider they already have. Collision=None is today's behaviour — no component.
+		if (const AssetMetadata* metadata = AssetManager::GetMetadata(handle))
+		{
+			if (MeshCollision::WantsBoxCollider(metadata->Config))
+			{
+				auto& box = entity.AddComponent<BoxColliderComponent>();
+				MeshCollision::SeedBoxCollider(box, mesh);
+			}
 		}
 
 		return entity;

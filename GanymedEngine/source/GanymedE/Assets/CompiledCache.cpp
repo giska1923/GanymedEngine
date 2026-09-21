@@ -42,19 +42,26 @@ namespace GanymedE {
 			return HashBytes(str.data(), str.size(), seed);
 		}
 
-		uint64_t HashConfig(const AssetConfig& config)
+	}
+
+	uint64_t CompiledCache::HashConfig(const AssetConfig& config)
+	{
+		// std::map iterates in key order, so the hash does not depend on insertion order -
+		// which matters because the sidecar reader and a hand-edited file can produce the
+		// same settings in a different order. Authoring-only keys (Collision) are skipped
+		// so flipping a mesh's collider default does not invalidate the blob.
+		uint64_t hash = 0xcbf29ce484222325ull;
+		for (const auto& [key, value] : config)
 		{
-			// std::map iterates in key order, so the hash does not depend on insertion order -
-			// which matters because the sidecar reader and a hand-edited file can produce the
-			// same settings in a different order.
-			uint64_t hash = 0xcbf29ce484222325ull;
-			for (const auto& [key, value] : config)
-			{
-				hash = HashString(key, hash);
-				hash = HashString(value, hash);
-			}
-			return hash;
+			if (!ConfigAffectsCompile(key))
+				continue;
+			hash = HashString(key, hash);
+			hash = HashString(value, hash);
 		}
+		return hash;
+	}
+
+	namespace {
 
 		uint64_t FileTimestamp(const std::filesystem::path& path)
 		{

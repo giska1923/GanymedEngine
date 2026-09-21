@@ -53,6 +53,15 @@ namespace GanymedE {
 		catch (...) { return fallback; }
 	}
 
+	// Authoring keys that share the Config bag with import settings. Compilers do not read
+	// them; hashing them into the epoch would recompile a mesh because a crate's collision
+	// default flipped. Unknown keys stay compile-affecting — a hand-added key a future
+	// compiler might consume must still invalidate.
+	inline bool ConfigAffectsCompile(const std::string& key)
+	{
+		return key != "Collision";
+	}
+
 	struct CompileInput
 	{
 		const AssetMetadata* Metadata = nullptr;
