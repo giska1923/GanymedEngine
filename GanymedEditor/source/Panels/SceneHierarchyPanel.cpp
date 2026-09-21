@@ -75,6 +75,16 @@ namespace GanymedE {
 				icon = ICON_LC_PACKAGE;
 				tint = theme.AssetTint[static_cast<int>(AssetType::Prefab)];
 			}
+			else if (entity.HasComponent<ScatterGroupComponent>())
+			{
+				icon = ICON_LC_SPRAY_CAN;
+			}
+			else if (entity.HasComponent<MarkerComponent>())
+			{
+				icon = ICON_LC_MAP_PIN;
+				const glm::vec4& c = entity.GetComponent<MarkerComponent>().Color;
+				tint = ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
+			}
 			else if (entity.HasComponent<CameraComponent>())
 			{
 				icon = ICON_LC_CAMERA;
@@ -140,6 +150,14 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_PACKAGE;
 				tint = theme.AssetTint[static_cast<int>(AssetType::Prefab)];
+			}
+			else if constexpr (std::is_same_v<T, ScatterGroupComponent>)
+			{
+				icon = ICON_LC_SPRAY_CAN;
+			}
+			else if constexpr (std::is_same_v<T, MarkerComponent>)
+			{
+				icon = ICON_LC_MAP_PIN;
 			}
 			else if constexpr (std::is_same_v<T, CameraComponent>)
 			{
@@ -1397,6 +1415,8 @@ namespace GanymedE {
 			return;
 
 		T& component = m_SelectionContext.AddComponent<T>();
+		if constexpr (std::is_same_v<T, BoxColliderComponent>)
+			SeedBoxColliderFromMesh(m_SelectionContext, component);
 		if (Recording())
 		{
 			m_UndoStack->Push(CreateScope<AddComponentCommand<T>>(
@@ -1439,6 +1459,7 @@ namespace GanymedE {
 			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");
 			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
 			DrawAddComponentEntry<ParticleEmitterComponent>("Particle Emitter");
+			DrawAddComponentEntry<MarkerComponent>("Marker");
 			DrawAddComponentEntry<RigidBodyComponent>("Rigid Body");
 			DrawAddComponentEntry<BoxColliderComponent>("Box Collider");
 			DrawAddComponentEntry<SphereColliderComponent>("Sphere Collider");
@@ -1668,7 +1689,8 @@ namespace GanymedE {
 		GE_INFO("Reverted instance from '{0}'", metadata->FilePath);
 	}
 
-	Entity SceneHierarchyPanel::InstantiatePrefab(const std::filesystem::path& relativePath)
+	Entity SceneHierarchyPanel::InstantiatePrefab(const std::filesystem::path& relativePath,
+		bool recordUndo)
 	{
 		if (!m_Context)
 			return {};
@@ -1681,9 +1703,25 @@ namespace GanymedE {
 		if (!root)
 			return {};
 
-		PushAddedEntities("Instantiate '" + root.GetComponent<TagComponent>().Tag + "'", root);
+		if (recordUndo)
+			PushAddedEntities("Instantiate '" + root.GetComponent<TagComponent>().Tag + "'", root);
 		SelectSingle(root);
 		return root;
+	}
+
+	bool SceneHierarchyPanel::SeedBoxColliderFromMesh(Entity entity, BoxColliderComponent& collider)
+	{
+		if (!entity || !entity.HasComponent<StaticMeshComponent>())
+			return false;
+
+		const Ref<Mesh>& mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
+		if (!mesh)
+			return false;
+
+		const AABB& bounds = mesh->GetBounds();
+		collider.HalfExtents = (bounds.Max - bounds.Min) * 0.5f;
+		collider.Offset = (bounds.Max + bounds.Min) * 0.5f;
+		return true;
 	}
 
 	// The inspector half of the instance UI: where the source came from, and the two propagation
@@ -1874,6 +1912,16 @@ namespace GanymedE {
 		// used to return false by hand for the same reason. ReadOnly also suppresses the drop
 		// target, which BeginDisabled alone would not: a payload drop is not an item click.
 		DrawComponent<PrefabInstanceComponent>("Prefab Instance", entity, [&](auto& component)
+		{
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
+		});
+
+		DrawComponent<ScatterGroupComponent>("Scatter Group", entity, [&](auto& component)
+		{
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
+		});
+
+		DrawComponent<MarkerComponent>("Marker", entity, [&](auto& component)
 		{
 			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});

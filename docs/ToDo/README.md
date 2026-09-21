@@ -6,20 +6,20 @@ belong in this folder.
 
 ## Where things live
 
-| Folder | Holds | Tense |
-|---|---|---|
-| `docs/ToDo/` | What is planned, broken, or deferred | future |
-| `docs/engine/`, `docs/editor/`, `docs/runtime/` | What the code does **now** | present |
-| `docs/history/` | Why it got that way — completed milestone records, with the rationale and the verification evidence | past |
+| Folder                                          | Holds                                                                                               | Tense   |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------- |
+| `docs/ToDo/`                                    | What is planned, broken, or deferred                                                                | future  |
+| `docs/engine/`, `docs/editor/`, `docs/runtime/` | What the code does **now**                                                                          | present |
+| `docs/history/`                                 | Why it got that way — completed milestone records, with the rationale and the verification evidence | past    |
 
 ## The lifecycle of an item
 
 1. **Plan it here.** A milestone plan, a bug, or a one-line follow-up — whichever the work is.
-2. **Build it**, updating the matching `docs/engine`/`editor`/`runtime` doc *in the same change*.
+2. **Build it**, updating the matching `docs/engine`/`editor`/`runtime` doc _in the same change_.
    A code change with no doc update is incomplete work, not a follow-up.
 3. **Close it.** Delete the item from this folder. If it was a milestone with execution notes and
    verification evidence worth keeping, move that record to `docs/history/` and link it from
-   [`docs/README.md`](../README.md). If it was a small fix, the live doc update *is* the record —
+   [`docs/README.md`](../README.md). If it was a small fix, the live doc update _is_ the record —
    do not manufacture history for it.
 
 The rule that makes this work: **an item leaves this folder only when the thing is actually done and
@@ -27,14 +27,15 @@ documented.** A file here is a promise, not a description.
 
 ## Open items
 
-| Document | Covers | Items |
-|---|---|---|
-| [PROVING_GROUND.md](PROVING_GROUND.md) | **Milestone plan** — the test game, and the engine work that must land first | Phase 0 + P1-P7 |
-| [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something | A2 done; A1, A3 remain |
-| [rendering.md](rendering.md) | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback | 4 |
-| [reflection.md](reflection.md) | Per-field override marking on hand-written sections (permanent) | 1 |
-| [assets.md](assets.md) | Dependency hashing; mesh-apply file I/O; indivisible texture uploads | 3 |
-| [cross-cutting.md](cross-cutting.md) | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, an unchecked collider-vs-mesh gap, and two shipping gaps | 18 |
+| Document                                           | Covers                                                                                                                                                                                                                                  | Items                  |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7        |
+| [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something                                                                                                                                                    | A2 done; A1, A3 remain |
+| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done             |
+| [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback; the frustum's near-plane depth convention                                                            | 5                      |
+| [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                      |
+| [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads; mesh `.meta` collision default                                                                                                                                    | 4                      |
+| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, and two shipping gaps | 17                     |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
@@ -63,6 +64,12 @@ before this moves to `docs/history/`:
 - The merge direction is master → game, so nothing written on the branch ever arrives here. The
   milestone has to be assembled from `first-game` when it is retired.
 
+**[MAP_EDITOR.md](MAP_EDITOR.md) executes on `map-editor`, which is based on `master`.** The plan
+started on `first-game`, which the branch policy forbids from touching editor or engine source;
+the file was moved here before M0. M0–M6 have landed. M6's scene and Lua edits (the step-up
+ledge, the P2 footprint doors, the Sentry's `+Z` facing) live on `first-game`. The Warehouse
+rebuild was not timed in the editor — see that file.
+
 **Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
 managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three
 things the plan got wrong, is in
@@ -87,7 +94,10 @@ was hiding: a 24 ms Apply frame in Release is the budget's inability to subdivid
 backpressure does not fix and did not. [rendering.md](rendering.md) is effectively closed — all four backends
 render, pick and agree on colour. Its one remaining entry, **MSAA, is parked on purpose**: the abort
 is diagnosed and the fix is one line, but whether MSAA is wanted at all is the open question, and
-FXAA already ships. Nothing there blocks anything else.
+FXAA already ships. Nothing there blocks anything else. One entry was added while planning the map
+editor: the frustum's near plane is extracted with the OpenGL depth convention under a
+`GLM_FORCE_DEPTH_ZERO_TO_ONE` build. It is conservative, so nothing renders wrong — it is one line,
+and it matters before anyone tunes culling numbers.
 
 The frame loop is instrumented and the profiler backend was rewritten to make that affordable, so
 what is left of that item is only the Tracy question — worth having, blocking nothing. macOS is the

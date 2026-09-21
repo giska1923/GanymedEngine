@@ -75,6 +75,7 @@ mistake:
 | You changed | Update |
 |---|---|
 | `GanymedEngine/source/Core/` | `docs/engine/core.md` |
+| `GanymedEngine/source/GanymedE/Math/` | `docs/engine/core.md` |
 | ECS wrappers, views, systems, scheduling | `docs/engine/ecs.md` |
 | Scene, Entity, components, serialization | `docs/engine/scene.md` |
 | bgfx backend, shaders, render passes | `docs/engine/rendering.md` |

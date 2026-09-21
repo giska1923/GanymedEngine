@@ -78,6 +78,12 @@ declare interface Entity {
 	HasParticleEmitter(): boolean;
 
 	/**
+	 * `MarkerComponent.Kind`, or `undefined` when this entity has no marker.
+	 * There is no setter — kinds are authored in the editor.
+	 */
+	GetMarkerKind(): string | undefined;
+
+	/**
 	 * Switches to `name` and plays it. Switching clips is a hard cut from the start —
 	 * there is no crossfade in v1.
 	 *
@@ -366,6 +372,15 @@ declare namespace Scene {
 	 * meaningless. Store it and pass it back, nothing else.
 	 */
 	function FindEntityByUUID(id: number): Entity | undefined;
+
+	/**
+	 * Linear scan over `MarkerComponent`. Fine for setup; do not call it every frame.
+	 *
+	 * `kind` is an exact string match. Omit it (or pass `""`) to get every marker.
+	 * No matches is `[]`, not `undefined`. A typo in the kind is a silent empty list —
+	 * kinds are game vocabulary, not an engine enum.
+	 */
+	function FindMarkers(kind?: string): Entity[];
 
 	/**
 	 * Instantiate a prefab, returning the root's id — or `undefined` if the path is not an

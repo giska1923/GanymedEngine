@@ -39,6 +39,7 @@ namespace GanymedE {
 		// Iterated in Phase 3: billboards go to ParticleRenderer, mesh particles
 		// ride SubmitMesh. The declaration itself was Phase 2 (ordering lock).
 		using ParticleView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<ParticleEmitterComponent>>;
+		using MarkerView   = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<MarkerComponent>>;
 
 		using Views = TypeList<
 			MeshView,
@@ -50,7 +51,8 @@ namespace GanymedE {
 			BoxColliderView,
 			SphereColliderView,
 			CapsuleColliderView,
-			ParticleView
+			ParticleView,
+			MarkerView
 		>;
 
 		using ECS::System<RenderSystem>::System;
@@ -66,12 +68,14 @@ namespace GanymedE {
 			const glm::vec3& cameraUp);
 		void SubmitSprites();
 		void DrawColliderGizmos();
+		void DrawMarkerGizmos();
 
 		void RebuildEditorHidden();
 		bool IsEditorHidden(entt::entity entity) const;
 
 		// Jolt's own debug view when physics is running and enabled, otherwise authored
 		// gizmos - and those only when PhysicsSettings::ShowColliderGizmos is set.
+		// Edit used to call DrawColliderGizmos unconditionally; it now reads the same flag.
 		void DrawPhysicsDebugOrGizmos(const glm::vec3& cameraPosition);
 
 		// Reused across entities within one SubmitMeshes pass, so resolving material overrides

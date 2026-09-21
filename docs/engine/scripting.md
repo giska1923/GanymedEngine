@@ -137,10 +137,10 @@ Copying nine floats beats both problems at script call rates.
 
 Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, `Cross`), `Entity`
 (`GetName`, `GetUUID`, `GetChildByName`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians),
-`Get/SetScale`, `HasRigidBody`, the physics, animation, audio and particle calls below), `Input`,
+`Get/SetScale`, `HasRigidBody`, `GetMarkerKind`, the physics, animation, audio and particle calls below), `Input`,
 `Key`, `Mouse`, `Log`
 (routed to the **client** logger — script output is game output),
-`Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.Spawn`, `Entity:Destroy`,
+`Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.FindMarkers` / `Scene.Spawn`, `Entity:Destroy`,
 `Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
 
 > **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
@@ -357,6 +357,27 @@ below); the binding takes `double` and truncates toward zero, because `int` is r
 sol2 when a script property (a double `24.0`) is passed.
 
 Curves, textures, meshes, blend mode and `RenderMode` are **not** scriptable in v1.
+
+### Markers
+
+`Entity:GetMarkerKind()` returns the `MarkerComponent::Kind` string, or `nil` when the entity has
+no marker. There is no setter: kinds are authored in the editor, and wait times / teams stay on
+`ScriptComponent`.
+
+`Scene.FindMarkers(kind)` is a linear scan over `MarkerComponent`, the same posture as
+`FindEntityByName` — setup, not per-frame. Kind is an **exact** string match. Omit the argument
+(or pass `""`) to get every marker. The result is a 1-based Lua table of `Entity` userdata; no
+matches is `{}`, not `nil`. A typo in the kind string is a silent empty table, which is the cost
+of `Kind` being a game vocabulary string rather than an engine enum.
+
+```lua
+local spawns = Scene.FindMarkers("Spawn")
+for i = 1, #spawns do
+    local p = spawns[i]:GetTranslation()
+end
+```
+
+### Child lookup
 
 `Entity:GetChildByName(name)` is the lookup the demo needs: **direct children only**, first tag
 match. `Scene.FindEntityByName` is a global first-match, so two boxes both parenting a child
