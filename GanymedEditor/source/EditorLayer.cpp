@@ -1,5 +1,7 @@
 #include "EditorLayer.h"
+#include "EditorPicking.h"
 #include "EditorPrefabOverrides.h"
+#include "EditorUndo.h"
 #include "AssetDragDrop.h"
 #include "EditorFonts.h"
 #include "EditorIcons.h"
@@ -12,6 +14,8 @@
 #include <imgui/imgui_internal.h>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include "GanymedE/Scene/SceneSerializer.h"
@@ -27,7 +31,9 @@
 #include "GanymedE/Utils/PlatformUtils.h"
 #include "GanymedE/Math/Math.h"
 #include "GanymedE/Renderer/MeshImporter.h"
+#include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Renderer/Renderer3D.h"
 #include "GanymedE/UI/UIEngine.h"
 #include "GanymedE/Scene/SceneSingletons.h"
@@ -36,10 +42,16 @@
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace GanymedE {
 
@@ -49,7 +61,7 @@ namespace GanymedE {
 		// Bump when the DockBuilder default tree changes. Existing imgui.ini otherwise keeps
 		// the old splits — including the phase-1 6% toolbar node — and View → Reset Layout
 		// is easy to miss on the first launch after a chrome change.
-		constexpr int kDockLayoutVersion = 2;
+		constexpr int kDockLayoutVersion = 3;
 		int s_IniDockLayoutVersion = 0;
 
 		void* DockLayoutReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
@@ -94,6 +106,7 @@ namespace GanymedE {
 			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
 			ImGui::DockBuilderDockWindow("Viewport", dockMain);
 			ImGui::DockBuilderDockWindow("Stats", dockRight);
+			ImGui::DockBuilderDockWindow("Map", dockRight);
 			ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
 			ImGui::DockBuilderFinish(dockspaceId);
 		}
@@ -167,6 +180,144 @@ namespace GanymedE {
 
 			scene.MarkChanged<TransformComponent>(entity);
 		}
+
+		glm::vec3 Quantize(const glm::vec3& p, float step)
+		{
+			if (step <= 1.0e-6f)
+				return p;
+			return glm::round(p / step) * step;
+		}
+
+		bool IntersectWorkPlane(const Math::Ray& ray, float height, glm::vec3& outPoint)
+		{
+			if (std::abs(ray.Direction.y) < 1.0e-8f)
+				return false;
+
+			const float t = (height - ray.Origin.y) / ray.Direction.y;
+			if (t < 0.0f || t > ray.MaxDistance)
+				return false;
+
+			outPoint = ray.Origin + ray.Direction * t;
+			return true;
+		}
+
+		glm::quat RotationBetween(const glm::vec3& from, const glm::vec3& to)
+		{
+			const glm::vec3 f = glm::normalize(from);
+			const glm::vec3 t = glm::normalize(to);
+			const float d = glm::dot(f, t);
+			if (d > 0.9999f)
+				return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+			if (d < -0.9999f)
+			{
+				glm::vec3 axis = glm::cross(f, glm::vec3(1.0f, 0.0f, 0.0f));
+				if (glm::dot(axis, axis) < 1.0e-6f)
+					axis = glm::cross(f, glm::vec3(0.0f, 0.0f, 1.0f));
+				return glm::angleAxis(glm::pi<float>(), glm::normalize(axis));
+			}
+
+			const glm::vec3 axis = glm::cross(f, t);
+			const float s = std::sqrt((1.0f + d) * 2.0f);
+			glm::quat q;
+			q.x = axis.x / s;
+			q.y = axis.y / s;
+			q.z = axis.z / s;
+			q.w = s * 0.5f;
+			return glm::normalize(q);
+		}
+
+		glm::mat4 EulerRotationMatrix(const glm::vec3& euler)
+		{
+			return glm::rotate(glm::mat4(1.0f), euler.x, { 1.0f, 0.0f, 0.0f })
+				* glm::rotate(glm::mat4(1.0f), euler.y, { 0.0f, 1.0f, 0.0f })
+				* glm::rotate(glm::mat4(1.0f), euler.z, { 0.0f, 0.0f, 1.0f });
+		}
+
+		void AccumulateMeshBounds(Scene& scene, Entity entity, const glm::mat4& invRoot,
+			AABB& bounds, bool& any)
+		{
+			if (entity.HasComponent<StaticMeshComponent>())
+			{
+				const Ref<Mesh>& mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
+				if (mesh)
+				{
+					const AABB local = mesh->GetBounds().Transformed(
+						invRoot * scene.GetWorldSpaceTransform(entity));
+					if (!any)
+					{
+						bounds = local;
+						any = true;
+					}
+					else
+					{
+						bounds.Grow(local.Min);
+						bounds.Grow(local.Max);
+					}
+				}
+			}
+
+			if (!entity.HasComponent<RelationshipComponent>())
+				return;
+
+			for (UUID childID : entity.GetComponent<RelationshipComponent>().Children)
+			{
+				Entity child = scene.FindEntityByUUID(childID);
+				if (child)
+					AccumulateMeshBounds(scene, child, invRoot, bounds, any);
+			}
+		}
+
+		Entity FindScatterGroup(Scene& scene, AssetHandle source)
+		{
+			if (!IsAssetHandleValid(source))
+				return {};
+
+			auto view = scene.Reg().view<ScatterGroupComponent>();
+			for (auto handle : view)
+			{
+				if (view.get<ScatterGroupComponent>(handle).Source == source)
+					return Entity{ handle, &scene };
+			}
+			return {};
+		}
+
+		AssetHandle MeshHandleOf(Entity entity)
+		{
+			if (entity && entity.HasComponent<StaticMeshComponent>())
+				return entity.GetComponent<StaticMeshComponent>().Mesh.Handle();
+			return InvalidAssetHandle;
+		}
+
+		void CollectSubtreeUUIDs(Scene& scene, Entity root, std::unordered_set<UUID>& out)
+		{
+			std::vector<Entity> subtree;
+			std::unordered_set<UUID> visited;
+			scene.CollectSubtree(root, subtree, visited);
+			for (Entity entity : subtree)
+				out.insert(entity.GetUUID());
+		}
+
+		uint64_t ScatterCellKey(int x, int y, int z)
+		{
+			const auto pack = [](int v) -> uint64_t
+			{
+				return (uint64_t)((uint32_t)(v + 0x100000) & 0x1FFFFFu);
+			};
+			return pack(x) | (pack(y) << 21) | (pack(z) << 42);
+		}
+
+		void TangentAxes(const glm::vec3& normal, glm::vec3& tangent, glm::vec3& bitangent)
+		{
+			const glm::vec3 n = glm::normalize(normal);
+			tangent = (std::abs(n.y) < 0.99f)
+				? glm::normalize(glm::cross(n, glm::vec3(0.0f, 1.0f, 0.0f)))
+				: glm::normalize(glm::cross(n, glm::vec3(1.0f, 0.0f, 0.0f)));
+			bitangent = glm::cross(n, tangent);
+		}
+
+		constexpr int kScatterMaxDropRays = 12;
+		constexpr size_t kScatterSceneWarn = 1500;
+		constexpr float kScatterDropLift = 8.0f;
 
 	}
 
@@ -269,6 +420,16 @@ namespace GanymedE {
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 
 		RetargetPanels();
+		m_MapPanel.SetPlaceHandler([this](AssetHandle handle, AssetType type)
+		{
+			if (m_SceneState == SceneState::Edit)
+				BeginPlacement(handle, type);
+		});
+		m_MapPanel.SetMarkerHandler([this](const std::string& kind, const glm::vec4& color, float size)
+		{
+			if (m_SceneState == SceneState::Edit)
+				BeginMarkerPlacement(kind, color, size);
+		});
 
 		// Optional scene on the command line: GanymedEditor [--renderer=<backend>] [path/to/scene.ganymede]
 		// FirstPositional, not Args[1]: an option may come first.
@@ -338,6 +499,35 @@ namespace GanymedE {
 				m_ActiveScene->GetSingleton<EditorViewFilter>().HiddenEntities =
 					&m_SceneHierarchyPanel.HiddenEntities();
 				m_ActiveScene->GetSingleton<RenderContext>().PreviewCamera = m_ViewportCamera;
+				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowColliderGizmos =
+					m_ShowColliderGizmos;
+				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowMarkers = m_ShowMarkers;
+
+				// Raycast and write the placement transform before TransformSystem so the
+				// preview renders this frame at the hover pose, not last frame's.
+				UpdateSurfaceRaycast();
+				if (IsPlacing())
+					ApplyPlacementTransform();
+				TickScatter();
+
+				EditorBoundsOverlay& overlay = m_ActiveScene->GetSingleton<EditorBoundsOverlay>();
+				m_MapPanel.FillOverlay(overlay);
+				overlay.Spheres.clear();
+				if (IsScattering() && m_SurfaceHit.IsHit())
+				{
+					const bool erase = m_ScatterStroke.Active
+						? m_ScatterStroke.Erase
+						: (Input::IsKeyPressed(Key::LeftShift)
+							|| Input::IsKeyPressed(Key::RightShift));
+					overlay.Spheres.push_back({
+						m_SurfaceHit.Point,
+						m_MapPanel.Scatter().Radius,
+						erase
+							? glm::vec4(0.95f, 0.40f, 0.35f, 1.0f)
+							: glm::vec4(0.35f, 0.85f, 1.0f, 1.0f)
+					});
+				}
+
 				m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 				break;
 			}
@@ -348,11 +538,12 @@ namespace GanymedE {
 
 				PhysicsSettings& physicsSettings = m_ActiveScene->GetSingleton<PhysicsSettings>();
 				physicsSettings.DebugDraw = m_PhysicsDebugDraw;
-				// Editor-only opt-in: the engine defaults this off so a shipped game never
-				// draws authored collider wireframes. Pushed every frame for the same reason
-				// DebugDraw is - Scene::Copy does not carry singletons, so the play scene
-				// starts each run with engine defaults.
-				physicsSettings.ShowColliderGizmos = true;
+				// Editor-only opt-in: the engine defaults these off so a shipped game never
+				// draws authored collider wireframes or marker gizmos. Edit and Play both push
+				// the Visualizers / Icons checkboxes every frame because Scene::Copy does not
+				// carry singletons.
+				physicsSettings.ShowColliderGizmos = m_ShowColliderGizmos;
+				physicsSettings.ShowMarkers = m_ShowMarkers;
 
 				m_ActiveScene->OnUpdateRuntime(ts, &m_EditorCamera);
 
@@ -366,7 +557,9 @@ namespace GanymedE {
 			}
 		}
 
-		// Mouse picking: read back the entity ID under the cursor
+		// Mouse picking: GPU entity-ID (click-select / hover highlight) plus the CPU
+		// surface ray (world point + normal, this frame). The GPU path is async and
+		// has no depth; the CPU path is what placement will use.
 		auto [mx, my] = ImGui::GetMousePos();
 		mx -= m_ViewportBounds[0].x;
 		my -= m_ViewportBounds[0].y;
@@ -381,10 +574,13 @@ namespace GanymedE {
 		int mouseX = (int)mx;
 		int mouseY = (int)my;
 
+		const bool pointerInViewport = mouseX >= 0 && mouseY >= 0
+			&& mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y;
+
 		// Picking is asynchronous now: queue this frame's pick and take whatever
 		// has landed. The result trails the cursor by a frame or two, which is
 		// invisible for hover highlighting.
-		if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
+		if (pointerInViewport)
 		{
 			m_SceneRenderer->RequestEntityID(mouseX, mouseY);
 
@@ -395,6 +591,12 @@ namespace GanymedE {
 		else
 		{
 			m_HoveredEntity = {};
+		}
+
+		if (m_SceneState != SceneState::Edit)
+		{
+			m_SurfaceHit = {};
+			m_SurfaceRaycastMs = 0.0f;
 		}
 
 		// Post stack: bloom -> tonemap -> FXAA into the composite shown in the viewport
@@ -496,6 +698,11 @@ namespace GanymedE {
 
 		m_SceneHierarchyPanel.OnImGuiRender();
 		m_ContentBrowserPanel.OnImGuiRender();
+		m_MapPanel.OnImGuiRender(m_SnapSettings, m_SceneState == SceneState::Edit, IsPlacing(),
+			m_ActiveScene.get(), m_SceneState == SceneState::Edit ? &m_UndoStack : nullptr,
+			&m_SceneHierarchyPanel,
+			m_ViewportCamera == UUID{ 0 } ? &m_EditorCamera : nullptr,
+			m_PlacePreview);
 
 		ImGui::Begin("Stats");
 
@@ -503,6 +710,26 @@ namespace GanymedE {
 		if (m_HoveredEntity)
 			hoveredEntityName = m_HoveredEntity.GetComponent<TagComponent>().Tag;
 		ImGui::Text("Hovered Entity: %s", hoveredEntityName.c_str());
+
+		if (m_SurfaceHit.FromWorkPlane)
+		{
+			ImGui::Text("Surface: work plane  (%.3f, %.3f, %.3f)  n=(%.2f, %.2f, %.2f)  %.3f ms",
+				m_SurfaceHit.Point.x, m_SurfaceHit.Point.y, m_SurfaceHit.Point.z,
+				m_SurfaceHit.Normal.x, m_SurfaceHit.Normal.y, m_SurfaceHit.Normal.z,
+				m_SurfaceRaycastMs);
+		}
+		else if (m_SurfaceHit.Hit)
+		{
+			ImGui::Text("Surface: %s  (%.3f, %.3f, %.3f)  n=(%.2f, %.2f, %.2f)  %.3f ms",
+				m_SurfaceHit.Hit.GetName().c_str(),
+				m_SurfaceHit.Point.x, m_SurfaceHit.Point.y, m_SurfaceHit.Point.z,
+				m_SurfaceHit.Normal.x, m_SurfaceHit.Normal.y, m_SurfaceHit.Normal.z,
+				m_SurfaceRaycastMs);
+		}
+		else
+		{
+			ImGui::Text("Surface: none  %.3f ms", m_SurfaceRaycastMs);
+		}
 
 		auto stats = Renderer2D::GetStats();
 		ImGui::Text("Renderer2D Stats:");
@@ -714,6 +941,26 @@ namespace GanymedE {
 		if (m_SceneState != SceneState::Edit || !m_EditorScene)
 			return;
 
+		if (IsPlacing())
+		{
+			if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+				CancelPlacement();
+
+			if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket))
+			{
+				m_PlaceYaw -= m_SnapSettings.Rotate;
+				ApplyPlacementTransform();
+			}
+			if (ImGui::IsKeyPressed(ImGuiKey_RightBracket))
+			{
+				m_PlaceYaw += m_SnapSettings.Rotate;
+				ApplyPlacementTransform();
+			}
+		}
+
+		if (IsScattering() && ImGui::IsKeyPressed(ImGuiKey_Escape))
+			CancelScatterMode();
+
 		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
 			m_UndoStack.Undo(*m_EditorScene);
 
@@ -722,6 +969,16 @@ namespace GanymedE {
 		{
 			m_UndoStack.Redo(*m_EditorScene);
 		}
+
+		if (IsPlacing())
+		{
+			if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+				CancelPlacement();
+			return;
+		}
+
+		if (IsScattering())
+			return;
 
 		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D))
 			m_SceneHierarchyPanel.DuplicateSelectedEntity();
@@ -916,6 +1173,12 @@ namespace GanymedE {
 		ImGui::PopStyleColor();
 	}
 
+	void EditorLayer::SetEditorTopOrtho(bool enabled)
+	{
+		m_EditorTopOrtho = enabled;
+		m_EditorCamera.SetOrthographic(enabled);
+	}
+
 	void EditorLayer::UI_Viewport()
 	{
 		using EditorUI::BeginPanel;
@@ -942,13 +1205,19 @@ namespace GanymedE {
 			const float availX = ImGui::GetContentRegionAvail().x;
 
 			std::string cameraLabel = "Editor Camera";
-			if (editing && m_ViewportCamera != UUID{ 0 })
+			if (editing && m_EditorTopOrtho && m_ViewportCamera == UUID{ 0 })
+				cameraLabel = "Top (Ortho)";
+			else if (editing && m_ViewportCamera != UUID{ 0 })
 			{
 				Entity preview = m_ActiveScene ? m_ActiveScene->FindEntityByUUID(m_ViewportCamera) : Entity{};
 				if (preview && preview.HasComponent<CameraComponent>())
 					cameraLabel = preview.GetComponent<TagComponent>().Tag;
 				else
+				{
 					m_ViewportCamera = UUID{ 0 };
+					if (m_EditorTopOrtho)
+						cameraLabel = "Top (Ortho)";
+				}
 			}
 			else if (!editing && m_ActiveScene)
 			{
@@ -961,8 +1230,18 @@ namespace GanymedE {
 			ImGui::SetNextItemWidth(200.0f);
 			if (ImGui::BeginCombo("##ViewportCam", cameraLabel.c_str()))
 			{
-				if (ImGui::Selectable("Editor Camera", m_ViewportCamera == UUID{ 0 }))
+				if (ImGui::Selectable("Editor Camera",
+					m_ViewportCamera == UUID{ 0 } && !m_EditorTopOrtho))
+				{
 					m_ViewportCamera = UUID{ 0 };
+					SetEditorTopOrtho(false);
+				}
+				if (ImGui::Selectable("Top (Ortho)",
+					m_ViewportCamera == UUID{ 0 } && m_EditorTopOrtho))
+				{
+					m_ViewportCamera = UUID{ 0 };
+					SetEditorTopOrtho(true);
+				}
 
 				if (m_ActiveScene)
 				{
@@ -992,21 +1271,63 @@ namespace GanymedE {
 				m_ViewportSize.x, m_ViewportSize.y);
 			ImGui::PushStyleColor(ImGuiCol_Text, Color(theme.TextDim));
 			ImGui::TextUnformatted(aspect);
+
+			float metresPerPixel = 0.0f;
+			if (m_ViewportSize.y > 0.0f)
+			{
+				if (m_ViewportCamera == UUID{ 0 } && m_EditorCamera.IsOrthographic())
+					metresPerPixel = m_EditorCamera.GetOrthoHeight() / m_ViewportSize.y;
+				else if (m_ViewportCamera != UUID{ 0 } && m_ActiveScene)
+				{
+					Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+					if (preview && preview.HasComponent<CameraComponent>())
+					{
+						const auto& cam = preview.GetComponent<CameraComponent>().Camera;
+						if (cam.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
+							metresPerPixel = cam.GetOrthographicSize() / m_ViewportSize.y;
+					}
+				}
+			}
+			if (metresPerPixel > 0.0f)
+			{
+				ImGui::SameLine();
+				char mpp[32];
+				std::snprintf(mpp, sizeof(mpp), "%.3f m/px", metresPerPixel);
+				ImGui::TextUnformatted(mpp);
+				ImGui::SetItemTooltip("Metres per pixel in the current orthographic view");
+			}
 			ImGui::PopStyleColor();
 
 			const float gap = ImGui::GetStyle().ItemSpacing.x;
 			const char* spaceLabel = m_GizmoWorldSpace ? "World" : "Local";
-			const float rightWidth = 24.0f + gap + 9.0f + gap + 72.0f;
+			const float rightWidth = 24.0f + gap + 24.0f + gap + 24.0f + gap + 9.0f + gap + 72.0f;
 			const float rightX = row.x + availX - rightWidth;
 			if (rightX > ImGui::GetCursorPosX() + gap)
 				ImGui::SetCursorPos(ImVec2(rightX, row.y));
 			else
 				ImGui::SameLine();
 
-			if (IconButton(ICON_LC_BOXES, "Visualizers", m_PhysicsDebugDraw.Enabled))
+			if (IconButton(ICON_LC_MAGNET, m_SnapSettings.Enabled
+				? "Snap settings (Ctrl disables)" : "Snap settings (Ctrl enables)",
+				m_SnapSettings.Enabled))
+			{
+				ImGui::OpenPopup("##SnapSettings");
+			}
+			if (ImGui::BeginPopup("##SnapSettings"))
+			{
+				DrawMapSnapControls(m_SnapSettings);
+				ImGui::EndPopup();
+			}
+
+			ImGui::SameLine();
+			if (IconButton(ICON_LC_BOXES, "Visualizers",
+				m_ShowColliderGizmos || m_PhysicsDebugDraw.Enabled))
 				ImGui::OpenPopup("##Visualizers");
 			if (ImGui::BeginPopup("##Visualizers"))
 			{
+				ImGui::Checkbox("Collider gizmos", &m_ShowColliderGizmos);
+				ImGui::SetItemTooltip("Authored box/sphere/capsule wireframes. Edit and Play.");
+				ImGui::Separator();
 				ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
 				ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
 				ImGui::Checkbox("Wireframe Shapes", &m_PhysicsDebugDraw.Wireframe);
@@ -1015,9 +1336,13 @@ namespace GanymedE {
 				ImGui::Checkbox("Center of Mass", &m_PhysicsDebugDraw.CenterOfMass);
 				ImGui::Checkbox("Constraints", &m_PhysicsDebugDraw.Constraints);
 				ImGui::EndDisabled();
-				ImGui::TextDisabled("Visible during Play (Jolt body state)");
+				ImGui::TextDisabled("Jolt debug draw is Play-only (live body state).");
 				ImGui::EndPopup();
 			}
+
+			ImGui::SameLine();
+			if (IconButton(ICON_LC_MAP_PIN, "Icons (marker gizmos)", m_ShowMarkers))
+				m_ShowMarkers = !m_ShowMarkers;
 
 			ImGui::SameLine();
 			ToolbarSeparator();
@@ -1085,11 +1410,11 @@ namespace GanymedE {
 		Entity gizmoEntity = selectedEntity;
 		if (gizmoEntity && m_SceneHierarchyPanel.IsLocked(gizmoEntity))
 			gizmoEntity = {};
-		if (gizmoEntity && m_GizmoType != -1 && editing)
+		if (gizmoEntity && m_GizmoType != -1 && editing && !IsPlacing() && !IsScattering())
 		{
 			glm::mat4 cameraProjection = m_EditorCamera.GetProjection();
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
-			bool ortho = false;
+			bool ortho = m_EditorCamera.IsOrthographic();
 			if (m_ViewportCamera != UUID{ 0 })
 			{
 				Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
@@ -1110,10 +1435,12 @@ namespace GanymedE {
 			auto& tc = gizmoEntity.GetComponent<TransformComponent>();
 			glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(gizmoEntity);
 
-			bool snap = Input::IsKeyPressed(Key::LeftControl);
-			float snapValue = 0.5f;
+			bool snap = SnapActive();
+			float snapValue = m_SnapSettings.Translate;
 			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
-				snapValue = 45.0f;
+				snapValue = m_SnapSettings.Rotate;
+			else if (m_GizmoType == ImGuizmo::OPERATION::SCALE)
+				snapValue = m_SnapSettings.Scale;
 			float snapValues[3] = { snapValue, snapValue, snapValue };
 
 			// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
@@ -1322,8 +1649,45 @@ namespace GanymedE {
 
 	bool EditorLayer::OnMouseButtonPressed(MouseButtonPressedEvent& e)
 	{
+		if (e.GetMouseButton() == Mouse::ButtonRight && m_ViewportHovered)
+		{
+			if (IsPlacing())
+			{
+				CancelPlacement();
+				return false;
+			}
+			if (IsScattering())
+			{
+				CancelScatterMode();
+				return false;
+			}
+		}
+
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
+			if (IsPlacing())
+			{
+				if (m_ViewportHovered && !ImGuizmo::IsOver())
+				{
+					ApplyPlacementTransform();
+					const bool chain = Input::IsKeyPressed(Key::LeftShift)
+						|| Input::IsKeyPressed(Key::RightShift);
+					CommitPlacement(chain);
+				}
+				return false;
+			}
+
+			if (m_MapPanel.IsPaintArmed() && m_SceneState == SceneState::Edit)
+			{
+				if (m_ViewportHovered && !ImGuizmo::IsOver())
+				{
+					const bool erase = Input::IsKeyPressed(Key::LeftShift)
+						|| Input::IsKeyPressed(Key::RightShift);
+					BeginScatterStroke(erase);
+				}
+				return false;
+			}
+
 			if (m_ViewportHovered && !ImGuizmo::IsOver() && !Input::IsKeyPressed(Key::LeftAlt))
 			{
 				Entity hover = m_HoveredEntity;
@@ -1352,6 +1716,8 @@ namespace GanymedE {
 
 	void EditorLayer::NewScene()
 	{
+		CancelScatterMode();
+		CancelPlacement();
 		m_EditorScene = CreateRef<Scene>();
 		SetupDefaultEnvironment(m_EditorScene);
 		m_ActiveScene = m_EditorScene;
@@ -1408,6 +1774,9 @@ namespace GanymedE {
 		if (m_SceneState != SceneState::Edit)
 			OnSceneStop();
 
+		CancelScatterMode();
+		CancelPlacement();
+
 		if (path.extension().string() != ".ganymede")
 		{
 			GE_WARN("Could not load {0} - not a scene file", path.filename().string());
@@ -1459,6 +1828,9 @@ namespace GanymedE {
 
 	void EditorLayer::OnScenePlay()
 	{
+		CancelScatterMode();
+		CancelPlacement();
+
 		m_EditorScene = m_ActiveScene;
 		m_ActiveScene = Scene::Copy(m_EditorScene);
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
@@ -1485,5 +1857,823 @@ namespace GanymedE {
 		// play, so every UUID it records still resolves.
 		RetargetPanels();
 		m_SceneHierarchyPanel.SetSelectedEntity({});
+	}
+
+	bool EditorLayer::SnapActive() const
+	{
+		const bool ctrl = Input::IsKeyPressed(Key::LeftControl)
+			|| Input::IsKeyPressed(Key::RightControl);
+		return m_SnapSettings.Enabled != ctrl;
+	}
+
+	void EditorLayer::CancelPlacement()
+	{
+		if (m_PlacePreview != UUID{ 0 } && m_ActiveScene)
+		{
+			Entity preview = m_ActiveScene->FindEntityByUUID(m_PlacePreview);
+			if (preview)
+			{
+				if (m_SceneHierarchyPanel.GetSelectedEntity()
+					&& m_SceneHierarchyPanel.GetSelectedEntity().GetUUID() == m_PlacePreview)
+				{
+					m_SceneHierarchyPanel.SetSelectedEntity({});
+				}
+
+				std::vector<EntitySnapshot> snapshots;
+				CaptureSubtree(*m_ActiveScene, preview, snapshots);
+				RemoveSubtree(*m_ActiveScene, snapshots);
+			}
+		}
+
+		m_PlacePreview = UUID{ 0 };
+		m_PlaceHandle = InvalidAssetHandle;
+		m_PlaceType = AssetType::None;
+		m_PlaceHasTarget = false;
+		m_PlaceHasBounds = false;
+		m_PlaceMarkerKind.clear();
+	}
+
+	void EditorLayer::BeginPlacement(AssetHandle handle, AssetType type)
+	{
+		if (!m_ActiveScene || m_SceneState != SceneState::Edit)
+			return;
+		if (type != AssetType::Prefab && type != AssetType::StaticMesh)
+			return;
+
+		CancelScatterMode();
+
+		const float keepYaw = (handle == m_PlaceHandle && type == m_PlaceType) ? m_PlaceYaw : 0.0f;
+		CancelPlacement();
+		m_PlaceYaw = keepYaw;
+
+		const AssetMetadata* metadata = AssetManager::GetMetadata(handle);
+		if (!metadata)
+			return;
+
+		Entity root;
+		if (type == AssetType::Prefab)
+			root = m_SceneHierarchyPanel.InstantiatePrefab(metadata->FilePath, false);
+		else
+			root = MeshImporter::Instantiate(m_ActiveScene.get(), GetAssetRoot() / metadata->FilePath);
+
+		if (!root)
+			return;
+
+		m_PlaceHandle = handle;
+		m_PlaceType = type;
+		m_PlacePreview = root.GetUUID();
+		m_PlaceBaseEuler = root.GetComponent<TransformComponent>().Rotation;
+		m_PlaceBaseScale = root.GetComponent<TransformComponent>().Scale;
+		RefreshPlaceBounds(root);
+		m_SceneHierarchyPanel.SetSelectedEntity(root);
+		ApplyPlacementTransform();
+	}
+
+	void EditorLayer::BeginMarkerPlacement(const std::string& kind, const glm::vec4& color, float size)
+	{
+		if (!m_ActiveScene || m_SceneState != SceneState::Edit)
+			return;
+		if (kind.empty())
+			return;
+
+		CancelScatterMode();
+
+		const float keepYaw = (kind == m_PlaceMarkerKind) ? m_PlaceYaw : 0.0f;
+		CancelPlacement();
+		m_PlaceYaw = keepYaw;
+
+		Entity root = m_ActiveScene->CreateEntity(kind);
+		auto& marker = root.AddComponent<MarkerComponent>();
+		marker.Kind = kind;
+		marker.Color = color;
+		marker.Size = glm::clamp(size, 0.05f, 20.0f);
+		marker.DrawForward = true;
+
+		m_PlaceMarkerKind = kind;
+		m_PlaceMarkerColor = marker.Color;
+		m_PlaceMarkerSize = marker.Size;
+		m_PlaceHandle = InvalidAssetHandle;
+		m_PlaceType = AssetType::None;
+		m_PlacePreview = root.GetUUID();
+		m_PlaceBaseEuler = root.GetComponent<TransformComponent>().Rotation;
+		m_PlaceBaseScale = root.GetComponent<TransformComponent>().Scale;
+		m_PlaceHasBounds = false;
+		m_PlaceBounds = {};
+		m_SceneHierarchyPanel.SetSelectedEntity(root);
+		ApplyPlacementTransform();
+	}
+
+	void EditorLayer::UpdateSurfaceRaycast()
+	{
+		m_SurfaceHit = {};
+		m_SurfaceRaycastMs = 0.0f;
+
+		auto [mx, my] = ImGui::GetMousePos();
+		mx -= m_ViewportBounds[0].x;
+		my -= m_ViewportBounds[0].y;
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		const float localX = mx;
+		const float localY = my;
+
+		if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
+			return;
+
+		const int mouseX = (int)mx;
+		const int mouseY = (int)my;
+		const bool pointerInViewport = mouseX >= 0 && mouseY >= 0
+			&& mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y;
+		if (!pointerInViewport)
+			return;
+
+		glm::mat4 viewProjection = m_EditorCamera.GetViewProjection();
+		if (m_ViewportCamera != UUID{ 0 })
+		{
+			Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+			if (preview && preview.HasComponent<CameraComponent>())
+			{
+				const auto& cc = preview.GetComponent<CameraComponent>();
+				const glm::mat4 view = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
+				viewProjection = cc.Camera.GetProjection() * view;
+			}
+		}
+
+		const glm::vec2 ndc = {
+			(localX / viewportSize.x) * 2.0f - 1.0f,
+			1.0f - (localY / viewportSize.y) * 2.0f
+		};
+		const float nearClipZ = Projection::HomogeneousDepth() ? -1.0f : 0.0f;
+		m_EditRay = Math::ScreenPointToRay(glm::inverse(viewProjection), ndc, nearClipZ, 1.0f);
+
+		RaycastFilter filter;
+		filter.HiddenEntities = &m_SceneHierarchyPanel.HiddenEntities();
+		filter.Exclude = m_PlacePreview;
+		if (IsScattering())
+		{
+			RebuildScatterExclude();
+			filter.ExcludeSet = &m_ScatterStroke.Exclude;
+		}
+		filter.GridHeight = m_SnapSettings.GridHeight;
+
+		const auto t0 = std::chrono::high_resolution_clock::now();
+		m_SurfaceHit = RaycastScene(m_ActiveScene, m_EditRay, filter);
+		const auto t1 = std::chrono::high_resolution_clock::now();
+		m_SurfaceRaycastMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+	}
+
+	void EditorLayer::RefreshPlaceBounds(Entity root)
+	{
+		m_PlaceHasBounds = false;
+		m_PlaceBounds = {};
+		if (!root || !m_ActiveScene)
+			return;
+
+		const glm::mat4 invRoot = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(root));
+		AccumulateMeshBounds(*m_ActiveScene, root, invRoot, m_PlaceBounds, m_PlaceHasBounds);
+	}
+
+	void EditorLayer::ApplyPlacementTransform()
+	{
+		if (!IsPlacing() || !m_ActiveScene)
+			return;
+
+		Entity preview = m_ActiveScene->FindEntityByUUID(m_PlacePreview);
+		if (!preview)
+		{
+			m_PlacePreview = UUID{ 0 };
+			m_PlaceType = AssetType::None;
+			m_PlaceHandle = InvalidAssetHandle;
+			m_PlaceMarkerKind.clear();
+			return;
+		}
+
+		if (!preview.HasComponent<TransformComponent>())
+			return;
+
+		if (!m_PlaceHasBounds && m_PlaceMarkerKind.empty())
+			RefreshPlaceBounds(preview);
+
+		const bool alt = Input::IsKeyPressed(Key::LeftAlt) || Input::IsKeyPressed(Key::RightAlt);
+		const bool snap = SnapActive() && !alt;
+
+		glm::vec3 point;
+		glm::vec3 normal{ 0.0f, 1.0f, 0.0f };
+		bool havePoint = false;
+
+		if (!m_SnapSettings.SnapToSurface)
+		{
+			havePoint = IntersectWorkPlane(m_EditRay, m_SnapSettings.GridHeight, point);
+			normal = { 0.0f, 1.0f, 0.0f };
+		}
+		else if (m_SurfaceHit.IsHit())
+		{
+			point = m_SurfaceHit.Point;
+			normal = m_SurfaceHit.Normal;
+			havePoint = true;
+		}
+
+		if (!havePoint)
+			return;
+
+		if (snap)
+			point = Quantize(point, m_SnapSettings.Translate);
+
+		glm::quat align(1.0f, 0.0f, 0.0f, 0.0f);
+		if (m_SnapSettings.AlignToNormal)
+			align = RotationBetween(glm::vec3(0.0f, 1.0f, 0.0f), normal);
+
+		const glm::quat yaw = glm::angleAxis(glm::radians(m_PlaceYaw), glm::vec3(0.0f, 1.0f, 0.0f));
+		const glm::mat4 rotation = glm::mat4_cast(align * yaw) * EulerRotationMatrix(m_PlaceBaseEuler);
+
+		glm::vec3 origin = point;
+		if (m_SnapSettings.SitOnBounds && m_PlaceHasBounds && m_PlaceMarkerKind.empty())
+		{
+			const glm::vec3 sitLocal(0.0f, -m_PlaceBounds.Min.y * m_PlaceBaseScale.y, 0.0f);
+			origin += glm::vec3(rotation * glm::vec4(sitLocal, 0.0f));
+		}
+
+		glm::mat4 world = glm::translate(glm::mat4(1.0f), origin)
+			* rotation
+			* glm::scale(glm::mat4(1.0f), m_PlaceBaseScale);
+
+		const UUID parentID = preview.HasComponent<RelationshipComponent>()
+			? preview.GetComponent<RelationshipComponent>().Parent : UUID{ 0 };
+		if (parentID != UUID{ 0 })
+		{
+			Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
+			if (parent)
+				world = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * world;
+		}
+
+		glm::vec3 translation, euler, scale;
+		if (!Math::DecomposeTransform(world, translation, euler, scale))
+			return;
+
+		auto& tc = preview.GetComponent<TransformComponent>();
+		tc.Translation = translation;
+		tc.Rotation = euler;
+		tc.Scale = m_PlaceBaseScale;
+		m_ActiveScene->MarkChanged<TransformComponent>(preview);
+		m_PlaceHasTarget = true;
+	}
+
+	void EditorLayer::CommitPlacement(bool chain)
+	{
+		if (!m_ActiveScene || !m_PlaceHasTarget)
+			return;
+
+		Entity preview = m_ActiveScene->FindEntityByUUID(m_PlacePreview);
+		if (!preview)
+		{
+			CancelPlacement();
+			return;
+		}
+
+		std::vector<EntitySnapshot> snapshots;
+		CaptureSubtree(*m_ActiveScene, preview, snapshots);
+		m_UndoStack.Push(CreateScope<AddEntitiesCommand>(
+			"Place '" + preview.GetComponent<TagComponent>().Tag + "'", std::move(snapshots)));
+
+		const AssetHandle handle = m_PlaceHandle;
+		const AssetType type = m_PlaceType;
+		const std::string markerKind = m_PlaceMarkerKind;
+		const glm::vec4 markerColor = m_PlaceMarkerColor;
+		const float markerSize = m_PlaceMarkerSize;
+		const float yaw = m_PlaceYaw;
+
+		m_PlacePreview = UUID{ 0 };
+		m_PlaceHandle = InvalidAssetHandle;
+		m_PlaceType = AssetType::None;
+		m_PlaceHasTarget = false;
+		m_PlaceHasBounds = false;
+		m_PlaceMarkerKind.clear();
+
+		m_SceneHierarchyPanel.SetSelectedEntity(preview);
+
+		if (chain)
+		{
+			if (!markerKind.empty())
+				BeginMarkerPlacement(markerKind, markerColor, markerSize);
+			else
+				BeginPlacement(handle, type);
+			m_PlaceYaw = yaw;
+			ApplyPlacementTransform();
+		}
+	}
+
+	bool EditorLayer::IsScattering() const
+	{
+		return m_MapPanel.IsPaintArmed() || m_ScatterStroke.Active;
+	}
+
+	void EditorLayer::TickScatter()
+	{
+		if (m_SceneState != SceneState::Edit || !m_ActiveScene)
+			return;
+
+		if (m_MapPanel.IsPaintArmed() && IsPlacing())
+			CancelPlacement();
+
+		if (m_ScatterStroke.Active && !m_MapPanel.IsPaintArmed())
+		{
+			EndScatterStroke();
+			return;
+		}
+
+		if (!m_ScatterStroke.Active)
+			return;
+
+		if (!Input::IsMouseButtonPressed(Mouse::ButtonLeft))
+		{
+			EndScatterStroke();
+			return;
+		}
+
+		if (!m_SurfaceHit.IsHit())
+			return;
+
+		const ScatterSettings& settings = m_MapPanel.Scatter();
+
+		if (!m_ScatterStroke.Erase
+			&& settings.FilterToStartSurface
+			&& !m_ScatterStroke.FilterLocked)
+		{
+			m_ScatterStroke.FilterWorkPlane = m_SurfaceHit.FromWorkPlane;
+			m_ScatterStroke.FilterMesh = MeshHandleOf(m_SurfaceHit.Hit);
+			m_ScatterStroke.FilterLocked = true;
+		}
+
+		if (m_ScatterStroke.Erase)
+		{
+			ScatterEraseAt(m_SurfaceHit.Point);
+			return;
+		}
+
+		if (m_ScatterStroke.Count >= settings.MaxInstancesPerStroke)
+		{
+			if (!m_ScatterStroke.HitCap)
+			{
+				GE_WARN("Scatter: hit MaxInstancesPerStroke ({0}).", settings.MaxInstancesPerStroke);
+				m_ScatterStroke.HitCap = true;
+			}
+			return;
+		}
+
+		const float radius = std::max(settings.Radius, 0.0f);
+		const float area = glm::pi<float>() * radius * radius;
+		const int want = std::max(1, (int)std::lround((double)settings.Density * (double)area));
+
+		int inDisc = 0;
+		const float radius2 = radius * radius;
+		for (const glm::vec3& p : m_ScatterStroke.Placed)
+		{
+			const glm::vec3 d = p - m_SurfaceHit.Point;
+			if (glm::dot(d, d) <= radius2)
+				inDisc++;
+		}
+
+		int attempts = want - inDisc;
+		attempts = std::min(attempts, kScatterMaxDropRays);
+		attempts = std::min(attempts, settings.MaxInstancesPerStroke - m_ScatterStroke.Count);
+		if (attempts <= 0)
+			return;
+
+		glm::vec3 tangent, bitangent;
+		TangentAxes(m_SurfaceHit.Normal, tangent, bitangent);
+
+		RaycastFilter filter;
+		filter.HiddenEntities = &m_SceneHierarchyPanel.HiddenEntities();
+		filter.ExcludeSet = &m_ScatterStroke.Exclude;
+		filter.GridHeight = m_SnapSettings.GridHeight;
+
+		for (int i = 0; i < attempts; i++)
+		{
+			if (m_ScatterStroke.Count >= settings.MaxInstancesPerStroke)
+				break;
+
+			const float u = m_ScatterStroke.Rng.Float01();
+			const float v = m_ScatterStroke.Rng.Float01();
+			const float discR = radius * std::sqrt(u);
+			const float theta = v * glm::two_pi<float>();
+			const glm::vec3 candidate = m_SurfaceHit.Point
+				+ tangent * (discR * std::cos(theta))
+				+ bitangent * (discR * std::sin(theta));
+
+			Math::Ray drop;
+			drop.Origin = candidate + glm::vec3(0.0f, kScatterDropLift, 0.0f);
+			drop.Direction = glm::vec3(0.0f, -1.0f, 0.0f);
+			drop.MaxDistance = 256.0f;
+
+			const SurfaceHit hit = RaycastScene(m_ActiveScene, drop, filter);
+			if (!hit.IsHit())
+				continue;
+
+			if (settings.FilterToStartSurface && m_ScatterStroke.FilterLocked)
+			{
+				if (m_ScatterStroke.FilterWorkPlane)
+				{
+					if (!hit.FromWorkPlane)
+						continue;
+				}
+				else if (IsAssetHandleValid(m_ScatterStroke.FilterMesh))
+				{
+					if (MeshHandleOf(hit.Hit) != m_ScatterStroke.FilterMesh)
+						continue;
+				}
+			}
+
+			if (ScatterTooClose(hit.Point))
+				continue;
+
+			ScatterPlaceOne(hit.Point, hit.Normal);
+		}
+	}
+
+	void EditorLayer::BeginScatterStroke(bool erase)
+	{
+		if (m_ScatterStroke.Active)
+			return;
+		if (!m_ActiveScene || m_SceneState != SceneState::Edit)
+			return;
+
+		const ScatterSettings& settings = m_MapPanel.Scatter();
+		if (!IsAssetHandleValid(settings.Source)
+			|| (settings.SourceType != AssetType::Prefab && settings.SourceType != AssetType::StaticMesh))
+		{
+			GE_WARN("Scatter: pin a prefab or mesh and click it before painting.");
+			return;
+		}
+
+		if (IsPlacing())
+			CancelPlacement();
+
+		m_ScatterStroke = ScatterStroke{};
+		m_ScatterStroke.Active = true;
+		m_ScatterStroke.Erase = erase;
+		m_ScatterStroke.StrokeSeed = settings.Seed;
+		m_ScatterStroke.Rng = Random(settings.Seed);
+
+		if (erase)
+		{
+			Entity group = FindScatterGroup(*m_ActiveScene, settings.Source);
+			if (group)
+				m_ScatterStroke.Group = group.GetUUID();
+			return;
+		}
+
+		Entity group = FindScatterGroup(*m_ActiveScene, settings.Source);
+		if (!group)
+			return;
+
+		m_ScatterStroke.Group = group.GetUUID();
+		if (!group.HasComponent<RelationshipComponent>())
+			return;
+
+		for (UUID childID : group.GetComponent<RelationshipComponent>().Children)
+		{
+			Entity child = m_ActiveScene->FindEntityByUUID(childID);
+			if (child)
+				ScatterRememberPoint(glm::vec3(m_ActiveScene->GetWorldSpaceTransform(child)[3]));
+		}
+	}
+
+	void EditorLayer::EndScatterStroke()
+	{
+		if (!m_ScatterStroke.Active)
+			return;
+
+		const bool erase = m_ScatterStroke.Erase;
+		const int placed = m_ScatterStroke.Count;
+		const UUID groupID = m_ScatterStroke.Group;
+		const uint32_t seed = m_ScatterStroke.StrokeSeed;
+
+		if (m_ActiveScene)
+		{
+			if (erase)
+			{
+				std::vector<Scope<EditorCommand>> steps;
+				steps.reserve(m_ScatterStroke.Batches.size());
+				for (std::vector<EntitySnapshot>& batch : m_ScatterStroke.Batches)
+				{
+					if (!batch.empty())
+						steps.push_back(CreateScope<DeleteEntitiesCommand>("Scatter instance", std::move(batch)));
+				}
+
+				if (steps.size() == 1)
+					m_UndoStack.Push(std::move(steps.front()));
+				else if (!steps.empty())
+					m_UndoStack.Push(CreateScope<CompositeCommand>("Scatter erase", std::move(steps)));
+			}
+			else if (placed > 0)
+			{
+				std::vector<Scope<EditorCommand>> steps;
+				if (!m_ScatterStroke.GroupSnapshot.empty())
+				{
+					steps.push_back(CreateScope<AddEntitiesCommand>(
+						"Scatter group", std::move(m_ScatterStroke.GroupSnapshot)));
+				}
+				for (std::vector<EntitySnapshot>& batch : m_ScatterStroke.Batches)
+				{
+					if (!batch.empty())
+						steps.push_back(CreateScope<AddEntitiesCommand>("Scatter instance", std::move(batch)));
+				}
+
+				if (steps.size() == 1)
+					m_UndoStack.Push(std::move(steps.front()));
+				else if (!steps.empty())
+					m_UndoStack.Push(CreateScope<CompositeCommand>("Scatter paint", std::move(steps)));
+
+				if (Entity group = m_ActiveScene->FindEntityByUUID(groupID))
+				{
+					if (group.HasComponent<ScatterGroupComponent>())
+						group.GetComponent<ScatterGroupComponent>().LastSeed = seed;
+				}
+				m_MapPanel.Scatter().Seed = seed + 1u;
+			}
+			else if (!m_ScatterStroke.GroupSnapshot.empty())
+			{
+				RemoveSubtree(*m_ActiveScene, m_ScatterStroke.GroupSnapshot);
+			}
+
+			if ((erase && !m_ScatterStroke.Batches.empty()) || placed > 0)
+			{
+				if (Entity group = m_ActiveScene->FindEntityByUUID(groupID))
+					m_SceneHierarchyPanel.SetSelectedEntity(group);
+			}
+		}
+
+		m_ScatterStroke = ScatterStroke{};
+	}
+
+	void EditorLayer::AbortScatterStroke()
+	{
+		if (!m_ScatterStroke.Active)
+			return;
+
+		if (m_ActiveScene)
+		{
+			if (m_ScatterStroke.Erase)
+			{
+				for (auto it = m_ScatterStroke.Batches.rbegin(); it != m_ScatterStroke.Batches.rend(); ++it)
+					RestoreSubtree(*m_ActiveScene, *it);
+			}
+			else
+			{
+				for (auto it = m_ScatterStroke.Batches.rbegin(); it != m_ScatterStroke.Batches.rend(); ++it)
+					RemoveSubtree(*m_ActiveScene, *it);
+				if (!m_ScatterStroke.GroupSnapshot.empty())
+					RemoveSubtree(*m_ActiveScene, m_ScatterStroke.GroupSnapshot);
+			}
+		}
+
+		m_ScatterStroke = ScatterStroke{};
+	}
+
+	void EditorLayer::CancelScatterMode()
+	{
+		if (m_ScatterStroke.Active)
+			AbortScatterStroke();
+		m_MapPanel.SetPaintArmed(false);
+	}
+
+	void EditorLayer::RebuildScatterExclude()
+	{
+		m_ScatterStroke.Exclude.clear();
+		if (!m_ActiveScene)
+			return;
+
+		Entity group;
+		if (m_ScatterStroke.Group != UUID{ 0 })
+			group = m_ActiveScene->FindEntityByUUID(m_ScatterStroke.Group);
+		if (!group)
+			group = FindScatterGroup(*m_ActiveScene, m_MapPanel.Scatter().Source);
+		if (group)
+			CollectSubtreeUUIDs(*m_ActiveScene, group, m_ScatterStroke.Exclude);
+	}
+
+	Entity EditorLayer::EnsureScatterGroup()
+	{
+		if (!m_ActiveScene)
+			return {};
+
+		if (m_ScatterStroke.Group != UUID{ 0 })
+		{
+			Entity existing = m_ActiveScene->FindEntityByUUID(m_ScatterStroke.Group);
+			if (existing)
+				return existing;
+			m_ScatterStroke.Group = UUID{ 0 };
+			m_ScatterStroke.CreatedGroup = false;
+			m_ScatterStroke.GroupSnapshot.clear();
+		}
+
+		const ScatterSettings& settings = m_MapPanel.Scatter();
+		Entity existing = FindScatterGroup(*m_ActiveScene, settings.Source);
+		if (existing)
+		{
+			m_ScatterStroke.Group = existing.GetUUID();
+			return existing;
+		}
+
+		const AssetMetadata* metadata = AssetManager::GetMetadata(settings.Source);
+		std::string stem = metadata
+			? std::filesystem::path(metadata->FilePath).stem().string()
+			: "Untitled";
+		if (stem.empty())
+			stem = "Untitled";
+
+		Entity group = m_ActiveScene->CreateEntity("Scatter/" + stem);
+		auto& component = group.AddComponent<ScatterGroupComponent>();
+		component.Source = settings.Source;
+		component.LastSeed = m_ScatterStroke.StrokeSeed;
+
+		m_ScatterStroke.Group = group.GetUUID();
+		m_ScatterStroke.CreatedGroup = true;
+		CaptureSubtree(*m_ActiveScene, group, m_ScatterStroke.GroupSnapshot);
+		return group;
+	}
+
+	bool EditorLayer::ScatterTooClose(const glm::vec3& p) const
+	{
+		const float spacing = m_MapPanel.Scatter().MinSpacing;
+		if (spacing <= 0.0f)
+			return false;
+
+		const float spacing2 = spacing * spacing;
+		const int cx = (int)std::floor(p.x / spacing);
+		const int cy = (int)std::floor(p.y / spacing);
+		const int cz = (int)std::floor(p.z / spacing);
+
+		for (int dz = -1; dz <= 1; dz++)
+		for (int dy = -1; dy <= 1; dy++)
+		for (int dx = -1; dx <= 1; dx++)
+		{
+			auto it = m_ScatterStroke.Cells.find(ScatterCellKey(cx + dx, cy + dy, cz + dz));
+			if (it == m_ScatterStroke.Cells.end())
+				continue;
+			for (uint32_t index : it->second)
+			{
+				const glm::vec3 d = m_ScatterStroke.Placed[index] - p;
+				if (glm::dot(d, d) < spacing2)
+					return true;
+			}
+		}
+		return false;
+	}
+
+	void EditorLayer::ScatterRememberPoint(const glm::vec3& p)
+	{
+		const uint32_t index = (uint32_t)m_ScatterStroke.Placed.size();
+		m_ScatterStroke.Placed.push_back(p);
+
+		const float spacing = m_MapPanel.Scatter().MinSpacing;
+		if (spacing <= 0.0f)
+			return;
+
+		const int cx = (int)std::floor(p.x / spacing);
+		const int cy = (int)std::floor(p.y / spacing);
+		const int cz = (int)std::floor(p.z / spacing);
+		m_ScatterStroke.Cells[ScatterCellKey(cx, cy, cz)].push_back(index);
+	}
+
+	void EditorLayer::ScatterPlaceOne(const glm::vec3& point, const glm::vec3& normal)
+	{
+		if (!m_ActiveScene)
+			return;
+
+		const ScatterSettings& settings = m_MapPanel.Scatter();
+		const AssetMetadata* metadata = AssetManager::GetMetadata(settings.Source);
+		if (!metadata)
+			return;
+
+		Entity root;
+		if (settings.SourceType == AssetType::Prefab)
+			root = PrefabSerializer::InstantiateFromAsset(settings.Source, *m_ActiveScene);
+		else if (settings.SourceType == AssetType::StaticMesh)
+			root = MeshImporter::Instantiate(m_ActiveScene.get(), GetAssetRoot() / metadata->FilePath);
+		if (!root)
+			return;
+
+		if (!m_ScatterStroke.SourceHasBounds)
+		{
+			const glm::mat4 invRoot = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(root));
+			AccumulateMeshBounds(*m_ActiveScene, root, invRoot,
+				m_ScatterStroke.SourceBounds, m_ScatterStroke.SourceHasBounds);
+			m_ScatterStroke.SourceEuler = root.GetComponent<TransformComponent>().Rotation;
+			m_ScatterStroke.SourceScale = root.GetComponent<TransformComponent>().Scale;
+		}
+
+		Entity group = EnsureScatterGroup();
+		if (!group)
+		{
+			std::vector<EntitySnapshot> failed;
+			CaptureSubtree(*m_ActiveScene, root, failed);
+			RemoveSubtree(*m_ActiveScene, failed);
+			return;
+		}
+
+		m_ActiveScene->SetParent(root, group);
+
+		glm::quat align(1.0f, 0.0f, 0.0f, 0.0f);
+		if (settings.AlignToNormal)
+			align = RotationBetween(glm::vec3(0.0f, 1.0f, 0.0f), normal);
+
+		const float yawDeg = m_ScatterStroke.Rng.Range(-settings.YawJitter, settings.YawJitter);
+		const glm::quat yaw = glm::angleAxis(glm::radians(yawDeg), glm::vec3(0.0f, 1.0f, 0.0f));
+		const glm::mat4 rotation = glm::mat4_cast(align * yaw)
+			* EulerRotationMatrix(m_ScatterStroke.SourceEuler);
+
+		float uniform = 1.0f;
+		if (settings.ScaleMax > settings.ScaleMin)
+			uniform = m_ScatterStroke.Rng.Range(settings.ScaleMin, settings.ScaleMax);
+		else
+			uniform = settings.ScaleMin;
+		const glm::vec3 scale = m_ScatterStroke.SourceScale * uniform;
+
+		glm::vec3 origin = point;
+		if (m_SnapSettings.SitOnBounds && m_ScatterStroke.SourceHasBounds)
+		{
+			const glm::vec3 sitLocal(0.0f, -m_ScatterStroke.SourceBounds.Min.y * scale.y, 0.0f);
+			origin += glm::vec3(rotation * glm::vec4(sitLocal, 0.0f));
+		}
+
+		glm::mat4 world = glm::translate(glm::mat4(1.0f), origin)
+			* rotation
+			* glm::scale(glm::mat4(1.0f), scale);
+
+		const UUID parentID = root.HasComponent<RelationshipComponent>()
+			? root.GetComponent<RelationshipComponent>().Parent : UUID{ 0 };
+		if (parentID != UUID{ 0 })
+		{
+			Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
+			if (parent)
+				world = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * world;
+		}
+
+		glm::vec3 translation, euler, decomposedScale;
+		if (!Math::DecomposeTransform(world, translation, euler, decomposedScale))
+		{
+			std::vector<EntitySnapshot> failed;
+			CaptureSubtree(*m_ActiveScene, root, failed);
+			RemoveSubtree(*m_ActiveScene, failed);
+			return;
+		}
+
+		auto& tc = root.GetComponent<TransformComponent>();
+		tc.Translation = translation;
+		tc.Rotation = euler;
+		tc.Scale = scale;
+		m_ActiveScene->MarkChanged<TransformComponent>(root);
+
+		std::vector<EntitySnapshot> batch;
+		CaptureSubtree(*m_ActiveScene, root, batch);
+		m_ScatterStroke.Batches.push_back(std::move(batch));
+		CollectSubtreeUUIDs(*m_ActiveScene, root, m_ScatterStroke.Exclude);
+		ScatterRememberPoint(point);
+		m_ScatterStroke.Count++;
+
+		if (!m_ScatterStroke.HitSceneWarn
+			&& m_ActiveScene->Reg().view<IDComponent>().size() >= kScatterSceneWarn)
+		{
+			GE_WARN("Scatter: scene has {0} entities. The cap exists because each instance is an entity.",
+				(uint32_t)m_ActiveScene->Reg().view<IDComponent>().size());
+			m_ScatterStroke.HitSceneWarn = true;
+		}
+	}
+
+	void EditorLayer::ScatterEraseAt(const glm::vec3& point)
+	{
+		if (!m_ActiveScene)
+			return;
+
+		Entity group;
+		if (m_ScatterStroke.Group != UUID{ 0 })
+			group = m_ActiveScene->FindEntityByUUID(m_ScatterStroke.Group);
+		if (!group)
+			group = FindScatterGroup(*m_ActiveScene, m_MapPanel.Scatter().Source);
+		if (!group || !group.HasComponent<RelationshipComponent>())
+			return;
+
+		m_ScatterStroke.Group = group.GetUUID();
+
+		const float radius = std::max(m_MapPanel.Scatter().Radius, 0.0f);
+		const float radius2 = radius * radius;
+		const std::vector<UUID> children = group.GetComponent<RelationshipComponent>().Children;
+
+		for (UUID childID : children)
+		{
+			Entity child = m_ActiveScene->FindEntityByUUID(childID);
+			if (!child)
+				continue;
+
+			const glm::vec3 worldPos = glm::vec3(m_ActiveScene->GetWorldSpaceTransform(child)[3]);
+			const glm::vec3 d = worldPos - point;
+			if (glm::dot(d, d) > radius2)
+				continue;
+
+			std::vector<EntitySnapshot> batch;
+			CaptureSubtree(*m_ActiveScene, child, batch);
+			RemoveSubtree(*m_ActiveScene, batch);
+			if (!batch.empty())
+				m_ScatterStroke.Batches.push_back(std::move(batch));
+		}
 	}
 }

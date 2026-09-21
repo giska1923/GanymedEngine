@@ -356,3 +356,20 @@ it, in order:
    a corpse.
 
 Small, and worth doing once the game shakes out whether any 2D path is wanted at all.
+
+## The frustum's near plane uses the wrong depth convention
+
+`Frustum::FromViewProjection` (`GanymedE/Math/BoundingVolumes.h:46`) extracts the near plane as
+`row(3) + row(2)` — the OpenGL rule, where clip space is `-w ≤ z ≤ w`. The workspace defines
+`GLM_FORCE_DEPTH_ZERO_TO_ONE` for every project (`premake5.lua:29`) because bgfx normalises clip
+space to `[0, 1]` on D3D/Vulkan/Metal, and there the near plane is `z ≥ 0` — `row(2)` alone. The
+far plane, `row(3) - row(2)`, is correct under both conventions.
+
+The computed plane therefore sits *behind* the real near plane, so the frustum is strictly larger
+than the camera's: culling is **conservative**. Nothing renders incorrectly, which is why this has
+never shown up — it only means `Renderer3D::FrustumIntersects` keeps a few objects that are behind
+the camera and could have been rejected. `CulledMeshes` is correspondingly a slight under-count.
+
+One line. Worth doing next time frustum culling is touched. The map editor's Top (Ortho) camera
+(MAP_EDITOR M5) uses this frustum as-is: culling stays conservative, which is why that phase did
+not wait on this fix. The near plane is still close to the camera (0.1 m), not to the ground.

@@ -31,11 +31,11 @@ documented.** A file here is a promise, not a description.
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7        |
 | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something                                                                                                                                                    | A2 done; A1, A3 remain |
-| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6, nothing built   |
+| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done |
 | [MODEL_EDITOR.md](MODEL_EDITOR.md)                 | **Milestone plan** — an inspector for assets rather than entities: readouts, import settings written to `.meta`, a collision default, a preview renderer, thumbnails                                                                    | P1–P7, nothing built   |
 | [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback; the frustum's near-plane depth convention                                                            | 5                      |
 | [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                      |
-| [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                      |
+| [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads; mesh `.meta` collision default                                                                                                                                    | 4                      |
 | [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, and two shipping gaps | 17                     |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
@@ -56,9 +56,14 @@ they live off `master`, not off the game branch.** Every phase of either touches
 the game branch receives that work by merge and never sends anything back. Both were drafted on
 `first-game` and moved to a branch off `master` for exactly that reason.
 
+**[MAP_EDITOR.md](MAP_EDITOR.md) executed on `map-editor`, which was based on `master`.** M0–M6
+have landed. M6's scene and Lua edits (the step-up ledge, the P2 footprint doors, the Sentry's
+`+Z` facing) live on `first-game`. The Warehouse rebuild was not timed in the editor — see that
+file.
+
 The map editor exists because the Proving Ground's buildings were hand-assembled from typed-in box
 colliders, which is what produced the wall holes above — two of its gates (P2's interiors, P4's
-`+Z` occlusion re-run) are the milestone's own closing verification. The model editor is the
+`+Z` occlusion re-run) were the milestone's own closing verification. The model editor is the
 other half of the same problem: a mesh asset carries no collision default, so every placement
 types its own box. It also picks up two gaps found while planning it — import settings that are
 plumbed end-to-end but reachable only by hand-editing a `.meta`, and the fact that
@@ -89,7 +94,10 @@ was hiding: a 24 ms Apply frame in Release is the budget's inability to subdivid
 backpressure does not fix and did not. [rendering.md](rendering.md) is effectively closed — all four backends
 render, pick and agree on colour. Its one remaining entry, **MSAA, is parked on purpose**: the abort
 is diagnosed and the fix is one line, but whether MSAA is wanted at all is the open question, and
-FXAA already ships. Nothing there blocks anything else.
+FXAA already ships. Nothing there blocks anything else. One entry was added while planning the map
+editor: the frustum's near plane is extracted with the OpenGL depth convention under a
+`GLM_FORCE_DEPTH_ZERO_TO_ONE` build. It is conservative, so nothing renders wrong — it is one line,
+and it matters before anyone tunes culling numbers.
 
 The frame loop is instrumented and the profiler backend was rewritten to make that affordable, so
 what is left of that item is only the Tracy question — worth having, blocking nothing. macOS is the

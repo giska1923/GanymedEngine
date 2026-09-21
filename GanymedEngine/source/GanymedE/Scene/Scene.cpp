@@ -48,6 +48,7 @@ namespace GanymedE {
 		SetSingleton<RenderContext>();
 		SetSingleton<PhysicsSettings>();
 		SetSingleton<EditorViewFilter>();
+		SetSingleton<EditorBoundsOverlay>();
 
 		// Registration order IS execution order, and matches the order the logic previously ran
 		// inline in OnUpdateRuntime: physics, then scripts, then rendering. CameraSystem must

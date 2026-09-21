@@ -475,11 +475,11 @@ namespace GanymedE {
 		}
 	}
 
-	// Fits one orthographic light frustum to a slice of the camera frustum (stable, texel-snapped).
-	static glm::mat4 FitCascade(const glm::mat4& view, float fov, float aspect, float nearSplit, float farSplit, const glm::vec3& lightDir)
+	// Fits one orthographic light frustum to a camera-frustum slice (stable, texel-snapped).
+	// `sliceProj` is the camera projection for that near/far split — perspective or ortho.
+	static glm::mat4 FitCascade(const glm::mat4& view, const glm::mat4& sliceProj, const glm::vec3& lightDir)
 	{
-		glm::mat4 cascadeProj = Projection::Perspective(fov, aspect, nearSplit, farSplit);
-		glm::mat4 invViewProj = glm::inverse(cascadeProj * view);
+		glm::mat4 invViewProj = glm::inverse(sliceProj * view);
 
 		glm::vec3 corners[8];
 		glm::vec3 center(0.0f);
@@ -520,14 +520,35 @@ namespace GanymedE {
 		return lightProj * lightView;
 	}
 
+	static void ExtractOrthoExtents(const glm::mat4& proj, float& halfW, float& halfH,
+		float& nearP, float& farP)
+	{
+		halfW = 1.0f / glm::max(glm::abs(proj[0][0]), 1.0e-6f);
+		halfH = 1.0f / glm::max(glm::abs(proj[1][1]), 1.0e-6f);
+
+		const float a = proj[2][2];
+		const float b = proj[3][2];
+		if (Projection::HomogeneousDepth())
+		{
+			nearP = (b + 1.0f) / a;
+			farP = (b - 1.0f) / a;
+		}
+		else
+		{
+			nearP = b / a;
+			farP = nearP - 1.0f / a;
+		}
+	}
+
 	static void ComputeCascades(const glm::vec3& lightDir)
 	{
 		const glm::mat4& proj = s_Data.CameraBuffer.Projection;
 		const glm::mat4& view = s_Data.CameraBuffer.View;
 
-		bool perspective = glm::abs(proj[3][3]) < 0.0001f;
+		const bool perspective = glm::abs(proj[3][3]) < 0.0001f;
 
-		float nearP, farP, fov, aspect;
+		float nearP = 0.1f, farP = 200.0f, fov = glm::radians(50.0f), aspect = 1.7778f;
+		float halfW = 1.0f, halfH = 1.0f;
 		if (perspective)
 		{
 			nearP = proj[3][2] / (proj[2][2] - 1.0f);
@@ -537,12 +558,25 @@ namespace GanymedE {
 		}
 		else
 		{
-			// Orthographic fallback: reasonable defaults, cascades still fit the view slices
-			nearP = 0.1f; farP = 200.0f; fov = glm::radians(50.0f); aspect = 1.7778f;
+			ExtractOrthoExtents(proj, halfW, halfH, nearP, farP);
 		}
 
-		// Keep cascades tight — shadows past this distance are rarely useful
+		if (!(nearP > 0.0f))
+			nearP = 0.1f;
+		if (!(farP > nearP))
+			farP = nearP + 200.0f;
+
+		// Keep cascades tight — shadows past this distance are rarely useful.
+		// Ortho: the box does not widen with depth, so a 200 m far on a 20 m view
+		// would dominate the bounding sphere and waste texel density. Cap far at
+		// twice the larger view extent as well. This is the 80% instead of a
+		// separate shadow camera — MAP_EDITOR M5.
 		float shadowFar = glm::min(farP, 200.0f);
+		if (!perspective)
+		{
+			const float viewSize = glm::max(halfW, halfH) * 2.0f;
+			shadowFar = glm::min(shadowFar, glm::max(viewSize, 20.0f) * 2.0f);
+		}
 
 		const float lambda = 0.7f; // blend between uniform and logarithmic splits
 		float lastSplit = nearP;
@@ -553,7 +587,10 @@ namespace GanymedE {
 			float linSplit = nearP + (shadowFar - nearP) * p;
 			float splitFar = lambda * logSplit + (1.0f - lambda) * linSplit;
 
-			s_Data.CascadeLightSpace[i] = FitCascade(view, fov, aspect, lastSplit, splitFar, lightDir);
+			const glm::mat4 sliceProj = perspective
+				? Projection::Perspective(fov, aspect, lastSplit, splitFar)
+				: Projection::Orthographic(-halfW, halfW, -halfH, halfH, lastSplit, splitFar);
+			s_Data.CascadeLightSpace[i] = FitCascade(view, sliceProj, lightDir);
 			s_Data.CascadeSplits[i] = splitFar;
 			lastSplit = splitFar;
 		}
@@ -1002,11 +1039,28 @@ namespace GanymedE {
 
 		s_Data.GridShader->Bind();
 
-		// Scale grid quad so the shader's world-XZ fade covers a large area.
+		const glm::mat4& proj = s_Data.CameraBuffer.Projection;
+		const bool ortho = glm::abs(proj[3][3]) > 0.0001f;
+		float quadScale = 100.0f;
+		float fadeStart = 20.0f;
+		float fadeEnd = 80.0f;
+		if (ortho)
+		{
+			const float halfW = 1.0f / glm::max(glm::abs(proj[0][0]), 1.0e-6f);
+			const float halfH = 1.0f / glm::max(glm::abs(proj[1][1]), 1.0e-6f);
+			const float halfDiag = glm::sqrt(halfW * halfW + halfH * halfH);
+			fadeEnd = halfDiag * 1.05f;
+			fadeStart = fadeEnd * 0.65f;
+			quadScale = fadeEnd * 1.1f;
+		}
+
+		// Scale the unit XZ quad so the shader's planar fade covers the view.
 		// This goes on bgfx's transform stack rather than a u_Transform uniform,
 		// which is what makes the predefined u_model / u_modelViewProj correct.
-		glm::mat4 transform = glm::scale(glm::mat4(1.0f), glm::vec3(100.0f));
+		glm::mat4 transform = glm::scale(glm::mat4(1.0f), glm::vec3(quadScale));
 		bgfx::setTransform(&transform[0][0]);
+
+		s_Data.GridShader->SetFloat4("u_GridFade", glm::vec4(fadeStart, fadeEnd, 0.0f, 0.0f));
 
 		// u_CameraPosition deliberately NOT set here: FrameUniforms already
 		// supplies it every draw, and bgfx asserts if one uniform is set twice
