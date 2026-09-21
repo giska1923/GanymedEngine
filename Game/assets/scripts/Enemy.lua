@@ -58,6 +58,9 @@ local Enemy = {
         -- 0.8 is just under the two half-widths (0.35 + 0.35), so they press in.
         standoff = 0.8,
         label = "E",          -- what it calls itself in the log
+        -- Yaw in engine convention (0 faces -Z). Idle sentries never walk, so they never
+        -- recompute this; author it to face the opening they are meant to watch.
+        facing = 0.0,
     },
     health = 3,
     patrolTo = Vec3(0, 0, 0),
@@ -113,6 +116,12 @@ function Enemy:OnCreate()
         self.leg = self.patrolTo
     else
         self.state = "idle"
+    end
+
+    -- Seed the mesh yaw from the authored facing. Patrol overwrites this on the first stride;
+    -- an idle sentry never walks, so without this it would stare at -Z forever.
+    if self.body then
+        self.body:SetRotation(Vec3(0, self.facing + math.pi, 0))
     end
 
     Log.Info(string.format("Enemy %s up at (%.1f, %.1f, %.1f) health=%d state=%s",

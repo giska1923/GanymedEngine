@@ -369,8 +369,9 @@ Several buildings from box colliders, enterable, with interiors. Lighting.
 - **Tests:** static mesh rendering at scene scale, box colliders, the four light types, shadows,
   and the asset pipeline under a real content load rather than the eight committed fixtures.
 - **Gate:** walk inside and out of every building that has a door; no tunnelling through a wall
-  at full speed. **Open** - the box sets were wrong on both buildings, and the corrected sets
-  below have not been walked yet.
+  at full speed. **PASSED (M6).** 130 s of Debug `GanymedRuntime` autopilot: `inWall=0`,
+  `inWH=0`; `inBH` reached 261 frames across two visits through the `+Z` door. The Warehouse is a
+  sealed shell — the honest form of this gate is walk the Blockhouse and bounce off the Warehouse.
 
 #### Content layout
 
@@ -522,12 +523,11 @@ test costs one screenshot from inside.
   history — the path is what the gate measures, not what it passes.
 - **Step** (8 x 0.2 x 1) is deleted on request. It was the thing in the scene deliberately
   exercising `CharacterControllerComponent::StepHeight` (0.4), and nothing was authored to
-  replace it. ~~Step-up has no coverage now.~~ **Corrected:** the `GroundTile` pad does it by
-  accident - 16 x 16 m at `x [-8, 8] z [2, 18]`, collider top at `y = 0.19`, so every approach to
-  it from the surrounding ground is a 0.19 m step, and `ROUTE`'s leg to `(4, 6)` crosses its edge
-  once a lap. What is genuinely uncovered is the *limit*: nothing in the map is between 0.2 m and
-  0.4 m, so the difference between "steps up" and "stops dead" has never been located. A ledge or
-  a ramp would pin it down; a box would not be the only way to do it.
+  replace it. ~~Step-up has no coverage now.~~ **Corrected (P2):** the `GroundTile` pad does it by
+  accident - 16 x 16 m at `x [-8, 8] z [2, 18]`, collider top at `y = 0.19`. **M6** authored
+  `StepUp Ledge` at `(12, 0.15, 4)`, a 4×4×0.30 m box, in `(0.2, 0.4)`. The P2 autopilot lifted
+  to `y=1.21` at the pad (baseline grounded `y=0.95`), so 0.30 m is walked. The cliff at
+  `StepHeight` still needs a box taller than 0.4 m.
 - **The projectile's 0.15 m cube** is now a particle bolt (below).
 - **The Ground** keeps its 100x1x100 collider and its mesh, but wears a new flat
   `materials/Ground.gmat` — no maps at all, just a matte albedo.
@@ -890,6 +890,28 @@ collider set self-consistent.** Nothing that queries physics can see a box that 
 mesh drawn over it; that needs the mesh, which is what the audit above reads. Re-running the probe
 means new positions on the `+Z` side.
 
+#### M6 — walk the corrected set, 130 s Debug `GanymedRuntime`
+
+`Player.lua` `FOOTPRINTS` still treated the old holes as doors. M6 removed them: the Blockhouse
+keeps only the `+Z` doorway, the Warehouse none. Without that, a clip through a now-solid wall at
+an old gap would not have incremented `inWall`.
+
+```
+GATE t=10s  pos=(17.5, 0.95, -2.0)  inWall=0 inBH=0   inWH=0
+GATE t=15s  pos=(10.8, 1.21,  3.9)  inWall=0 inBH=96  inWH=0
+GATE t=100s pos=(16.9, 0.95, -3.8)  inWall=0 inBH=109 inWH=0
+GATE t=105s pos=( 8.1, 1.12,  4.8)  inWall=0 inBH=261 inWH=0
+GATE t=130s pos=(20.2, 0.95, -2.1)  inWall=0 inBH=261 inWH=0
+```
+
+Two visits through the `+Z` door, never inside the Warehouse, never inside a wall. Stuck-escapes
+at `(-32.4, -8.6)` are the capsule leaning on the sealed `-X` face, which is the slide test the
+route was written for.
+
+The Warehouse was not rebuilt from nothing in the map tool. The `1df1654` boxes already match the
+glb POSITION AABB × scale 10 to < 3 mm. Generate-from-mesh on the hollow shell would fill the
+interior. Recorded in `docs/ToDo/MAP_EDITOR.md` on `map-editor`.
+
 #### The measurement P2 exists to take
 
 The pipeline has only ever been exercised on eight committed fixtures. Before importing a set,
@@ -912,14 +934,14 @@ Projectile weapon. Enemies with health that despawn on death.
 - **Gate:** fire continuously for a minute; entity count returns to baseline; no leaked Jolt
   bodies.
 
-### P4 — Enemies with eyes — **PASSED**, on geometry since corrected
+### P4 — Enemies with eyes — **PASSED**, including the `+Z` re-run
 
 Waypoint patrol, line-of-sight acquisition via raycast, charge. Animation on the enemies.
 
 - **Tests:** P0.3's raycast, the animator under many simultaneous instances, and whether buildings
   actually occlude.
 - **Gate:** an enemy behind a building does not acquire the player; stepping into the doorway does.
-  **PASSED**, and to within 0.1 m of a position predicted before the run.
+  **PASSED** on the original `-Z` hole, and **PASSED** on the real `+Z` door in M6.
 
 #### What was built
 
@@ -984,6 +1006,26 @@ Acquisition at `px = 17.2` against a predicted 17.11. The loss on the way back, 
 puts the crossing at `x = 17.65` against the same 17.66 edge. **Buildings occlude, and they occlude
 exactly where their colliders are** — which also says the colliders hand-placed in P2 line up with
 the mesh they were measured from.
+
+#### Gate run 1b — the `+Z` re-run (M6)
+
+`LOS_ROUTE` already stood on the `+Z` side. The first M6 losgate acquired nothing: the Sentry
+still faced `-Z`, so the door was `blocked-by=behind` and no transition was logged. Vacuous.
+`facing` is now a script property; the Sentry is authored at yaw π, looking through the door.
+
+```
+LOS Sentry t=8.2s  ACQUIRED player=(14.5, -1.0)   # crossed the door walking to probe 2
+LOS Sentry t=8.6s  lost     player=(16.7, -0.2)   blocked-by=Blockhouse Wall Z+ Right
+LOSGATE probe 2 at (19.70, 0.89), 8.0s            # behind the east jamb — no acquire
+LOS Sentry t=21.8s ACQUIRED player=(15.8,  2.4)   # doorway sight line
+LOSGATE probe 3 at (15.58, 1.33), 8.0s            # held
+LOS Sentry t=31.3s lost     player=(17.1, -1.5)   blocked-by=Blockhouse Wall Z+ Right
+LOSGATE probe 4 at (19.88, 0.68), 6.0s            # stayed lost
+LOSGATE route complete
+```
+
+The occluder named is the east jamb of the real door. Probe 2 and probe 4 both sit in the Sentry's
+view cone now — the wall, not the FOV, is doing the blocking.
 
 The probe route stops and stands still at each point, because "does the wall occlude" only has a
 clean answer while nothing is moving, and it sets `PG.freeze` so that six enemies converging on the

@@ -45,22 +45,10 @@ before this moves to `docs/history/`:
 
 - **P2 and P3 have no record on either branch.** They were built and gated; the runs were never
   written up, and both sections are still only their plan. Reconstructing that honestly means
-  re-running the gates, not copying numbers out of a transcript.
-- **The buildings' colliders disagreed with their meshes, and two gates rest on the old geometry.**
-  Found on `first-game` and fixed in the scene: the Warehouse had a 0.90 m hole in a wall of a
-  building that has no door, and the Blockhouse had three holes, none of them at its one real
-  doorway, which was itself walled off. P2's gate ("walk inside and out of every building") has
-  therefore never been met for the Warehouse and is open. P4's occlusion probe was authored against
-  one of the Blockhouse holes in the belief that it was the doorway; its conclusion stands but its
-  probe positions do not, and it wants a re-run on the `+Z` side. Both are written up in
-  [PROVING_GROUND.md](PROVING_GROUND.md).
-- **Step-up is covered only by accident, and never near its limit.** The P1-era `Step` box was
-  deleted and nothing was authored to replace it, but the `GroundTile` pad's 0.19 m collider lip
-  turns out to do the job every lap of the autopilot. Nothing in the map sits between 0.2 m and
-  `CharacterControllerComponent::StepHeight` (0.4), so where step-up actually stops working has
-  never been measured. The Blockhouse doorway's 0.12 m threshold is deliberately left uncollided
-  and is not the answer: collide it and the flat-bottomed enemy boxes can no longer follow the
-  player through the door. A ledge near 0.4 m, or a ramp, would settle it.
+  re-running the gates, not copying numbers out of a transcript. **P2's walk was re-run in M6**
+  — see [PROVING_GROUND.md](PROVING_GROUND.md).
+- **A box taller than `CharacterControllerComponent::StepHeight` (0.4 m) is still missing.**
+  M6's 0.30 m ledge is walked; that measures the working side, not the cliff.
 - The merge direction is master → game, so nothing written on the branch ever arrives here. The
   milestone has to be assembled from `first-game` when it is retired.
 

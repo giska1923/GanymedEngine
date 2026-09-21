@@ -154,18 +154,18 @@ local Player = {
 -- Without this, every legitimate doorway transit counts as being inside a wall: passing through a
 -- door *is* being inside the footprint and within a wall thickness of the edge. The first run
 -- reported inWall=299 for exactly that reason and none of it was tunnelling.
--- Every opening, not just the one the route uses. The colliders were generated with a gap at each
--- opening the mesh actually has, so passing through any of them is legitimate; the first pass at
--- this listed only the main doorway and reported 34 "tunnelling" frames that were all the
--- Blockhouse's other two gaps. Radius is the opening's half-width plus the capsule's 0.35 m.
+--
+-- Only openings the *mesh* actually has. The first pass listed the Blockhouse's two window-wall
+-- holes and the Warehouse's 0.90 m X- gap as doors, because that is where the box sets were open.
+-- Those holes are closed (see PROVING_GROUND.md). Treating them as doors now would hide tunnelling
+-- at the old locations: inWall would not increment if the capsule clipped a now-solid wall there.
+-- Radius is the opening's half-width plus the capsule's 0.35 m.
 local FOOTPRINTS = {
     { name = "BH", x = 16,  z = -6,  hx = 4.0,  hz = 3.58, doors = {
-        { 20.0,  -6.0,  1.05 },   -- +X wall, 1.4 m gap
-        { 18.56, -9.58, 1.25 },   -- -Z wall, 1.8 m doorway (the route uses this one)
-        { 12.82, -2.42, 0.85 },   -- +Z wall, 1.0 m gap
+        { 16.465, -2.57, 1.29 },  -- +Z doorway, 1.87 m, the only walkable opening on either building
     } },
     { name = "WH", x = -22, z = -14, hx = 10.0, hz = 5.775, doors = {
-        { -32.0, -15.92, 0.80 },  -- -X wall, 0.9 m door
+        -- Sealed shell. No aperture at walking height on any face.
     } },
 }
 
@@ -196,6 +196,7 @@ local FOOTPRINTS = {
 -- not."
 local ROUTE = {
     {  0,   -7 },   -- open floor (was head-on at the 0.2 m Step, removed with the boxes)
+    { 12,    4 },   -- 0.30 m StepUp Ledge, 4 x 4 m pad (0.2 < h < StepHeight 0.4)
     {  9,   -4 },   -- open floor (was along Block A's east face)
     { 16.5,  1.5 }, -- line up on the Blockhouse doorway from outside, on its +Z face
     { 16.5, -6 },   -- through it, into the middle of the Blockhouse, past the Sentry
@@ -219,8 +220,8 @@ local ROUTE = {
 --
 -- The Blockhouse's +Z wall is two collider segments at world z = -2.57, spanning x 12.00..15.53
 -- and x 17.40..20.00, with the 1.87 m doorway between them and a lintel above it from y = 3.11.
--- The Sentry stands inside at (18.4, -6) and never turns, so its eye is fixed, and at 1.5 m it
--- passes well under the lintel.
+-- The Sentry stands inside at (18.4, -6), facing +Z (yaw pi) through that door. It never turns.
+-- At 1.5 m its eye passes well under the lintel.
 --
 -- A sight line from (18.4, -6) to a player at (px, 1.0) crosses z = -2.57 at
 --     x = 18.4 + 0.49 * (px - 18.4)
@@ -906,9 +907,9 @@ function Player:Diagnose(ts)
     if self.t >= self.nextReport then
         self.nextReport = self.nextReport + 5.0
         Log.Info(string.format(
-            "GATE t=%.0fs pos=(%.1f, %.2f, %.1f) grounded=%.0f%% inWall=%d | fired=%d live=%d despawned=%d hits=%d kills=%d refused=%d",
+            "GATE t=%.0fs pos=(%.1f, %.2f, %.1f) grounded=%.0f%% inWall=%d inBH=%d inWH=%d | fired=%d live=%d despawned=%d hits=%d kills=%d refused=%d",
             self.t, p.x, p.y, p.z,
-            100.0 * self.groundedFrames / math.max(self.frames, 1), self.inWall,
+            100.0 * self.groundedFrames / math.max(self.frames, 1), self.inWall, self.inBH, self.inWH,
             PG.fired, PG.fired - PG.despawned, PG.despawned, PG.hits, PG.kills, self.refused))
         Log.Info(string.format(
             "P5   hp=%.0f/%.0f taken=%d healed=%.0f weapon=%d dmg=%d score=%d upgrades=%d "
