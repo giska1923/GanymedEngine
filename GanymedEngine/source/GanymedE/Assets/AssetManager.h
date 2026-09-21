@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GanymedE/Assets/AssetCompiler.h"
 #include "GanymedE/Assets/AssetManagerRegistry.h"
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Core/Core.h"
@@ -138,6 +139,14 @@ namespace GanymedE {
 		// this also drops its textures and its compiled blob - "reimport now".
 		// Safe to call mid-frame from editor UI; see docs/engine/assets.md for why.
 		static void Reload(AssetHandle handle);
+
+		// Overlay `config` onto the sidecar's Config map, write it (atomic tmp+rename),
+		// update the in-memory index, then Reload. Unknown keys already on disk are kept:
+		// the incoming map is merged, not a replacement, which is what makes a sidecar from
+		// a newer engine survive a rewrite. Writing a `.meta` does not trip AssetWatcher
+		// (it stamps the asset file, not the sidecar), so this has to Reload itself.
+		// Returns false when the handle is unknown, assets/ is read-only, or the write failed.
+		static bool SetAssetConfig(AssetHandle handle, const AssetConfig& config);
 
 		// "Something outside the asset layer cares that this file changed."
 		//

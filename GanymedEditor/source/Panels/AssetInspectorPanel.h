@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GanymedE/Assets/AssetCompiler.h"
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Math/BoundingVolumes.h"
 
@@ -56,6 +57,11 @@ namespace GanymedE {
 		void DrawMeshBody();
 		void DrawTextureBody();
 		void DrawMaterialBody();
+		void DrawImportSettings();
+		void DrawTextureImportSettings();
+		void DrawMeshImportSettings();
+		void CommitConfig(const AssetConfig& keys);
+		void Reimport();
 		void EnsureMeshCache();
 
 		std::filesystem::path m_Absolute;

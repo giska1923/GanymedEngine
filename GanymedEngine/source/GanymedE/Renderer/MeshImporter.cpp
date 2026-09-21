@@ -433,7 +433,7 @@ namespace GanymedE {
 	}
 
 	bool MeshImporter::Import(const std::filesystem::path& path, MeshSource& out,
-		std::vector<std::string>* outDependencies)
+		std::vector<std::string>* outDependencies, const AssetConfig* config)
 	{
 		cgltf_options options = {};
 		cgltf_data* data = nullptr;
@@ -593,6 +593,31 @@ namespace GanymedE {
 		std::vector<Submesh> submeshes;
 		std::vector<float> weightScratch;
 
+		const AssetConfig emptyConfig;
+		const AssetConfig& settings = config ? *config : emptyConfig;
+
+		float importScale = ConfigFloat(settings, "ImportScale", MeshImportSettings::ImportScale);
+		if (importScale <= 0.0f)
+			importScale = MeshImportSettings::ImportScale;
+
+		const std::string upAxis = ConfigString(settings, "UpAxis", MeshImportSettings::UpAxis);
+		glm::mat4 importXform(1.0f);
+		if (upAxis == "Z")
+			importXform = glm::rotate(importXform, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		importXform = glm::scale(glm::mat4(1.0f), glm::vec3(importScale)) * importXform;
+
+		// WhenMissing is today's hard-coded rule. Always regenerates even when the file
+		// shipped tangents; Never trusts the file and, if it has none, leaves the pre-
+		// generation constant +X so the setting is doing what it says.
+		const std::string tangentPolicy = ConfigString(settings, "TangentPolicy",
+			MeshImportSettings::TangentPolicy);
+		enum class TangentMode { WhenMissing, Always, Never };
+		TangentMode tangents = TangentMode::WhenMissing;
+		if (tangentPolicy == "Always")
+			tangents = TangentMode::Always;
+		else if (tangentPolicy == "Never")
+			tangents = TangentMode::Never;
+
 		// glTF does not require TANGENT. The spec makes generating one the client's job when a
 		// normal map is present, and exporters routinely omit it - Meshy does. This used to
 		// substitute the constant world +X, which is not a tangent and which the shader then
@@ -725,7 +750,12 @@ namespace GanymedE {
 			submesh.BaseVertex = (uint32_t)vertices.size();
 			submesh.BaseIndex = (uint32_t)indices.size();
 			submesh.IndexCount = (uint32_t)indexCount;
-			submesh.LocalTransform = transform;
+			// ImportScale / UpAxis: static verts bake the xform; skinned verts stay in
+			// bind space and the same xform rides LocalTransform, because Renderer3D
+			// draws entity * LocalTransform * Palette * v. Putting it on RootTransform
+			// as well would apply it twice. Uniform scale commutes; a Z-up rotation
+			// does not, so LocalTransform is the one place both keys are correct.
+			submesh.LocalTransform = skinned ? (importXform * transform) : transform;
 			submesh.Name = name ? name : "Submesh";
 			submesh.IsSkinned = skinned;
 
@@ -739,7 +769,7 @@ namespace GanymedE {
 			// Skinned vertices stay in skin space: the joint matrices already carry the
 			// world placement, and the spec says a skinned mesh node's own transform is
 			// ignored. Baking it in would apply the node transform twice.
-			const glm::mat4 bake = skinned ? glm::mat4(1.0f) : transform;
+			const glm::mat4 bake = skinned ? glm::mat4(1.0f) : (importXform * transform);
 			const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(bake)));
 
 			for (cgltf_size v = 0; v < positionAccessor->count; v++)
@@ -758,14 +788,20 @@ namespace GanymedE {
 					vertex.Normal = { 0.0f, 1.0f, 0.0f };
 				}
 
-				if (tangentAccessor)
+				if (tangentAccessor && tangents != TangentMode::Always)
 				{
 					glm::vec4 t = ReadAccessorElement<glm::vec4>(tangentAccessor, v);
 					vertex.Tangent = glm::normalize(normalMatrix * glm::vec3(t));
 				}
+				else if (tangents == TangentMode::Never)
+				{
+					// The constant the generator replaced. Never + no TANGENT is a
+					// deliberate degradation, not a hole.
+					vertex.Tangent = { 1.0f, 0.0f, 0.0f };
+				}
 				else
 				{
-					// Overwritten by generateTangents below; the file has no TANGENT attribute.
+					// Overwritten by generateTangents below.
 					vertex.Tangent = { 0.0f, 0.0f, 0.0f };
 				}
 
@@ -786,7 +822,7 @@ namespace GanymedE {
 
 			// After the indices, because it needs the triangles, and per primitive rather than
 			// per file because indices are primitive-local.
-			if (!tangentAccessor)
+			if (tangents == TangentMode::Always || (tangents == TangentMode::WhenMissing && !tangentAccessor))
 				generateTangents(submesh.BaseVertex, positionAccessor->count,
 					submesh.BaseIndex, indexCount);
 

@@ -10,6 +10,7 @@
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/CompiledCache.h"
 #include "GanymedE/Assets/MaterialSerializer.h"
+#include "GanymedE/Assets/TextureCompiler.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Renderer/MeshImporter.h"
@@ -257,6 +258,157 @@ namespace GanymedE {
 			ImGui::Text("Compiled: %s", CompiledLabel(CompiledCache::QueryOutput(*metadata)));
 		else
 			ImGui::TextDisabled("Compiled: not indexed");
+
+		if (m_Type == AssetType::StaticMesh || m_Type == AssetType::Texture)
+			DrawImportSettings();
+	}
+
+	void AssetInspectorPanel::CommitConfig(const AssetConfig& keys)
+	{
+		if (!AssetManager::SetAssetConfig(m_Handle, keys))
+			return;
+		m_Mesh.Ready = false;
+		ResolveSelection();
+	}
+
+	void AssetInspectorPanel::Reimport()
+	{
+		if (!IsAssetHandleValid(m_Handle))
+			return;
+		AssetManager::Reload(m_Handle);
+		m_Mesh.Ready = false;
+		ResolveSelection();
+	}
+
+	void AssetInspectorPanel::DrawImportSettings()
+	{
+		if (!IsAssetHandleValid(m_Handle))
+			return;
+
+		if (!ImGui::CollapsingHeader("Import Settings", ImGuiTreeNodeFlags_DefaultOpen))
+			return;
+
+		ImGui::TextDisabled("Edits apply to this asset everywhere it is used, and are not undoable");
+
+		const bool writable = AssetManager::IsAssetsWritable();
+		if (!writable)
+			ImGui::BeginDisabled();
+
+		if (m_Type == AssetType::Texture)
+			DrawTextureImportSettings();
+		else
+			DrawMeshImportSettings();
+
+		if (ImGui::Button("Reimport"))
+			Reimport();
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Force a recompile even if nothing changed.\nUse when a source edit did not trip the watcher.");
+
+		if (!writable)
+			ImGui::EndDisabled();
+	}
+
+	void AssetInspectorPanel::DrawTextureImportSettings()
+	{
+		const AssetMetadata* metadata = AssetManager::GetMetadata(m_Handle);
+		const AssetConfig empty;
+		const AssetConfig& config = metadata ? metadata->Config : empty;
+
+		const char* formats[] = { "auto", "BC1", "BC3", "BC5", "BC7", "RGBA8" };
+		const char* formatLabels[] = { "auto", "BC1", "BC3", "BC5", "BC7", "raw (RGBA8)" };
+		std::string format = ConfigString(config, "Format", TextureImportSettings::Format);
+		int formatIndex = 0;
+		for (int i = 0; i < 6; i++)
+		{
+			if (format == formats[i])
+			{
+				formatIndex = i;
+				break;
+			}
+		}
+
+		if (ImGui::BeginCombo("Format", formatLabels[formatIndex]))
+		{
+			for (int i = 0; i < 6; i++)
+			{
+				if (ImGui::Selectable(formatLabels[i], formatIndex == i))
+					CommitConfig({ { "Format", formats[i] } });
+			}
+			ImGui::EndCombo();
+		}
+
+		bool normalMap = ConfigBool(config, "NormalMap", TextureImportSettings::NormalMap);
+		if (ImGui::Checkbox("Normal Map", &normalMap))
+			CommitConfig({ { "NormalMap", normalMap ? "true" : "false" } });
+
+		bool generateMips = ConfigBool(config, "GenerateMips", TextureImportSettings::GenerateMips);
+		if (ImGui::Checkbox("Generate Mips", &generateMips))
+			CommitConfig({ { "GenerateMips", generateMips ? "true" : "false" } });
+
+		int maxSize = ConfigInt(config, "MaxSize", TextureImportSettings::MaxSize);
+		ImGui::DragInt("Max Size", &maxSize, 1.0f, 0, 16384);
+		if (ImGui::IsItemDeactivatedAfterEdit())
+		{
+			if (maxSize < 0)
+				maxSize = 0;
+			CommitConfig({ { "MaxSize", std::to_string(maxSize) } });
+		}
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Longest edge in pixels. 0 = no limit.\nApplied by dropping top mips, not resampling.");
+	}
+
+	void AssetInspectorPanel::DrawMeshImportSettings()
+	{
+		const AssetMetadata* metadata = AssetManager::GetMetadata(m_Handle);
+		const AssetConfig empty;
+		const AssetConfig& config = metadata ? metadata->Config : empty;
+
+		float scale = ConfigFloat(config, "ImportScale", MeshImportSettings::ImportScale);
+		ImGui::DragFloat("Import Scale", &scale, 0.01f, 0.0001f, 1000.0f, "%.4f");
+		if (ImGui::IsItemDeactivatedAfterEdit())
+		{
+			if (scale <= 0.0f)
+				scale = MeshImportSettings::ImportScale;
+			char buf[32];
+			std::snprintf(buf, sizeof(buf), "%.6g", scale);
+			CommitConfig({ { "ImportScale", buf } });
+		}
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Uniform scale baked at import.\nRescales every placement of this mesh and is not undoable.");
+
+		const char* policies[] = { "WhenMissing", "Always", "Never" };
+		std::string policy = ConfigString(config, "TangentPolicy", MeshImportSettings::TangentPolicy);
+		int policyIndex = 0;
+		for (int i = 0; i < 3; i++)
+		{
+			if (policy == policies[i])
+			{
+				policyIndex = i;
+				break;
+			}
+		}
+		if (ImGui::BeginCombo("Tangent Policy", policies[policyIndex]))
+		{
+			for (int i = 0; i < 3; i++)
+			{
+				if (ImGui::Selectable(policies[i], policyIndex == i))
+					CommitConfig({ { "TangentPolicy", policies[i] } });
+			}
+			ImGui::EndCombo();
+		}
+
+		const char* axes[] = { "Y", "Z" };
+		std::string axis = ConfigString(config, "UpAxis", MeshImportSettings::UpAxis);
+		int axisIndex = (axis == "Z") ? 1 : 0;
+		if (ImGui::BeginCombo("Up Axis", axes[axisIndex]))
+		{
+			for (int i = 0; i < 2; i++)
+			{
+				if (ImGui::Selectable(axes[i], axisIndex == i))
+					CommitConfig({ { "UpAxis", axes[i] } });
+			}
+			ImGui::EndCombo();
+		}
 	}
 
 	void AssetInspectorPanel::EnsureMeshCache()

@@ -1047,6 +1047,21 @@ with no compiler reports `n/a`.
 | Anything else | "No inspector for this type" |
 | Mid-load mesh or texture | "Loading..." — `GetAsset` returning null is the async contract; there are no placeholders |
 
+**Import settings** (mesh and texture). Written to `AssetMeta::Config` through
+`AssetManager::SetAssetConfig`, which overlays keys onto the sidecar (unknown keys survive),
+updates the index, and `Reload`s. The watcher stamps the asset file, not the sidecar, so a
+`.meta` write cannot double-fire. Defaults are the compiler’s (`TextureImportSettings` /
+`MeshImportSettings`); the widgets read `Config*` with those fallbacks so an unset sidecar and a
+UI-default sidecar cannot disagree.
+
+Commits on **deactivate**, not per-drag. `MaxSize` and `ImportScale` would otherwise kick a
+recompile every mouse move — a BC7 encode is seconds. Combos and checkboxes commit on the click.
+Reimport forces the round trip when a source edit did not trip the watcher.
+
+Texture keys: `Format` (auto / BC1 / BC3 / BC5 / BC7 / raw=`RGBA8`), `NormalMap`, `GenerateMips`,
+`MaxSize`. Mesh keys: `ImportScale`, `TangentPolicy` (`WhenMissing` / `Always` / `Never`),
+`UpAxis` (`Y` / `Z`). Same global-edit warning as the `.gmat` editor.
+
 Triangle counts, clip lists and the mirrored-UV walk are computed **once per selection**, not per
 frame. A mesh that is not yet resident leaves those sections empty until Apply lands it.
 

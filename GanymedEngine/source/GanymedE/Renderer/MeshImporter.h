@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GanymedE/Assets/AssetCompiler.h"
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Renderer/MeshSource.h"
@@ -25,6 +26,15 @@ namespace GanymedE {
 		bool AnyNormalMap = false;
 	};
 
+	// Defaults MeshImporter and the Asset Inspector both read. Unset means these values,
+	// which is today's hard-coded behaviour — so an empty sidecar does not change a mesh.
+	struct MeshImportSettings
+	{
+		static constexpr float ImportScale = 1.0f;
+		static constexpr const char* TangentPolicy = "WhenMissing";
+		static constexpr const char* UpAxis = "Y";
+	};
+
 	class MeshImporter
 	{
 	public:
@@ -40,7 +50,8 @@ namespace GanymedE {
 		// the mesh blob built from it. A self-contained `.glb` reports nothing, which is why the
 		// sample content exercises the machinery but not the outcome.
 		static bool Import(const std::filesystem::path& path, MeshSource& out,
-			std::vector<std::string>* outDependencies = nullptr);
+			std::vector<std::string>* outDependencies = nullptr,
+			const AssetConfig* config = nullptr);
 		static Entity Instantiate(Scene* scene, const std::filesystem::path& path);
 	};
 

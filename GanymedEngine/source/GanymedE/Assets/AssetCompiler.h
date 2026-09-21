@@ -43,6 +43,16 @@ namespace GanymedE {
 		catch (...) { return fallback; }
 	}
 
+	inline float ConfigFloat(const AssetConfig& config, const char* key, float fallback)
+	{
+		auto it = config.find(key);
+		if (it == config.end())
+			return fallback;
+
+		try { return std::stof(it->second); }
+		catch (...) { return fallback; }
+	}
+
 	struct CompileInput
 	{
 		const AssetMetadata* Metadata = nullptr;

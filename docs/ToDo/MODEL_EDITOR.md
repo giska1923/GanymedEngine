@@ -1,6 +1,6 @@
 # Milestone — Model Asset Editor
 
-**Status: P1 done. P2–P7 planned.**
+**Status: P1–P2 done. P3–P7 planned.**
 
 > **Same branch rule as [MAP_EDITOR.md](MAP_EDITOR.md).** Every phase touches
 > `GanymedEditor/source/` or `GanymedEngine/source/`, which the
@@ -44,7 +44,7 @@ and before the two phases that need it.
 | Phase | What | Size | Depends on |
 |---|---|---|---|
 | **P1** | Asset Inspector panel — readouts, no preview | **done** | — |
-| **P2** | Import settings written to `AssetMeta::Config` | ~1.5 days | P1 |
+| **P2** | Import settings written to `AssetMeta::Config` | **done** | P1 |
 | **P3** | Collision default on the mesh asset | ~0.5 day | P2, and pairs with [MAP_EDITOR](MAP_EDITOR.md) M2 |
 | **P4** | Multi-target rendering: view-ID bases | ~1.5 days | — (**the risk**) |
 | **P5** | The asset preview renderer | ~2 days | P4 |

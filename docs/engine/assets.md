@@ -84,6 +84,7 @@ one derived index plus a registry of per-type managers (see *Managers and cachin
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
 | `GetAsset<T>(handle)` | Cached load through the type’s manager. Available for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those, enforced by an `IsAssetType<T>` `static_assert`. Prefer an [`AssetRef<T>`](#assetreft) member; this is for one-shot lookups |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
+| `SetAssetConfig(handle, config)` | Overlay keys onto the sidecar’s Config (unknown keys on disk survive), write atomically, update the index, `Reload`. Writing a `.meta` does not trip `AssetWatcher` — it stamps the asset file, not the sidecar — so this has to Reload itself |
 | `GetCacheStats()` | One `{TypeName, Resident, Retained}` row per registered manager, for the editor’s Stats panel |
 | `OrphanedMetaCount()` / `CleanOrphanedMeta()` | `.meta` sidecars the last scan found with no asset beside them, and the action that deletes them. Split because detection is safe and deletion is not — see [Orphaned sidecars](#orphaned-sidecars) |
 | `IsAssetsWritable()` | "This process may write into `assets/`" — one flag, one meaning, for sidecars and every other asset-file writer |
@@ -1219,7 +1220,19 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 2.0 (`.gltf`/`.glb`) via the header-only cgltf into a
 [`MeshSource`](../../GanymedEngine/source/GanymedE/Renderer/MeshSource.h) — **CPU data only, no bgfx
 call anywhere below it**, which is what lets it run on a worker. `BuildMesh` is the main-thread half
-that turns one into a live `Mesh`.
+that turns one into a live `Mesh`. `MeshCompiler` passes the sidecar Config through; the epoch
+already hashes Config, so a changed key invalidates the blob with no new machinery. Defaults live
+in `MeshImportSettings` and match what the importer did before the keys existed — an empty sidecar
+does not change a mesh. Compiler `Version()` is therefore not bumped.
+
+| Key | Values | Default | What it does |
+|---|---|---|---|
+| `ImportScale` | float > 0 | `1.0` | Uniform scale baked at import. Static verts bake it; skinned verts keep bind space and the same matrix rides `Submesh::LocalTransform`, because the draw is `entity * LocalTransform * Palette * v` |
+| `TangentPolicy` | `WhenMissing`, `Always`, `Never` | `WhenMissing` | `WhenMissing` is the previous hard-coded rule. `Always` regenerates even when the file shipped tangents. `Never` trusts the file and, if it has none, leaves the pre-generation constant +X |
+| `UpAxis` | `Y`, `Z` | `Y` | glTF is Y-up by spec. `Z` applies a −90° rotation about X (Z-up DCC → Y-up) through the same import matrix as `ImportScale` |
+
+The Asset Inspector writes these keys. A bad `ImportScale` rescales every existing placement and
+is not undoable — the panel says so in the same words the `.gmat` editor uses.
 
 ### Tangents are generated when the file has none
 
@@ -1444,11 +1457,13 @@ generates mips and block-compresses into a DDS. `Texture2D` takes the container 
 `bgfx::createTexture`, which parses DDS itself — so a mipped, compressed texture costs the engine no
 more code than an uncompressed one.
 
-`.meta` Config keys, all optional:
+`.meta` Config keys, all optional. Defaults live in `TextureImportSettings`; the Asset Inspector
+reads the same constants.
 
 | Key | Values | Default |
 |---|---|---|
 | `Format` | `auto`, `BC1`, `BC3`, `BC4`, `BC5`, `BC7`, `RGBA8` | `auto` |
+| `NormalMap` | `true`, `false` | `false` (`BC5` implies true in the encoder) |
 | `GenerateMips` | `true`, `false` | `true` |
 | `MaxSize` | integer, longest edge; 0 for no limit | `0` |
 
