@@ -7,20 +7,38 @@
 #include "GanymedE/Renderer/Renderer.h"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace GanymedE {
 
 	static constexpr uint32_t kMaxBloomMips = 6;
 	static constexpr uint32_t kMinBloomMipSize = 8;
 
-	// Clear-colour palette slots. bgfx keeps a global palette; these two indices
-	// belong to the scene pass and must not collide with any other pass's.
-	static constexpr uint8_t kSceneColourPalette = 0;
-	static constexpr uint8_t kEntityIdPalette = 1;
-
-	SceneRenderer::SceneRenderer(uint32_t width, uint32_t height)
+	SceneRenderer::SceneRenderer(uint32_t width, uint32_t height,
+		uint16_t viewBase, uint8_t paletteBase)
 		: m_Width(std::max(width, 1u)), m_Height(std::max(height, 1u))
+		, m_ViewBase(viewBase)
+		, m_ColourPalette(paletteBase)
+		, m_EntityIdPalette((uint8_t)(paletteBase + 1))
 	{
+#ifdef GE_ENABLE_ASSERTS
+		char overrun[96];
+		std::snprintf(overrun, sizeof(overrun),
+			"View-ID range overrun at construction: base=%u count=%u",
+			(unsigned)viewBase, (unsigned)RenderPass::SceneViewCount);
+		GE_CORE_ASSERT((uint32_t)viewBase + RenderPass::SceneViewCount <= 256, overrun);
+#endif
+		if (viewBase != RenderPass::MainViewBase)
+		{
+			const uint16_t thisEnd = (uint16_t)(viewBase + RenderPass::SceneViewCount);
+			const uint16_t mainEnd = RenderPass::MainViewBase + RenderPass::SceneViewCount;
+			GE_CORE_ASSERT(thisEnd <= RenderPass::MainViewBase || viewBase >= mainEnd,
+				"View-ID range overlaps the main SceneRenderer");
+			GE_CORE_ASSERT(thisEnd <= RenderPass::UI,
+				"View-ID range collides with RenderPass::UI");
+			GE_CORE_ASSERT(paletteBase != 0,
+				"A second SceneRenderer must use its own clear-palette slots");
+		}
 		FramebufferSpecification sceneSpec;
 		sceneSpec.Attachments = { FramebufferTextureFormat::RGBA16F, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
 		sceneSpec.Width = m_Width;
@@ -83,10 +101,14 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
+		RenderPass::PushActiveBase(m_ViewBase, RenderPass::SceneViewCount);
+		const uint16_t sceneHDR = RenderPass::Id(RenderPass::SceneHDR);
+		const uint16_t sceneTransparent = RenderPass::Id(RenderPass::SceneTransparent);
+
 		// Under bgfx a pass is a view, not a bound framebuffer: point the scene
 		// view at the HDR target and everything submitted to it lands there.
-		m_SceneFramebuffer->BindToView(RenderPass::SceneHDR);
-		RenderCommand::SetViewId(RenderPass::SceneHDR);
+		m_SceneFramebuffer->BindToView(sceneHDR);
+		RenderCommand::SetViewId(sceneHDR);
 
 		// Sequential, NOT bgfx's default sort.
 		//
@@ -96,7 +118,7 @@ namespace GanymedE {
 		// off (it would paint over opaque geometry if it moved after it), and
 		// transparents are sorted back-to-front on the CPU. Sequential keeps the
 		// order the engine already establishes.
-		bgfx::setViewMode(RenderPass::SceneHDR, bgfx::ViewMode::Sequential);
+		bgfx::setViewMode(sceneHDR, bgfx::ViewMode::Sequential);
 
 		// The clear is view state rather than an immediate command.
 		//
@@ -109,20 +131,20 @@ namespace GanymedE {
 		const float sceneColour[4] = { c.r, c.g, c.b, c.a };
 		const float noEntity[4] = { -1.0f, -1.0f, -1.0f, -1.0f };
 
-		bgfx::setPaletteColor(kSceneColourPalette, sceneColour);
-		bgfx::setPaletteColor(kEntityIdPalette, noEntity);
+		bgfx::setPaletteColor(m_ColourPalette, sceneColour);
+		bgfx::setPaletteColor(m_EntityIdPalette, noEntity);
 
-		bgfx::setViewClear(RenderPass::SceneHDR,
+		bgfx::setViewClear(sceneHDR,
 			BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
 			1.0f, 0,
-			kSceneColourPalette,  // attachment 0 - HDR colour
-			kEntityIdPalette);    // attachment 1 - entity IDs
+			m_ColourPalette,      // attachment 0 - HDR colour
+			m_EntityIdPalette);   // attachment 1 - entity IDs
 
 		// bgfx skips a view that receives no draw calls, and its clear with it.
 		// Without this the scene target keeps last frame's contents whenever
 		// nothing is submitted - which is every frame while the scene shaders
 		// are still unported.
-		bgfx::touch(RenderPass::SceneHDR);
+		bgfx::touch(sceneHDR);
 
 		// Renderer2D draws into the same target but needs its OWN view.
 		//
@@ -131,10 +153,10 @@ namespace GanymedE {
 		// view. With 2D sharing SceneHDR, Renderer2D::BeginScene (which runs
 		// after Renderer3D::EndScene) retroactively re-projected all the 3D
 		// geometry with the 2D camera. Separate views keep separate transforms.
-		m_SceneFramebuffer->BindToView(RenderPass::SceneTransparent);
-		bgfx::setViewMode(RenderPass::SceneTransparent, bgfx::ViewMode::Sequential);
+		m_SceneFramebuffer->BindToView(sceneTransparent);
+		bgfx::setViewMode(sceneTransparent, bgfx::ViewMode::Sequential);
 		// No clear: this view composites on top of the 3D pass.
-		bgfx::setViewClear(RenderPass::SceneTransparent, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+		bgfx::setViewClear(sceneTransparent, BGFX_CLEAR_NONE, 0, 1.0f, 0);
 	}
 
 	Ref<Framebuffer> SceneRenderer::RenderBloom()
@@ -157,7 +179,7 @@ namespace GanymedE {
 			const auto& sourceSpec = source->GetSpecification();
 
 			// One view per mip so bgfx keeps the chain strictly ordered.
-			const uint16_t view = RenderPass::BloomDownsample + (uint16_t)i;
+			const uint16_t view = RenderPass::Id(RenderPass::BloomDownsample + (uint16_t)i);
 			m_BloomMips[i]->BindToView(view);
 			RenderCommand::SetViewId(view);
 
@@ -186,7 +208,7 @@ namespace GanymedE {
 			// index. Using `BloomUpsample + i` made the chain run backwards, with
 			// every pass reading a mip that had not been written yet this frame.
 			const uint16_t step = (uint16_t)(m_BloomMips.size() - 1 - i);
-			const uint16_t view = RenderPass::BloomUpsample + step;
+			const uint16_t view = RenderPass::Id(RenderPass::BloomUpsample + step);
 			m_BloomMips[i - 1]->BindToView(view);
 			RenderCommand::SetViewId(view);
 
@@ -223,28 +245,31 @@ namespace GanymedE {
 		const bool fxaaActive = m_Settings.FXAAEnabled && m_FXAAShader;
 
 		// Tonemap HDR (+ bloom) into the FXAA input, or straight to the final target
-		RenderCommand::SetViewId(RenderPass::Tonemap);
-		if (fxaaActive)
-			m_TonemapFramebuffer->BindToView(RenderPass::Tonemap);
-		else if (m_OutputToBackbuffer)
-			BindFinalPassToBackbuffer(RenderPass::Tonemap);
-		else
-			m_CompositeFramebuffer->BindToView(RenderPass::Tonemap);
+		const uint16_t tonemap = RenderPass::Id(RenderPass::Tonemap);
+		const uint16_t fxaa = RenderPass::Id(RenderPass::FXAA);
 
-		bgfx::setViewClear(RenderPass::Tonemap, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
-		bgfx::touch(RenderPass::Tonemap); // force the clear even with nothing submitted
+		RenderCommand::SetViewId(tonemap);
+		if (fxaaActive)
+			m_TonemapFramebuffer->BindToView(tonemap);
+		else if (m_OutputToBackbuffer)
+			BindFinalPassToBackbuffer(tonemap);
+		else
+			m_CompositeFramebuffer->BindToView(tonemap);
+
+		bgfx::setViewClear(tonemap, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+		bgfx::touch(tonemap); // force the clear even with nothing submitted
 		PostProcess::Tonemap(m_SceneFramebuffer, m_Settings.Exposure, bloom, m_Settings.BloomIntensity);
 
 		if (fxaaActive)
 		{
 			if (m_OutputToBackbuffer)
-				BindFinalPassToBackbuffer(RenderPass::FXAA);
+				BindFinalPassToBackbuffer(fxaa);
 			else
-				m_CompositeFramebuffer->BindToView(RenderPass::FXAA);
+				m_CompositeFramebuffer->BindToView(fxaa);
 
-			RenderCommand::SetViewId(RenderPass::FXAA);
-			bgfx::setViewClear(RenderPass::FXAA, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
-			bgfx::touch(RenderPass::FXAA);
+			RenderCommand::SetViewId(fxaa);
+			bgfx::setViewClear(fxaa, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+			bgfx::touch(fxaa);
 
 			m_FXAAShader->Bind();
 			m_FXAAShader->SetTexture("u_Texture", 0, m_TonemapFramebuffer->GetColorAttachment(0), BGFX_SAMPLER_UVW_CLAMP);
@@ -254,6 +279,7 @@ namespace GanymedE {
 		}
 
 		RenderCommand::SetBlend(true);
+		RenderPass::PopActiveBase();
 	}
 
 	void SceneRenderer::RequestEntityID(int x, int y)
@@ -281,7 +307,7 @@ namespace GanymedE {
 			return;
 
 		const uint32_t readyFrame = m_SceneFramebuffer->RequestPixelRead(
-			RenderPass::Picking, 1, x, y, &slot->Value);
+			(uint16_t)(m_ViewBase + RenderPass::Picking), 1, x, y, &slot->Value);
 
 		if (readyFrame == 0)
 			return;

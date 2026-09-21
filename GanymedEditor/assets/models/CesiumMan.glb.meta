@@ -3,6 +3,6 @@ Asset:
   Type: StaticMesh
   ImportConfigVersion: 1
   Config:
-    Collision: Box
+    Collision: None
     TangentPolicy: WhenMissing
     UpAxis: Y

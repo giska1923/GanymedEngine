@@ -265,7 +265,7 @@ namespace GanymedE {
 		// The matrices ride on the view rather than in a uniform block; only the
 		// camera position still needs uploading. Culling keeps using the CPU-side
 		// copy, which is why CameraBuffer survives the UBO removal.
-		FrameUniforms::SetCamera(RenderPass::SceneHDR, view, projection, cameraPos);
+		FrameUniforms::SetCamera(RenderPass::Id(RenderPass::SceneHDR), view, projection, cameraPos);
 
 		s_Data.CameraFrustum = Frustum::FromViewProjection(s_Data.CameraBuffer.ViewProjection);
 	}
@@ -666,6 +666,12 @@ namespace GanymedE {
 
 	static void RenderShadowPass(std::vector<const DrawCommand*>& casters)
 	{
+		// Shadow maps live on Renderer3D's singleton framebuffers. A preview
+		// SceneRenderer shares those textures; writing them from a second base
+		// would overwrite the main viewport's cascades in the same bgfx::frame().
+		if (RenderPass::ActiveBase() != RenderPass::MainViewBase)
+			return;
+
 		if (!s_Data.HasShadowLight || !s_Data.ShadowDepthShader || casters.empty())
 			return;
 
@@ -697,7 +703,7 @@ namespace GanymedE {
 				continue;
 
 			// One view per cascade, so bgfx renders them in a defined order.
-			const uint16_t view = RenderPass::Shadow + (uint16_t)c;
+			const uint16_t view = RenderPass::Id(RenderPass::Shadow + (uint16_t)c);
 			s_Data.ShadowFramebuffers[c]->BindToView(view);
 			RenderCommand::SetViewId(view);
 			bgfx::setViewClear(view, BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
@@ -851,7 +857,7 @@ namespace GanymedE {
 		// RenderShadowPass leaves the current view pointing at the last cascade.
 		// Every colour draw below belongs to the scene view - without this they
 		// are submitted into the shadow framebuffer and simply never appear.
-		RenderCommand::SetViewId(RenderPass::SceneHDR);
+		RenderCommand::SetViewId(RenderPass::Id(RenderPass::SceneHDR));
 
 		// Opaque: group by material -> mesh -> submesh (instancing batches within a
 		// group), front-to-back inside each group for early-z

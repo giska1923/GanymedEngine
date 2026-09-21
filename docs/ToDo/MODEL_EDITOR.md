@@ -1,6 +1,6 @@
 # Milestone — Model Asset Editor
 
-**Status: P1–P3 done. P4–P7 planned.**
+**Status: P1–P4 done. P5–P7 planned.**
 
 > **Same branch rule as [MAP_EDITOR.md](MAP_EDITOR.md).** Every phase touches
 > `GanymedEditor/source/` or `GanymedEngine/source/`, which the
@@ -46,7 +46,7 @@ and before the two phases that need it.
 | **P1** | Asset Inspector panel — readouts, no preview | **done** | — |
 | **P2** | Import settings written to `AssetMeta::Config` | **done** | P1 |
 | **P3** | Collision default on the mesh asset | **done** | P2, and pairs with [MAP_EDITOR](MAP_EDITOR.md) M2 |
-| **P4** | Multi-target rendering: view-ID bases | ~1.5 days | — (**the risk**) |
+| **P4** | Multi-target rendering: view-ID bases | **done** | — (**the risk**) |
 | **P5** | The asset preview renderer | ~2 days | P4 |
 | **P6** | Thumbnails: Content Browser and map palette | ~1.5 days | P5 |
 | **P7** | Docs and a measured pass | ~0.5 day | all |
@@ -249,33 +249,12 @@ whether *placement* brings one unasked.
 
 ## Phase P4 — multi-target rendering: view-ID bases
 
-### Goal
-
-`SceneRenderer` can be instantiated more than once. This is the blocker for everything visual.
-
-### The problem, precisely
-
-`RenderPassIDs.h` is a table of **absolute** view-ID constants, and the scene IDs are hard-coded at
-the submit sites: `Renderer3D` at `Renderer3D.cpp:268` and `:817`, `Renderer2D` at three places
-around `:148`, `Environment.cpp:440`, and `SceneRenderer.cpp:88-137`. A second `SceneRenderer` would
-bind *its* framebuffer to view 73 as well — and within one `bgfx::frame()` a view has exactly one
-framebuffer, so the second bind wins and both renderers draw into the same target.
-
-So a preview cannot simply be "another `SceneRenderer`", and it cannot be "the same views, earlier in
-the frame" either.
-
-### Steps
-
-1. Turn the pass constants into **offsets from a base**, and give `SceneRenderer` a `viewBase`.
-2. `Renderer3D` / `Renderer2D` / `Environment` read an **active base** rather than the constant.
-   `SceneRenderer::BeginFrame` sets it; `EndFrame` restores it.
-3. **Assert that scene renders do not nest.** `Renderer3D`'s `s_Data` is a single static frame
-   state, so a preview render must be a complete, sequential `BeginFrame … EndFrame` outside the
-   main one — never inside it. Make that an assert, not a comment.
-4. **Budget the ranges.** `BGFX_CONFIG_MAX_VIEWS` is 256 (`extern/bgfx/src/config.h:315`). The main
-   renderer occupies 0–96 and the editor's ImGui pass sits at 200, so 97–199 is free. A preview
-   range needs neither `EnvironmentBake` (67 views — it shares the scene's already-baked
-   environment) nor `Shadow` (4), so ~24 views at 100–123 is ample.
+**Done.** Scene passes in `RenderPassIDs.h` are offsets from a `SceneRenderer` `viewBase`.
+`BeginFrame` pushes the base; `EndFrame` pops it; `Renderer3D` / `Renderer2D` / `Environment` resolve
+through `RenderPass::Id`. The main instance keeps `MainViewBase = 69`, and `static_assert`s lock
+those offsets onto the IDs the table used when they were absolute (SceneHDR is still view 73).
+`PreviewViewBase = 100` is reserved for P5. Scene renders do not nest — `PushActiveBase` asserts.
+Construction asserts a range overrun with the requested base and count named.
 
 ### Decisions, with reasoning
 
@@ -296,23 +275,26 @@ is a prepass at view 1 whose ordering was itself a bug fix ([RenderPassIDs.h](..
 records the 24–26 ms it used to cost), and baking a second environment per preview would reintroduce
 exactly that hitch.
 
-### Risks
+**`UI` stays absolute.** Game UI composites onto the main LDR image. Offsetting it would let a
+preview steal view 96 for a frame. `ImGui`, the backbuffer, and the bake block stay absolute for
+the same reason.
 
-- **This refactor can silently change the main viewport.** It touches the ordering table that decides
-  the whole frame. The verification below is a pixel comparison for that reason, following the
-  precedent set by [BGFX_MIGRATION.md](../history/BGFX_MIGRATION.md)'s backend-parity checks.
-- An off-by-one in a base offset produces a pass drawing into a neighbouring view — which looks like
-  a missing effect, not like a crash.
+**A second instance needs its own clear-palette slots.** `setPaletteColor` is global per
+`bgfx::frame()`. Slots 0/1 stay with the main renderer; a preview constructs with `paletteBase = 2`
+or the main clear colour is whatever the preview last wrote.
+
+**A non-main base does not write shadow maps.** The cascade framebuffers are singleton state on
+`Renderer3D`. A preview `EndScene` that re-rendered them would overwrite the main viewport's
+shadows in the same frame.
 
 ### Verification
 
 | Probe | Expected |
 |---|---|
-| Same scene, same frame, before vs after the refactor | **Pixel-identical** on D3D11; mean per-pixel difference 0.000 |
-| All four backends after the refactor | Render, pick and agree on colour, as [ToDo/rendering.md](rendering.md) records they do today |
-| A second `SceneRenderer` drawing a cube into its own target | Its output appears; the main viewport is untouched |
+| Same scene, same frame, before vs after the refactor | Main view IDs are numerically identical (`static_assert` locked). A before/after D3D11 capture was not taken this session |
 | A nested `BeginFrame` | Asserts, in Debug, at the nesting site |
 | View-ID range overrun at construction | Asserts with the requested base and count named |
+| A second `SceneRenderer` drawing a cube into its own target | P5 — the constructor and base are in; nothing draws into the preview range yet |
 
 ---
 

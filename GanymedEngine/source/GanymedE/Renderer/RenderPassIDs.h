@@ -1,12 +1,20 @@
 #pragma once
 
+#include "GanymedE/Core/Core.h"
+
 #include <cstdint>
 
 namespace GanymedE {
 
 	// bgfx sorts submitted draw calls by view ID, so the order of the whole frame
 	// is decided by this table rather than by the order calls happen to be made.
-	// Every pass gets a fixed ID here instead of a magic number at the call site.
+	//
+	// Scene passes are **offsets from a base**. SceneRenderer::BeginFrame pushes
+	// its viewBase as the active base; EndFrame pops it. Renderer3D / Renderer2D
+	// / Environment resolve through RenderPass::Id, so a second SceneRenderer
+	// can bind a different framebuffer to "SceneHDR" without stealing view 73.
+	// Global passes (backbuffer, environment bake, game UI, ImGui) stay absolute
+	// — they are not per-renderer.
 	//
 	// A framebuffer is attached to a view (Framebuffer::BindToView) and every
 	// draw submitted to that view lands in it - which is what replaced bind/unbind.
@@ -29,41 +37,110 @@ namespace GanymedE {
 		constexpr uint16_t EnvironmentBake = 1;
 		constexpr uint16_t EnvironmentBakeViewCount = 67;
 
-		// Directional shadow cascades. Contiguous so cascade N is Shadow + N.
-		constexpr uint16_t Shadow = 69;
+		// Offsets from SceneRenderer's viewBase. MainViewBase is 69 so these land
+		// on the same IDs the table used when they were absolute — the main
+		// viewport's frame graph does not move.
+		constexpr uint16_t Shadow = 0;
 		constexpr uint16_t ShadowCascadeCount = 4;
 
-		// Main HDR scene: opaque geometry, then skybox.
-		constexpr uint16_t SceneHDR = 73;
-		// Transparent geometry and 2D overlays, drawn after the opaque pass.
-		constexpr uint16_t SceneTransparent = 74;
+		constexpr uint16_t SceneHDR = 4;
+		constexpr uint16_t SceneTransparent = 5;
 
-		// Bloom mip chain: downsample then upsample, one view per mip in each
-		// direction. Kept apart so the two halves never interleave.
-		constexpr uint16_t BloomDownsample = 75;
-		constexpr uint16_t BloomUpsample = 83;
+		constexpr uint16_t BloomDownsample = 6;
+		constexpr uint16_t BloomUpsample = 14;
 		constexpr uint16_t BloomMipCount = 8;
 
-		constexpr uint16_t Tonemap = 92;
-		constexpr uint16_t FXAA = 93;
-		constexpr uint16_t Composite = 94;
+		constexpr uint16_t Tonemap = 23;
+		constexpr uint16_t FXAA = 24;
+		constexpr uint16_t Composite = 25;
+		constexpr uint16_t Picking = 26;
 
-		// Entity-ID readback blits. Must sort after SceneHDR so the blit copies
-		// this frame's IDs rather than the previous frame's.
-		constexpr uint16_t Picking = 95;
+		// Inclusive span of scene offsets (Shadow through Picking). Tonemap sits
+		// one past BloomUpsample+BloomMipCount, matching the unused view 91 the
+		// absolute table left.
+		constexpr uint16_t SceneViewCount = 27;
 
-		// Game UI (RmlUi), composited into the final LDR image.
+		constexpr uint16_t MainViewBase = 69;
+		// Preview range: neither EnvironmentBake nor the main 69–95 block.
+		// BGFX_CONFIG_MAX_VIEWS is 256; ImGui sits at 200, so 97–199 is free.
+		constexpr uint16_t PreviewViewBase = 100;
+
+		// Game UI (RmlUi), composited into the *main* LDR image.
 		//
-		// Because bgfx executes views in ID order, this one constant is the whole
-		// ordering story: sitting after Composite (26) means the UI lands on the
+		// Absolute on purpose: a preview must not steal this view. Because bgfx
+		// executes views in ID order, this one constant is the whole ordering
+		// story — sitting after the main Composite means the UI lands on the
 		// tonemapped, anti-aliased image in display space and is never itself
-		// tonemapped - no matter where in the frame the submit calls happen. It
-		// also appears inside the editor's viewport image for free, since that
-		// image IS the composite attachment.
+		// tonemapped.
 		constexpr uint16_t UI = 96;
 
 		// Editor UI renders last, straight to the backbuffer.
 		constexpr uint16_t ImGui = 200;
+
+		static_assert(MainViewBase + Shadow == 69, "main Shadow view moved");
+		static_assert(MainViewBase + SceneHDR == 73, "main SceneHDR view moved");
+		static_assert(MainViewBase + SceneTransparent == 74, "main SceneTransparent view moved");
+		static_assert(MainViewBase + BloomDownsample == 75, "main BloomDownsample view moved");
+		static_assert(MainViewBase + BloomUpsample == 83, "main BloomUpsample view moved");
+		static_assert(MainViewBase + Tonemap == 92, "main Tonemap view moved");
+		static_assert(MainViewBase + FXAA == 93, "main FXAA view moved");
+		static_assert(MainViewBase + Composite == 94, "main Composite view moved");
+		static_assert(MainViewBase + Picking == 95, "main Picking view moved");
+		static_assert(MainViewBase + SceneViewCount == 96, "main scene range no longer ends at UI");
+		static_assert(UI == 96, "UI view moved");
+		static_assert(PreviewViewBase + SceneViewCount <= ImGui, "preview range collides with ImGui");
+		static_assert(PreviewViewBase >= MainViewBase + SceneViewCount, "preview range collides with main");
+
+		inline uint16_t& ActiveBaseStorage()
+		{
+			static uint16_t base = MainViewBase;
+			return base;
+		}
+
+		inline bool& InSceneRenderStorage()
+		{
+			static bool inScene = false;
+			return inScene;
+		}
+
+		inline uint16_t& SavedBaseStorage()
+		{
+			static uint16_t saved = MainViewBase;
+			return saved;
+		}
+
+		inline uint16_t ActiveBase()
+		{
+			return ActiveBaseStorage();
+		}
+
+		inline uint16_t Id(uint16_t offset)
+		{
+			const uint32_t id = (uint32_t)ActiveBase() + offset;
+			GE_CORE_ASSERT(id < 256, "View-ID range overrun resolving a pass offset");
+			return (uint16_t)id;
+		}
+
+		inline void PushActiveBase(uint16_t base, uint16_t count)
+		{
+			GE_CORE_ASSERT(!InSceneRenderStorage(),
+				"Scene renders do not nest: Renderer3D frame state is a single static. "
+				"A preview must be a complete BeginFrame...EndFrame outside the main one.");
+			GE_CORE_ASSERT(count > 0 && (uint32_t)base + count <= 256,
+				"View-ID range overrun: base and count exceed BGFX_CONFIG_MAX_VIEWS (256)");
+
+			SavedBaseStorage() = ActiveBaseStorage();
+			ActiveBaseStorage() = base;
+			InSceneRenderStorage() = true;
+		}
+
+		inline void PopActiveBase()
+		{
+			GE_CORE_ASSERT(InSceneRenderStorage(),
+				"RenderPass::PopActiveBase without a matching Push");
+			ActiveBaseStorage() = SavedBaseStorage();
+			InSceneRenderStorage() = false;
+		}
 
 	}
 
