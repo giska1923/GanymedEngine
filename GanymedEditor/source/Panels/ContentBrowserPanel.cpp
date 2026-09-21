@@ -157,6 +157,15 @@ namespace GanymedE {
 		m_FileIcon = Texture2D::Create("resources/icons/ContentBrowser/FileIcon.png");
 	}
 
+	void ContentBrowserPanel::SetSelected(const std::filesystem::path& path)
+	{
+		if (m_Selected == path)
+			return;
+		m_Selected = path;
+		if (m_OnSelectionChanged)
+			m_OnSelectionChanged(m_Selected);
+	}
+
 	bool ContentBrowserPanel::IsUnderAssetRoot(const std::filesystem::path& path) const
 	{
 		const auto base = Normalize(m_BaseDirectory);
@@ -190,7 +199,7 @@ namespace GanymedE {
 		}
 
 		m_CurrentDirectory = next;
-		m_Selected.clear();
+		SetSelected({});
 		{
 			std::error_code mtimeEc;
 			m_ListingMtime = std::filesystem::last_write_time(m_CurrentDirectory, mtimeEc);
@@ -609,7 +618,7 @@ namespace GanymedE {
 			}
 
 			if (ImGui::IsItemClicked())
-				m_Selected = item->Path;
+				SetSelected(item->Path);
 
 			if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && item->IsDirectory)
 				TryNavigate(item->Path, true);
@@ -672,7 +681,7 @@ namespace GanymedE {
 				ImGui::PopStyleColor(3);
 
 			if (ImGui::IsItemClicked())
-				m_Selected = item->Path;
+				SetSelected(item->Path);
 			if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
 				&& item->IsDirectory)
 				TryNavigate(item->Path, true);
@@ -720,7 +729,7 @@ namespace GanymedE {
 			DrawList();
 
 		if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
-			m_Selected.clear();
+			SetSelected({});
 
 		ImGui::EndChild();
 	}

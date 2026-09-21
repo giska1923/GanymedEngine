@@ -6,7 +6,10 @@
 #include "EditorWidgets.h"
 
 #include "GanymedE/Assets/AssetManager.h"
+#include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Assets/AssetRef.h"
+#include "GanymedE/Assets/MaterialSerializer.h"
+#include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Core/Log.h"
 #include "GanymedE/Renderer/Environment.h"
 #include "GanymedE/Scene/Components.h"
@@ -684,6 +687,97 @@ namespace GanymedE::EditorUI {
 		}
 
 		return edited;
+	}
+
+	void DrawMaterialAssetEditor(AssetHandle handle)
+	{
+		const AssetMetadata* metadata = AssetManager::GetMetadata(handle);
+		Ref<Material> material = AssetManager::GetAsset<Material>(handle);
+		if (!metadata || !material)
+		{
+			ImGui::TextDisabled("Material asset could not be loaded");
+			return;
+		}
+
+		ImGui::PushID((int)(uint64_t)handle);
+		ImGui::Separator();
+		ImGui::Text("%s", metadata->FilePath.c_str());
+		ImGui::TextDisabled("Edits apply to this asset everywhere it is used, and are not undoable");
+
+		glm::vec4 albedo = material->GetAlbedoColor();
+		if (ImGui::ColorEdit4("Albedo", glm::value_ptr(albedo)))
+			material->SetAlbedoColor(albedo);
+
+		float metallic = material->GetMetallic();
+		if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
+			material->SetMetallic(metallic);
+
+		float roughness = material->GetRoughness();
+		if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.0f, 1.0f))
+			material->SetRoughness(roughness);
+
+		bool transparent = material->IsTransparent();
+		if (ImGui::Checkbox("Transparent", &transparent))
+			material->SetTransparent(transparent);
+		ImGui::SameLine();
+		bool twoSided = material->IsTwoSided();
+		if (ImGui::Checkbox("Two Sided", &twoSided))
+			material->SetTwoSided(twoSided);
+
+		struct MapRow
+		{
+			const char* Label;
+			const std::string& (Material::*GetPath)() const;
+			void (Material::*SetPath)(const std::string&);
+			void (Material::*SetTexture)(const Ref<Texture2D>&);
+		};
+
+		const MapRow rows[] = {
+			{ "Albedo Map",     &Material::GetAlbedoMapPath,            &Material::SetAlbedoMapPath,            &Material::SetAlbedoMap },
+			{ "Normal Map",     &Material::GetNormalMapPath,            &Material::SetNormalMapPath,            &Material::SetNormalMap },
+			{ "Metal/Rough Map",&Material::GetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMap },
+		};
+
+		for (const MapRow& row : rows)
+		{
+			ImGui::PushID(row.Label);
+
+			const std::string& path = (material.get()->*row.GetPath)();
+			ImGui::Text("%s: %s", row.Label, path.empty() ? "(none)" : path.c_str());
+
+			if (auto dropped = EditorUI::AcceptAssetDrop(AssetType::Texture))
+			{
+				const std::string relative = dropped->generic_string();
+				(material.get()->*row.SetPath)(relative);
+				(material.get()->*row.SetTexture)(TextureImporter::LoadMaterialMap(relative));
+			}
+
+			if (!path.empty())
+			{
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Clear"))
+				{
+					(material.get()->*row.SetPath)(std::string());
+					(material.get()->*row.SetTexture)(nullptr);
+				}
+			}
+
+			ImGui::PopID();
+		}
+
+		ImGui::TextDisabled("Drop a texture on a map row to assign it");
+
+		if (ImGui::Button("Save"))
+		{
+			if (MaterialSerializer::Save(material, GetAssetRoot() / metadata->FilePath))
+				GE_INFO("Saved material '{0}'", metadata->FilePath);
+		}
+
+		ImGui::SameLine();
+		if (ImGui::Button("Revert"))
+			AssetManager::Reload(handle);
+
+		ImGui::PopID();
 	}
 
 }

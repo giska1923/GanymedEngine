@@ -13,9 +13,24 @@ namespace GanymedE {
 	class Scene;
 	class Entity;
 
+	// Facts the importer already knows and currently only logs. Parsed from the glTF JSON
+	// without loading buffers, so this is cheap relative to Import and does not build a Mesh.
+	// The Asset Inspector asks once per selection; a cache replay has already dropped the
+	// warnings, and bumping the mesh blob to carry them would invalidate every compiled mesh
+	// for three UI strings.
+	struct MeshSourceInspect
+	{
+		uint32_t SkinCount = 0;
+		bool AnyPrimitiveMissingTangent = false;
+		bool AnyNormalMap = false;
+	};
+
 	class MeshImporter
 	{
 	public:
+		// glTF JSON only — skins, attributes, material slots. False when the file will not parse.
+		static bool InspectSource(const std::filesystem::path& path, MeshSourceInspect& out);
+
 		// glTF -> CPU-side mesh data. **No bgfx call anywhere below this**, which is what lets
 		// the asset compiler run it on a worker thread; `BuildMesh` is the main-thread half.
 		//

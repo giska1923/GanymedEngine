@@ -61,6 +61,21 @@ namespace GanymedE {
 		// what makes it non-blocking; until then the editor says so rather than pretending.
 		static bool Open(const AssetMetadata& metadata, std::vector<uint8_t>& out);
 
+		// Cheap, non-compiling status for the editor. Compares the epoch record's cheap fields
+		// (compiler version, size, mtime, config) and does **not** content-hash the source —
+		// that is Open's job, and hashing a 4K texture on a selection click would hitch the UI.
+		// A touched-but-identical file therefore reports Stale until the next Open refreshes
+		// the record, which is conservative and honest.
+		enum class OutputStatus
+		{
+			None,     // this type has no compiler; the source is the artifact
+			Missing,  // no .gres
+			Stale,    // .gres exists but the cheap epoch fields disagree
+			Current   // .gres exists and matches the current epoch's cheap fields
+		};
+
+		static OutputStatus QueryOutput(const AssetMetadata& metadata);
+
 		// Delete this asset's compiled output and its epoch record, so the next Open recompiles.
 		// This is "reimport now" - the epoch already catches an edited source on its own.
 		static bool Invalidate(const AssetMetadata& metadata);

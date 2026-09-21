@@ -61,7 +61,7 @@ namespace GanymedE {
 		// Bump when the DockBuilder default tree changes. Existing imgui.ini otherwise keeps
 		// the old splits — including the phase-1 6% toolbar node — and View → Reset Layout
 		// is easy to miss on the first launch after a chrome change.
-		constexpr int kDockLayoutVersion = 3;
+		constexpr int kDockLayoutVersion = 4;
 		int s_IniDockLayoutVersion = 0;
 
 		void* DockLayoutReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
@@ -104,6 +104,7 @@ namespace GanymedE {
 
 			ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
 			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
+			ImGui::DockBuilderDockWindow("Asset Inspector", dockLeftBottom);
 			ImGui::DockBuilderDockWindow("Viewport", dockMain);
 			ImGui::DockBuilderDockWindow("Stats", dockRight);
 			ImGui::DockBuilderDockWindow("Map", dockRight);
@@ -430,6 +431,8 @@ namespace GanymedE {
 			if (m_SceneState == SceneState::Edit)
 				BeginMarkerPlacement(kind, color, size);
 		});
+		m_ContentBrowserPanel.SetSelectionChangedCallback(
+			[this](const std::filesystem::path& path) { m_AssetInspectorPanel.SetSelectedPath(path); });
 
 		// Optional scene on the command line: GanymedEditor [--renderer=<backend>] [path/to/scene.ganymede]
 		// FirstPositional, not Args[1]: an option may come first.
@@ -698,6 +701,7 @@ namespace GanymedE {
 
 		m_SceneHierarchyPanel.OnImGuiRender();
 		m_ContentBrowserPanel.OnImGuiRender();
+		m_AssetInspectorPanel.OnImGuiRender();
 		m_MapPanel.OnImGuiRender(m_SnapSettings, m_SceneState == SceneState::Edit, IsPlacing(),
 			m_ActiveScene.get(), m_SceneState == SceneState::Edit ? &m_UndoStack : nullptr,
 			&m_SceneHierarchyPanel,

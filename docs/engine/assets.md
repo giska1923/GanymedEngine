@@ -1266,6 +1266,11 @@ Two deliberate limits:
   file supplied one. A mirrored UV shell lights as though it were not mirrored. Carrying `w` means a
   vertex-format change; nothing in the project has mirrored shells yet.
 
+`MeshImporter::InspectSource` is the read-only half of the same parse: glTF JSON only (skins,
+whether any primitive lacks `TANGENT`, whether any material names a normal map), no buffer load
+and no `Mesh`. The Asset Inspector asks once per selection so the warnings the importer already
+logs are visible without bumping the compiled blob to carry them.
+
 - Walks the node tree **depth-first into a vector**, flattening every mesh primitive into one
   interleaved vertex/index buffer with a `Submesh` per primitive. Traversal order is part of the
   contract: submesh order must be stable across runs or cache diffs and joint↔submesh correlation
@@ -1353,6 +1358,11 @@ files in a project with tens of thousands of assets. Hashing happens in one func
 (`CompiledCache::OutputPath`), which is what makes adding a platform tag to the key a one-line
 change the day a second build target exists — the machinery for that is deliberately *not* built
 (roadmap decision 9).
+
+`CompiledCache::QueryOutput` is the editor's non-compiling status: Missing / Stale / Current /
+None (type has no compiler). It compares the `.dep`'s cheap fields and does **not** content-hash
+the source — that is `Open`'s job. A touched-but-identical file therefore reports Stale until
+the next Open refreshes the record.
 
 ### Compilers
 

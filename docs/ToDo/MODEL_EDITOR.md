@@ -1,6 +1,6 @@
 # Milestone — Model Asset Editor
 
-**Status: planned. Nothing here is built.**
+**Status: P1 done. P2–P7 planned.**
 
 > **Same branch rule as [MAP_EDITOR.md](MAP_EDITOR.md).** Every phase touches
 > `GanymedEditor/source/` or `GanymedEngine/source/`, which the
@@ -43,7 +43,7 @@ and before the two phases that need it.
 
 | Phase | What | Size | Depends on |
 |---|---|---|---|
-| **P1** | Asset Inspector panel — readouts, no preview | ~2 days | — |
+| **P1** | Asset Inspector panel — readouts, no preview | **done** | — |
 | **P2** | Import settings written to `AssetMeta::Config` | ~1.5 days | P1 |
 | **P3** | Collision default on the mesh asset | ~0.5 day | P2, and pairs with [MAP_EDITOR](MAP_EDITOR.md) M2 |
 | **P4** | Multi-target rendering: view-ID bases | ~1.5 days | — (**the risk**) |
@@ -116,6 +116,10 @@ that looks local is the worst version of this UI.
   there are no placeholders.
 - Triangle counts over a large mesh are cheap but not free; compute once per selection, not per
   frame.
+- The first two warnings are *source* facts, lost on a compiled-cache load. P1 reads them with
+  `MeshImporter::InspectSource` (glTF JSON, no buffers) rather than bumping the mesh blob: a
+  compiler-version bump would invalidate every `.gres` for three UI strings. A huge `.glb` can
+  hitch once on select; persist the bits in P2 if that shows up.
 
 ### Verification
 

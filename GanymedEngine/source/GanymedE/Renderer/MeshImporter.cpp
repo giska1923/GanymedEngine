@@ -392,6 +392,46 @@ namespace GanymedE {
 
 	}
 
+	bool MeshImporter::InspectSource(const std::filesystem::path& path, MeshSourceInspect& out)
+	{
+		cgltf_options options = {};
+		cgltf_data* data = nullptr;
+		if (cgltf_parse_file(&options, path.string().c_str(), &data) != cgltf_result_success)
+			return false;
+
+		out = {};
+		out.SkinCount = (uint32_t)data->skins_count;
+
+		for (cgltf_size i = 0; i < data->materials_count; i++)
+		{
+			if (data->materials[i].normal_texture.texture)
+				out.AnyNormalMap = true;
+		}
+
+		for (cgltf_size m = 0; m < data->meshes_count; m++)
+		{
+			const cgltf_mesh& mesh = data->meshes[m];
+			for (cgltf_size p = 0; p < mesh.primitives_count; p++)
+			{
+				const cgltf_primitive& primitive = mesh.primitives[p];
+				bool hasTangent = false;
+				for (cgltf_size a = 0; a < primitive.attributes_count; a++)
+				{
+					if (primitive.attributes[a].type == cgltf_attribute_type_tangent)
+					{
+						hasTangent = true;
+						break;
+					}
+				}
+				if (!hasTangent)
+					out.AnyPrimitiveMissingTangent = true;
+			}
+		}
+
+		cgltf_free(data);
+		return true;
+	}
+
 	bool MeshImporter::Import(const std::filesystem::path& path, MeshSource& out,
 		std::vector<std::string>* outDependencies)
 	{

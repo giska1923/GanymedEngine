@@ -302,6 +302,36 @@ namespace GanymedE {
 		return s_Data.Compilers[index].get();
 	}
 
+	CompiledCache::OutputStatus CompiledCache::QueryOutput(const AssetMetadata& metadata)
+	{
+		const IAssetCompiler* compiler = CompilerFor(metadata.Type);
+		if (!compiler)
+			return OutputStatus::None;
+
+		const std::filesystem::path output = OutputPath(metadata.FilePath);
+		std::filesystem::path depPath = output;
+		depPath.replace_extension(".dep");
+
+		if (!std::filesystem::exists(output))
+			return OutputStatus::Missing;
+
+		Epoch previous;
+		if (!ReadEpoch(depPath, previous))
+			return OutputStatus::Stale;
+
+		const std::filesystem::path sourceFull = GetAssetRoot() / metadata.FilePath;
+		if (previous.CompilerVersion != compiler->Version())
+			return OutputStatus::Stale;
+		if (previous.SourceSize != FileSize(sourceFull))
+			return OutputStatus::Stale;
+		if (previous.SourceMtime != FileTimestamp(sourceFull))
+			return OutputStatus::Stale;
+		if (previous.ConfigHash != HashConfig(metadata.Config))
+			return OutputStatus::Stale;
+
+		return OutputStatus::Current;
+	}
+
 	std::filesystem::path CompiledCache::OutputPath(const std::string& relativeSourcePath)
 	{
 		const uint64_t hash = HashString(relativeSourcePath);

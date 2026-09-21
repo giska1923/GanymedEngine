@@ -3,7 +3,7 @@
 The editor application (`GanymedEditor/source/`). It is a thin client of the engine: one
 `Application` subclass ([`GanymedEditorApp.cpp`](../../GanymedEditor/source/GanymedEditorApp.cpp))
 pushing a single [`EditorLayer`](../../GanymedEditor/source/EditorLayer.h), plus the hierarchy,
-content browser, and Map panels.
+content browser, Asset Inspector, and Map panels.
 Run it with `GanymedEditor/` as the working directory — the editor's *own* assets (Inter, Lucide,
 the checkerboard, its HUD document) resolve relative to CWD. A scene path may be passed
 positionally, and `--renderer=<backend>` selects the graphics backend (see
@@ -40,13 +40,14 @@ and shows a host scrollbar. The host itself is `NoScrollbar`. None of those stri
 docked window: they cannot be resized, undocked, or given a tab. On Wayland the title bar is
 omitted and the ImGui menu bar stays, because an undecorated window cannot be moved. On first
 run, after **View → Reset Layout**, or when the dock-layout version in `imgui.ini` mismatches
-(`[GanymedEditor][Dock] Version`, currently 3), `EditorLayer` builds a default DockBuilder
-tree: Scene Hierarchy left, Properties below it, Viewport center, Stats and Map tabbed on the
-right, Content
-Browser bottom. After that, panel layout persists in `GanymedEditor/imgui.ini`. Later chrome
-changes that alter the default tree bump that version so an existing ini does not keep a
-stale split. The title bar and status bar sit outside the dock tree, so they did not need a
-version bump.
+(`[GanymedEditor][Dock] Version`, currently 4), `EditorLayer` builds a default DockBuilder
+tree: Scene Hierarchy left, Properties below it (Asset Inspector tabbed with Properties),
+Viewport center, Stats and Map tabbed on the right, Content Browser bottom. After that, panel
+layout persists in `GanymedEditor/imgui.ini`. Later chrome changes that alter the default tree
+bump that version so an existing ini does not keep a stale split. The title bar and status bar
+sit outside the dock tree, so they did not need a version bump. The Asset Inspector is a
+separate panel — not a mode of Properties — so entity multi-select and asset selection stay
+two domains; the cost is one extra dock tab.
 
 ## Look and feel
 
@@ -162,7 +163,7 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-The outliner, Properties, Content Browser, Map, and Viewport are wrapped (`BeginPanel`). The host
+The outliner, Properties, Content Browser, Asset Inspector, Map, and Viewport are wrapped (`BeginPanel`). The host
 title bar is `EditorTitleBar.cpp`, not a furniture helper — it has to talk to `Window` hit-testing.
 
 ### Title bar
@@ -981,6 +982,12 @@ those Header colours. The legacy `ImGui::Columns` grid is gone.
 **Footer.** Visible item count (after the search filter) on the left; grid / list toggle on the
 right. Grid keeps the PNG directory/file thumbnails with `AssetTint`. List uses Lucide type icons.
 
+**Selection** is readable. `GetSelectedPath()` returns the absolute path (empty when nothing is
+selected); `SetSelectionChangedCallback` fires on a real change, including a clear. `EditorLayer`
+wires that to the Asset Inspector the same way it wires MapPanel's place handler. `m_Selected`
+stays private. Navigating a folder, clicking empty space, or picking a cell all go through
+`SetSelected` so the inspector cannot miss a clear.
+
 **Cache.** One recursive walk fills a flat index of every visible file and folder _and_ the
 sidebar tree. It rebuilds when a watched directory's `last_write_time` moves, when
 `AssetWatcher` reports a reload, or every 0.25 s — `AssetWatcher` only polls _indexed files_,
@@ -1013,6 +1020,55 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
   because the action is not undoable: see
   [assets.md](../engine/assets.md#orphaned-sidecars) for why the editor asks a person rather than
   reaping at boot.
+
+## Asset Inspector panel
+
+[`AssetInspectorPanel`](../../GanymedEditor/source/Panels/AssetInspectorPanel.h) — `BeginPanel("Asset
+Inspector")`, tabbed with Properties in the default tree (dock-layout version 4). It inspects
+**assets**, not entities. Selecting a file in the Content Browser fills it; selecting nothing
+clears it. Properties stays entity-scoped and multi-select-aware. The two selection domains do
+not arbitrate.
+
+**Header, every type.** Relative path, `AssetHandle` (or "not indexed"), `AssetType`, source file
+size, sidecar state, and compiled-output status for the current epoch. Sidecar state is read
+from disk (`present` / `missing` / `quarantined` as `.meta.bad`) — the panel never calls
+`ImportAsset` or `ScanAssets` to "fix" a missing sidecar, which is what would silently re-mint
+one. Compiled status is `CompiledCache::QueryOutput`: cheap epoch fields only (compiler version,
+size, mtime, config), no content hash, so a selection click cannot hitch on a 4K texture. A type
+with no compiler reports `n/a`.
+
+**Bodies.**
+
+| Type | What it shows |
+|---|---|
+| Mesh | Submesh table (index, name, material slot, triangles, local extents), vertex / index / triangle counts, total bounds, skin present or not, material slots as *imported defaults* (the entity inspector's rows are per-entity overrides), a Generate-sidecars button, and a skeleton summary (joint count, clip names and durations) when the mesh has one |
+| Texture | Dimensions, source format (extension), mip count, compiled GPU format and size |
+| Material | The same `DrawMaterialAssetEditor` Properties uses on a slot override — live on the shared `Ref`, not undoable, Save / Revert |
+| Anything else | "No inspector for this type" |
+| Mid-load mesh or texture | "Loading..." — `GetAsset` returning null is the async contract; there are no placeholders |
+
+Triangle counts, clip lists and the mirrored-UV walk are computed **once per selection**, not per
+frame. A mesh that is not yet resident leaves those sections empty until Apply lands it.
+
+**Warnings**, the ones `MeshImporter` already knew and only logged:
+
+- more than one `cgltf_skin` — only the first is imported
+- a normal map present and no `TANGENT` attribute — tangents were generated
+- mirrored UV shells — `MeshVertex::Tangent` is a `vec3`, so glTF's tangent `w` is dropped and a
+  mirrored shell lights as though it were not. The engine cannot fix this without a vertex-format
+  change; the inspector stops it being a mystery
+
+The first two come from `MeshImporter::InspectSource`, a glTF-JSON parse that does not load
+buffers and does not build a `Mesh`. They are not stored on the compiled blob: bumping the mesh
+format to carry three bits would invalidate every `.gres` for UI copy. The mirrored-shell test
+walks the resident mesh's triangles once.
+
+`.gmat` edits follow the existing asset transaction model: live, not undoable, Save / Revert.
+The warning text is the same sentence Properties already uses, because a global edit that looks
+local is the worst version of this UI. `DrawMaterialAssetEditor` lives in `EditorInspector` so
+the two call sites cannot drift.
+
+There is no 3D preview. That is P5, and it is blocked on the view-ID-base refactor in P4.
 
 ## Map panel
 
