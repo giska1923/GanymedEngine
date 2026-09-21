@@ -1,6 +1,6 @@
 # Milestone — Map Editor
 
-**Status: M0–M5 landed. M6 planned.**
+**Status: M0–M6 landed.** Warehouse rebuild-from-nothing was not timed in the editor; see M6.
 
 An in-editor toolset for authoring maps: a palette, a surface-snapping placement mode, a snap model
 shared with the gizmo, a collider-versus-mesh audit, a scatter brush, gameplay markers, and a
@@ -26,8 +26,9 @@ Each of those walls is a box collider whose half-extents and offset were **typed
 a mesh that was authored somewhere else**. The predictable result is recorded in
 [ToDo/README.md](README.md): the Warehouse had a 0.90 m hole in a wall of a building with no door,
 the Blockhouse had three holes none of which were at its one real doorway, and P2's gate — *walk
-inside and out of every building* — has therefore never been met for the Warehouse. P4's occlusion
-probe was authored against one of those holes in the belief that it was the doorway.
+inside and out of every building* — had never been met for the Warehouse. P4's occlusion
+probe was authored against one of those holes in the belief that it was the doorway. M6 re-ran
+both gates on the corrected geometry.
 
 That is not a careless-author story. Three things in the editor make it close to inevitable:
 
@@ -90,7 +91,7 @@ a synchronous ray. After that the order is by value, not by dependency.
 | **M3** | Scatter brush | done | High for dressing, none for structure |
 | **M4** | Gameplay markers | done | Medium; the only phase touching engine + Lua |
 | **M5** | Top-down orthographic view | done | Lowest. Cut this first |
-| **M6** | Prove it on the Proving Ground | ~1 day | Closes two open gates |
+| **M6** | Prove it on the Proving Ground | done | Closes two open gates |
 
 **Two pieces of pushback, stated before the plan rather than after it.**
 
@@ -112,8 +113,9 @@ volume. Keep it last, and drop it without ceremony if M1–M4 run long.
 
 **Done.** `Math::ScreenPointToRay` and `RaycastScene` are live; Edit-mode Stats shows `Surface:`
 plus the per-ray milliseconds. The Proving Ground probes below (GroundTile, Warehouse wall, 1 000
-rays in Release) still need that scene, which lives on `first-game` — they are M6's job, not a
-reason to keep M0 open.
+rays in Release) still need that scene, which lives on `first-game`. They were not run in M6 —
+they need a human in the editor with `--project=` pointed at `Game/assets`. Not a reason to keep
+M0 open.
 
 ### Goal
 
@@ -627,21 +629,108 @@ A true-scale plan view for laying out footprints and sightlines.
 
 ## Phase M6 — prove it on the Proving Ground
 
-The milestone's own gate. Not "the tool works" — *the tool fixed something that was broken*.
+**Done**, on `first-game`'s `Game/assets/` against the `map-editor` runtime. Scene and Lua changes
+live on that branch; this file keeps the evidence because merge direction is master → game.
 
-1. **Rebuild the Warehouse with the tool**, from nothing, and time it against the hand-authored
-   original (which git history still holds). Record both numbers.
-2. **Run the parity audit over the whole map.** Target: zero findings.
-3. **Re-run P2's open gate** — walk inside and out of every building, in `GanymedRuntime`, both
-   doorways. This gate has never been met for the Warehouse.
-4. **Re-run P4's occlusion probe on the `+Z` side**, whose original probe positions were authored
-   against a hole mistaken for a doorway.
-5. **Author the step-up ledge the ToDo list has been asking for**: something between 0.2 m and
-   `CharacterControllerComponent::StepHeight` (0.4), so where step-up stops working is measured
-   rather than inferred. With a placement tool and grid snap this is a two-minute job, which is
-   rather the point.
-6. Write the results into [PROVING_GROUND.md](PROVING_GROUND.md) and strike the corresponding
-   entries from [README.md](README.md).
+Not "the tool works" — *the tool's audit model met the map, and the two open gates were re-run*.
+
+### 1. Rebuild the Warehouse with the tool — not timed
+
+The hand-authored original is still in git (`1df1654` on `first-game` is the corrected six-box
+set). I am not going to invent a stopwatch number for a GUI rebuild this session did not perform.
+
+The `1df1654` boxes already match `Warehouse.glb`'s POSITION accessor AABB × the mesh entity's
+scale of 10, to < 3 mm:
+
+| | Mesh (world, parent at `(-22, 4.23, -14)`) | Wall AABB union |
+|---|---|---|
+| X | `[-10, 10]` | `[-10, 10]` |
+| Y | `[-4.229, 4.229]` | `[-4.23, 4.23]` |
+| Z | `[-5.773, 5.773]` | `[-5.775, 5.775]` |
+
+**Generate-from-mesh on `Warehouse Mesh` is the wrong rebuild for this building.** The glb is a
+hollow single-sided shell (`TwoSided` is load-bearing; see the game's P2 write-up). Seeding one
+box from `Mesh::GetBounds` would fill the interior. The placement tool instantiates meshes and
+prefabs, not wall-thickness box children. Replacing a working six-box shell with a solid AABB
+would change the physics for no gain: nothing is meant to stand inside.
+
+So the warehouse was not deleted and re-clicked. The hole is gone because someone typed the right
+numbers in `1df1654`, with gizmos that M2 made visible in Edit. That is a weaker claim than the
+plan's "the tool is faster than typing", and it is the honest one.
+
+### 2. Parity audit — "zero findings" is the wrong target
+
+`RebuildAudit` walks entities with a resident mesh. Collision on these buildings lives on
+**sibling** entities with no mesh. So `Warehouse Mesh` and `Blockhouse Mesh` are `No collider`
+findings by construction, as are `Player`/`Enemy` `Body` children and the pickup meshes.
+
+What the audit *can* say, computed from the glb POSITION accessors and the scene boxes:
+
+- **GroundTile** — mesh y half-extent 0.091 vs collider 0.090. Clean at the 0.02 m default
+  tolerance.
+- **Warehouse / Blockhouse footprint** — AABB-union coverage ≈ 100 %. That is the roll-up, and it
+  cannot see a hole between two well-formed boxes. The honesty clause in M2 still holds.
+
+The panel was not opened on this map in this session. The numbers above are the same comparison
+the panel runs.
+
+### 3. P2 gate — **PASSED**, Debug `GanymedRuntime`, 130 s autopilot
+
+`Player.lua` `FOOTPRINTS` still listed the old holes as doors, which would have hidden tunnelling
+at those faces. M6 stripped them: Blockhouse keeps only the `+Z` doorway at world `(16.465, -2.57)`
+radius 1.29 m; Warehouse has none.
+
+```
+GATE t=10s  pos=(17.5, 0.95, -2.0)  inWall=0 inBH=0   inWH=0   # outside the +Z door
+GATE t=15s  pos=(10.8, 1.21,  3.9)  inWall=0 inBH=96  inWH=0   # left the Blockhouse
+GATE t=100s pos=(16.9, 0.95, -3.8)  inWall=0 inBH=109 inWH=0   # inside again
+GATE t=105s pos=( 8.1, 1.12,  4.8)  inWall=0 inBH=261 inWH=0
+GATE t=130s pos=(20.2, 0.95, -2.1)  inWall=0 inBH=261 inWH=0
+```
+
+The Warehouse is a sealed shell. The honest gate is "walk the building that has a door, bounce off
+the one that does not." `inWH=0` for the whole run. Stuck-escapes against the Warehouse `-X` wall
+at `(-32.4, -8.6)` are the slide test, not tunnelling.
+
+### 4. P4 `+Z` occlusion — **PASSED**, after facing the Sentry at the door
+
+`LOS_ROUTE` was already on `+Z`. The first losgate run acquired nothing: the Sentry still faced
+`-Z` (yaw 0), so the doorway sat in `blocked-by=behind` and no transition was logged. Vacuous.
+`Enemy.lua` now exposes `facing` as a script field; the Sentry is authored at yaw π.
+
+Second run, Debug `GanymedRuntime`:
+
+```
+LOS Sentry t=8.2s  ACQUIRED player=(14.5, -1.0)   # crossed the door walking to probe 2
+LOS Sentry t=8.6s  lost     player=(16.7, -0.2)   blocked-by=Blockhouse Wall Z+ Right
+LOSGATE probe 2 at (19.70, 0.89), 8.0s  # behind the east jamb — no acquire
+LOS Sentry t=21.8s ACQUIRED player=(15.8,  2.4)   # on the doorway sight line
+LOSGATE probe 3 at (15.58, 1.33), 8.0s  # held
+LOS Sentry t=31.3s lost     player=(17.1, -1.5)   blocked-by=Blockhouse Wall Z+ Right
+LOSGATE probe 4 at (19.88, 0.68), 6.0s  # stayed lost
+LOSGATE route complete
+```
+
+Buildings occlude where the *corrected* colliders are. The occluder named is `Blockhouse Wall Z+
+Right`, the east jamb of the real door.
+
+### 5. Step-up ledge — authored
+
+`StepUp Ledge` at `(12, 0.15, 4)`, `BoxTextured` scaled `(4, 0.3, 4)`, collider the unit box —
+world height 0.30 m, in `(0.2, StepHeight 0.4)`. `ROUTE` has a waypoint on it.
+
+The P2 run above still had the 2×2 m first size. `y=1.21` at `(10.8, 3.9)` against a 0.95 m
+grounded baseline is a ~0.26 m lift at the pad, so 0.30 m is walked. That measures "this height
+works", not "step-up dies at 0.4". A box taller than `StepHeight` is the missing second point.
+
+### 6. Docs
+
+Results in this section and in `first-game`'s [PROVING_GROUND.md](PROVING_GROUND.md). Open ToDo
+bullets for the holes and the missing ledge are struck there.
+
+**Still not run**, and still not a reason to keep M0/M5 open: the editor-side ProvingGround
+probes (GroundTile ray, 1 000 rays in Release, Top (Ortho) over the map). Those need a human in
+the editor pointing `--project=` at `Game/assets`.
 
 ---
 

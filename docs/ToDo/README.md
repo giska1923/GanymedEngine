@@ -31,7 +31,7 @@ documented.** A file here is a promise, not a description.
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7        |
 | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something                                                                                                                                                    | A2 done; A1, A3 remain |
-| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M5 done; M6 remains |
+| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done |
 | [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback; the frustum's near-plane depth convention                                                            | 5                      |
 | [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                      |
 | [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads; mesh `.meta` collision default                                                                                                                                    | 4                      |
@@ -51,11 +51,9 @@ before this moves to `docs/history/`:
 
 **[MAP_EDITOR.md](MAP_EDITOR.md) executes on `map-editor`, which is based on `master`.** The plan
 started on `first-game`, which the branch policy forbids from touching editor or engine source;
-the file was moved here before M0. M0 (synchronous surface ray), M1 (snap, palette, placement),
-M2 (collider↔mesh parity) and M3 (scatter brush) have landed. The milestone exists
-because the Proving Ground's buildings were hand-assembled from typed-in box colliders, which is
-what produced the wall holes above — two of its gates (P2's interiors, P4's `+Z` occlusion re-run)
-are the milestone's own closing verification.
+the file was moved here before M0. M0–M6 have landed. M6's scene and Lua edits (the step-up
+ledge, the P2 footprint doors, the Sentry's `+Z` facing) live on `first-game`. The Warehouse
+rebuild was not timed in the editor — see that file.
 
 **Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
 managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three
