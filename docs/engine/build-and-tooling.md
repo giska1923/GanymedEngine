@@ -94,6 +94,18 @@ Workspace-wide defines worth knowing:
   stb in editor TUs. `extern/ImGui.lua` also compiles `imgui/misc/freetype/imgui_freetype.cpp`
   and repeats the define; dropping either side links, but you get muddy 18 px text.
 
+**vcpkg is switched off in every project** (`vsprops { VcpkgEnabled = "false" }`, workspace scope,
+VS actions only). A machine that has run `vcpkg integrate install` hooks *every* MSBuild C++ project
+through `%LOCALAPPDATA%cpkgcpkg.user.props` / `.targets`, whether it uses vcpkg or not. This
+workspace vendors all of its dependencies, so the hook only does harm: it adds vcpkg's include and
+lib paths to every project — harmless while vcpkg's `installed/` is empty, a silent shadow of the
+vendored glm or yaml-cpp the day someone installs that package — and after every link it runs an
+app-local DLL copy through `pwsh.exe`, falling back to Windows PowerShell. On a machine without
+PowerShell 7 that fallback printed `'pwsh.exe' is not recognized` on every editor and runtime build.
+The property lands in each `.vcxproj`'s `Globals` group, ahead of the `Microsoft.Cpp` props that
+import vcpkg's, and vcpkg only defaults it when empty. `vcpkg integrate remove` would also silence it,
+but that is a per-machine setting other projects may rely on; the opt-out belongs to the workspace.
+
 Other build facts that have bitten before (details in
 [`BGFX_MIGRATION.md`](../history/BGFX_MIGRATION.md) Phase 0):
 

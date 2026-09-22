@@ -39,6 +39,17 @@ workspace "GanymedEngine"
 		flags { "MultiProcessorCompile" }
 	filter {}
 
+	-- Opt every project out of vcpkg's MSBuild integration. `vcpkg integrate install` hooks all
+	-- C++ projects user-wide, and this workspace uses none of its packages - every dependency is
+	-- vendored. Left on, the hook adds vcpkg's include and lib paths to every project (which would
+	-- shadow the vendored glm, yaml-cpp and friends the day someone installs that package there),
+	-- and after every link it runs an app-local DLL copy through pwsh.exe - the "'pwsh.exe' is not
+	-- recognized" line on any machine without PowerShell 7. VcpkgEnabled is vcpkg's documented
+	-- per-project switch; its props only default it when empty, so the project's value wins.
+	filter "action:vs*"
+		vsprops { VcpkgEnabled = "false" }
+	filter {}
+
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
 -- Include paths for third-party libraries that include their own public headers with
