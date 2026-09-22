@@ -62,7 +62,7 @@ namespace GanymedE {
 		// Bump when the DockBuilder default tree changes. Existing imgui.ini otherwise keeps
 		// the old splits — including the phase-1 6% toolbar node — and View → Reset Layout
 		// is easy to miss on the first launch after a chrome change.
-		constexpr int kDockLayoutVersion = 4;
+		constexpr int kDockLayoutVersion = 5;
 		int s_IniDockLayoutVersion = 0;
 
 		void* DockLayoutReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
@@ -104,6 +104,7 @@ namespace GanymedE {
 			ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
 
 			ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
+			ImGui::DockBuilderDockWindow("Joints", dockLeft);
 			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
 			ImGui::DockBuilderDockWindow("Asset Inspector", dockLeftBottom);
 			ImGui::DockBuilderDockWindow("Viewport", dockMain);
@@ -181,6 +182,102 @@ namespace GanymedE {
 			tc.Scale = scale;
 
 			scene.MarkChanged<TransformComponent>(entity);
+		}
+
+		// Joint world = targetWorld * TryGetJointFrame. The socket gizmo inverts this, not the
+		// parent chain: GetWorldSpaceTransform walks local TR, which BoneAttachmentSystem ignores
+		// while the socket resolves, so that walk would put the handle at the parent.
+		struct SocketGizmoQuery
+		{
+			bool IsSocket = false;
+			bool Ready = false;
+			const char* Reason = nullptr;
+			glm::mat4 JointWorld{ 1.0f };
+		};
+
+		SocketGizmoQuery QuerySocketGizmo(Scene& scene, Entity socket)
+		{
+			SocketGizmoQuery query;
+			if (!socket || !socket.HasComponent<BoneAttachmentComponent>())
+				return query;
+
+			query.IsSocket = true;
+			const auto& attachment = socket.GetComponent<BoneAttachmentComponent>();
+
+			UUID id = attachment.Target;
+			if (id == UUID{ 0 } && socket.HasComponent<RelationshipComponent>())
+				id = socket.GetComponent<RelationshipComponent>().Parent;
+			if (id == UUID{ 0 })
+			{
+				query.Reason = "Socket has no target";
+				return query;
+			}
+
+			Entity target = scene.FindEntityByUUID(id);
+			if (!target)
+			{
+				query.Reason = "Socket has no target";
+				return query;
+			}
+			if (target == socket)
+			{
+				query.Reason = "Socket cannot target itself";
+				return query;
+			}
+
+			if (!target.HasComponent<StaticMeshComponent>())
+			{
+				query.Reason = "Socket target has no rigged mesh";
+				return query;
+			}
+			const Ref<Mesh>& mesh = target.GetComponent<StaticMeshComponent>().Mesh.Get();
+			if (!mesh || !mesh->HasSkeleton())
+			{
+				query.Reason = "Socket target has no rigged mesh";
+				return query;
+			}
+			if (!EntityHasSkinnedPose(target))
+			{
+				query.Reason = "Socket target has no joint palette";
+				return query;
+			}
+
+			if (attachment.Joint.empty())
+			{
+				query.Reason = "Set a joint to place this socket";
+				return query;
+			}
+			if (attachment.Resolved < 0)
+			{
+				query.Reason = "Joint name does not resolve";
+				return query;
+			}
+
+			if (!target.HasComponent<WorldTransformComponent>()
+				|| !socket.HasComponent<WorldTransformComponent>()
+				|| !socket.HasComponent<TransformComponent>())
+			{
+				query.Reason = "Socket has no world transform";
+				return query;
+			}
+
+			glm::mat4 jointLocal{ 1.0f };
+			if (!TryGetJointFrame(*mesh, target.GetComponent<AnimatorComponent>().Palette,
+				attachment.Resolved, jointLocal))
+			{
+				query.Reason = "Joint frame is invalid";
+				return query;
+			}
+
+			query.JointWorld = target.GetComponent<WorldTransformComponent>().World * jointLocal;
+			if (std::abs(glm::determinant(query.JointWorld)) < 1.0e-8f)
+			{
+				query.Reason = "Joint frame is invalid";
+				return query;
+			}
+
+			query.Ready = true;
+			return query;
 		}
 
 		glm::vec3 Quantize(const glm::vec3& p, float step)
@@ -423,6 +520,7 @@ namespace GanymedE {
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 
 		RetargetPanels();
+		m_SceneHierarchyPanel.SetJointTool(&m_JointTool);
 		m_MapPanel.SetPlaceHandler([this](AssetHandle handle, AssetType type)
 		{
 			if (m_SceneState == SceneState::Edit)
@@ -502,12 +600,8 @@ namespace GanymedE {
 				if (m_ViewportCamera == UUID{ 0 })
 					m_EditorCamera.OnUpdate(ts);
 
-				m_ActiveScene->GetSingleton<EditorViewFilter>().HiddenEntities =
-					&m_SceneHierarchyPanel.HiddenEntities();
 				m_ActiveScene->GetSingleton<RenderContext>().PreviewCamera = m_ViewportCamera;
-				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowColliderGizmos =
-					m_ShowColliderGizmos;
-				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowMarkers = m_ShowMarkers;
+				PushEditorVisualizers();
 
 				// Raycast and write the placement transform before TransformSystem so the
 				// preview renders this frame at the hover pose, not last frame's.
@@ -543,13 +637,8 @@ namespace GanymedE {
 				m_EditorCamera.OnUpdate(ts);
 
 				PhysicsSettings& physicsSettings = m_ActiveScene->GetSingleton<PhysicsSettings>();
+				PushEditorVisualizers();
 				physicsSettings.DebugDraw = m_PhysicsDebugDraw;
-				// Editor-only opt-in: the engine defaults these off so a shipped game never
-				// draws authored collider wireframes or marker gizmos. Edit and Play both push
-				// the Visualizers / Icons checkboxes every frame because Scene::Copy does not
-				// carry singletons.
-				physicsSettings.ShowColliderGizmos = m_ShowColliderGizmos;
-				physicsSettings.ShowMarkers = m_ShowMarkers;
 
 				m_ActiveScene->OnUpdateRuntime(ts, &m_EditorCamera);
 
@@ -708,6 +797,12 @@ namespace GanymedE {
 		ImGui::PopStyleVar();
 
 		m_SceneHierarchyPanel.OnImGuiRender();
+		m_JointTool.VisualizerOn = m_ShowSkeletons;
+		if (!m_ShowSkeletons)
+			m_JointTool.CancelPick();
+		SyncJointToolToEntitySelection();
+		m_JointTreePanel.OnImGuiRender(m_ActiveScene.get(), m_JointTool,
+			m_SceneHierarchyPanel.GetSelection());
 		m_ContentBrowserPanel.OnImGuiRender();
 		m_AssetInspectorPanel.OnImGuiRender();
 		m_MapPanel.OnImGuiRender(m_SnapSettings, m_SceneState == SceneState::Edit, IsPlacing(),
@@ -722,6 +817,22 @@ namespace GanymedE {
 		if (m_HoveredEntity)
 			hoveredEntityName = m_HoveredEntity.GetComponent<TagComponent>().Tag;
 		ImGui::Text("Hovered Entity: %s", hoveredEntityName.c_str());
+		if (m_JointTool.HasJoint() && m_ActiveScene)
+		{
+			Entity skinned = m_ActiveScene->FindEntityByUUID(m_JointTool.SkeletonEntity);
+			const char* jointName = "?";
+			if (skinned && skinned.HasComponent<StaticMeshComponent>())
+			{
+				const Ref<Mesh>& mesh = skinned.GetComponent<StaticMeshComponent>().Mesh.Get();
+				if (mesh && (size_t)m_JointTool.Joint < mesh->GetSkeleton().JointNames.size())
+					jointName = mesh->GetSkeleton().JointNames[(size_t)m_JointTool.Joint].c_str();
+			}
+			ImGui::Text("Joint: %s [%d]", jointName, m_JointTool.Joint);
+		}
+		else
+		{
+			ImGui::Text("Joint: none");
+		}
 
 		if (m_SurfaceHit.FromWorkPlane)
 		{
@@ -757,6 +868,7 @@ namespace GanymedE {
 		ImGui::Text("Culled (frustum): %d", stats3D.CulledMeshes);
 		ImGui::Text("Instanced Draws: %d", stats3D.InstancedDraws);
 		ImGui::Text("Transparent: %d", stats3D.TransparentMeshes);
+		ImGui::Text("Debug lines: %u (%u draws)", stats3D.DebugLines, stats3D.DebugLineDraws);
 		ImGui::Text("Particles: %d emitters, %d billboards, %d draws, %d culled",
 			stats3D.ParticleEmitters, stats3D.ParticleBillboards,
 			stats3D.ParticleDrawCalls, stats3D.ParticleCulledEmitters);
@@ -978,6 +1090,9 @@ namespace GanymedE {
 		if (IsScattering() && ImGui::IsKeyPressed(ImGuiKey_Escape))
 			CancelScatterMode();
 
+		if (m_JointTool.PickForSocket && ImGui::IsKeyPressed(ImGuiKey_Escape))
+			m_JointTool.CancelPick();
+
 		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
 			m_UndoStack.Undo(*m_EditorScene);
 
@@ -1196,6 +1311,259 @@ namespace GanymedE {
 		m_EditorCamera.SetOrthographic(enabled);
 	}
 
+	void EditorLayer::SyncJointToolToEntitySelection()
+	{
+		UUID primary{ 0 };
+		if (Entity selected = m_SceneHierarchyPanel.GetSelectedEntity())
+			primary = selected.GetUUID();
+		if (primary != m_JointTool.AnchorEntity)
+		{
+			m_JointTool.ClearJoint();
+			m_JointTool.AnchorEntity = primary;
+			if (m_JointTool.PickForSocket && m_JointTool.SocketEntity != primary)
+				m_JointTool.CancelPick();
+		}
+	}
+
+	void EditorLayer::ResolveJointHighlight(UUID& entity, int32_t& joint)
+	{
+		entity = UUID{ 0 };
+		joint = -1;
+		if (m_JointTool.HasJoint())
+		{
+			entity = m_JointTool.SkeletonEntity;
+			joint = m_JointTool.Joint;
+			return;
+		}
+
+		Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (!selected || !selected.HasComponent<BoneAttachmentComponent>())
+			return;
+
+		const auto& attachment = selected.GetComponent<BoneAttachmentComponent>();
+		UUID targetID = attachment.Target;
+		if (targetID == UUID{ 0 })
+			targetID = selected.GetComponent<RelationshipComponent>().Parent;
+		entity = targetID;
+		joint = attachment.Resolved;
+	}
+
+	glm::mat4 EditorLayer::GetViewportViewProjection()
+	{
+		glm::mat4 viewProjection = m_EditorCamera.GetViewProjection();
+		if (!m_ActiveScene)
+			return viewProjection;
+
+		if (m_SceneState == SceneState::Play)
+		{
+			const RenderContext& ctx = m_ActiveScene->GetSingleton<RenderContext>();
+			if (ctx.MainCamera)
+				viewProjection = ctx.MainCamera->GetProjection() * glm::inverse(ctx.CameraTransform);
+			return viewProjection;
+		}
+
+		if (m_ViewportCamera != UUID{ 0 })
+		{
+			Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+			if (preview && preview.HasComponent<CameraComponent>())
+			{
+				const auto& cc = preview.GetComponent<CameraComponent>();
+				const glm::mat4 view = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
+				viewProjection = cc.Camera.GetProjection() * view;
+			}
+		}
+		return viewProjection;
+	}
+
+	bool EditorLayer::TryPickViewportJoint()
+	{
+		if (!m_ActiveScene)
+			return false;
+		if (!m_JointTool.PickForSocket && !m_ShowSkeletons)
+			return false;
+		if (m_JointTool.PickForSocket && !m_ShowSkeletons)
+			return true;
+
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportSize.x <= 1.0f || viewportSize.y <= 1.0f)
+			return m_JointTool.PickForSocket;
+
+		ImVec2 mouse = ImGui::GetMousePos();
+		const glm::vec2 mouseScreen{ mouse.x, mouse.y };
+		const glm::vec2 local = mouseScreen - m_ViewportBounds[0];
+		if (local.x < 0.0f || local.y < 0.0f || local.x >= viewportSize.x || local.y >= viewportSize.y)
+			return m_JointTool.PickForSocket;
+
+		const glm::mat4 viewProjection = GetViewportViewProjection();
+		const glm::vec2 ndc = {
+			(local.x / viewportSize.x) * 2.0f - 1.0f,
+			1.0f - (local.y / viewportSize.y) * 2.0f
+		};
+		const float nearClipZ = Projection::HomogeneousDepth() ? -1.0f : 0.0f;
+		const Math::Ray ray = Math::ScreenPointToRay(glm::inverse(viewProjection), ndc, nearClipZ, 1.0f);
+
+		JointPickQuery query;
+		query.Scene = m_ActiveScene.get();
+		query.Ray = ray;
+		query.ViewProjection = viewProjection;
+		query.ViewportMin = m_ViewportBounds[0];
+		query.ViewportSize = viewportSize;
+		query.MouseScreen = mouseScreen;
+		query.Selected = &m_SelectedIDs;
+		query.Hidden = m_SceneState == SceneState::Edit
+			? &m_SceneHierarchyPanel.HiddenEntities() : nullptr;
+		query.AllSkeletons = m_ShowAllSkeletons;
+
+		JointPickHit hit;
+		if (!PickJoint(query, hit))
+			return m_JointTool.PickForSocket;
+
+		if (m_JointTool.PickForSocket)
+		{
+			if (m_SceneState != SceneState::Edit)
+				return true;
+
+			Entity socket = m_ActiveScene->FindEntityByUUID(m_JointTool.SocketEntity);
+			if (!socket || !socket.HasComponent<BoneAttachmentComponent>())
+			{
+				m_JointTool.CancelPick();
+				return true;
+			}
+
+			auto& attachment = socket.GetComponent<BoneAttachmentComponent>();
+			UUID targetID = attachment.Target;
+			if (targetID == UUID{ 0 })
+				targetID = socket.GetComponent<RelationshipComponent>().Parent;
+			if (targetID != hit.Entity)
+				return true;
+
+			Entity skinned = m_ActiveScene->FindEntityByUUID(hit.Entity);
+			if (!EntityHasSkinnedPose(skinned))
+				return true;
+			const Skeleton& skeleton = skinned.GetComponent<StaticMeshComponent>().Mesh.Get()->GetSkeleton();
+			if ((size_t)hit.Joint >= skeleton.JointNames.size())
+				return true;
+
+			const std::string& name = skeleton.JointNames[(size_t)hit.Joint];
+			if (attachment.Joint != name)
+			{
+				const BoneAttachmentComponent before = attachment;
+				attachment.Joint = name;
+				attachment.Resolved = -1;
+				m_UndoStack.Push(CreateScope<ComponentEditCommand<BoneAttachmentComponent>>(
+					"Set Joint", socket.GetUUID(), before, attachment));
+			}
+
+			m_JointTool.Select(hit.Entity, hit.Joint);
+			m_JointTool.CancelPick();
+			return true;
+		}
+
+		m_JointTool.Select(hit.Entity, hit.Joint);
+		return true;
+	}
+
+	void EditorLayer::PushEditorVisualizers()
+	{
+		m_SelectedIDs.clear();
+		for (Entity entity : m_SceneHierarchyPanel.GetSelection())
+		{
+			if (entity)
+				m_SelectedIDs.insert(entity.GetUUID());
+		}
+
+		SyncJointToolToEntitySelection();
+
+		EditorViewFilter& filter = m_ActiveScene->GetSingleton<EditorViewFilter>();
+		filter.HiddenEntities = m_SceneState == SceneState::Edit
+			? &m_SceneHierarchyPanel.HiddenEntities() : nullptr;
+		filter.SelectedEntities = &m_SelectedIDs;
+		ResolveJointHighlight(filter.HighlightSkeletonEntity, filter.HighlightJoint);
+
+		PhysicsSettings& physics = m_ActiveScene->GetSingleton<PhysicsSettings>();
+		physics.ShowColliderGizmos = m_ShowColliderGizmos;
+		physics.ShowMarkers = m_ShowMarkers;
+		physics.ShowSkeletons = m_ShowSkeletons;
+		physics.ShowAllSkeletons = m_ShowAllSkeletons;
+		physics.SkeletonXRay = m_SkeletonXRay;
+	}
+
+	void EditorLayer::DrawSkeletonLabels()
+	{
+		if (!m_ShowSkeletons || !m_ActiveScene)
+			return;
+
+		UUID highlightEntity{ 0 };
+		int32_t highlightJoint = -1;
+		ResolveJointHighlight(highlightEntity, highlightJoint);
+		if (highlightEntity == UUID{ 0 } || highlightJoint < 0)
+			return;
+
+		Entity target = m_ActiveScene->FindEntityByUUID(highlightEntity);
+		if (!target || !target.HasComponent<StaticMeshComponent>()
+			|| !target.HasComponent<AnimatorComponent>())
+		{
+			return;
+		}
+
+		const Ref<Mesh>& mesh = target.GetComponent<StaticMeshComponent>().Mesh.Get();
+		const auto& animator = target.GetComponent<AnimatorComponent>();
+		if (!mesh || !mesh->HasSkeleton() || animator.Palette.empty())
+			return;
+
+		const Skeleton& skeleton = mesh->GetSkeleton();
+		const int32_t joint = highlightJoint;
+		if ((size_t)joint >= skeleton.JointCount())
+			return;
+
+		glm::mat4 viewProjection = GetViewportViewProjection();
+
+		const glm::vec2 viewportMin = m_ViewportBounds[0];
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportSize.x <= 1.0f || viewportSize.y <= 1.0f)
+			return;
+
+		const glm::mat4 entityWorld = m_ActiveScene->GetWorldSpaceTransform(target);
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		const ImU32 textCol = EditorUI::Theme().TextPrimary;
+
+		auto project = [&](const glm::vec3& world, ImVec2& out) -> bool
+		{
+			const glm::vec4 clip = viewProjection * glm::vec4(world, 1.0f);
+			if (clip.w <= 1.0e-5f)
+				return false;
+			const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+			if (ndc.x < -1.2f || ndc.x > 1.2f || ndc.y < -1.2f || ndc.y > 1.2f)
+				return false;
+			out.x = viewportMin.x + (ndc.x * 0.5f + 0.5f) * viewportSize.x;
+			out.y = viewportMin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportSize.y;
+			return true;
+		};
+
+		auto label = [&](int32_t index)
+		{
+			if (index < 0 || (size_t)index >= skeleton.JointCount())
+				return;
+			glm::mat4 local{ 1.0f };
+			if (!TryGetJointFrame(*mesh, animator.Palette, index, local))
+				return;
+			ImVec2 pos;
+			if (!project(glm::vec3((entityWorld * local)[3]), pos))
+				return;
+			const char* name = (size_t)index < skeleton.JointNames.size()
+				? skeleton.JointNames[(size_t)index].c_str() : "?";
+			drawList->AddText(ImVec2(pos.x + 6.0f, pos.y - 8.0f), textCol, name);
+		};
+
+		label(skeleton.ParentIndices[(size_t)joint]);
+		label(joint);
+		for (uint32_t i = 0; i < skeleton.JointCount(); i++)
+		{
+			if (skeleton.ParentIndices[i] == joint)
+				label((int32_t)i);
+		}
+	}
+
 	void EditorLayer::UI_Viewport()
 	{
 		using EditorUI::BeginPanel;
@@ -1338,12 +1706,23 @@ namespace GanymedE {
 
 			ImGui::SameLine();
 			if (IconButton(ICON_LC_BOXES, "Visualizers",
-				m_ShowColliderGizmos || m_PhysicsDebugDraw.Enabled))
+				m_ShowColliderGizmos || m_ShowSkeletons || m_PhysicsDebugDraw.Enabled))
 				ImGui::OpenPopup("##Visualizers");
 			if (ImGui::BeginPopup("##Visualizers"))
 			{
 				ImGui::Checkbox("Collider gizmos", &m_ShowColliderGizmos);
 				ImGui::SetItemTooltip("Authored box/sphere/capsule wireframes. Edit and Play.");
+				ImGui::Checkbox("Skeletons", &m_ShowSkeletons);
+				ImGui::SetItemTooltip(
+					"Posed joint overlay on the selection (or every rig with All). "
+					"While on, clicking a bone selects that joint and does not change the entity. "
+					"Edit and Play.");
+				ImGui::BeginDisabled(!m_ShowSkeletons);
+				ImGui::Checkbox("All skeletons", &m_ShowAllSkeletons);
+				ImGui::SetItemTooltip("Draw every posed rig, not only the current selection.");
+				ImGui::Checkbox("X-ray", &m_SkeletonXRay);
+				ImGui::SetItemTooltip("Draw in front of the mesh. Off keeps occlusion as information.");
+				ImGui::EndDisabled();
 				ImGui::Separator();
 				ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
 				ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
@@ -1398,6 +1777,16 @@ namespace GanymedE {
 		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
 			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
 
+		DrawSkeletonLabels();
+
+		if (m_JointTool.PickForSocket)
+		{
+			ImDrawList* draw = ImGui::GetWindowDrawList();
+			const ImVec2 pos = ImVec2(m_ViewportBounds[0].x + 10.0f, m_ViewportBounds[0].y + 10.0f);
+			draw->AddText(pos, EditorUI::Theme().AccentText,
+				"Click a joint to assign  (Esc cancels)");
+		}
+
 		// Hover is the *image*, not the window: a click on the camera combo must
 		// not also click-select whatever the pick buffer last saw.
 		m_ViewportHovered = ImGui::IsItemHovered();
@@ -1427,7 +1816,22 @@ namespace GanymedE {
 		Entity gizmoEntity = selectedEntity;
 		if (gizmoEntity && m_SceneHierarchyPanel.IsLocked(gizmoEntity))
 			gizmoEntity = {};
-		if (gizmoEntity && m_GizmoType != -1 && editing && !IsPlacing() && !IsScattering())
+
+		const SocketGizmoQuery socketGizmo = m_ActiveScene
+			? QuerySocketGizmo(*m_ActiveScene, gizmoEntity) : SocketGizmoQuery{};
+
+		if (!m_JointTool.PickForSocket && socketGizmo.IsSocket && socketGizmo.Reason
+			&& editing && !IsPlacing())
+		{
+			ImDrawList* draw = ImGui::GetWindowDrawList();
+			const ImVec2 pos = ImVec2(m_ViewportBounds[0].x + 10.0f, m_ViewportBounds[0].y + 10.0f);
+			draw->AddText(pos, theme.Warning, socketGizmo.Reason);
+		}
+
+		const bool gizmoGates = gizmoEntity && m_GizmoType != -1 && editing
+			&& !IsPlacing() && !IsScattering() && !m_JointTool.PickForSocket;
+		const bool showGizmo = gizmoGates && (!socketGizmo.IsSocket || socketGizmo.Ready);
+		if (showGizmo)
 		{
 			glm::mat4 cameraProjection = m_EditorCamera.GetProjection();
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
@@ -1449,86 +1853,146 @@ namespace GanymedE {
 			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
 				m_ViewportBounds[1].x - m_ViewportBounds[0].x, m_ViewportBounds[1].y - m_ViewportBounds[0].y);
 
-			auto& tc = gizmoEntity.GetComponent<TransformComponent>();
-			glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(gizmoEntity);
-
-			bool snap = SnapActive();
-			float snapValue = m_SnapSettings.Translate;
-			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
-				snapValue = m_SnapSettings.Rotate;
-			else if (m_GizmoType == ImGuizmo::OPERATION::SCALE)
-				snapValue = m_SnapSettings.Scale;
-			float snapValues[3] = { snapValue, snapValue, snapValue };
-
-			// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
-			// kept: it is what the rest of the selection's delta is measured against.
-			const glm::mat4 worldBefore = transform;
-
-			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-				(ImGuizmo::OPERATION)m_GizmoType,
-				m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
-				glm::value_ptr(transform),
-				nullptr, snap ? snapValues : nullptr);
-
-			if (ImGuizmo::IsUsing())
+			if (socketGizmo.Ready)
 			{
-				const std::vector<Entity>& selection = m_SceneHierarchyPanel.GetSelection();
+				auto& tc = gizmoEntity.GetComponent<TransformComponent>();
+				auto& attachment = gizmoEntity.GetComponent<BoneAttachmentComponent>();
+				glm::mat4 transform = gizmoEntity.GetComponent<WorldTransformComponent>().World;
 
-				// Rising edge. This is the last moment the pre-drag transforms still exist:
-				// rotation below is accumulated as a delta against the current value, so one
-				// frame later there is nothing left to reconstruct them from.
-				if (!m_GizmoUsing)
+				const bool snap = SnapActive();
+				float snapValue = 0.0f;
+				bool useSnap = false;
+				if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
 				{
-					m_GizmoUsing = true;
-					m_GizmoBefore.clear();
-					m_GizmoBefore.emplace_back(gizmoEntity.GetUUID(), tc);
+					snapValue = m_SnapSettings.Rotate;
+					useSnap = snap;
+				}
+				else if (m_GizmoType == ImGuizmo::OPERATION::SCALE)
+				{
+					snapValue = m_SnapSettings.Scale;
+					useSnap = snap;
+				}
+				float snapValues[3] = { snapValue, snapValue, snapValue };
 
-					for (Entity other : selection)
+				ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+					(ImGuizmo::OPERATION)m_GizmoType,
+					m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
+					glm::value_ptr(transform),
+					nullptr, useSnap ? snapValues : nullptr);
+
+				if (ImGuizmo::IsUsing())
+				{
+					if (!m_GizmoUsing)
 					{
-						if (other == gizmoEntity || !other.HasComponent<TransformComponent>())
-							continue;
+						m_GizmoUsing = true;
+						m_SocketGizmo = true;
+						m_SocketGizmoEntity = gizmoEntity.GetUUID();
+						m_SocketBefore = attachment;
+						m_SocketTransformBefore = tc;
+						m_GizmoBefore.clear();
+					}
 
-						// Skip anything that already moves because an ancestor of it is selected
-						// too - it would otherwise take the delta twice, once from its parent's
-						// transform and once from its own.
-						if (IsDescendantOfSelection(*m_ActiveScene, other, selection))
-							continue;
-
-						m_GizmoBefore.emplace_back(other.GetUUID(),
-							other.GetComponent<TransformComponent>());
+					if (gizmoEntity.GetUUID() == m_SocketGizmoEntity)
+					{
+						const glm::mat4 socketLocal = glm::inverse(socketGizmo.JointWorld) * transform;
+						glm::vec3 offset, rotation, scale;
+						if (Math::DecomposeTransform(socketLocal, offset, rotation, scale))
+						{
+							attachment.Offset = offset;
+							attachment.Rotation += rotation - attachment.Rotation;
+							if (tc.Scale != scale)
+							{
+								tc.Scale = scale;
+								m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+							}
+						}
 					}
 				}
+			}
+			else
+			{
+				auto& tc = gizmoEntity.GetComponent<TransformComponent>();
+				glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(gizmoEntity);
 
-				// The world-space change the gizmo just made. Applied to every other entity in
-				// the selection, which is what makes a group drag rotate and scale about the
-				// primary rather than each object about its own origin.
-				const glm::mat4 worldDelta = transform * glm::inverse(worldBefore);
+				bool snap = SnapActive();
+				float snapValue = m_SnapSettings.Translate;
+				if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
+					snapValue = m_SnapSettings.Rotate;
+				else if (m_GizmoType == ImGuizmo::OPERATION::SCALE)
+					snapValue = m_SnapSettings.Scale;
+				float snapValues[3] = { snapValue, snapValue, snapValue };
 
-				UUID parentID = gizmoEntity.GetComponent<RelationshipComponent>().Parent;
-				if (parentID != UUID{ 0 })
+				// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
+				// kept: it is what the rest of the selection's delta is measured against.
+				const glm::mat4 worldBefore = transform;
+
+				ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+					(ImGuizmo::OPERATION)m_GizmoType,
+					m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
+					glm::value_ptr(transform),
+					nullptr, snap ? snapValues : nullptr);
+
+				if (ImGuizmo::IsUsing())
 				{
-					Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
-					if (parent)
-						transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
-				}
+					const std::vector<Entity>& selection = m_SceneHierarchyPanel.GetSelection();
 
-				glm::vec3 translation, rotation, scale;
-				Math::DecomposeTransform(transform, translation, rotation, scale);
+					// Rising edge. This is the last moment the pre-drag transforms still exist:
+					// rotation below is accumulated as a delta against the current value, so one
+					// frame later there is nothing left to reconstruct them from.
+					if (!m_GizmoUsing)
+					{
+						m_GizmoUsing = true;
+						m_SocketGizmo = false;
+						m_GizmoBefore.clear();
+						m_GizmoBefore.emplace_back(gizmoEntity.GetUUID(), tc);
 
-				glm::vec3 deltaRotation = rotation - tc.Rotation;
-				tc.Translation = translation;
-				tc.Rotation += deltaRotation;
-				tc.Scale = scale;
+						for (Entity other : selection)
+						{
+							if (other == gizmoEntity || !other.HasComponent<TransformComponent>())
+								continue;
 
-				m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+							// Skip anything that already moves because an ancestor of it is selected
+							// too - it would otherwise take the delta twice, once from its parent's
+							// transform and once from its own.
+							if (IsDescendantOfSelection(*m_ActiveScene, other, selection))
+								continue;
 
-				// The rest of the selection. Driven from m_GizmoBefore rather than from the live
-				// selection, so an entity that leaves the selection mid-drag is not left half
-				// moved, and the ancestor filter above is applied once rather than per frame.
-				for (std::size_t i = 1; i < m_GizmoBefore.size(); i++)
-				{
-					ApplyWorldDelta(*m_ActiveScene,
-						m_ActiveScene->FindEntityByUUID(m_GizmoBefore[i].first), worldDelta);
+							m_GizmoBefore.emplace_back(other.GetUUID(),
+								other.GetComponent<TransformComponent>());
+						}
+					}
+
+					// The world-space change the gizmo just made. Applied to every other entity in
+					// the selection, which is what makes a group drag rotate and scale about the
+					// primary rather than each object about its own origin.
+					const glm::mat4 worldDelta = transform * glm::inverse(worldBefore);
+
+					UUID parentID = gizmoEntity.GetComponent<RelationshipComponent>().Parent;
+					if (parentID != UUID{ 0 })
+					{
+						Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
+						if (parent)
+							transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
+					}
+
+					glm::vec3 translation, rotation, scale;
+					Math::DecomposeTransform(transform, translation, rotation, scale);
+
+					glm::vec3 deltaRotation = rotation - tc.Rotation;
+					tc.Translation = translation;
+					tc.Rotation += deltaRotation;
+					tc.Scale = scale;
+
+					m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+
+					// The rest of the selection. Driven from m_GizmoBefore rather than from the live
+					// selection, so an entity that leaves the selection mid-drag is not left half
+					// moved, and the ancestor filter above is applied once rather than per frame.
+					for (std::size_t i = 1; i < m_GizmoBefore.size(); i++)
+					{
+						ApplyWorldDelta(*m_ActiveScene,
+							m_ActiveScene->FindEntityByUUID(m_GizmoBefore[i].first), worldDelta);
+					}
 				}
 			}
 		}
@@ -1541,40 +2005,85 @@ namespace GanymedE {
 
 			if (m_EditorScene && editing)
 			{
-				std::vector<Scope<EditorCommand>> moved;
-				moved.reserve(m_GizmoBefore.size());
-
-				for (const auto& entry : m_GizmoBefore)
+				if (m_SocketGizmo)
 				{
-					Entity dragged = m_EditorScene->FindEntityByUUID(entry.first);
-					if (!dragged || !dragged.HasComponent<TransformComponent>())
-						continue;
+					Entity dragged = m_EditorScene->FindEntityByUUID(m_SocketGizmoEntity);
+					std::vector<Scope<EditorCommand>> moved;
+					if (dragged && dragged.HasComponent<BoneAttachmentComponent>())
+					{
+						const auto& after = dragged.GetComponent<BoneAttachmentComponent>();
+						if (after.Offset != m_SocketBefore.Offset
+							|| after.Rotation != m_SocketBefore.Rotation)
+						{
+							moved.push_back(CreateScope<ComponentEditCommand<BoneAttachmentComponent>>(
+								"Gizmo Socket", m_SocketGizmoEntity, m_SocketBefore, after));
+						}
+					}
+					if (dragged && dragged.HasComponent<TransformComponent>())
+					{
+						const auto& after = dragged.GetComponent<TransformComponent>();
+						if (after.Scale != m_SocketTransformBefore.Scale)
+						{
+							moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
+								"Gizmo Socket", m_SocketGizmoEntity, m_SocketTransformBefore, after));
+						}
+					}
 
-					moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
-						"Gizmo Transform", entry.first, entry.second,
-						dragged.GetComponent<TransformComponent>()));
+					if (moved.size() == 1)
+					{
+						m_UndoStack.Push(std::move(moved.front()));
+					}
+					else if (!moved.empty())
+					{
+						m_UndoStack.Push(CreateScope<CompositeCommand>(
+							"Gizmo Socket", std::move(moved)));
+					}
 				}
+				else
+				{
+					std::vector<Scope<EditorCommand>> moved;
+					moved.reserve(m_GizmoBefore.size());
 
-				// One drag is one undo entry, the same rule the inspector's multi-edit follows.
-				if (moved.size() == 1)
-				{
-					m_UndoStack.Push(std::move(moved.front()));
-				}
-				else if (!moved.empty())
-				{
-					m_UndoStack.Push(CreateScope<CompositeCommand>(
-						"Gizmo Transform (" + std::to_string(moved.size()) + " entities)",
-						std::move(moved)));
+					for (const auto& entry : m_GizmoBefore)
+					{
+						Entity dragged = m_EditorScene->FindEntityByUUID(entry.first);
+						if (!dragged || !dragged.HasComponent<TransformComponent>())
+							continue;
+
+						moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
+							"Gizmo Transform", entry.first, entry.second,
+							dragged.GetComponent<TransformComponent>()));
+					}
+
+					// One drag is one undo entry, the same rule the inspector's multi-edit follows.
+					if (moved.size() == 1)
+					{
+						m_UndoStack.Push(std::move(moved.front()));
+					}
+					else if (!moved.empty())
+					{
+						m_UndoStack.Push(CreateScope<CompositeCommand>(
+							"Gizmo Transform (" + std::to_string(moved.size()) + " entities)",
+							std::move(moved)));
+					}
 				}
 			}
 
+			m_SocketGizmo = false;
 			m_GizmoBefore.clear();
 		}
 
 		if (selectedEntity && selectedEntity.HasComponent<TransformComponent>())
 		{
 			glm::vec3 t = selectedEntity.GetComponent<TransformComponent>().Translation;
-			if (m_GizmoWorldSpace)
+			if (selectedEntity.HasComponent<BoneAttachmentComponent>()
+				&& selectedEntity.GetComponent<BoneAttachmentComponent>().Resolved >= 0)
+			{
+				t = selectedEntity.GetComponent<BoneAttachmentComponent>().Offset;
+				if (m_GizmoWorldSpace && selectedEntity.HasComponent<WorldTransformComponent>())
+					t = glm::vec3(selectedEntity.GetComponent<WorldTransformComponent>().World[3]);
+			}
+			else if (m_GizmoWorldSpace)
 				t = glm::vec3(m_ActiveScene->GetWorldSpaceTransform(selectedEntity)[3]);
 
 			ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -1707,6 +2216,9 @@ namespace GanymedE {
 
 			if (m_ViewportHovered && !ImGuizmo::IsOver() && !Input::IsKeyPressed(Key::LeftAlt))
 			{
+				if (TryPickViewportJoint())
+					return false;
+
 				Entity hover = m_HoveredEntity;
 				if (!(hover && m_SceneHierarchyPanel.IsLocked(hover)))
 					m_SceneHierarchyPanel.SetSelectedEntity(hover);
@@ -1744,6 +2256,9 @@ namespace GanymedE {
 
 		// Every UUID on the stack names an entity in a Scene object that no longer exists.
 		m_UndoStack.Clear();
+		m_JointTool.ClearJoint();
+		m_JointTool.CancelPick();
+		m_JointTool.AnchorEntity = UUID{ 0 };
 		RetargetPanels();
 		m_SceneHierarchyPanel.ClearEditorViewState();
 		m_ViewportCamera = UUID{ 0 };
@@ -1806,6 +2321,9 @@ namespace GanymedE {
 		m_SceneState = SceneState::Edit;
 
 		m_UndoStack.Clear();
+		m_JointTool.ClearJoint();
+		m_JointTool.CancelPick();
+		m_JointTool.AnchorEntity = UUID{ 0 };
 		RetargetPanels();
 		m_SceneHierarchyPanel.ClearEditorViewState();
 		m_ViewportCamera = UUID{ 0 };
@@ -1854,6 +2372,9 @@ namespace GanymedE {
 		m_ActiveScene->OnRuntimeStart();
 		m_SceneState = SceneState::Play;
 		RetargetPanels();
+		m_JointTool.CancelPick();
+		m_JointTool.ClearJoint();
+		m_JointTool.AnchorEntity = UUID{ 0 };
 		m_SceneHierarchyPanel.SetSelectedEntity({});
 
 		// Hard-coded for now. Making this a scene property is the obvious next
@@ -2002,17 +2523,7 @@ namespace GanymedE {
 		if (!pointerInViewport)
 			return;
 
-		glm::mat4 viewProjection = m_EditorCamera.GetViewProjection();
-		if (m_ViewportCamera != UUID{ 0 })
-		{
-			Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
-			if (preview && preview.HasComponent<CameraComponent>())
-			{
-				const auto& cc = preview.GetComponent<CameraComponent>();
-				const glm::mat4 view = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
-				viewProjection = cc.Camera.GetProjection() * view;
-			}
-		}
+		glm::mat4 viewProjection = GetViewportViewProjection();
 
 		const glm::vec2 ndc = {
 			(localX / viewportSize.x) * 2.0f - 1.0f,

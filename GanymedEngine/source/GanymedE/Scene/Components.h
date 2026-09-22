@@ -194,9 +194,10 @@ namespace GanymedE {
 	};
 
 	// Plays one of the clips carried by the entity's StaticMeshComponent mesh. There is no
-	// SkinnedMeshComponent: an entity is skinned iff its mesh asset HasSkeleton() and it has an
-	// animator, so a second mesh component would duplicate drag-drop, serialization, inspector and
-	// RenderSystem plumbing to express something the asset already knows.
+	// SkinnedMeshComponent: whether the mesh is rigged is a fact of the asset (HasSkeleton).
+	// The animator is what plays a clip; RenderSystem skins any HasSkeleton() mesh even
+	// without one, using Mesh::GetRestPalette(). A second mesh component would duplicate
+	// drag-drop, serialization, inspector and RenderSystem plumbing to express that.
 	//
 	// Clips are referenced by name rather than index because indices shift whenever a DCC
 	// reorders or adds a clip on re-export. A name that no longer resolves warns once and falls
@@ -221,9 +222,9 @@ namespace GanymedE {
 	};
 
 	// Pins this entity to a joint of a skinned mesh. The joint transform is recovered from
-	// AnimatorComponent::Palette each frame (Palette[i] * inverse(InverseBind[i])) rather than
-	// stored beside it: most entities never attach anything, and keeping a second per-joint
-	// array would add 2-8 KB per animator for Scene::Copy to shuffle on every play.
+	// AnimatorComponent::Palette each frame via TryGetJointFrame rather than stored beside it:
+	// most entities never attach anything, and keeping a second per-joint array would add
+	// 2-8 KB per animator for Scene::Copy to shuffle on every play.
 	//
 	// Writes WorldTransformComponent directly, after TransformSystem, because feeding a joint
 	// quaternion through TransformComponent's Euler storage is lossy. Local Translation and
@@ -233,8 +234,8 @@ namespace GanymedE {
 	// resolve shows a correctly sized prop rather than a compensated one.
 	//
 	// Offset is in the target mesh's own units — metres for any mesh authored that way — whatever
-	// unit the *rig* uses: the system folds in the skinned submesh's LocalTransform and divides the
-	// bind pose's basis scale back out (see BoneAttachmentSystem.h). What the *clip* does to the
+	// unit the *rig* uses: TryGetJointFrame folds in the skinned submesh's LocalTransform and
+	// divides the bind pose's basis scale back out (see Mesh.h). What the *clip* does to the
 	// joint chain still carries, scale included — a constant scale on Hips will grow the attached
 	// entity for as long as that clip plays, which is a clip bug, not something this component
 	// papers over.

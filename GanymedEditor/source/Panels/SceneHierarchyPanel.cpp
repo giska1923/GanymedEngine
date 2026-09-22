@@ -2086,6 +2086,11 @@ namespace GanymedE {
 			else
 			{
 				const auto& names = mesh->GetSkeleton().JointNames;
+				const bool canPick = m_JointTool && m_JointTool->VisualizerOn && Recording();
+				const bool armed = canPick && m_JointTool->PickForSocket
+					&& m_JointTool->SocketEntity == entity.GetUUID();
+				const float pickSlot = 28.0f;
+				ImGui::SetNextItemWidth(ImMax(64.0f, ImGui::GetContentRegionAvail().x - pickSlot));
 				if (ImGui::BeginCombo("Joint",
 					component.Joint.empty() ? "(none)" : component.Joint.c_str()))
 				{
@@ -2111,6 +2116,27 @@ namespace GanymedE {
 
 					ImGui::EndCombo();
 				}
+
+				ImGui::SameLine();
+				ImGui::BeginDisabled(!canPick);
+				const char* pickTip = !m_JointTool
+					? "Pick joint in the viewport"
+					: (!Recording()
+						? "Play mode cannot assign a joint"
+						: (!m_JointTool->VisualizerOn
+							? "Turn on Visualizers → Skeletons to pick in the viewport"
+							: "Pick joint in the viewport. Bones win over entity pick. Esc cancels."));
+				if (EditorUI::IconButton(ICON_LC_CROSSHAIR, pickTip, armed))
+				{
+					if (armed)
+						m_JointTool->CancelPick();
+					else
+					{
+						m_JointTool->PickForSocket = true;
+						m_JointTool->SocketEntity = entity.GetUUID();
+					}
+				}
+				ImGui::EndDisabled();
 
 				if (names.empty())
 					ImGui::TextDisabled("Mesh is rigged but lists no joint names");

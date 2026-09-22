@@ -27,15 +27,14 @@ documented.** A file here is a promise, not a description.
 
 ## Open items
 
-| Document                                           | Covers                                                                                                                                                                                                                                  | Items                  |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7        |
-| [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something                                                                                                                                                    | A2 done; A1, A3 remain |
-| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done |
-| [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback; the frustum's near-plane depth convention                                                            | 5                      |
-| [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                      |
-| [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                      |
-| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, and two shipping gaps | 17                     |
+| Document                                           | Covers                                                                                                                                                                                                                                  | Items                             |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7                   |
+| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done                        |
+| [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the frustum's near-plane depth convention                                                            | 4                                 |
+| [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                                 |
+| [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                                 |
+| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, and two skeletal leftovers (A3 grip picture, `Visible` bit) | 18                                |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
@@ -63,9 +62,15 @@ file.
 The map editor exists because the Proving Ground's buildings were hand-assembled from typed-in box
 colliders, which is what produced the wall holes above — two of its gates (P2's interiors, P4's
 `+Z` occlusion re-run) were the milestone's own closing verification. The model editor closed the
-other half: an inspector, import settings on the sidecar, a collision *seed* (not an override —
+other half: an inspector, import settings on the sidecar, a collision _seed_ (not an override —
 and not for hollow building shells), a second `SceneRenderer` for preview, and thumbnails. The
 collision default does not zero the parity audit on those buildings; M6 already recorded why.
+
+**Skeletal attachments and joint tooling are done.** Mechanism in
+[`SKELETAL_ATTACHMENTS.md`](../history/SKELETAL_ATTACHMENTS.md), editor in
+[`SKELETAL_TOOLING.md`](../history/SKELETAL_TOOLING.md) (S1–S6). Two leftovers — the A3 grip
+picture on `first-game`, and a general `Visible` bit — are in
+[cross-cutting.md](cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
 
 **Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
 managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three
@@ -122,3 +127,4 @@ describe problems that were fixed later. Verified stale, recorded here so nobody
 - `ASSET_PIPELINE_ROADMAP.md` Phase 1 note on `IsRegistryWritable` being misnamed — renamed to
   `IsAssetsWritable`.
 - `THREADING_ROADMAP.md` "T4 remains open" — history inside T3's notes; T4 is done.
+- `MODEL_EDITOR.md` "socket authoring is [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)'s territory" — that file now lives at [`docs/history/SKELETAL_ATTACHMENTS.md`](../history/SKELETAL_ATTACHMENTS.md). S5 of [SKELETAL_TOOLING.md](../history/SKELETAL_TOOLING.md) is the clip readout on the Asset Inspector; sockets stay instance-side.

@@ -7,6 +7,7 @@
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Renderer/EditorCamera.h"
 
+#include <cstdint>
 #include <unordered_set>
 #include <vector>
 
@@ -56,6 +57,14 @@ namespace GanymedE {
 		// because this is already the bag those flags are pushed through; the name is debt.
 		bool ShowMarkers = false;
 
+		// Skeleton overlay. Same editor-opt-in shape. ShowAllSkeletons draws every posed
+		// rig; otherwise only the current selection (and its hierarchy — select the capsule,
+		// see the body's bones). SkeletonXRay skips the depth test so bones inside the mesh
+		// are visible; off keeps occlusion as information.
+		bool ShowSkeletons = false;
+		bool ShowAllSkeletons = false;
+		bool SkeletonXRay = true;
+
 		float FixedTimestep = 1.0f / 60.0f;
 		int MaxStepsPerFrame = 5;          // spiral-of-death guard
 	};
@@ -87,6 +96,15 @@ namespace GanymedE {
 	struct EditorViewFilter
 	{
 		const std::unordered_set<UUID>* HiddenEntities = nullptr;
+
+		// Skeleton visualizer: draw only these entities' hierarchy unless ShowAllSkeletons.
+		// Pointer into editor-owned state, same contract as HiddenEntities.
+		const std::unordered_set<UUID>* SelectedEntities = nullptr;
+
+		// Joint to accent + triad + labels. UUID{0} / -1 means none. The editor writes
+		// picking and tree selection here; a selected BoneAttachmentComponent is the fallback.
+		UUID HighlightSkeletonEntity{ 0 };
+		int32_t HighlightJoint = -1;
 	};
 
 	// Change-tracked so a system can react to the camera moving rather than recomputing

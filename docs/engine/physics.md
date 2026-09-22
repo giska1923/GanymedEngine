@@ -359,7 +359,9 @@ collider gizmos — a divergence between the two is itself diagnostic (it means 
 bodies disagree). Authored gizmos (`DrawColliderGizmos`) run in Edit and in Play-with-Jolt-off
 when `ShowColliderGizmos` is set; the editor defaults that checkbox on and pushes it every frame.
 Marker wire-spheres use the same singleton (`ShowMarkers`); the editor's Icons toggle pushes that
-one. Both default **false** in the engine so a shipped game draws neither.
+one. Skeleton overlay flags (`ShowSkeletons` / `ShowAllSkeletons` / `SkeletonXRay`) sit here for
+the same per-frame editor push; drawing is `RenderSystem::DrawSkeletonGizmos`, not physics.
+All of those default **false** in the engine so a shipped game draws none of them.
 
 ## Mesh collision default
 

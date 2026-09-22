@@ -1,12 +1,19 @@
 # Milestone — Skeletal attachments (bone sockets)
 
-**Status: A2 implemented. A1 (carry clips) and A3 (Proving Ground wiring) remain.** A1 is
-content — Meshy credits, clip pick, post-process — and is still the cheap disproof that current
-unarmed clips will look worse with a rifle in the hand. A3 lives on the game branch.
+**Status: A1, A2 and A3 have landed as mechanism and wiring. S6 retired this file to
+`docs/history/`.** Mechanical verification is written up below. The visual A3 gate (rifle stays
+in the hand through the carry clips) and a visibility bit were named rather than deferred by
+silence; they now live in
+[cross-cutting.md](../ToDo/cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
+The engine can pin an entity to a joint (`BoneAttachmentComponent` + `BoneAttachmentSystem`), the
+character runs a weapon-carry clip, and the rifle is socketed to `RightHand`.
 
-The engine can pin an entity to a joint (`BoneAttachmentComponent` + `BoneAttachmentSystem`). A
-character still cannot *look* armed until A1 ships carry clips and A3 wires `Rifle.glb` to
-`RightHand`. That remaining gap is content and wiring, not a missing capability.
+Evidence, on `first-game`, in `Game/assets/scenes/ProvingGround.ganymede`: the player body carries
+`AnimatorComponent { Clip: Lower_Weapon_Look_Raise }` and its `Rifle` child carries a
+`BoneAttachmentComponent` naming `RightHand` with a hand-tuned offset and rotation.
+
+The offsets were placed by hand, which is the bottleneck this plan said to watch for. That
+evidence became [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md).
 
 ---
 
@@ -23,7 +30,7 @@ rubber. That generation was discarded and re-rolled unarmed.
 
 > The detailed record of that — the prompts, the measurements, the re-roll — is in
 > `PROVING_GROUND.md` **on the game branch**, not in this copy. The milestone's own branch policy
-> splits its write-ups that way; see [README.md](README.md). The facts this plan depends on are
+> splits its write-ups that way; see [ToDo README](../ToDo/README.md). The facts this plan depends on are
 > restated here rather than linked, so nothing below relies on reading the other branch.
 
 **Parent the weapon to the character entity.** It then hangs at a fixed offset from the capsule and
@@ -38,11 +45,18 @@ engine of this kind provides: Unreal's sockets, Unity's bone transforms, Godot's
 - **Not a socket editor.** No named socket assets authored onto a skeleton, no gizmo for placing
   them. A joint name plus an offset, typed into the inspector. If placing offsets by hand becomes
   the bottleneck, that is the evidence for building more.
+  — **It did.** The rifle's offset and rotation were placed by dragging sliders, and the committed
+  values say so. That evidence is [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md); this bullet stands as
+  the scope decision it was, not as a claim about what should exist now.
 - **Not IK, not look-at, not procedural aim.** Attachment reads the pose; it never writes to it.
 - **Not clip blending.** There is still no crossfade — `PlayAnimation` restarts on a clip change.
   A weapon on a socket does not need blending; it only makes the lack more visible.
-- **Not the separate clip asset.** That is its own item in [cross-cutting.md](cross-cutting.md)
-  and is independent of this one.
+- **Not a separate clip asset.** A rigged `.glb` ships mesh, skin and clips in one file, and the
+  engine keeps them there on purpose — separate clip assets would buy identity surgery and nothing
+  else (see [assets.md](../engine/assets.md#skinning-data)). Clips therefore have to be generated
+  as one `action_ids` set rather than downloaded one at a time. *(This bullet and the note under A1
+  both used to cite an item in `cross-cutting.md`; no such item exists there, so the constraint is
+  stated here against the doc that actually records it.)*
 
 ---
 
@@ -147,6 +161,9 @@ cache-stomp risk is accepted; `BoneAttachmentSystem` is the one caller.
 
 ### A1 — Rifle-carry clips, before any engine work
 
+**Done — the clip set shipped.** The player body runs `Lower_Weapon_Look_Raise`. Verification
+below: the three clips are in the glb; the ~5 cm table was not measured.
+
 Regenerate the player's clip set with weapon-carry animations rather than the unarmed idle, walk
 and run it has now.
 
@@ -158,14 +175,30 @@ and run it has now.
   Turn Right, `686` Walk Backward with Gun 1, `425` Vault with Rifle. Pick by fetching each
   `preview_url` GIF and comparing mid-stride frames — that is free, and it is how the current run
   clip was chosen after the first one turned out to be a head-down lunge.
-- **Cost:** 3 credits per action, re-issued as one `action_ids` set (clips must ship in one file;
-  see [cross-cutting.md](cross-cutting.md)).
+- **Cost:** 3 credits per action, re-issued as one `action_ids` set — clips must ship in one file,
+  because they live inside the `Mesh` asset ([assets.md](../engine/assets.md#skinning-data)).
 - **Post-processing is not optional.** Every download so far has needed the same two fixes, and
   both recurred on the second generation: a constant scale artifact on `Hips` in at least one
   clip, and real root motion that has to be detrended *and* re-centred. Measure before installing.
 - **Gate:** the clip set plays on the existing player with head height, hips height and forward
   offset within ~5 cm of each other across all clips, and zero net root drift. **No engine change
   has happened at this point** — the character simply mimes holding a weapon that is not there.
+
+**Verification (A1).** The clip set shipped inside `ArmoredHumanoid.glb` on `first-game`. The glTF
+skin has **three** animations, named exactly as `Player.lua` selects them:
+
+| Speed | Clip | `animSpeed` |
+|---|---|---|
+| `< 0.5` m/s | `Lower_Weapon_Look_Raise` | 1.0 |
+| `< 4` m/s | `Walk_Forward_While_Shooting` | 1.0 |
+| else | `Run_and_Shoot` | 1.7 |
+
+There is no dedicated backpedal clip. Holding S turns the mesh 180° and plays walk/run forward —
+that is the "backpedal turn" the A3 gate names, not Meshy's `Walk Backward with Gun 1`.
+
+The **~5 cm cross-clip table was never measured.** Reconstructing it from a transcript would be
+inventing the gate. [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S5 is the readout; it reports Head Y /
+Hips Y / Hips Z at t=0 per clip. Those figures were not compared to a hand table on this branch.
 
 ### A2 — The engine feature, on `master`
 
@@ -182,7 +215,23 @@ name warns once and restores parent-relative world. New files: `BoneAttachmentSy
   it; a bad joint name warns once and leaves the entity at its parent's transform rather than at
   the origin.
 
-### A2 follow-up — one item left
+**Verification (A2).** Mechanical probes, against the committed player mesh and the system as it
+stands. Visual lag / multi-minute drift were not timed — that is the A3 picture, and S2 is what
+makes the hand a thing you can see.
+
+| Probe | Result |
+|---|---|
+| Rig with no finger joints | `ArmoredHumanoid.glb` skin: **24 joints**. `LeftHand` / `RightHand` are terminals. No finger, thumb, or toe-beyond-`ToeBase` joints. A weapon attaches at the wrist, as the hazard below said. |
+| Socket on a moving, animating character | `BoneAttachmentSystem` runs every frame in play *and* edit, after `AnimationSystem` has written `Palette` and `TransformSystem` has published `targetWorld`. Same-frame pose; no extra delay by construction. |
+| Target mesh swapped at runtime | `ResolveJointIndex` keeps `Resolved` only while `JointNames[Resolved] == Joint`; otherwise it walks the name list. `Scene::Copy` / duplicate / deserialize reset `Resolved` to −1 so a stale index cannot attach to whichever joint now occupies that slot. Not exercised by swapping the player's mesh in play. |
+| Joint name the skeleton does not have | Warns once per distinct failure (`WarnOnce`) and `Restore()`s parent-cache × local. Never the origin. Empty `Joint` is quiet. Not planted as a typo in the committed scene (`RightHand` is present). |
+| Socket with children of its own | `TransformSystem::OverrideWorld` clears `m_Visited` and walks the subtree. The committed `Rifle` has **no children**. `Muzzle` is still parented to `Yaw`. The walk is untested with a live child. |
+| Bad inverse bind | Singular `InverseBind` returns false from `TryGetJointFrame`, warns once, `Restore()`. Self-checked with a zero matrix. |
+
+The run-cycle gate (tracks the hand, no visible lag, no drift over minutes) is the A3 picture. It
+was not watched from this branch.
+
+### A2 follow-up — LocalTransform (fixed) and visibility (decided)
 
 The socket frame left out the skinned submesh's `LocalTransform`, which `Renderer3D` applies and
 the socket did not — so a socket on a rig whose joints are centimetres and whose vertices are
@@ -192,16 +241,31 @@ resolve. `OverrideWorld` also discarded the attached entity's `Scale`, so that c
 nowhere honest to live. Both are **fixed**: `LocalTransform` is folded in, the bind pose's basis
 scale is divided back out, and local `Scale` is composed. See `docs/engine/scene.md`.
 
-Still open:
+**Decided, not built — hide an unresolved socket.**
 
-- **Hide an entity whose socket does not resolve**, rather than leaving it at its parent transform.
-  The window is short — the frames before a skinned mesh finishes streaming, on every load — and
-  now that scale is no longer compensated it is only a brief pop rather than a wrong-sized prop.
-  There is no visibility flag on any component today, so this is new surface, not a tweak: either
-  an `Enabled`/`Visible` bit that `RenderSystem` honours (useful well beyond sockets) or a
-  socket-local suppression. Worth deciding which before building either.
+The window is short — the frames before a skinned mesh finishes streaming, on every load — and
+now that scale is no longer compensated it is only a brief pop rather than a wrong-sized prop.
+
+There is no runtime visibility flag on any component today. The outliner eye is
+`EditorViewFilter::HiddenEntities`, an editor filter that `OnUpdate` clears so Play and the
+runtime draw everything. Reusing it would hide the rifle in the editor and show it in the game,
+which is the opposite of the streaming pop.
+
+| Option | Why not / why |
+|---|---|
+| Socket-local suppression | A second visibility system the day anything else needs to hide. This note exists so that does not happen. |
+| **`Visible` / `Enabled` on a component `RenderSystem` honours** | The engine-shaped answer (Unity renderer enabled, Unreal hidden-in-game). Useful for cutscenes, inventory, pooling — sockets are one client. |
+
+**Chosen: the general bit.** Not built here: inventing a visibility component as a side quest of
+joint-frame extraction is the over-build, and the pop is brief. The next piece of work that
+actually needs to hide something implements it, and sockets piggy-back. Do not add a socket-only
+flag in the meantime.
 
 ### A3 — Wiring, on the game branch
+
+**Done — the rifle is socketed.** `Rifle` is a child of the player body with
+`BoneAttachmentComponent { Target: 0, Joint: RightHand }` and a `0.45` local scale. Verification
+below: wiring confirmed; the grip was not watched; `Muzzle` is still on `Yaw`.
 
 Attach `Rifle.glb` to the player's `RightHand`, offset by hand against the new clips. Either retire
 the hovering rifle pickup at the Weapon Crate or keep it and attach on collect — the latter is more
@@ -217,6 +281,23 @@ believing the picture.
   muzzle particle emitter can be moved from `Yaw` onto the gun's barrel without changing where
   shots go.
 
+**Verification (A3).** Wiring, on `first-game` `ProvingGround.ganymede`, as committed:
+
+| Piece | State |
+|---|---|
+| `Rifle` parent | Body (`3000000000000000013`), `Target: 0` → parent |
+| `Joint` | `RightHand` |
+| `Offset` / `Rotation` | `[-0.2487, 0.1440, -0.0064]`, `[-2.7143, 0.2545, 0.8852]` — the slider residue that triggered [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) |
+| Local `Scale` | `0.45` on the rifle entity, not a compensating child |
+| `Muzzle` | **Still parented to `Yaw`**, translation `[0, 0.5, -1]`. The "move onto the barrel" half of the gate was not done. Shots still leave from Yaw-space; moving the emitter would change where they appear, not yet where they go, until fire is re-derived from the gun. |
+| Idle / walk / run | The three A1 clips, selected by capsule speed in `Player.lua` |
+| Backpedal turn | Mesh yaw eased 180° when moving opposite the camera; same walk/run clips, not a backward cycle |
+
+The "stays in the hand" picture was not watched from this branch. S2 draws the joints; S6 did not
+re-run the gate (`ProvingGround` lives on `first-game`). Until then this section records the
+wiring, not the grip. Leftover:
+[cross-cutting.md](../ToDo/cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
+
 ---
 
 ## Hazards found while scoping
@@ -230,10 +311,12 @@ believing the picture.
   weapon attaches at the wrist and the hand cannot close around it. With a carry clip the grip pose
   is baked into the animation, which is why A1 comes first. Without one, no socket offset will make
   it look held.
-- **The editor needs the *target's* skeleton to populate a joint dropdown.** The clip combo in
-  `SceneHierarchyPanel` reads `mesh->GetClips()` off the same entity; this reads
-  `mesh->GetSkeleton().JointNames` off a different one, which the inspector does not currently do
-  for any component.
+- **The editor needs the *target's* skeleton to populate a joint dropdown.** **Built.** The
+  `BoneAttachmentComponent` section resolves the target entity (drop from the outliner, or the
+  hierarchy parent when `Target` is zero) and fills a combo from
+  `mesh->GetSkeleton().JointNames` on *that* entity — the first inspector section to read a
+  component off a different entity than the one selected. [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md)
+  S2 draws where those joints are; S3 picks them.
 - **`Scene::Copy` runs on play.** `Resolved` is a runtime index and must reset, the same way
   `AnimatorComponent::Time` and `Palette` already do.
 
@@ -257,7 +340,7 @@ system:
 
 ## Branch policy
 
-Unchanged from [PROVING_GROUND.md](PROVING_GROUND.md): A2 is engine work and lands on `master`
+Unchanged from [PROVING_GROUND.md](../ToDo/PROVING_GROUND.md): A2 is engine work and lands on `master`
 first; A1 and A3 are content and wiring and live on the game branch. The check stays mechanical:
 
 ```

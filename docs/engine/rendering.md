@@ -354,8 +354,12 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    draws over it) — accepted v1 artifact; Unity interleaves the queues, Ganymed does not because
    that means injecting into the transparent sort.
 8. **Debug lines** — accumulated `DrawLine/DrawWireBox/DrawWireSphere/DrawWireCapsule` calls flush
-   as one lines draw (20k-vertex dynamic buffer), depth-tested but not written. Used by collider
-   gizmos, marker gizmos (`DrawWireSphere` + optional forward `DrawLine`), and Jolt debug draw.
+   as one or two line draws (20k-vertex dynamic buffer). The default batch is depth-tested but not
+   written (collider gizmos, marker gizmos, Jolt debug draw, depth-tested skeletons).
+   `DrawLine(..., depthTest=false)` goes to a second overlay submit with depth testing off — the
+   skeleton visualizer's x-ray default, so bones inside a mesh are visible. A 90-joint rig is still
+   one overlay submit, not one per bone; `Statistics::DebugLines` counts segments,
+   `DebugLineDraws` is 0–2.
 
 Also owned here: the procedural **skybox** (fullscreen quad, sky/ground gradient + sun) or the
 **cubemap skybox** when an environment is active; the editor **grid** (fragment-shader infinite
@@ -366,11 +370,11 @@ numbers; ortho sizes both to the visible XZ extent so a 200 m plan view still ha
 corners. The active environment is whatever `SubmitEnvironment` set this frame — caching
 environments by path is
 `AssetManager`'s job, not the renderer's. `GetStats()` reports
-draws/meshes/culled/instanced/transparent/skinned plus particle emitters/billboards/draws/culled
-(shown in the editor Stats panel). Per-emitter frustum cull uses the CPU AABB `ParticleSystem`
-wrote; there is no per-billboard cull. Budget: billboards carry the high counts; mesh debris is
-hundreds, not tens of thousands (one `DrawCommand` + frustum test per particle, and opaque casters
-are pushed unculled ×4 shadow cascades).
+draws/meshes/culled/instanced/transparent/skinned, debug-line segments/submits, plus particle
+emitters/billboards/draws/culled (shown in the editor Stats panel). Per-emitter frustum cull uses
+the CPU AABB `ParticleSystem` wrote; there is no per-billboard cull. Budget: billboards carry the
+high counts; mesh debris is hundreds, not tens of thousands (one `DrawCommand` + frustum test per
+particle, and opaque casters are pushed unculled ×4 shadow cascades).
 
 Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5–8 shadow cascades,
 9–11 IBL, 12 skybox cubemap.
@@ -378,8 +382,12 @@ Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5�
 ### Skinned meshes
 
 `Renderer3D::SubmitSkinnedMesh(mesh, transform, palette, jointCount, entityID)` is the skinned
-entry point; `RenderSystem` calls it for entities whose mesh has a skeleton and whose animator has
-built a palette. Everything else about the command — sorting, culling, material binding, entity-ID
+entry point; `RenderSystem` calls it for every entity whose mesh `HasSkeleton()`. The animator's
+palette is used when it is present and sized to the rig; a null or empty palette uses
+`Mesh::GetRestPalette()` (built once at mesh load from `SampleClipGlobals(nullptr)` then
+`Global * InverseBind`). `SubmitMesh` is not a rest-pose equivalent — it applies `LocalTransform`
+with no palette, and on a file whose mesh node is a unit conversion (Meshy: 0.01) that draws a
+~2 cm character. Everything else about the command — sorting, culling, material binding, entity-ID
 picking — goes through the same path as a static draw. Only three things differ:
 
 - **The palette is copied at submit** into a frame-lifetime `PaletteStorage`, one `MaxBones`-sized
@@ -409,14 +417,20 @@ measured AABB is not the box that gets drawn; `Mesh::ComputeBounds` pads it by
 `SkinnedBoundsPadding` (25%) of the box's **largest** extent — not per axis, because a limb can
 swing about as far as the rig is long, so a narrow axis needs the same absolute slack as a wide one
 (CesiumMan stands arms-down with an X extent of 0.31 against a height of 1.51, and its walk cycle
-overruns a per-axis 50% pad). Exact posed bounds mean skinning every vertex on the CPU each frame to
-decide one culling test. The failure mode is a character popping at the screen edge if a clip swings
-wider than the pad.
+overruns a per-axis 50% pad) — then transforms that box by the root joint's rest palette so
+`LocalTransform * box` matches `LocalTransform * RestPalette * v`. Without that rest matrix, a
+Meshy character's `GetBounds()` is ~2 cm while the skinned draw is 1.8 m: preview framing parks
+the camera 1 m away from a full-size character, and a Box collision seed is a postage stamp.
+Exact posed bounds mean skinning every vertex on the CPU each frame to decide one culling test.
+The failure mode is a character popping at the screen edge if a clip swings wider than the pad.
 
 Order of operations in `vs_PhongSkinned`: blend the palette in mesh space **first**, apply the
 per-instance model matrix after, exactly where `vs_Phong` applies it. The palette is
-`Global * InverseBind`, which is identity at the bind pose, so an unposed rig lands precisely where
-`vs_Phong` would have put it.
+`Global * InverseBind`. On Khronos samples (Fox, CesiumMan) that is identity at rest, so
+`vs_PhongSkinned` with the rest palette lands where `vs_Phong` would. That is **not** true when
+`LocalTransform` is a unit conversion (Meshy: vertices in metres, joints in centimetres, mesh node
+0.01): the rest palette is ~scale 100, and `LocalTransform * Palette` cancel. An unposed rig
+therefore still has to go through `SubmitSkinnedMesh`.
 
 One last trap. `Submesh::LocalTransform` is *kept* for skinned submeshes, where static ones have it
 reset to identity by the world-space bake, and re-applying it here is what cancels the
@@ -440,9 +454,14 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
   (base vertex/index, count, material index, local transform, name, local AABB, `IsSkinned`) +
   material list + the built `Geometry`, plus the skeleton and clips on a rigged asset. Bounds are
   computed on build and used for culling. `Build` also creates the optional stream-1 buffer
-  (`GetSkinVertexBuffer()`, null when there is no skin data) from `SkinVertex{JointIndices,
+  (  `GetSkinVertexBuffer()`, null when there is no skin data) from `SkinVertex{JointIndices,
   JointWeights}`; the skin attributes ride a second stream rather than widening `MeshVertex`, which
   would cost every static vertex in the engine 32 bytes to serve the few that are rigged.
+  `TryGetJointFrame(mesh, palette, joint, outFrame)` recovers a joint's frame in the mesh
+  entity's local space — `LocalTransform * Palette[i] * inverse(InverseBind[i])`, then the bind
+  pose's basis scale divided out — so sockets and skeleton tooling share one formula. False on
+  an out-of-range joint or a singular inverse bind; the caller multiplies by the target's world
+  matrix.
 
 ### Per-entity material overrides
 
