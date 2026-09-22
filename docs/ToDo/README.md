@@ -132,3 +132,7 @@ describe problems that were fixed later. Verified stale, recorded here so nobody
   `IsAssetsWritable`.
 - `THREADING_ROADMAP.md` "T4 remains open" — history inside T3's notes; T4 is done.
 - `MODEL_EDITOR.md` "socket authoring is [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)'s territory" — that file now lives at [`docs/history/SKELETAL_ATTACHMENTS.md`](../history/SKELETAL_ATTACHMENTS.md). S5 of [SKELETAL_TOOLING.md](../history/SKELETAL_TOOLING.md) is the clip readout on the Asset Inspector; sockets stay instance-side.
+- `RUNTIME_AUDIO_ROADMAP.md` Phase 2 note "every solution build prints `'pwsh.exe' is not recognized`
+  from `vendor/premake/premake5.lua`'s postbuild step" — the source was vcpkg's user-wide MSBuild
+  integration (its app-local DLL step runs `pwsh.exe`), not premake. Fixed by opting the workspace
+  out ([build-and-tooling.md](../engine/build-and-tooling.md#workspace)).
