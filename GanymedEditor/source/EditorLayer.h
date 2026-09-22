@@ -5,11 +5,14 @@
 #include "Panels/ContentBrowserPanel.h"
 #include "Panels/AssetInspectorPanel.h"
 #include "Panels/MapPanel.h"
+#include "Panels/JointTreePanel.h"
+#include "EditorJoint.h"
 #include "EditorPicking.h"
 #include "EditorUndo.h"
 
 #include "GanymedE/Core/Random.h"
 
+#include <glm/glm.hpp>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -86,6 +89,10 @@ namespace GanymedE {
 
 		void PushEditorVisualizers();
 		void DrawSkeletonLabels();
+		void SyncJointToolToEntitySelection();
+		void ResolveJointHighlight(UUID& entity, int32_t& joint);
+		glm::mat4 GetViewportViewProjection();
+		bool TryPickViewportJoint();
 
 		void SetEditorTopOrtho(bool enabled);
 	private:
@@ -97,6 +104,7 @@ namespace GanymedE {
 		bool m_ShowAllSkeletons = false;
 		bool m_SkeletonXRay = true;
 		std::unordered_set<UUID> m_SelectedIDs;
+		EditorJointTool m_JointTool;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;
@@ -154,6 +162,7 @@ namespace GanymedE {
 		ContentBrowserPanel m_ContentBrowserPanel;
 		AssetInspectorPanel m_AssetInspectorPanel;
 		MapPanel m_MapPanel;
+		JointTreePanel m_JointTreePanel;
 		MapSnapSettings m_SnapSettings;
 
 		// Placement preview is a real entity, excluded from the surface ray so it cannot

@@ -101,8 +101,8 @@ namespace GanymedE {
 		// Pointer into editor-owned state, same contract as HiddenEntities.
 		const std::unordered_set<UUID>* SelectedEntities = nullptr;
 
-		// Joint to accent + triad + labels. UUID{0} / -1 means none. S3 writes picking;
-		// until then the editor fills this from a selected BoneAttachmentComponent.
+		// Joint to accent + triad + labels. UUID{0} / -1 means none. The editor writes
+		// picking and tree selection here; a selected BoneAttachmentComponent is the fallback.
 		UUID HighlightSkeletonEntity{ 0 };
 		int32_t HighlightJoint = -1;
 	};

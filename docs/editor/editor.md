@@ -3,7 +3,7 @@
 The editor application (`GanymedEditor/source/`). It is a thin client of the engine: one
 `Application` subclass ([`GanymedEditorApp.cpp`](../../GanymedEditor/source/GanymedEditorApp.cpp))
 pushing a single [`EditorLayer`](../../GanymedEditor/source/EditorLayer.h), plus the hierarchy,
-content browser, Asset Inspector, and Map panels.
+Joints, content browser, Asset Inspector, and Map panels.
 Run it with `GanymedEditor/` as the working directory — the editor's *own* assets (Inter, Lucide,
 the checkerboard, its HUD document) resolve relative to CWD. A scene path may be passed
 positionally, and `--renderer=<backend>` selects the graphics backend (see
@@ -40,8 +40,8 @@ and shows a host scrollbar. The host itself is `NoScrollbar`. None of those stri
 docked window: they cannot be resized, undocked, or given a tab. On Wayland the title bar is
 omitted and the ImGui menu bar stays, because an undecorated window cannot be moved. On first
 run, after **View → Reset Layout**, or when the dock-layout version in `imgui.ini` mismatches
-(`[GanymedEditor][Dock] Version`, currently 4), `EditorLayer` builds a default DockBuilder
-tree: Scene Hierarchy left, Properties below it (Asset Inspector tabbed with Properties),
+(`[GanymedEditor][Dock] Version`, currently 5), `EditorLayer` builds a default DockBuilder
+tree: Scene Hierarchy left (Joints tabbed with it), Properties below it (Asset Inspector tabbed with Properties),
 Viewport center, Stats and Map tabbed on the right, Content Browser bottom. After that, panel
 layout persists in `GanymedEditor/imgui.ini`. Later chrome changes that alter the default tree
 bump that version so an existing ini does not keep a stale split. The title bar and status bar
@@ -163,7 +163,7 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-The outliner, Properties, Content Browser, Asset Inspector, Map, and Viewport are wrapped (`BeginPanel`). The host
+The outliner, Joints, Properties, Content Browser, Asset Inspector, Map, and Viewport are wrapped (`BeginPanel`). The host
 title bar is `EditorTitleBar.cpp`, not a furniture helper — it has to talk to `Window` hit-testing.
 
 ### Title bar
@@ -256,8 +256,11 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   `originBottomLeft` (a render target's orientation follows the backend — hard-coding either way
   is wrong on half of them). Joint-name labels for the highlighted socket joint (and its parent
   and children) are ImGui text on that same window after the image, projected through the camera
-  the viewport is looking through. The highlight is the selected `BoneAttachmentComponent`'s
-  `Resolved` index; there is no joint picking yet.
+  the viewport is looking through. The highlight is the editor joint selection (viewport pick or
+  Joints panel), falling back to the selected `BoneAttachmentComponent`'s `Resolved` index.
+  While Skeletons is on, a click whose screen-space distance to a bone or joint marker is within
+  12 px selects that joint and does **not** change the entity selection; otherwise entity picking
+  proceeds. The GPU pick buffer cannot see joints — they are not entities and carry no ID.
 - **`m_ViewportHovered` is the image**, not the window. A click on the camera combo must not
   also click-select whatever the pick buffer last saw. `BlockEvents` still uses
   focused-or-hovered, so Q/W/E/R keep working while the viewport window is focused.
@@ -334,7 +337,8 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera. In Top (Ortho): Alt+LMB yaws only, scroll changes `OrthoHeight`, RMB fly is off |
 | Viewport combo → Top (Ortho)            | Pitch-locked orthographic plan view. Metres-per-pixel readout appears beside Free Aspect                             |
-| LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed)                            |
+| LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed). While Skeletons is on, a bone within 12 px wins and does not change the entity |
+| Esc while assigning a socket joint      | Cancel viewport joint pick                                                                                                                                               |
 | LMB while placing                       | Commit the preview (`AddEntitiesCommand` after the transform is final). Shift+LMB chains; Alt+LMB places unsnapped                           |
 | LMB while scatter-painting              | Paint instances into the active group. Shift+LMB erases that group's instances inside the brush radius. Mode (paint vs erase) is locked at mouse-down |
 | Esc / RMB while placing                 | Cancel and destroy the preview (no undo entry)                                                                                               |
@@ -343,7 +347,7 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 | Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
 | Local / World combo (viewport header)   | ImGuizmo LOCAL (default) / WORLD                                                                                                             |
 | Icons (viewport header)                 | Toggle `MarkerComponent` gizmos (`ShowMarkers`). Default on. Independent of Visualizers                                                      |
-| Visualizers → Skeletons                 | Posed joint overlay (`ShowSkeletons`). Default on, selection hierarchy only. All / X-ray are in the same popup. Engine default off            |
+| Visualizers → Skeletons                 | Posed joint overlay (`ShowSkeletons`). Default on, selection hierarchy only. All / X-ray are in the same popup. Engine default off. Bone click selects a joint; it does not change the entity. Delete still acts on the entity |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z          | Undo / redo (Edit state only)                                                                                                                |
 | Ctrl+D / Delete                         | Duplicate / delete the selected entity, subtree included (Edit state only). While placing, Delete cancels instead                            |
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene. New, Open and Play cancel an uncommitted preview and abort scatter                                        |
@@ -576,7 +580,7 @@ are omitted for the same reason.
 
 ### Stats panel
 
-Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
+Hovered entity, selected joint (or `none`), Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
 transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
 and live post-processing settings (exposure, bloom threshold/knee/intensity/radius, FXAA).
 Jolt debug-draw toggles, the collider-gizmo checkbox, and the skeleton overlay live on the viewport
@@ -660,6 +664,24 @@ OnUpdateEditor` via the `EditorViewFilter` singleton (play/runtime still draw th
 - Deletion is deferred to after the hierarchy walk. Destroying a subtree mid-walk would invalidate
   the entt view the enclosing loop is iterating.
 - ImGui IDs use the entt handle, not the UUID — old scene files could contain colliding UUIDs.
+
+## Joints panel
+
+[`JointTreePanel`](../../GanymedEditor/source/Panels/JointTreePanel.h) — `BeginPanel("Joints")`,
+tabbed with Scene Hierarchy in the default tree (dock-layout version 5). Hierarchy from
+`Skeleton::ParentIndices`. `EditorUI::SearchField` filters by a case-insensitive name substring;
+ancestors of a match stay visible and are forced open.
+
+**Joint selection is subordinate to entity selection.** It is `{ UUID skinnedEntity, int32_t joint }`
+on `EditorLayer`, not a scene singleton and not an entity. Clicking a row selects that joint and
+does not change the outliner. Changing the primary entity clears the joint. Delete and Ctrl+D
+still act on the entity — they never attempt to delete a joint. Viewport picking (12 px screen-space
+threshold against markers and parent–child segments, `Math::ScreenPointToRay`) writes the same
+state. Existing `imgui.ini` will not show the tab until **View → Reset Layout** or a dock-version
+mismatch rebuilds the tree.
+
+Empty: "Select a skinned entity." The tree follows the selection hierarchy the same way the overlay
+does (select the capsule, see the body's joints).
 
 ### Properties (drawn by the same panel)
 
@@ -881,9 +903,12 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   through `PlayAnimation` and friends — see [scripting.md](../engine/scripting.md).
 - Bone attachment: **Target** is a drop from the outliner (zero / Parent button = hierarchy parent),
   and **Joint** is a combo over the *target's* `skeleton.JointNames`, not this entity's — the
-  inspector has not previously read another entity's mesh for any component. Offset and Rotation
-  are reflected (`Trait::Radians` on Rotation). Local transform is ignored while the socket
-  resolves; edit Offset, not the gizmo, to place the attached mesh in the hand.
+  inspector has not previously read another entity's mesh for any component. A crosshair next to
+  the combo arms viewport pick: the next bone click writes `Joint` (one undo entry) if it belongs
+  to that target, Esc cancels. Selecting the socket still highlights its named joint until the
+  user picks a different one. Offset and Rotation are reflected (`Trait::Radians` on Rotation).
+  Local transform is ignored while the socket resolves; edit Offset, not the gizmo, to place the
+  attached mesh in the hand.
 - Script: shows the `.lua` asset (handle + path) with a Clear button — assign with
   `AcceptAssetDropHandle(Script)`. Below it, one row per property the
   script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The
@@ -1043,7 +1068,7 @@ palette rows use the same `GetThumbnail` / `RequestVisible` pair. See
 ## Asset Inspector panel
 
 [`AssetInspectorPanel`](../../GanymedEditor/source/Panels/AssetInspectorPanel.h) — `BeginPanel("Asset
-Inspector")`, tabbed with Properties in the default tree (dock-layout version 4). It inspects
+Inspector")`, tabbed with Properties in the default tree (dock-layout version 5). It inspects
 **assets**, not entities. Selecting a file in the Content Browser fills it; selecting nothing
 clears it. Properties stays entity-scoped and multi-select-aware. The two selection domains do
 not arbitrate.

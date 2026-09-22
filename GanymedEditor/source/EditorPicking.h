@@ -36,4 +36,31 @@ namespace GanymedE {
 	// caller must have run TransformSystem this frame (or accept last frame's cache).
 	SurfaceHit RaycastScene(const Ref<Scene>& scene, const Math::Ray& ray, const RaycastFilter& filter = {});
 
+	bool EntityHasSkinnedPose(Entity entity);
+	Entity FindSkinnedMeshInHierarchy(Scene& scene, Entity start);
+
+	struct JointPickQuery
+	{
+		Scene* Scene = nullptr;
+		Math::Ray Ray;
+		glm::mat4 ViewProjection{ 1.0f };
+		glm::vec2 ViewportMin{ 0.0f };
+		glm::vec2 ViewportSize{ 0.0f };
+		glm::vec2 MouseScreen{ 0.0f };
+		const std::unordered_set<UUID>* Selected = nullptr;
+		const std::unordered_set<UUID>* Hidden = nullptr;
+		bool AllSkeletons = false;
+		float PixelThreshold = 12.0f;
+	};
+
+	struct JointPickHit
+	{
+		UUID Entity{ 0 };
+		int32_t Joint = -1;
+	};
+
+	// Synchronous. Joints are not entities and have no GPU pick ID. Screen-space distance
+	// to markers and parent-child segments, nearest hit within PixelThreshold.
+	bool PickJoint(const JointPickQuery& query, JointPickHit& out);
+
 }

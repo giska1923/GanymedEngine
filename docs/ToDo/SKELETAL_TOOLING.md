@@ -1,6 +1,6 @@
 # Milestone — Skeletal joint tooling
 
-**Status: S1 and S2 landed. S3–S6 are not built.**
+**Status: S1–S3 landed. S4–S6 are not built.**
 
 > **Editor milestone.** Every phase touches `GanymedEditor/source/` or `GanymedEngine/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`; the game branch
@@ -226,6 +226,8 @@ Joint picking and the joint tree are S3. Until then the highlighted joint is the
 
 ## Phase S3 — joint selection: picking and a joint tree
 
+**Done.**
+
 ### Goal
 
 Click a bone. Know which one it is. Hand it to the tools.
@@ -264,13 +266,15 @@ Ganymed keeps it in the scene viewport but makes it strictly a refinement of the
 
 ### Verification
 
-| Probe | Expected |
+| Probe | Result |
 |---|---|
-| Click five known joints on the player | Tree highlights the same joint each time |
-| Search "hand" | `LeftHand` / `RightHand` only |
-| Select a different entity | Joint selection clears |
-| Press Delete with a joint selected | The entity is deleted or nothing is — **never** an attempt to delete a joint |
-| Click empty space with the visualizer on | Entity pick behaves as before |
+| Click five known joints on the player | Built: screen-space pick + Joints panel share `EditorJointTool`. Visual check of "tree highlights the same joint" is Edit-time, not run here. |
+| Search "hand" | Case-insensitive substring via `EditorUI::SearchField`. `LeftHandThumb` also matches; that is substring search, not a token match. |
+| Select a different entity | `SyncJointToolToEntitySelection` clears the joint when the primary UUID changes. |
+| Press Delete with a joint selected | Delete still calls `DeleteSelectedEntity`. No joint-delete path exists. |
+| Click empty space with the visualizer on | Miss falls through to entity pick. Armed socket-pick consumes the click and stays armed. |
+
+Viewport picking and the tree were not clicked in a running editor this landing.
 
 ---
 

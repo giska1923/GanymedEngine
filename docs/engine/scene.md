@@ -441,7 +441,8 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
   `CollectSubtree` and skips those submits. Play/runtime ignore hidden, so a hidden entity still
   simulates and draws in Play. `SelectedEntities` and `HighlightSkeletonEntity` / `HighlightJoint`
   drive the skeleton overlay on both Edit and Play (the editor pushes them onto the play copy).
-  Not serialized; `Scene::Copy` does not carry it.
+  Highlight comes from editor joint picking / the Joints panel, falling back to a selected
+  `BoneAttachmentComponent`'s resolved joint. Not serialized; `Scene::Copy` does not carry it.
 - **`EditorBoundsOverlay`** — editor-only extra wire geometry, drawn after collider gizmos in
   `OnUpdateEditor`. The Map panel's parity audit fills `Boxes` with the focused finding's mesh AABB
   (cyan) and box collider (orange). Scatter fills `Spheres` with the brush (cyan paint, red erase).

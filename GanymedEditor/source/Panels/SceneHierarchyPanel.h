@@ -7,6 +7,7 @@
 #include "GanymedE/Scene/Entity.h"
 
 #include "../EditorUndo.h"
+#include "../EditorJoint.h"
 
 #include <filesystem>
 #include <string>
@@ -29,6 +30,8 @@ namespace GanymedE {
 		// nullptr in Play, so play-mode edits to the throwaway scene copy are structurally
 		// unrecordable rather than filtered out somewhere downstream.
 		void SetUndoStack(EditorUndoStack* stack) { m_UndoStack = stack; }
+
+		void SetJointTool(EditorJointTool* tool) { m_JointTool = tool; }
 
 		void OnImGuiRender();
 
@@ -122,6 +125,7 @@ namespace GanymedE {
 		Entity m_SelectionContext;
 
 		EditorUndoStack* m_UndoStack = nullptr;
+		EditorJointTool* m_JointTool = nullptr;
 
 		// Deleting inside the hierarchy walk would destroy entities the enclosing entt view is
 		// still iterating; the request is serviced after the walk instead.

@@ -332,4 +332,271 @@ namespace GanymedE {
 		return hit;
 	}
 
+	namespace {
+
+		bool EntityOrAncestorHidden(Scene& scene, Entity entity, const std::unordered_set<UUID>* hidden)
+		{
+			if (!hidden)
+				return false;
+			while (entity)
+			{
+				if (hidden->count(entity.GetUUID()) != 0)
+					return true;
+				UUID parentID = entity.GetComponent<RelationshipComponent>().Parent;
+				if (parentID == UUID{ 0 })
+					break;
+				entity = scene.FindEntityByUUID(parentID);
+			}
+			return false;
+		}
+
+		bool SkeletonInSelection(Scene& scene, Entity skinned, const std::unordered_set<UUID>& selected)
+		{
+			std::unordered_set<entt::entity> seen;
+			Entity walk = skinned;
+			while (walk)
+			{
+				if (!seen.insert((entt::entity)walk).second)
+					break;
+				if (selected.count(walk.GetUUID()) != 0)
+					return true;
+				UUID parentID = walk.GetComponent<RelationshipComponent>().Parent;
+				if (parentID == UUID{ 0 })
+					break;
+				walk = scene.FindEntityByUUID(parentID);
+			}
+
+			const UUID skinnedID = skinned.GetUUID();
+			for (UUID id : selected)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (!entity)
+					continue;
+				seen.clear();
+				Entity start = entity;
+				while (start)
+				{
+					if (!seen.insert((entt::entity)start).second)
+						break;
+					if (start.GetUUID() == skinnedID)
+						return true;
+					UUID parentID = start.GetComponent<RelationshipComponent>().Parent;
+					if (parentID == UUID{ 0 })
+						break;
+					start = scene.FindEntityByUUID(parentID);
+				}
+			}
+			return false;
+		}
+
+		bool ProjectWorld(const glm::mat4& viewProjection, const glm::vec2& vpMin,
+			const glm::vec2& vpSize, const glm::vec3& world, glm::vec2& outScreen)
+		{
+			const glm::vec4 clip = viewProjection * glm::vec4(world, 1.0f);
+			if (clip.w <= 1.0e-5f)
+				return false;
+			const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+			if (ndc.x < -1.0f || ndc.x > 1.0f || ndc.y < -1.0f || ndc.y > 1.0f)
+				return false;
+			outScreen.x = vpMin.x + (ndc.x * 0.5f + 0.5f) * vpSize.x;
+			outScreen.y = vpMin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * vpSize.y;
+			return true;
+		}
+
+		float DistPointSegment2(const glm::vec2& p, const glm::vec2& a, const glm::vec2& b)
+		{
+			const glm::vec2 ab = b - a;
+			const float denom = glm::dot(ab, ab);
+			if (denom < 1.0e-8f)
+				return glm::length(p - a);
+			const float t = glm::clamp(glm::dot(p - a, ab) / denom, 0.0f, 1.0f);
+			return glm::length(p - (a + t * ab));
+		}
+
+		float RaySegmentT(const Math::Ray& ray, const glm::vec3& a, const glm::vec3& b)
+		{
+			const glm::vec3 d1 = ray.Direction;
+			const glm::vec3 d2 = b - a;
+			const glm::vec3 r = ray.Origin - a;
+			const float aa = glm::dot(d1, d1);
+			const float bb = glm::dot(d1, d2);
+			const float cc = glm::dot(d2, d2);
+			const float dd = glm::dot(d1, r);
+			const float ee = glm::dot(d2, r);
+			float s = 0.0f;
+			if (cc < 1.0e-12f)
+			{
+				return glm::dot(a - ray.Origin, d1);
+			}
+			const float denom = aa * cc - bb * bb;
+			if (denom < 1.0e-12f)
+				s = glm::clamp(ee / cc, 0.0f, 1.0f);
+			else
+				s = glm::clamp((aa * ee - bb * dd) / denom, 0.0f, 1.0f);
+			const glm::vec3 p = a + s * d2;
+			return glm::dot(p - ray.Origin, d1);
+		}
+
+		glm::vec3 JointOrigin(const glm::mat4& world)
+		{
+			return glm::vec3(world[3]);
+		}
+
+		struct JointCand
+		{
+			UUID Entity{ 0 };
+			int32_t Joint = -1;
+			float Screen = 0.0f;
+			float T = 0.0f;
+		};
+
+	}
+
+	bool EntityHasSkinnedPose(Entity entity)
+	{
+		if (!entity || !entity.HasComponent<StaticMeshComponent>()
+			|| !entity.HasComponent<AnimatorComponent>())
+		{
+			return false;
+		}
+		const Ref<Mesh>& mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
+		const auto& animator = entity.GetComponent<AnimatorComponent>();
+		return mesh && mesh->HasSkeleton() && !animator.Palette.empty()
+			&& animator.Palette.size() == mesh->GetSkeleton().JointCount();
+	}
+
+	Entity FindSkinnedMeshInHierarchy(Scene& scene, Entity start)
+	{
+		if (!start)
+			return {};
+
+		std::unordered_set<entt::entity> seen;
+		std::vector<Entity> stack;
+		stack.push_back(start);
+		while (!stack.empty())
+		{
+			Entity entity = stack.back();
+			stack.pop_back();
+			if (!entity || !seen.insert((entt::entity)entity).second)
+				continue;
+			if (EntityHasSkinnedPose(entity))
+				return entity;
+			for (UUID childID : entity.GetComponent<RelationshipComponent>().Children)
+			{
+				if (Entity child = scene.FindEntityByUUID(childID))
+					stack.push_back(child);
+			}
+		}
+
+		Entity walk = start;
+		seen.clear();
+		while (walk)
+		{
+			if (!seen.insert((entt::entity)walk).second)
+				break;
+			UUID parentID = walk.GetComponent<RelationshipComponent>().Parent;
+			if (parentID == UUID{ 0 })
+				break;
+			walk = scene.FindEntityByUUID(parentID);
+			if (EntityHasSkinnedPose(walk))
+				return walk;
+		}
+		return {};
+	}
+
+	bool PickJoint(const JointPickQuery& query, JointPickHit& out)
+	{
+		out = {};
+		if (!query.Scene || query.ViewportSize.x <= 1.0f || query.ViewportSize.y <= 1.0f)
+			return false;
+		if (!query.AllSkeletons && (!query.Selected || query.Selected->empty()))
+			return false;
+
+		Scene& scene = *query.Scene;
+		JointCand best;
+		bool have = false;
+
+		auto consider = [&](const JointCand& cand)
+		{
+			if (cand.T < 0.0f || cand.T > query.Ray.MaxDistance)
+				return;
+			if (cand.Screen > query.PixelThreshold)
+				return;
+			if (!have || cand.Screen < best.Screen - 0.5f
+				|| (glm::abs(cand.Screen - best.Screen) <= 0.5f && cand.T < best.T))
+			{
+				best = cand;
+				have = true;
+			}
+		};
+
+		auto view = scene.Reg().view<WorldTransformComponent, StaticMeshComponent, AnimatorComponent>();
+		for (auto entityID : view)
+		{
+			Entity handle{ entityID, &scene };
+			if (EntityOrAncestorHidden(scene, handle, query.Hidden))
+				continue;
+			if (!EntityHasSkinnedPose(handle))
+				continue;
+			if (!query.AllSkeletons && !SkeletonInSelection(scene, handle, *query.Selected))
+				continue;
+
+			const Ref<Mesh>& mesh = handle.GetComponent<StaticMeshComponent>().Mesh.Get();
+			const auto& animator = handle.GetComponent<AnimatorComponent>();
+			const Skeleton& skeleton = mesh->GetSkeleton();
+			const uint32_t jointCount = skeleton.JointCount();
+			const glm::mat4& entityWorld = handle.GetComponent<WorldTransformComponent>().World;
+
+			std::vector<glm::vec3> origins(jointCount);
+			std::vector<glm::vec2> screens(jointCount);
+			std::vector<uint8_t> ok(jointCount, 0);
+
+			for (uint32_t i = 0; i < jointCount; i++)
+			{
+				glm::mat4 local{ 1.0f };
+				if (!TryGetJointFrame(*mesh, animator.Palette, (int32_t)i, local))
+					continue;
+				origins[i] = JointOrigin(entityWorld * local);
+				if (!ProjectWorld(query.ViewProjection, query.ViewportMin, query.ViewportSize,
+						origins[i], screens[i]))
+				{
+					continue;
+				}
+				ok[i] = 1;
+			}
+
+			const UUID id = handle.GetUUID();
+			for (uint32_t i = 0; i < jointCount; i++)
+			{
+				if (!ok[i])
+					continue;
+
+				JointCand marker;
+				marker.Entity = id;
+				marker.Joint = (int32_t)i;
+				marker.Screen = glm::length(query.MouseScreen - screens[i]);
+				marker.T = glm::dot(origins[i] - query.Ray.Origin, query.Ray.Direction);
+				consider(marker);
+
+				const int32_t parent = skeleton.ParentIndices[i];
+				if (parent < 0 || (uint32_t)parent >= jointCount || !ok[(uint32_t)parent])
+					continue;
+
+				JointCand bone;
+				bone.Entity = id;
+				bone.Joint = (int32_t)i;
+				bone.Screen = DistPointSegment2(query.MouseScreen, screens[(uint32_t)parent], screens[i]);
+				bone.T = RaySegmentT(query.Ray, origins[(uint32_t)parent], origins[i]);
+				consider(bone);
+			}
+		}
+
+		if (!have)
+			return false;
+
+		out.Entity = best.Entity;
+		out.Joint = best.Joint;
+		return true;
+	}
+
 }

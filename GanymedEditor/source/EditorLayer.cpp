@@ -62,7 +62,7 @@ namespace GanymedE {
 		// Bump when the DockBuilder default tree changes. Existing imgui.ini otherwise keeps
 		// the old splits — including the phase-1 6% toolbar node — and View → Reset Layout
 		// is easy to miss on the first launch after a chrome change.
-		constexpr int kDockLayoutVersion = 4;
+		constexpr int kDockLayoutVersion = 5;
 		int s_IniDockLayoutVersion = 0;
 
 		void* DockLayoutReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
@@ -104,6 +104,7 @@ namespace GanymedE {
 			ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
 
 			ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
+			ImGui::DockBuilderDockWindow("Joints", dockLeft);
 			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
 			ImGui::DockBuilderDockWindow("Asset Inspector", dockLeftBottom);
 			ImGui::DockBuilderDockWindow("Viewport", dockMain);
@@ -423,6 +424,7 @@ namespace GanymedE {
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 
 		RetargetPanels();
+		m_SceneHierarchyPanel.SetJointTool(&m_JointTool);
 		m_MapPanel.SetPlaceHandler([this](AssetHandle handle, AssetType type)
 		{
 			if (m_SceneState == SceneState::Edit)
@@ -699,6 +701,12 @@ namespace GanymedE {
 		ImGui::PopStyleVar();
 
 		m_SceneHierarchyPanel.OnImGuiRender();
+		m_JointTool.VisualizerOn = m_ShowSkeletons;
+		if (!m_ShowSkeletons)
+			m_JointTool.CancelPick();
+		SyncJointToolToEntitySelection();
+		m_JointTreePanel.OnImGuiRender(m_ActiveScene.get(), m_JointTool,
+			m_SceneHierarchyPanel.GetSelection());
 		m_ContentBrowserPanel.OnImGuiRender();
 		m_AssetInspectorPanel.OnImGuiRender();
 		m_MapPanel.OnImGuiRender(m_SnapSettings, m_SceneState == SceneState::Edit, IsPlacing(),
@@ -713,6 +721,22 @@ namespace GanymedE {
 		if (m_HoveredEntity)
 			hoveredEntityName = m_HoveredEntity.GetComponent<TagComponent>().Tag;
 		ImGui::Text("Hovered Entity: %s", hoveredEntityName.c_str());
+		if (m_JointTool.HasJoint() && m_ActiveScene)
+		{
+			Entity skinned = m_ActiveScene->FindEntityByUUID(m_JointTool.SkeletonEntity);
+			const char* jointName = "?";
+			if (skinned && skinned.HasComponent<StaticMeshComponent>())
+			{
+				const Ref<Mesh>& mesh = skinned.GetComponent<StaticMeshComponent>().Mesh.Get();
+				if (mesh && (size_t)m_JointTool.Joint < mesh->GetSkeleton().JointNames.size())
+					jointName = mesh->GetSkeleton().JointNames[(size_t)m_JointTool.Joint].c_str();
+			}
+			ImGui::Text("Joint: %s [%d]", jointName, m_JointTool.Joint);
+		}
+		else
+		{
+			ImGui::Text("Joint: none");
+		}
 
 		if (m_SurfaceHit.FromWorkPlane)
 		{
@@ -970,6 +994,9 @@ namespace GanymedE {
 		if (IsScattering() && ImGui::IsKeyPressed(ImGuiKey_Escape))
 			CancelScatterMode();
 
+		if (m_JointTool.PickForSocket && ImGui::IsKeyPressed(ImGuiKey_Escape))
+			m_JointTool.CancelPick();
+
 		if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
 			m_UndoStack.Undo(*m_EditorScene);
 
@@ -1188,6 +1215,158 @@ namespace GanymedE {
 		m_EditorCamera.SetOrthographic(enabled);
 	}
 
+	void EditorLayer::SyncJointToolToEntitySelection()
+	{
+		UUID primary{ 0 };
+		if (Entity selected = m_SceneHierarchyPanel.GetSelectedEntity())
+			primary = selected.GetUUID();
+		if (primary != m_JointTool.AnchorEntity)
+		{
+			m_JointTool.ClearJoint();
+			m_JointTool.AnchorEntity = primary;
+			if (m_JointTool.PickForSocket && m_JointTool.SocketEntity != primary)
+				m_JointTool.CancelPick();
+		}
+	}
+
+	void EditorLayer::ResolveJointHighlight(UUID& entity, int32_t& joint)
+	{
+		entity = UUID{ 0 };
+		joint = -1;
+		if (m_JointTool.HasJoint())
+		{
+			entity = m_JointTool.SkeletonEntity;
+			joint = m_JointTool.Joint;
+			return;
+		}
+
+		Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (!selected || !selected.HasComponent<BoneAttachmentComponent>())
+			return;
+
+		const auto& attachment = selected.GetComponent<BoneAttachmentComponent>();
+		UUID targetID = attachment.Target;
+		if (targetID == UUID{ 0 })
+			targetID = selected.GetComponent<RelationshipComponent>().Parent;
+		entity = targetID;
+		joint = attachment.Resolved;
+	}
+
+	glm::mat4 EditorLayer::GetViewportViewProjection()
+	{
+		glm::mat4 viewProjection = m_EditorCamera.GetViewProjection();
+		if (!m_ActiveScene)
+			return viewProjection;
+
+		if (m_SceneState == SceneState::Play)
+		{
+			const RenderContext& ctx = m_ActiveScene->GetSingleton<RenderContext>();
+			if (ctx.MainCamera)
+				viewProjection = ctx.MainCamera->GetProjection() * glm::inverse(ctx.CameraTransform);
+			return viewProjection;
+		}
+
+		if (m_ViewportCamera != UUID{ 0 })
+		{
+			Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+			if (preview && preview.HasComponent<CameraComponent>())
+			{
+				const auto& cc = preview.GetComponent<CameraComponent>();
+				const glm::mat4 view = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
+				viewProjection = cc.Camera.GetProjection() * view;
+			}
+		}
+		return viewProjection;
+	}
+
+	bool EditorLayer::TryPickViewportJoint()
+	{
+		if (!m_ActiveScene)
+			return false;
+		if (!m_JointTool.PickForSocket && !m_ShowSkeletons)
+			return false;
+		if (m_JointTool.PickForSocket && !m_ShowSkeletons)
+			return true;
+
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportSize.x <= 1.0f || viewportSize.y <= 1.0f)
+			return m_JointTool.PickForSocket;
+
+		ImVec2 mouse = ImGui::GetMousePos();
+		const glm::vec2 mouseScreen{ mouse.x, mouse.y };
+		const glm::vec2 local = mouseScreen - m_ViewportBounds[0];
+		if (local.x < 0.0f || local.y < 0.0f || local.x >= viewportSize.x || local.y >= viewportSize.y)
+			return m_JointTool.PickForSocket;
+
+		const glm::mat4 viewProjection = GetViewportViewProjection();
+		const glm::vec2 ndc = {
+			(local.x / viewportSize.x) * 2.0f - 1.0f,
+			1.0f - (local.y / viewportSize.y) * 2.0f
+		};
+		const float nearClipZ = Projection::HomogeneousDepth() ? -1.0f : 0.0f;
+		const Math::Ray ray = Math::ScreenPointToRay(glm::inverse(viewProjection), ndc, nearClipZ, 1.0f);
+
+		JointPickQuery query;
+		query.Scene = m_ActiveScene.get();
+		query.Ray = ray;
+		query.ViewProjection = viewProjection;
+		query.ViewportMin = m_ViewportBounds[0];
+		query.ViewportSize = viewportSize;
+		query.MouseScreen = mouseScreen;
+		query.Selected = &m_SelectedIDs;
+		query.Hidden = m_SceneState == SceneState::Edit
+			? &m_SceneHierarchyPanel.HiddenEntities() : nullptr;
+		query.AllSkeletons = m_ShowAllSkeletons;
+
+		JointPickHit hit;
+		if (!PickJoint(query, hit))
+			return m_JointTool.PickForSocket;
+
+		if (m_JointTool.PickForSocket)
+		{
+			if (m_SceneState != SceneState::Edit)
+				return true;
+
+			Entity socket = m_ActiveScene->FindEntityByUUID(m_JointTool.SocketEntity);
+			if (!socket || !socket.HasComponent<BoneAttachmentComponent>())
+			{
+				m_JointTool.CancelPick();
+				return true;
+			}
+
+			auto& attachment = socket.GetComponent<BoneAttachmentComponent>();
+			UUID targetID = attachment.Target;
+			if (targetID == UUID{ 0 })
+				targetID = socket.GetComponent<RelationshipComponent>().Parent;
+			if (targetID != hit.Entity)
+				return true;
+
+			Entity skinned = m_ActiveScene->FindEntityByUUID(hit.Entity);
+			if (!EntityHasSkinnedPose(skinned))
+				return true;
+			const Skeleton& skeleton = skinned.GetComponent<StaticMeshComponent>().Mesh.Get()->GetSkeleton();
+			if ((size_t)hit.Joint >= skeleton.JointNames.size())
+				return true;
+
+			const std::string& name = skeleton.JointNames[(size_t)hit.Joint];
+			if (attachment.Joint != name)
+			{
+				const BoneAttachmentComponent before = attachment;
+				attachment.Joint = name;
+				attachment.Resolved = -1;
+				m_UndoStack.Push(CreateScope<ComponentEditCommand<BoneAttachmentComponent>>(
+					"Set Joint", socket.GetUUID(), before, attachment));
+			}
+
+			m_JointTool.Select(hit.Entity, hit.Joint);
+			m_JointTool.CancelPick();
+			return true;
+		}
+
+		m_JointTool.Select(hit.Entity, hit.Joint);
+		return true;
+	}
+
 	void EditorLayer::PushEditorVisualizers()
 	{
 		m_SelectedIDs.clear();
@@ -1197,25 +1376,13 @@ namespace GanymedE {
 				m_SelectedIDs.insert(entity.GetUUID());
 		}
 
+		SyncJointToolToEntitySelection();
+
 		EditorViewFilter& filter = m_ActiveScene->GetSingleton<EditorViewFilter>();
 		filter.HiddenEntities = m_SceneState == SceneState::Edit
 			? &m_SceneHierarchyPanel.HiddenEntities() : nullptr;
 		filter.SelectedEntities = &m_SelectedIDs;
-		filter.HighlightSkeletonEntity = UUID{ 0 };
-		filter.HighlightJoint = -1;
-
-		if (Entity selected = m_SceneHierarchyPanel.GetSelectedEntity())
-		{
-			if (selected.HasComponent<BoneAttachmentComponent>())
-			{
-				const auto& attachment = selected.GetComponent<BoneAttachmentComponent>();
-				UUID targetID = attachment.Target;
-				if (targetID == UUID{ 0 })
-					targetID = selected.GetComponent<RelationshipComponent>().Parent;
-				filter.HighlightSkeletonEntity = targetID;
-				filter.HighlightJoint = attachment.Resolved;
-			}
-		}
+		ResolveJointHighlight(filter.HighlightSkeletonEntity, filter.HighlightJoint);
 
 		PhysicsSettings& physics = m_ActiveScene->GetSingleton<PhysicsSettings>();
 		physics.ShowColliderGizmos = m_ShowColliderGizmos;
@@ -1230,11 +1397,13 @@ namespace GanymedE {
 		if (!m_ShowSkeletons || !m_ActiveScene)
 			return;
 
-		const EditorViewFilter& filter = m_ActiveScene->GetSingleton<EditorViewFilter>();
-		if (filter.HighlightSkeletonEntity == UUID{ 0 } || filter.HighlightJoint < 0)
+		UUID highlightEntity{ 0 };
+		int32_t highlightJoint = -1;
+		ResolveJointHighlight(highlightEntity, highlightJoint);
+		if (highlightEntity == UUID{ 0 } || highlightJoint < 0)
 			return;
 
-		Entity target = m_ActiveScene->FindEntityByUUID(filter.HighlightSkeletonEntity);
+		Entity target = m_ActiveScene->FindEntityByUUID(highlightEntity);
 		if (!target || !target.HasComponent<StaticMeshComponent>()
 			|| !target.HasComponent<AnimatorComponent>())
 		{
@@ -1247,27 +1416,11 @@ namespace GanymedE {
 			return;
 
 		const Skeleton& skeleton = mesh->GetSkeleton();
-		const int32_t joint = filter.HighlightJoint;
+		const int32_t joint = highlightJoint;
 		if ((size_t)joint >= skeleton.JointCount())
 			return;
 
-		glm::mat4 viewProjection = m_EditorCamera.GetViewProjection();
-		if (m_SceneState == SceneState::Play)
-		{
-			const RenderContext& ctx = m_ActiveScene->GetSingleton<RenderContext>();
-			if (ctx.MainCamera)
-				viewProjection = ctx.MainCamera->GetProjection() * glm::inverse(ctx.CameraTransform);
-		}
-		else if (m_ViewportCamera != UUID{ 0 })
-		{
-			Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
-			if (preview && preview.HasComponent<CameraComponent>())
-			{
-				const auto& cc = preview.GetComponent<CameraComponent>();
-				const glm::mat4 view = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
-				viewProjection = cc.Camera.GetProjection() * view;
-			}
-		}
+		glm::mat4 viewProjection = GetViewportViewProjection();
 
 		const glm::vec2 viewportMin = m_ViewportBounds[0];
 		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
@@ -1465,7 +1618,9 @@ namespace GanymedE {
 				ImGui::SetItemTooltip("Authored box/sphere/capsule wireframes. Edit and Play.");
 				ImGui::Checkbox("Skeletons", &m_ShowSkeletons);
 				ImGui::SetItemTooltip(
-					"Posed joint overlay on the selection (or every rig with All). Edit and Play.");
+					"Posed joint overlay on the selection (or every rig with All). "
+					"While on, clicking a bone selects that joint and does not change the entity. "
+					"Edit and Play.");
 				ImGui::BeginDisabled(!m_ShowSkeletons);
 				ImGui::Checkbox("All skeletons", &m_ShowAllSkeletons);
 				ImGui::SetItemTooltip("Draw every posed rig, not only the current selection.");
@@ -1527,6 +1682,14 @@ namespace GanymedE {
 			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
 
 		DrawSkeletonLabels();
+
+		if (m_JointTool.PickForSocket)
+		{
+			ImDrawList* draw = ImGui::GetWindowDrawList();
+			const ImVec2 pos = ImVec2(m_ViewportBounds[0].x + 10.0f, m_ViewportBounds[0].y + 10.0f);
+			draw->AddText(pos, EditorUI::Theme().AccentText,
+				"Click a joint to assign  (Esc cancels)");
+		}
 
 		// Hover is the *image*, not the window: a click on the camera combo must
 		// not also click-select whatever the pick buffer last saw.
@@ -1837,6 +2000,9 @@ namespace GanymedE {
 
 			if (m_ViewportHovered && !ImGuizmo::IsOver() && !Input::IsKeyPressed(Key::LeftAlt))
 			{
+				if (TryPickViewportJoint())
+					return false;
+
 				Entity hover = m_HoveredEntity;
 				if (!(hover && m_SceneHierarchyPanel.IsLocked(hover)))
 					m_SceneHierarchyPanel.SetSelectedEntity(hover);
@@ -1874,6 +2040,9 @@ namespace GanymedE {
 
 		// Every UUID on the stack names an entity in a Scene object that no longer exists.
 		m_UndoStack.Clear();
+		m_JointTool.ClearJoint();
+		m_JointTool.CancelPick();
+		m_JointTool.AnchorEntity = UUID{ 0 };
 		RetargetPanels();
 		m_SceneHierarchyPanel.ClearEditorViewState();
 		m_ViewportCamera = UUID{ 0 };
@@ -1936,6 +2105,9 @@ namespace GanymedE {
 		m_SceneState = SceneState::Edit;
 
 		m_UndoStack.Clear();
+		m_JointTool.ClearJoint();
+		m_JointTool.CancelPick();
+		m_JointTool.AnchorEntity = UUID{ 0 };
 		RetargetPanels();
 		m_SceneHierarchyPanel.ClearEditorViewState();
 		m_ViewportCamera = UUID{ 0 };
@@ -1984,6 +2156,9 @@ namespace GanymedE {
 		m_ActiveScene->OnRuntimeStart();
 		m_SceneState = SceneState::Play;
 		RetargetPanels();
+		m_JointTool.CancelPick();
+		m_JointTool.ClearJoint();
+		m_JointTool.AnchorEntity = UUID{ 0 };
 		m_SceneHierarchyPanel.SetSelectedEntity({});
 
 		// Hard-coded for now. Making this a scene property is the obvious next
@@ -2132,17 +2307,7 @@ namespace GanymedE {
 		if (!pointerInViewport)
 			return;
 
-		glm::mat4 viewProjection = m_EditorCamera.GetViewProjection();
-		if (m_ViewportCamera != UUID{ 0 })
-		{
-			Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
-			if (preview && preview.HasComponent<CameraComponent>())
-			{
-				const auto& cc = preview.GetComponent<CameraComponent>();
-				const glm::mat4 view = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
-				viewProjection = cc.Camera.GetProjection() * view;
-			}
-		}
+		glm::mat4 viewProjection = GetViewportViewProjection();
 
 		const glm::vec2 ndc = {
 			(localX / viewportSize.x) * 2.0f - 1.0f,
