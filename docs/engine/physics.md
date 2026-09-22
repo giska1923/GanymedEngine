@@ -353,9 +353,36 @@ enkiTS workers with none falling back inline — the check that separates "corre
 When built with `JPH_DEBUG_RENDERER` (Debug/Release, not Dist), `PhysicsScene::DebugDraw` pipes
 Jolt's own body/constraint visualization into `Renderer3D::DrawLine`. Toggles live in the
 `PhysicsSettings` singleton's `PhysicsDebugDrawSettings` (wireframe, bounding boxes, velocities,
-center of mass, constraints), editable in the editor Stats panel. During play with the toggle on,
-`RenderSystem` draws Jolt's view of the world *instead of* the authored collider gizmos — a
-divergence between the two is itself diagnostic (it means components and bodies disagree).
+center of mass, constraints), editable from the viewport Visualizers popup. During play with
+Jolt debug draw on, `RenderSystem` draws Jolt's view of the world *instead of* the authored
+collider gizmos — a divergence between the two is itself diagnostic (it means components and
+bodies disagree). Authored gizmos (`DrawColliderGizmos`) run in Edit and in Play-with-Jolt-off
+when `ShowColliderGizmos` is set; the editor defaults that checkbox on and pushes it every frame.
+Marker wire-spheres use the same singleton (`ShowMarkers`); the editor's Icons toggle pushes that
+one. Both default **false** in the engine so a shipped game draws neither.
+
+## Mesh collision default
+
+A mesh sidecar may carry `Collision` (`None` | `Box`, default `None`). That is a **seed**, not a
+physics asset: Unreal stores simple collision on the static mesh and treats the component as the
+exception; Ganymed inverts it because colliders were always component-side and two placements of
+the same crate must still be allowed to disagree.
+
+`MeshImporter::Instantiate` is the one path that consults the key. `Box` adds a
+`BoxColliderComponent` whose `HalfExtents` / `Offset` come from `Mesh::GetBounds()` — the same
+AABB `ComputeBounds` already wrote at import, in mesh local space, which is the space
+`PhysicsScene::CreateBodies` already applies the entity transform on top of. `None` is a no-op,
+so every existing scene and every mesh that has not opted in behaves as it did. Leave `None`
+on a hollow building shell: `GetBounds()` is the outer AABB, and a Box seed would fill the
+interior. The key is for kit pieces whose mesh *is* the collider you want.
+
+Add-component and the map panel's generate-from-mesh share `MeshCollision::SeedBoxCollider` and
+do **not** wait on the key: asking for a collider on a mesh that still says `None` must still
+produce a fitted box. The key only decides whether placement brings one unasked.
+
+`Box` only. Sphere and capsule are placement decisions; convex hulls and mesh colliders do not
+exist. The fitted numbers are not a second Config key — they would hash into the compile epoch
+and go stale on `ImportScale`. See [assets.md](assets.md#mesh-import-cgltf).
 
 ## Extending
 

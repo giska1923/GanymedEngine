@@ -61,4 +61,30 @@ namespace GanymedE::Math {
 
 		return true;
 	}
+
+	Ray ScreenPointToRay(const glm::mat4& inverseViewProjection, const glm::vec2& ndc,
+		float nearClipZ, float farClipZ)
+	{
+		auto unproject = [&](float clipZ) -> glm::vec3
+		{
+			glm::vec4 h = inverseViewProjection * glm::vec4(ndc.x, ndc.y, clipZ, 1.0f);
+			if (glm::epsilonEqual(h.w, 0.0f, glm::epsilon<float>()))
+				return glm::vec3(h);
+			return glm::vec3(h) / h.w;
+		};
+
+		const glm::vec3 nearPoint = unproject(nearClipZ);
+		const glm::vec3 farPoint = unproject(farClipZ);
+		const glm::vec3 delta = farPoint - nearPoint;
+		const float length = glm::length(delta);
+
+		Ray ray;
+		ray.Origin = nearPoint;
+		if (length > 0.0f)
+		{
+			ray.Direction = delta / length;
+			ray.MaxDistance = length;
+		}
+		return ray;
+	}
 }

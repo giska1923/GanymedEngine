@@ -15,6 +15,8 @@
 
 namespace GanymedE {
 
+	struct BoxColliderComponent;
+
 	class SceneHierarchyPanel
 	{
 	public:
@@ -47,8 +49,16 @@ namespace GanymedE {
 		void DeleteSelectedEntity();
 
 		// Instantiates a .gprefab into the current scene (viewport drop, or the hierarchy's
-		// blank-space menu) and selects the new instance root.
-		Entity InstantiatePrefab(const std::filesystem::path& relativePath);
+		// blank-space menu) and selects the new instance root. Placement passes recordUndo=false
+		// so the preview is not an undo entry; commit pushes AddEntitiesCommand after the
+		// transform is final.
+		Entity InstantiatePrefab(const std::filesystem::path& relativePath, bool recordUndo = true);
+
+		// HalfExtents / Offset from MeshCollision::SeedBoxCollider (resident mesh AABB).
+		// Leaves Material alone. Returns false when there is no mesh or it is not loaded
+		// yet — the collider stays at its current (usually unit) values. The asset
+		// Collision key does not gate this: add-component and M2 generate always seed.
+		static bool SeedBoxColliderFromMesh(Entity entity, BoxColliderComponent& collider);
 
 		// Editor-only outliner flags. Keyed by UUID so they survive play/stop (same IDs on
 		// the copied scene) and are not cleared by RetargetPanels. New/Open must call

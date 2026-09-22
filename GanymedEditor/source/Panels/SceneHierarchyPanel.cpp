@@ -21,10 +21,9 @@
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
-#include "GanymedE/Assets/MaterialSerializer.h"
-#include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Scene/PrefabSerializer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 #include "GanymedE/Utils/PlatformUtils.h"
@@ -74,6 +73,16 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_PACKAGE;
 				tint = theme.AssetTint[static_cast<int>(AssetType::Prefab)];
+			}
+			else if (entity.HasComponent<ScatterGroupComponent>())
+			{
+				icon = ICON_LC_SPRAY_CAN;
+			}
+			else if (entity.HasComponent<MarkerComponent>())
+			{
+				icon = ICON_LC_MAP_PIN;
+				const glm::vec4& c = entity.GetComponent<MarkerComponent>().Color;
+				tint = ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
 			}
 			else if (entity.HasComponent<CameraComponent>())
 			{
@@ -140,6 +149,14 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_PACKAGE;
 				tint = theme.AssetTint[static_cast<int>(AssetType::Prefab)];
+			}
+			else if constexpr (std::is_same_v<T, ScatterGroupComponent>)
+			{
+				icon = ICON_LC_SPRAY_CAN;
+			}
+			else if constexpr (std::is_same_v<T, MarkerComponent>)
+			{
+				icon = ICON_LC_MAP_PIN;
 			}
 			else if constexpr (std::is_same_v<T, CameraComponent>)
 			{
@@ -1102,106 +1119,6 @@ namespace GanymedE {
 		m_Pending.Visited = false;
 	}
 
-	// The inline editor for one .gmat asset.
-	//
-	// These edits are live on the shared Ref, so they show up immediately in every entity and
-	// every scene using this material - the header text says so, because a global edit that
-	// looks local is the worst version of this UI. They are also **not undoable** (undo covers
-	// scene edits only); Save and Revert are the asset-level transaction model instead, and
-	// Revert is just AssetManager::Reload.
-	static void DrawMaterialAssetEditor(AssetHandle handle)
-	{
-		const AssetMetadata* metadata = AssetManager::GetMetadata(handle);
-		Ref<Material> material = AssetManager::GetAsset<Material>(handle);
-		if (!metadata || !material)
-		{
-			ImGui::TextDisabled("Material asset could not be loaded");
-			return;
-		}
-
-		ImGui::PushID((int)(uint64_t)handle);
-		ImGui::Separator();
-		ImGui::Text("%s", metadata->FilePath.c_str());
-		ImGui::TextDisabled("Edits apply to this asset everywhere it is used, and are not undoable");
-
-		glm::vec4 albedo = material->GetAlbedoColor();
-		if (ImGui::ColorEdit4("Albedo", glm::value_ptr(albedo)))
-			material->SetAlbedoColor(albedo);
-
-		float metallic = material->GetMetallic();
-		if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
-			material->SetMetallic(metallic);
-
-		float roughness = material->GetRoughness();
-		if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.0f, 1.0f))
-			material->SetRoughness(roughness);
-
-		bool transparent = material->IsTransparent();
-		if (ImGui::Checkbox("Transparent", &transparent))
-			material->SetTransparent(transparent);
-		ImGui::SameLine();
-		bool twoSided = material->IsTwoSided();
-		if (ImGui::Checkbox("Two Sided", &twoSided))
-			material->SetTwoSided(twoSided);
-
-		// Texture maps are assigned by dragging a texture asset; the material stores the path,
-		// because a .gmat has to stay self-describing and hand-mergeable.
-		struct MapRow
-		{
-			const char* Label;
-			const std::string& (Material::*GetPath)() const;
-			void (Material::*SetPath)(const std::string&);
-			void (Material::*SetTexture)(const Ref<Texture2D>&);
-		};
-
-		const MapRow rows[] = {
-			{ "Albedo Map",     &Material::GetAlbedoMapPath,            &Material::SetAlbedoMapPath,            &Material::SetAlbedoMap },
-			{ "Normal Map",     &Material::GetNormalMapPath,            &Material::SetNormalMapPath,            &Material::SetNormalMap },
-			{ "Metal/Rough Map",&Material::GetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMap },
-		};
-
-		for (const MapRow& row : rows)
-		{
-			ImGui::PushID(row.Label);
-
-			const std::string& path = (material.get()->*row.GetPath)();
-			ImGui::Text("%s: %s", row.Label, path.empty() ? "(none)" : path.c_str());
-
-			if (auto dropped = EditorUI::AcceptAssetDrop(AssetType::Texture))
-			{
-				const std::string relative = dropped->generic_string();
-				(material.get()->*row.SetPath)(relative);
-				(material.get()->*row.SetTexture)(TextureImporter::LoadMaterialMap(relative));
-			}
-
-			if (!path.empty())
-			{
-				ImGui::SameLine();
-				if (ImGui::SmallButton("Clear"))
-				{
-					(material.get()->*row.SetPath)(std::string());
-					(material.get()->*row.SetTexture)(nullptr);
-				}
-			}
-
-			ImGui::PopID();
-		}
-
-		ImGui::TextDisabled("Drop a texture on a map row to assign it");
-
-		if (ImGui::Button("Save"))
-		{
-			if (MaterialSerializer::Save(material, GetAssetRoot() / metadata->FilePath))
-				GE_INFO("Saved material '{0}'", metadata->FilePath);
-		}
-
-		ImGui::SameLine();
-		if (ImGui::Button("Revert"))
-			AssetManager::Reload(handle);
-
-		ImGui::PopID();
-	}
-
 	template<typename T, typename UIFunction>
 	void SceneHierarchyPanel::DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
 	{
@@ -1397,6 +1314,8 @@ namespace GanymedE {
 			return;
 
 		T& component = m_SelectionContext.AddComponent<T>();
+		if constexpr (std::is_same_v<T, BoxColliderComponent>)
+			SeedBoxColliderFromMesh(m_SelectionContext, component);
 		if (Recording())
 		{
 			m_UndoStack->Push(CreateScope<AddComponentCommand<T>>(
@@ -1439,6 +1358,7 @@ namespace GanymedE {
 			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");
 			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
 			DrawAddComponentEntry<ParticleEmitterComponent>("Particle Emitter");
+			DrawAddComponentEntry<MarkerComponent>("Marker");
 			DrawAddComponentEntry<RigidBodyComponent>("Rigid Body");
 			DrawAddComponentEntry<BoxColliderComponent>("Box Collider");
 			DrawAddComponentEntry<SphereColliderComponent>("Sphere Collider");
@@ -1668,7 +1588,8 @@ namespace GanymedE {
 		GE_INFO("Reverted instance from '{0}'", metadata->FilePath);
 	}
 
-	Entity SceneHierarchyPanel::InstantiatePrefab(const std::filesystem::path& relativePath)
+	Entity SceneHierarchyPanel::InstantiatePrefab(const std::filesystem::path& relativePath,
+		bool recordUndo)
 	{
 		if (!m_Context)
 			return {};
@@ -1681,9 +1602,19 @@ namespace GanymedE {
 		if (!root)
 			return {};
 
-		PushAddedEntities("Instantiate '" + root.GetComponent<TagComponent>().Tag + "'", root);
+		if (recordUndo)
+			PushAddedEntities("Instantiate '" + root.GetComponent<TagComponent>().Tag + "'", root);
 		SelectSingle(root);
 		return root;
+	}
+
+	bool SceneHierarchyPanel::SeedBoxColliderFromMesh(Entity entity, BoxColliderComponent& collider)
+	{
+		if (!entity || !entity.HasComponent<StaticMeshComponent>())
+			return false;
+
+		return MeshCollision::SeedBoxCollider(
+			collider, entity.GetComponent<StaticMeshComponent>().Mesh.Get());
 	}
 
 	// The inspector half of the instance UI: where the source came from, and the two propagation
@@ -1878,6 +1809,16 @@ namespace GanymedE {
 			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});
 
+		DrawComponent<ScatterGroupComponent>("Scatter Group", entity, [&](auto& component)
+		{
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
+		});
+
+		DrawComponent<MarkerComponent>("Marker", entity, [&](auto& component)
+		{
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
+		});
+
 		// SceneCamera's fields are drawn inline by the nested-struct fallback, so Projection and
 		// its clip planes appear as rows of this section exactly as they did by hand. The one
 		// thing left is which of the two projections' fields to show, and that is visibility
@@ -1978,7 +1919,7 @@ namespace GanymedE {
 								edited = true;
 							}
 
-							DrawMaterialAssetEditor(slot);
+							EditorUI::DrawMaterialAssetEditor(slot);
 						}
 
 						ImGui::PopID();

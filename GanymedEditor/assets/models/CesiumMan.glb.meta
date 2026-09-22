@@ -2,4 +2,7 @@ Asset:
   Handle: 9319709833365012176
   Type: StaticMesh
   ImportConfigVersion: 1
-  Config: {}
+  Config:
+    Collision: None
+    TangentPolicy: WhenMissing
+    UpAxis: Y
