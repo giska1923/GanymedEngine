@@ -111,8 +111,10 @@ local Player = {
     -- P8. The mesh child, which carries the skin and the AnimatorComponent.
     body = nil,
     clip = nil,
-    -- World yaw the mesh is turned to. Tracks the velocity, not the camera.
+    -- World yaw the mesh is turned to. The camera's yaw while aiming, otherwise the velocity.
     meshYaw = nil,
+    -- Seconds left in which the body keeps facing the aim after a shot (see Player:Animate).
+    aimHold = 0.0,
     stepTimer = 0.0,
     steps = 0,
     muzzleBursts = 0,
@@ -629,11 +631,17 @@ end
 -- than from the input. Easing toward a probe point runs at 1.2 m/s (Player:Route), and driving
 -- this off "is a key held" would snap between idle and a sprint through the whole approach.
 --
--- The Body child sits under the capsule, not under Yaw, so it does not inherit the mouse yaw -
--- which is correct for now: the mesh faces the capsule's forward, and the capsule never turns.
--- The character therefore strafes without turning, the same way the placeholder cube did. A
--- turning mesh needs the Body reparented under Yaw, and that is a change to what the gates
--- measured, so it is written into docs/ToDo/ rather than folded in here.
+-- Facing has two modes. Moving without shooting, the body turns to its velocity, so holding S
+-- runs the character forwards the other way instead of playing the stride in reverse. Aiming -
+-- standing with the cursor captured, or within AIM_HOLD of a shot - it faces the camera's yaw,
+-- because a rifle socketed to the hand points wherever the body points, and a body facing its
+-- velocity shoots sideways the moment you strafe or turn the mouse.
+--
+-- Aiming while moving is where that costs something. There are no strafe or backpedal clips, so
+-- a backwards move plays the forward clip in reverse (negative speed wraps, AnimationSystem.cpp)
+-- and a sideways one slides. Strafe clips are content, not code.
+local AIM_HOLD = 0.8
+
 function Player:Animate(ts)
     if not self.body then
         return
@@ -648,21 +656,33 @@ function Player:Animate(ts)
         speed = 0.0
     end
 
-    -- Turn the mesh to face where it is actually going, rather than playing the stride in
-    -- reverse. Holding S turns the character around and runs it forwards, which is what
-    -- "running in the opposite direction" means, and it covers strafing too - that had no clip
-    -- of its own and used to slide sideways facing forwards.
-    --
-    -- **Aiming is unaffected.** The muzzle hangs off Yaw, not off Body, so shots still leave
-    -- along the camera's forward however the mesh is turned. Only the visual changes.
-    if speed > 0.5 then
+    self.aimHold = math.max(0.0, self.aimHold - ts)
+    local aiming = not self.downed
+        and (self.aimHold > 0.0 or (self.looking and speed < 0.5))
+
+    -- Same convention as Enemy:Chase: -Z is forward at yaw 0.
+    local target, rate = nil, 14.0
+    if aiming then
+        -- Faster than the velocity turn: the mouse is already smooth, and lag here reads as
+        -- the gun trailing the crosshair.
+        target, rate = self.yaw, 20.0
+    elseif speed > 0.5 then
+        target = math.atan(-v.x, -v.z)
+    end
+
+    if target then
         self.meshYaw = self.meshYaw or self.yaw
-        -- Same convention as Enemy:Chase: -Z is forward at yaw 0.
-        local target = math.atan(-v.x, -v.z)
         -- Shortest way round, then eased, so tapping S turns through 180 degrees over a couple
         -- of frames instead of popping.
         local diff = (target - self.meshYaw + math.pi) % (2 * math.pi) - math.pi
-        self.meshYaw = self.meshYaw + diff * math.min(1.0, ts * 14.0)
+        self.meshYaw = self.meshYaw + diff * math.min(1.0, ts * rate)
+    end
+
+    -- Moving against the way the body faces: only possible while aiming.
+    local backwards = false
+    if speed > 0.5 and self.meshYaw then
+        local facing = -math.sin(self.meshYaw) * v.x - math.cos(self.meshYaw) * v.z
+        backwards = facing < -0.3 * speed
     end
 
     -- A1: the weapon-carry set. Names are Meshy's library entries baked into the glb, and the
@@ -682,6 +702,10 @@ function Player:Animate(ts)
         -- for someone carrying a rifle. Dropping `speed` to ~4.0 would let this play at 1.55
         -- with almost no slide. It also moves every P1-P7 gate number, so it is not done here.
         clip, animSpeed = "Run_and_Shoot", 1.7
+    end
+
+    if backwards then
+        animSpeed = -animSpeed
     end
 
     self.body:PlayAnimation(clip)
@@ -738,6 +762,58 @@ function Player:Step(ts)
     self.footsteps:PlaySound()
 end
 
+-- The world point under the crosshair, or nil when there is no mouse aim to honour.
+--
+-- The crosshair is the centre of the camera, and the camera sits behind and above the capsule
+-- (Yaw-local (0, 1.6, 5) in the scene). A round fired along the camera's forward from the chest
+-- would run parallel to the crosshair ray and miss it by that offset at every range. So: cast
+-- the camera ray, take what it hits, and aim the round from the muzzle *at that point* - the
+-- usual third-person convergence. Past 200 m nothing is hit and the far point stands in.
+--
+-- Computed by hand because Lua can only read local transforms. The capsule never rotates, so
+-- Yaw's translation is already a world offset; the camera's is in Yaw's frame and needs the yaw.
+function Player:AimPoint()
+    if not self.looking or not self.yawEntity or not self.cameraEntity then
+        return nil
+    end
+
+    local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
+    local c = self.cameraEntity:GetTranslation()
+    local origin = self.entity:GetTranslation() + self.yawEntity:GetTranslation()
+        + Vec3(c.x * cosY + c.z * sinY, c.y, -c.x * sinY + c.z * cosY)
+
+    -- Ry(yaw) * Rx(pitch) * (0, 0, -1): positive pitch looks up.
+    local cosP = math.cos(self.pitch)
+    local dir = Vec3(-sinY * cosP, math.sin(self.pitch), -cosY * cosP)
+
+    -- Start the cast level with the player, not at the lens. Anything between the camera and the
+    -- character - an enemy that has run round behind, a doorframe - is behind the muzzle and
+    -- cannot be shot, and the probe run caught exactly that: an Enemy at 4 m on the camera ray
+    -- put the aim point behind the gun. The crosshair still sits on the same ray.
+    local along = (self.entity:GetTranslation() - origin):Dot(dir)
+    if along > 0.0 then
+        origin = origin + dir * along
+    end
+
+    -- Sensors (heal spots, pickups) stop a ray like a wall does, and rounds fly through them
+    -- (Projectile:OnCollisionEnter's passThrough). Converging on a sensor's surface would bend
+    -- the shot off the crosshair, so step past any of them, a few at most.
+    local from, left = origin, 200.0
+    for _ = 1, 4 do
+        local hit = Physics.Raycast(from, dir, left, self.entity)
+        if not hit then
+            break
+        end
+        local name = hit.entity and hit.entity:GetName()
+        if not (name and PG and PG.passThrough and PG.passThrough[name]) then
+            return hit.point
+        end
+        from = hit.point + dir * 0.01
+        left = left - hit.distance - 0.01
+    end
+    return origin + dir * 200.0
+end
+
 function Player:Fire()
     local p = self.entity:GetTranslation()
     local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
@@ -746,6 +822,20 @@ function Player:Fire()
     -- A metre ahead and at chest height. Spawning inside the capsule would have the round collide
     -- with the player on its first step, and the shot would die where it was born.
     local muzzle = Vec3(p.x + fx * 1.0, p.y + 0.5, p.z + fz * 1.0)
+
+    -- Horizontal along yaw unless a human is aiming with the mouse. The gate modes never capture
+    -- the cursor, so they keep firing flat and their numbers do not move.
+    local dir = Vec3(fx, 0.0, fz)
+    local aim = self:AimPoint()
+    if aim then
+        local toAim = aim - muzzle
+        -- A point behind the muzzle, or almost on it (a wall right in front of the camera), has
+        -- no useful direction from here. Flat forward is the least surprising fallback.
+        if toAim:Dot(dir) > 0.5 then
+            dir = toAim:Normalized()
+        end
+    end
+    self.aimHold = AIM_HOLD
 
     local id = Scene.Spawn("prefabs/Projectile.gprefab", muzzle)
     if not id then
@@ -776,7 +866,12 @@ function Player:Fire()
     -- The entity does not exist until the command queue flushes at the next FrameBegin, so the
     -- velocity cannot be set here. Stash the id and push it next frame.
     self.pending = self.pending or {}
-    self.pending[#self.pending + 1] = { id = id, vx = fx * self.muzzleSpeed, vz = fz * self.muzzleSpeed }
+    self.pending[#self.pending + 1] = {
+        id = id,
+        vx = dir.x * self.muzzleSpeed,
+        vy = dir.y * self.muzzleSpeed,
+        vz = dir.z * self.muzzleSpeed,
+    }
 end
 
 function Player:PushPending()
@@ -786,7 +881,7 @@ function Player:PushPending()
         local q = self.pending[i]
         local e = Scene.FindEntityByUUID(q.id)
         if e then
-            e:SetLinearVelocity(Vec3(q.vx, 0, q.vz))
+            e:SetLinearVelocity(Vec3(q.vx, q.vy, q.vz))
         else
             -- Not there yet; the flush happens at FrameBegin so one frame of lag is normal.
             -- Anything still missing after that is a spawn that failed and is dropped.

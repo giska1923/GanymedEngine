@@ -530,5 +530,9 @@ it in the game.
 `Joint: RightHand`, hand-tuned Offset/Rotation, Scale 0.45). The picture — rifle stays in the
 hand through idle / walk / run and the 180° backpedal turn, with Skeletons on so the wrist is
 visible — needs `ProvingGround.ganymede` on `first-game`. The other half of that gate is content:
-`Muzzle` is still parented to `Yaw`; moving it onto the barrel was not done, and fire is still
-Yaw-space until it is re-derived from the gun.
+`Muzzle` is still parented to `Yaw`; moving it onto the barrel was not done. Mouse-aimed fire now
+converges on the crosshair (pitch included), but it leaves from a chest point in Yaw space, not
+from the gun. Re-deriving it from the barrel needs a Lua binding that reads
+`WorldTransformComponent` (`GetWorldPosition` / `GetWorldForward`): a socketed entity's
+`TransformComponent` is not where it is drawn, so no script can find the barrel today. That
+binding is `master` work.
