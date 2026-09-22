@@ -354,8 +354,12 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    draws over it) — accepted v1 artifact; Unity interleaves the queues, Ganymed does not because
    that means injecting into the transparent sort.
 8. **Debug lines** — accumulated `DrawLine/DrawWireBox/DrawWireSphere/DrawWireCapsule` calls flush
-   as one lines draw (20k-vertex dynamic buffer), depth-tested but not written. Used by collider
-   gizmos, marker gizmos (`DrawWireSphere` + optional forward `DrawLine`), and Jolt debug draw.
+   as one or two line draws (20k-vertex dynamic buffer). The default batch is depth-tested but not
+   written (collider gizmos, marker gizmos, Jolt debug draw, depth-tested skeletons).
+   `DrawLine(..., depthTest=false)` goes to a second overlay submit with depth testing off — the
+   skeleton visualizer's x-ray default, so bones inside a mesh are visible. A 90-joint rig is still
+   one overlay submit, not one per bone; `Statistics::DebugLines` counts segments,
+   `DebugLineDraws` is 0–2.
 
 Also owned here: the procedural **skybox** (fullscreen quad, sky/ground gradient + sun) or the
 **cubemap skybox** when an environment is active; the editor **grid** (fragment-shader infinite
@@ -366,11 +370,11 @@ numbers; ortho sizes both to the visible XZ extent so a 200 m plan view still ha
 corners. The active environment is whatever `SubmitEnvironment` set this frame — caching
 environments by path is
 `AssetManager`'s job, not the renderer's. `GetStats()` reports
-draws/meshes/culled/instanced/transparent/skinned plus particle emitters/billboards/draws/culled
-(shown in the editor Stats panel). Per-emitter frustum cull uses the CPU AABB `ParticleSystem`
-wrote; there is no per-billboard cull. Budget: billboards carry the high counts; mesh debris is
-hundreds, not tens of thousands (one `DrawCommand` + frustum test per particle, and opaque casters
-are pushed unculled ×4 shadow cascades).
+draws/meshes/culled/instanced/transparent/skinned, debug-line segments/submits, plus particle
+emitters/billboards/draws/culled (shown in the editor Stats panel). Per-emitter frustum cull uses
+the CPU AABB `ParticleSystem` wrote; there is no per-billboard cull. Budget: billboards carry the
+high counts; mesh debris is hundreds, not tens of thousands (one `DrawCommand` + frustum test per
+particle, and opaque casters are pushed unculled ×4 shadow cascades).
 
 Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5–8 shadow cascades,
 9–11 IBL, 12 skybox cubemap.

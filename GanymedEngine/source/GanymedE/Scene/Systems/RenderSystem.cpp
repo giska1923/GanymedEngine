@@ -285,6 +285,210 @@ namespace GanymedE {
 		}
 	}
 
+	namespace {
+
+		bool WalkHits(Scene& scene, Entity start, UUID target, std::unordered_set<entt::entity>& seen)
+		{
+			Entity entity = start;
+			while (entity)
+			{
+				if (!seen.insert((entt::entity)entity).second)
+					break;
+				if (entity.GetUUID() == target)
+					return true;
+				UUID parentID = entity.GetComponent<RelationshipComponent>().Parent;
+				if (parentID == UUID{ 0 })
+					break;
+				entity = scene.FindEntityByUUID(parentID);
+			}
+			return false;
+		}
+
+		bool SkeletonInSelection(Scene& scene, Entity skinned,
+			const std::unordered_set<UUID>& selected)
+		{
+			std::unordered_set<entt::entity> seen;
+			Entity walk = skinned;
+			while (walk)
+			{
+				if (!seen.insert((entt::entity)walk).second)
+					break;
+				if (selected.count(walk.GetUUID()) != 0)
+					return true;
+				UUID parentID = walk.GetComponent<RelationshipComponent>().Parent;
+				if (parentID == UUID{ 0 })
+					break;
+				walk = scene.FindEntityByUUID(parentID);
+			}
+
+			const UUID skinnedID = skinned.GetUUID();
+			for (UUID id : selected)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (!entity)
+					continue;
+				seen.clear();
+				if (WalkHits(scene, entity, skinnedID, seen))
+					return true;
+			}
+			return false;
+		}
+
+		glm::vec3 JointOrigin(const glm::mat4& world)
+		{
+			return glm::vec3(world[3]);
+		}
+
+		glm::vec3 JointAxis(const glm::mat4& world, int column)
+		{
+			glm::vec3 axis = glm::vec3(world[column]);
+			const float len = glm::length(axis);
+			if (len > 1e-6f)
+				return axis / len;
+			return glm::vec3(column == 0 ? 1.0f : 0.0f, column == 1 ? 1.0f : 0.0f, column == 2 ? 1.0f : 0.0f);
+		}
+
+	}
+
+	void RenderSystem::DrawSkeletonGizmos()
+	{
+		GE_PROFILE_FUNCTION();
+
+		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
+		const PhysicsSettings& settings = *settingsView.Get();
+		if (!settings.ShowSkeletons)
+			return;
+
+		const EditorViewFilter* filter = m_Scene.FindSingleton<EditorViewFilter>();
+		const std::unordered_set<UUID>* selected = filter ? filter->SelectedEntities : nullptr;
+		if (!settings.ShowAllSkeletons && (!selected || selected->empty()))
+			return;
+
+		const bool depthTest = !settings.SkeletonXRay;
+		const glm::vec4 boneColor{ 0.45f, 0.78f, 0.95f, 1.0f };
+		const glm::vec4 markerColor{ 0.85f, 0.92f, 1.0f, 1.0f };
+		const glm::vec4 accent{ 0.694f, 0.510f, 0.929f, 1.0f };
+		const glm::vec4 axisX{ 0.92f, 0.28f, 0.28f, 1.0f };
+		const glm::vec4 axisY{ 0.32f, 0.82f, 0.38f, 1.0f };
+		const glm::vec4 axisZ{ 0.32f, 0.48f, 0.95f, 1.0f };
+
+		auto line = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec4& color)
+		{
+			Renderer3D::DrawLine(a, b, color, depthTest);
+		};
+
+		const UUID highlightEntity = filter ? filter->HighlightSkeletonEntity : UUID{ 0 };
+		const int32_t highlightJoint = filter ? filter->HighlightJoint : -1;
+
+		for (auto [entity, worldTransform, meshComponent, animator] : View<MeshView>())
+		{
+			if (IsEditorHidden(entity))
+				continue;
+			if (!animator || animator->Palette.empty())
+				continue;
+
+			const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
+			if (!mesh || !mesh->HasSkeleton())
+				continue;
+
+			Entity handle{ entity, &m_Scene };
+			if (!settings.ShowAllSkeletons && !SkeletonInSelection(m_Scene, handle, *selected))
+				continue;
+
+			const Skeleton& skeleton = mesh->GetSkeleton();
+			const uint32_t jointCount = skeleton.JointCount();
+			if (jointCount == 0 || animator->Palette.size() != jointCount)
+				continue;
+
+			m_JointWorld.resize(jointCount);
+			m_JointOk.assign(jointCount, 0);
+			m_JointHasChild.assign(jointCount, 0);
+			m_BoneLength.assign(jointCount, 0.0f);
+
+			const glm::mat4& entityWorld = worldTransform.World;
+			for (uint32_t i = 0; i < jointCount; i++)
+			{
+				glm::mat4 local{ 1.0f };
+				if (!TryGetJointFrame(*mesh, animator->Palette, (int32_t)i, local))
+					continue;
+				m_JointWorld[i] = entityWorld * local;
+				m_JointOk[i] = 1;
+			}
+
+			for (uint32_t i = 0; i < jointCount; i++)
+			{
+				if (!m_JointOk[i])
+					continue;
+				const int32_t parent = skeleton.ParentIndices[i];
+				if (parent >= 0 && (uint32_t)parent < jointCount && m_JointOk[(uint32_t)parent])
+				{
+					m_JointHasChild[(uint32_t)parent] = 1;
+					m_BoneLength[i] = glm::distance(
+						JointOrigin(m_JointWorld[(uint32_t)parent]), JointOrigin(m_JointWorld[i]));
+				}
+			}
+
+			float meanBone = 0.0f;
+			uint32_t meanCount = 0;
+			for (uint32_t i = 0; i < jointCount; i++)
+			{
+				if (m_BoneLength[i] > 1e-6f)
+				{
+					meanBone += m_BoneLength[i];
+					++meanCount;
+				}
+			}
+			if (meanCount > 0)
+				meanBone /= (float)meanCount;
+			else
+				meanBone = 0.05f;
+
+			const bool thisHighlight = highlightEntity != UUID{ 0 }
+				&& handle.GetUUID() == highlightEntity;
+
+			for (uint32_t i = 0; i < jointCount; i++)
+			{
+				if (!m_JointOk[i])
+					continue;
+
+				const glm::vec3 origin = JointOrigin(m_JointWorld[i]);
+				const bool selectedJoint = thisHighlight && highlightJoint == (int32_t)i;
+				const glm::vec4 color = selectedJoint ? accent : boneColor;
+
+				const int32_t parent = skeleton.ParentIndices[i];
+				if (parent >= 0 && (uint32_t)parent < jointCount && m_JointOk[(uint32_t)parent])
+					line(JointOrigin(m_JointWorld[(uint32_t)parent]), origin, color);
+
+				float boneLen = m_BoneLength[i];
+				if (boneLen < 1e-6f)
+					boneLen = meanBone;
+				const float marker = glm::clamp(boneLen * 0.15f, 0.012f, 0.07f);
+
+				const glm::vec4 mark = selectedJoint ? accent : markerColor;
+				line(origin - JointAxis(m_JointWorld[i], 0) * marker,
+					origin + JointAxis(m_JointWorld[i], 0) * marker, mark);
+				line(origin - JointAxis(m_JointWorld[i], 1) * marker,
+					origin + JointAxis(m_JointWorld[i], 1) * marker, mark);
+				line(origin - JointAxis(m_JointWorld[i], 2) * marker,
+					origin + JointAxis(m_JointWorld[i], 2) * marker, mark);
+
+				if (!m_JointHasChild[i])
+				{
+					const float stub = boneLen * 0.4f;
+					line(origin, origin + JointAxis(m_JointWorld[i], 1) * stub, color);
+				}
+
+				if (selectedJoint)
+				{
+					const float triad = glm::max(marker * 2.5f, 0.08f);
+					line(origin, origin + JointAxis(m_JointWorld[i], 0) * triad, axisX);
+					line(origin, origin + JointAxis(m_JointWorld[i], 1) * triad, axisY);
+					line(origin, origin + JointAxis(m_JointWorld[i], 2) * triad, axisZ);
+				}
+			}
+		}
+	}
+
 	void RenderSystem::DrawPhysicsDebugOrGizmos(const glm::vec3& cameraPosition)
 	{
 		GE_PROFILE_FUNCTION();
@@ -320,6 +524,7 @@ namespace GanymedE {
 			SubmitParticles(cameraPosition, cameraRight, cameraUp);
 			DrawPhysicsDebugOrGizmos(cameraPosition);
 			DrawMarkerGizmos();
+			DrawSkeletonGizmos();
 			Renderer3D::EndScene();
 		};
 
@@ -424,6 +629,7 @@ namespace GanymedE {
 			DrawColliderGizmos();
 
 		DrawMarkerGizmos();
+		DrawSkeletonGizmos();
 
 		if (const EditorBoundsOverlay* overlay = m_Scene.FindSingleton<EditorBoundsOverlay>())
 		{

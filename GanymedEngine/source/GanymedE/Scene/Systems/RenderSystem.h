@@ -69,6 +69,7 @@ namespace GanymedE {
 		void SubmitSprites();
 		void DrawColliderGizmos();
 		void DrawMarkerGizmos();
+		void DrawSkeletonGizmos();
 
 		void RebuildEditorHidden();
 		bool IsEditorHidden(entt::entity entity) const;
@@ -81,6 +82,12 @@ namespace GanymedE {
 		// Reused across entities within one SubmitMeshes pass, so resolving material overrides
 		// costs no allocation after the first frame that needs it.
 		std::vector<Ref<Material>> m_ResolvedOverrides;
+
+		// Pose scratch for DrawSkeletonGizmos. Sized to the current rig, reused.
+		std::vector<glm::mat4> m_JointWorld;
+		std::vector<uint8_t> m_JointOk;
+		std::vector<uint8_t> m_JointHasChild;
+		std::vector<float> m_BoneLength;
 
 		// Filled only for OnUpdateEditor from EditorViewFilter; empty during play/runtime.
 		std::unordered_set<UUID> m_EditorHidden;

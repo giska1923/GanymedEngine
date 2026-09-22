@@ -369,8 +369,8 @@ Pure submission — everything that used to be inlined in `Scene::OnUpdate*`. Re
 begins Renderer3D with the main camera (or the editor fallback), submits lights, sky/environment,
 meshes, **particles** (billboards queued into `ParticleRenderer`, mesh particles as ordinary
 `SubmitMesh` opaques), collider gizmos (or Jolt debug draw when enabled during play), marker
-gizmos, ends the scene, then does the 2D pass (sprites) in its own render view. The editor path
-additionally draws the grid, and looks through `RenderContext::PreviewCamera` when the viewport
+gizmos, skeleton gizmos, ends the scene, then does the 2D pass (sprites) in its own render view.
+The editor path additionally draws the grid, and looks through `RenderContext::PreviewCamera` when the viewport
 dropdown has selected a scene camera (otherwise `EditorViewCamera`). Its eleven view declarations
 are live documentation of exactly what rendering reads.
 `SkyView` includes `EntityId` so the editor hide filter can skip a hidden sky light.
@@ -381,7 +381,7 @@ The editor outliner eye is honoured only on the editor path: `EditorViewFilter::
 and the runtime draw everything. Hidden entities therefore vanish from the entity-ID buffer and
 cannot be picked. This is an editor filter, not a runtime visibility component.
 
-Two policies live in this system:
+These policies live in this system:
 
 - **Collider gizmos are opt-in on both paths.** With Jolt debug draw off, the authored-collider
   wireframes are drawn only when `PhysicsSettings::ShowColliderGizmos` is set. It defaults
@@ -395,6 +395,14 @@ Two policies live in this system:
   accumulate and flush as one debug-line batch in `EndScene` — 100 markers are not 100 draws.
   The flag lives on `PhysicsSettings` next to `ShowColliderGizmos` rather than a one-bool
   singleton; the name is debt.
+- **Skeleton gizmos are the same opt-in.** `DrawSkeletonGizmos` reads `ShowSkeletons` (engine
+  default false; editor Visualizers, default on). Joint frames come from `TryGetJointFrame`, so
+  the overlay cannot drift from a socket. Per posed entity: a line to each parent, a 3-line cross
+  at the joint (sized from bone length, not a wire sphere), a short +Y stub on leaves, and an
+  axis triad only on the highlighted joint. `ShowAllSkeletons` draws every rig; otherwise only
+  the current selection and its hierarchy (select the capsule, see the body's bones).
+  `SkeletonXRay` (default true) submits those lines with depth testing off. Joint-name labels
+  are editor-side ImGui, and only for the highlighted joint plus its parent and children.
 - **No camera is loud, not silent.** With no primary camera *and* no fallback, the frame is the
   scene target's clear colour and the system logs an error at most once every 5 s. Throttled rather
   than per-frame: a 60 Hz error would bury everything else in the log to say the same thing.
@@ -423,14 +431,17 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
   *Known misnomer:* now that a non-editor host exists, `EditorViewCamera` is really "fallback view
   camera" and is simply null there. Flagged as debt rather than renamed — the rename ripples
   through docs and editor for zero behaviour change.
-- **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `ShowMarkers`, `FixedTimestep` (1/60),
-  `MaxStepsPerFrame` (5). `ShowMarkers` is editor visualization, not a physics flag; it sits here
+- **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `ShowMarkers`,
+  `ShowSkeletons` / `ShowAllSkeletons` / `SkeletonXRay`, `FixedTimestep` (1/60),
+  `MaxStepsPerFrame` (5). The Show* flags are editor visualization, not physics; they sit here
   because this is already the bag those per-frame editor pushes go through.
-- **`EditorViewFilter`** — editor-only. A pointer to the outliner's hidden-UUID set, asserted each
-  edit frame by `EditorLayer`. Null means draw everything. `RenderSystem::OnUpdateEditor` expands
-  each hidden UUID to its subtree via `CollectSubtree` and skips those submits (meshes, sprites,
-  lights, sky, particles, collider gizmos, marker gizmos). Play/runtime ignore it, so a hidden entity still
-  simulates and draws in Play. Not serialized; `Scene::Copy` does not carry it.
+- **`EditorViewFilter`** — editor-only. Pointers to the outliner's hidden-UUID set and the
+  current selection, asserted each frame by `EditorLayer`. `HiddenEntities` null means draw
+  everything. `RenderSystem::OnUpdateEditor` expands each hidden UUID to its subtree via
+  `CollectSubtree` and skips those submits. Play/runtime ignore hidden, so a hidden entity still
+  simulates and draws in Play. `SelectedEntities` and `HighlightSkeletonEntity` / `HighlightJoint`
+  drive the skeleton overlay on both Edit and Play (the editor pushes them onto the play copy).
+  Not serialized; `Scene::Copy` does not carry it.
 - **`EditorBoundsOverlay`** — editor-only extra wire geometry, drawn after collider gizmos in
   `OnUpdateEditor`. The Map panel's parity audit fills `Boxes` with the focused finding's mesh AABB
   (cyan) and box collider (orange). Scatter fills `Spheres` with the brush (cyan paint, red erase).
@@ -439,8 +450,8 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
 **Singletons are not carried by `Scene::Copy`.** The copy constructs a fresh `Scene`, whose
 constructor default-constructs its own `ctx()` entries, and then copies entities and components only.
 Anything a host needs true on the play-mode scene must be (re)written after the copy — which is why
-`EditorLayer` pushes `DebugDraw`, `ShowColliderGizmos` and `ShowMarkers` onto the active scene every Edit and
-Play frame rather than once on play.
+`EditorLayer` pushes `DebugDraw`, `ShowColliderGizmos`, `ShowMarkers` and the skeleton flags onto the
+active scene every Edit and Play frame rather than once on play.
 
 ## Member reflection
 

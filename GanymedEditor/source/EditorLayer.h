@@ -84,12 +84,19 @@ namespace GanymedE {
 		void UI_StatusBar();
 		void UI_Viewport();
 
+		void PushEditorVisualizers();
+		void DrawSkeletonLabels();
+
 		void SetEditorTopOrtho(bool enabled);
 	private:
 		Ref<SceneRenderer> m_SceneRenderer; // owns the HDR target + post stack (bloom, tonemap, FXAA)
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
 		bool m_ShowColliderGizmos = true;
 		bool m_ShowMarkers = true;
+		bool m_ShowSkeletons = true;
+		bool m_ShowAllSkeletons = false;
+		bool m_SkeletonXRay = true;
+		std::unordered_set<UUID> m_SelectedIDs;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;

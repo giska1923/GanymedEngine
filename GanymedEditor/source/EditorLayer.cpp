@@ -502,12 +502,8 @@ namespace GanymedE {
 				if (m_ViewportCamera == UUID{ 0 })
 					m_EditorCamera.OnUpdate(ts);
 
-				m_ActiveScene->GetSingleton<EditorViewFilter>().HiddenEntities =
-					&m_SceneHierarchyPanel.HiddenEntities();
 				m_ActiveScene->GetSingleton<RenderContext>().PreviewCamera = m_ViewportCamera;
-				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowColliderGizmos =
-					m_ShowColliderGizmos;
-				m_ActiveScene->GetSingleton<PhysicsSettings>().ShowMarkers = m_ShowMarkers;
+				PushEditorVisualizers();
 
 				// Raycast and write the placement transform before TransformSystem so the
 				// preview renders this frame at the hover pose, not last frame's.
@@ -543,13 +539,8 @@ namespace GanymedE {
 				m_EditorCamera.OnUpdate(ts);
 
 				PhysicsSettings& physicsSettings = m_ActiveScene->GetSingleton<PhysicsSettings>();
+				PushEditorVisualizers();
 				physicsSettings.DebugDraw = m_PhysicsDebugDraw;
-				// Editor-only opt-in: the engine defaults these off so a shipped game never
-				// draws authored collider wireframes or marker gizmos. Edit and Play both push
-				// the Visualizers / Icons checkboxes every frame because Scene::Copy does not
-				// carry singletons.
-				physicsSettings.ShowColliderGizmos = m_ShowColliderGizmos;
-				physicsSettings.ShowMarkers = m_ShowMarkers;
 
 				m_ActiveScene->OnUpdateRuntime(ts, &m_EditorCamera);
 
@@ -757,6 +748,7 @@ namespace GanymedE {
 		ImGui::Text("Culled (frustum): %d", stats3D.CulledMeshes);
 		ImGui::Text("Instanced Draws: %d", stats3D.InstancedDraws);
 		ImGui::Text("Transparent: %d", stats3D.TransparentMeshes);
+		ImGui::Text("Debug lines: %u (%u draws)", stats3D.DebugLines, stats3D.DebugLineDraws);
 		ImGui::Text("Particles: %d emitters, %d billboards, %d draws, %d culled",
 			stats3D.ParticleEmitters, stats3D.ParticleBillboards,
 			stats3D.ParticleDrawCalls, stats3D.ParticleCulledEmitters);
@@ -1196,6 +1188,133 @@ namespace GanymedE {
 		m_EditorCamera.SetOrthographic(enabled);
 	}
 
+	void EditorLayer::PushEditorVisualizers()
+	{
+		m_SelectedIDs.clear();
+		for (Entity entity : m_SceneHierarchyPanel.GetSelection())
+		{
+			if (entity)
+				m_SelectedIDs.insert(entity.GetUUID());
+		}
+
+		EditorViewFilter& filter = m_ActiveScene->GetSingleton<EditorViewFilter>();
+		filter.HiddenEntities = m_SceneState == SceneState::Edit
+			? &m_SceneHierarchyPanel.HiddenEntities() : nullptr;
+		filter.SelectedEntities = &m_SelectedIDs;
+		filter.HighlightSkeletonEntity = UUID{ 0 };
+		filter.HighlightJoint = -1;
+
+		if (Entity selected = m_SceneHierarchyPanel.GetSelectedEntity())
+		{
+			if (selected.HasComponent<BoneAttachmentComponent>())
+			{
+				const auto& attachment = selected.GetComponent<BoneAttachmentComponent>();
+				UUID targetID = attachment.Target;
+				if (targetID == UUID{ 0 })
+					targetID = selected.GetComponent<RelationshipComponent>().Parent;
+				filter.HighlightSkeletonEntity = targetID;
+				filter.HighlightJoint = attachment.Resolved;
+			}
+		}
+
+		PhysicsSettings& physics = m_ActiveScene->GetSingleton<PhysicsSettings>();
+		physics.ShowColliderGizmos = m_ShowColliderGizmos;
+		physics.ShowMarkers = m_ShowMarkers;
+		physics.ShowSkeletons = m_ShowSkeletons;
+		physics.ShowAllSkeletons = m_ShowAllSkeletons;
+		physics.SkeletonXRay = m_SkeletonXRay;
+	}
+
+	void EditorLayer::DrawSkeletonLabels()
+	{
+		if (!m_ShowSkeletons || !m_ActiveScene)
+			return;
+
+		const EditorViewFilter& filter = m_ActiveScene->GetSingleton<EditorViewFilter>();
+		if (filter.HighlightSkeletonEntity == UUID{ 0 } || filter.HighlightJoint < 0)
+			return;
+
+		Entity target = m_ActiveScene->FindEntityByUUID(filter.HighlightSkeletonEntity);
+		if (!target || !target.HasComponent<StaticMeshComponent>()
+			|| !target.HasComponent<AnimatorComponent>())
+		{
+			return;
+		}
+
+		const Ref<Mesh>& mesh = target.GetComponent<StaticMeshComponent>().Mesh.Get();
+		const auto& animator = target.GetComponent<AnimatorComponent>();
+		if (!mesh || !mesh->HasSkeleton() || animator.Palette.empty())
+			return;
+
+		const Skeleton& skeleton = mesh->GetSkeleton();
+		const int32_t joint = filter.HighlightJoint;
+		if ((size_t)joint >= skeleton.JointCount())
+			return;
+
+		glm::mat4 viewProjection = m_EditorCamera.GetViewProjection();
+		if (m_SceneState == SceneState::Play)
+		{
+			const RenderContext& ctx = m_ActiveScene->GetSingleton<RenderContext>();
+			if (ctx.MainCamera)
+				viewProjection = ctx.MainCamera->GetProjection() * glm::inverse(ctx.CameraTransform);
+		}
+		else if (m_ViewportCamera != UUID{ 0 })
+		{
+			Entity preview = m_ActiveScene->FindEntityByUUID(m_ViewportCamera);
+			if (preview && preview.HasComponent<CameraComponent>())
+			{
+				const auto& cc = preview.GetComponent<CameraComponent>();
+				const glm::mat4 view = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(preview));
+				viewProjection = cc.Camera.GetProjection() * view;
+			}
+		}
+
+		const glm::vec2 viewportMin = m_ViewportBounds[0];
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportSize.x <= 1.0f || viewportSize.y <= 1.0f)
+			return;
+
+		const glm::mat4 entityWorld = m_ActiveScene->GetWorldSpaceTransform(target);
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		const ImU32 textCol = EditorUI::Theme().TextPrimary;
+
+		auto project = [&](const glm::vec3& world, ImVec2& out) -> bool
+		{
+			const glm::vec4 clip = viewProjection * glm::vec4(world, 1.0f);
+			if (clip.w <= 1.0e-5f)
+				return false;
+			const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+			if (ndc.x < -1.2f || ndc.x > 1.2f || ndc.y < -1.2f || ndc.y > 1.2f)
+				return false;
+			out.x = viewportMin.x + (ndc.x * 0.5f + 0.5f) * viewportSize.x;
+			out.y = viewportMin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportSize.y;
+			return true;
+		};
+
+		auto label = [&](int32_t index)
+		{
+			if (index < 0 || (size_t)index >= skeleton.JointCount())
+				return;
+			glm::mat4 local{ 1.0f };
+			if (!TryGetJointFrame(*mesh, animator.Palette, index, local))
+				return;
+			ImVec2 pos;
+			if (!project(glm::vec3((entityWorld * local)[3]), pos))
+				return;
+			const char* name = (size_t)index < skeleton.JointNames.size()
+				? skeleton.JointNames[(size_t)index].c_str() : "?";
+			drawList->AddText(ImVec2(pos.x + 6.0f, pos.y - 8.0f), textCol, name);
+		};
+
+		label(skeleton.ParentIndices[(size_t)joint]);
+		label(joint);
+		for (uint32_t i = 0; i < skeleton.JointCount(); i++)
+		{
+			if (skeleton.ParentIndices[i] == joint)
+				label((int32_t)i);
+		}
+	}
+
 	void EditorLayer::UI_Viewport()
 	{
 		using EditorUI::BeginPanel;
@@ -1338,12 +1457,21 @@ namespace GanymedE {
 
 			ImGui::SameLine();
 			if (IconButton(ICON_LC_BOXES, "Visualizers",
-				m_ShowColliderGizmos || m_PhysicsDebugDraw.Enabled))
+				m_ShowColliderGizmos || m_ShowSkeletons || m_PhysicsDebugDraw.Enabled))
 				ImGui::OpenPopup("##Visualizers");
 			if (ImGui::BeginPopup("##Visualizers"))
 			{
 				ImGui::Checkbox("Collider gizmos", &m_ShowColliderGizmos);
 				ImGui::SetItemTooltip("Authored box/sphere/capsule wireframes. Edit and Play.");
+				ImGui::Checkbox("Skeletons", &m_ShowSkeletons);
+				ImGui::SetItemTooltip(
+					"Posed joint overlay on the selection (or every rig with All). Edit and Play.");
+				ImGui::BeginDisabled(!m_ShowSkeletons);
+				ImGui::Checkbox("All skeletons", &m_ShowAllSkeletons);
+				ImGui::SetItemTooltip("Draw every posed rig, not only the current selection.");
+				ImGui::Checkbox("X-ray", &m_SkeletonXRay);
+				ImGui::SetItemTooltip("Draw in front of the mesh. Off keeps occlusion as information.");
+				ImGui::EndDisabled();
 				ImGui::Separator();
 				ImGui::Checkbox("Jolt Debug Draw", &m_PhysicsDebugDraw.Enabled);
 				ImGui::BeginDisabled(!m_PhysicsDebugDraw.Enabled);
@@ -1397,6 +1525,8 @@ namespace GanymedE {
 
 		ImGui::Image(static_cast<ImTextureID>(static_cast<uintptr_t>(textureID)),
 			ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
+
+		DrawSkeletonLabels();
 
 		// Hover is the *image*, not the window: a click on the camera combo must
 		// not also click-select whatever the pick buffer last saw.

@@ -195,14 +195,16 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
    scatter stroke **before** `OnUpdateEditor`, so `TransformSystem` this frame sees the hover pose
    and the preview renders where the cursor is, not where it was last frame. Then
    `OnUpdateEditor(ts, editorCamera)` (and `RenderContext::PreviewCamera` from the viewport camera
-   combo). `ShowColliderGizmos`, `ShowMarkers`, and the Map-panel `EditorBoundsOverlay` (audit boxes
+   combo). `ShowColliderGizmos`, `ShowMarkers`, the skeleton flags (`ShowSkeletons` /
+   `ShowAllSkeletons` / `SkeletonXRay`), and the Map-panel `EditorBoundsOverlay` (audit boxes
    plus the scatter brush sphere) are pushed on this branch too. In Play:
    `OnUpdateRuntime(ts, &editorCamera)` (the editor camera is the fallback when the scene
-   has no primary `CameraComponent`; the physics-debug toggles, **`ShowColliderGizmos`** (Visualizers)
-   and **`ShowMarkers`** (Icons) are pushed into the scene's `PhysicsSettings` each frame). Those
-   gizmo flags are engine-default **false** so a non-editor front-end draws no collider wireframes
-   or marker spheres — the editor opts in, and it has to do so every frame because `Scene::Copy`
-   does not carry singletons onto the play-mode scene.
+   has no primary `CameraComponent`; the physics-debug toggles, **`ShowColliderGizmos`** and
+   **`ShowSkeletons`** (Visualizers) and **`ShowMarkers`** (Icons) are pushed into the scene's
+   `PhysicsSettings` each frame). Those gizmo flags are engine-default **false** so a non-editor
+   front-end draws no collider wireframes, marker spheres, or skeletons — the editor opts in, and
+   it has to do so every frame because `Scene::Copy` does not carry singletons onto the play-mode
+   scene.
 4. **Hover picking**: mouse position → viewport-local coordinates (Y flipped only when
    `bgfx::getCaps()->originBottomLeft` — render-target origin is backend-dependent), then
    `RequestEntityID` + `PollEntityID`. Picking is asynchronous under bgfx (~3 frames latency),
@@ -241,7 +243,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   next to it: `OrthoHeight / viewportHeight`.
 - **Header, right:** magnet (opens `MapSnapSettings`; accent-filled while snapping is enabled) ·
   Visualizers popup (`Collider gizmos`, default on — authored box/sphere/capsule wireframes in
-  Edit and Play — plus the Jolt debug-draw toggles, still Play-only because they read live body
+  Edit and Play; **Skeletons**, default on — posed joint overlay on the selection, with All and
+  X-ray; plus the Jolt debug-draw toggles, still Play-only because they read live body
   state) · Icons (`ICON_LC_MAP_PIN`, default on — `MarkerComponent` wire-spheres) · Local / World
   combo wired to `ImGuizmo::Manipulate`'s mode.
   Previously LOCAL was hard-coded. The magnet is the same snap struct placement reads.
@@ -251,7 +254,10 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   material. A dropdown whose only working item is Lit is dead furniture.
 - Shows the composite target via `ImGui::Image`; UVs flip vertically per
   `originBottomLeft` (a render target's orientation follows the backend — hard-coding either way
-  is wrong on half of them).
+  is wrong on half of them). Joint-name labels for the highlighted socket joint (and its parent
+  and children) are ImGui text on that same window after the image, projected through the camera
+  the viewport is looking through. The highlight is the selected `BoneAttachmentComponent`'s
+  `Resolved` index; there is no joint picking yet.
 - **`m_ViewportHovered` is the image**, not the window. A click on the camera combo must not
   also click-select whatever the pick buffer last saw. `BlockEvents` still uses
   focused-or-hovered, so Q/W/E/R keep working while the viewport window is focused.
@@ -337,6 +343,7 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 | Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
 | Local / World combo (viewport header)   | ImGuizmo LOCAL (default) / WORLD                                                                                                             |
 | Icons (viewport header)                 | Toggle `MarkerComponent` gizmos (`ShowMarkers`). Default on. Independent of Visualizers                                                      |
+| Visualizers → Skeletons                 | Posed joint overlay (`ShowSkeletons`). Default on, selection hierarchy only. All / X-ray are in the same popup. Engine default off            |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z          | Undo / redo (Edit state only)                                                                                                                |
 | Ctrl+D / Delete                         | Duplicate / delete the selected entity, subtree included (Edit state only). While placing, Delete cancels instead                            |
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene. New, Open and Play cancel an uncommitted preview and abort scatter                                        |
@@ -572,8 +579,10 @@ are omitted for the same reason.
 Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
 transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
 and live post-processing settings (exposure, bloom threshold/knee/intensity/radius, FXAA).
-Jolt debug-draw toggles and the collider-gizmo checkbox live on the viewport header's Visualizers
-popup, not here. Marker gizmos are the separate Icons toggle on that same header.
+Jolt debug-draw toggles, the collider-gizmo checkbox, and the skeleton overlay live on the viewport
+header's Visualizers popup, not here. Marker gizmos are the separate Icons toggle on that same header.
+`Debug lines` on this panel is `Renderer3D::Statistics::DebugLines` (segments) and `DebugLineDraws`
+(0–2 submits).
 
 A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
 many came out of `assets/.compiled/` instead. A second run over an unchanged project must read

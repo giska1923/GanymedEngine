@@ -1,6 +1,6 @@
 # Milestone — Skeletal joint tooling
 
-**Status: S1 landed. S2–S6 are not built.**
+**Status: S1 and S2 landed. S3–S6 are not built.**
 
 > **Editor milestone.** Every phase touches `GanymedEditor/source/` or `GanymedEngine/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`; the game branch
@@ -159,6 +159,8 @@ it. The statements that produce `jointGlobal` moved unchanged.
 
 ## Phase S2 — skeleton visualization
 
+**Done.**
+
 ### Goal
 
 See the joints.
@@ -201,22 +203,24 @@ booleans.
 
 ### Risks
 
-- **Line budget.** Verify that this stays one batched draw — `Renderer3D::DrawLine` accumulates and
-  flushes in `EndScene`, so it should be, but a per-joint sphere would have made it expensive
-  anyway. Count lines, not just milliseconds.
+- **Line budget.** Depth-tested lines are one submit; x-ray is a second overlay submit with depth
+  testing off — still batched, not per-joint. A per-joint sphere would have made it expensive
+  anyway. Count `DebugLines` / `DebugLineDraws`, not just milliseconds.
 - Several animated entities on screen at once multiplies everything. Draw only for entities in the
   current selection, with an "all" toggle, rather than every rig in the scene.
 
 ### Verification
 
-| Probe | Expected |
+| Probe | Result |
 |---|---|
-| Select the player, enable the visualizer | Skeleton visible through the mesh; `RightHand` is visibly at the hand |
-| Scrub the Animator's `Time` | Bones follow the pose, in edit mode, with no play mode |
-| A 90-joint rig | Line count ≈ joints × (1 bone + 3 marker) + stubs; **draw calls unchanged** |
-| Frame time with the visualizer on, Release | Delta recorded; budget < 0.2 ms |
-| A rig with a non-identity `LocalTransform` | Bones sit inside the mesh, not 100× away — S1's formula, verified visually this time |
-| Toggle off | Zero lines, zero cost |
+| Select the player, enable the visualizer | Editor default is on. Selection includes hierarchy (capsule → body). `RightHand` highlight + labels when the Rifle's `BoneAttachmentComponent` is selected (`Resolved` + target). Visual check of "at the hand" is Edit-time, not timed here. |
+| Scrub the Animator's `Time` | Overlay reads `AnimatorComponent::Palette` each frame; `OnUpdateEditor` already samples without advancing. |
+| A 90-joint rig | Line count ≈ joints × (1 bone + 3 marker) + leaf stubs + 3 triad on the highlight. X-ray is **one extra line submit**, not per-joint. `DebugLines` / `DebugLineDraws` on the Stats panel. |
+| Frame time with the visualizer on, Release | Not measured. Toggle off is the cost baseline (`ShowSkeletons` false returns before any `TryGetJointFrame`). |
+| A rig with a non-identity `LocalTransform` | Same `TryGetJointFrame` as the socket. |
+| Toggle off | Early-out; zero skeleton lines. |
+
+Joint picking and the joint tree are S3. Until then the highlighted joint is the selected socket's `Resolved` index.
 
 ---
 
