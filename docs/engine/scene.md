@@ -236,12 +236,14 @@ registered before `TransformSystem`. Details: [scripting.md](scripting.md).
 
 ### AnimationSystem — [`Systems/AnimationSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/AnimationSystem.h)
 Samples each `AnimatorComponent`'s clip and leaves a joint palette on the component. Per animator:
-advance `Time` (wrapped or clamped by clip duration), binary-search each channel's key pair and
-interpolate — lerp for translation/scale, **slerp** for rotation, `Step` holding the left key —
-over a copy of the skeleton's rest pose, so joints and paths the clip does not drive keep their
-authored transform. Globals are then composed in a single forward pass (the importer sorts joints
-parents-before-children so no recursion is needed), seeded from `Skeleton::RootTransform` rather
-than identity, giving `Palette[i] = Global[i] * InverseBind[i]`.
+advance `Time` (wrapped or clamped by clip duration), then `SampleClipGlobals` — binary-search each
+channel's key pair and interpolate — lerp for translation/scale, **slerp** for rotation, `Step`
+holding the left key — over a copy of the skeleton's rest pose, so joints and paths the clip does
+not drive keep their authored transform. Globals are composed in a single forward pass (the importer
+sorts joints parents-before-children so no recursion is needed), seeded from
+`Skeleton::RootTransform` rather than identity. The palette is then `Palette[i] = Global[i] *
+InverseBind[i]`. The clip inspector samples the same globals (head / hips / root at a given time)
+so a visualizer cannot re-derive the sampler and drift.
 
 An unresolvable clip name warns once per distinct name and holds the bind pose; a missing skeleton
 clears the palette, which is also the signal to the renderer to use the static path. Scratch pose

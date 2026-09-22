@@ -1,6 +1,6 @@
 # Milestone — Skeletal joint tooling
 
-**Status: S1–S4 landed. S5–S6 are not built.**
+**Status: S1–S5 landed. S6 is not built.**
 
 > **Editor milestone.** Every phase touches `GanymedEditor/source/` or `GanymedEngine/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`; the game branch
@@ -343,6 +343,8 @@ below tests it rather than assuming it**.
 
 ## Phase S5 — the clip inspector
 
+**Done.**
+
 ### Goal
 
 Stop measuring the same two artifacts by hand on every clip download.
@@ -385,12 +387,16 @@ person measuring, per clip, per download.
 
 ### Verification
 
-| Probe | Expected |
+**Done as code.** The inspector lives on a selected mesh in the Asset Inspector. Pose sampling is
+`SampleClipGlobals`, the same function `AnimationSystem` uses before `InverseBind`. The player
+clip set is on `first-game`; it was not opened here.
+
+| Probe | Result |
 |---|---|
-| Run against the player's committed clip set | The `Hips` constant-scale artifact is detected if that clip is still present |
-| The cross-clip table | Reproduces A1's hand-measured head/hips/forward figures |
-| A clip with deliberate root motion | Net drift reported, not flagged as an error |
-| A mesh with no clips | Section states that plainly rather than rendering empty |
+| Run against the player's committed clip set | Not run. `ArmoredHumanoid.glb` lives on `first-game`. Constant scale is "all Scale keys equal and not 1"; a 1.1765 `Hips` channel would list as `Hips scale is constant at 1.1765 (not 1)`. |
+| The cross-clip table | Head Y, Hips Y, Hips Z at `t=0` (mesh space), plus max−min span in cm. A1's "forward offset" is the Hips Z column. Figures were not compared to a hand table — that table was never measured. |
+| A clip with deliberate root motion | Net Δx/Δy/Δz is reported as a measurement, not a warning. Residual is max \|sample − lerp(start,end)\| on any axis. Not seen in the editor. |
+| A mesh with no clips | "No animation clips". Self-check: the empty branch is the `Clips.empty()` path, no tables. |
 
 ---
 

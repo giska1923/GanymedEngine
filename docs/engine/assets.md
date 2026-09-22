@@ -1351,6 +1351,14 @@ with it:
   in-tangent/value/out-tangent triple) with a warning. Morph-target weight channels are skipped.
   Duration is the maximum key time across channels. Rotation values are stored **xyzw** — glTF's
   order, not `glm::quat`'s `(w, x, y, z)` constructor order.
+  The Asset Inspector reports, per clip, duration, channel count, joints animated, and which of
+  T/R/S are present, plus four measurements that do not rewrite the file: a Scale channel whose
+  keys are all equal and not 1 (joint + factor); root-joint translation at `Duration` minus `t=0`
+  per axis, with a detrended residual (max |sample − lerp(start,end)|); Head Y / Hips Y / Hips Z
+  at `t=0` across every clip on the mesh; and `JointCount() > Skeleton::MaxBones` (128), already
+  warned at import and clamped at upload. Wording is what was measured, not a defect. A mesh with
+  no clips states that. Sampling is `SampleClipGlobals` in
+  [`Animation.h`](../../GanymedEngine/source/GanymedE/Renderer/Animation.h).
 - Skin weights ride a **second vertex stream** (`SkinVertex`) rather than widening `MeshVertex`,
   which would tax every static mesh 32 bytes a vertex. Because both bgfx streams are bound with one
   `startVertex`, `Mesh::GetSkinVertices()` is either empty or exactly parallel to the vertex array:

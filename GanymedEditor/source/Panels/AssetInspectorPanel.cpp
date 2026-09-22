@@ -20,10 +20,13 @@
 #include <bgfx/bgfx.h>
 #include <imgui/imgui.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <unordered_set>
 
 namespace GanymedE {
 
@@ -136,6 +139,123 @@ namespace GanymedE {
 			ImGui::PushStyleColor(ImGuiCol_Text, EditorUI::Color(EditorUI::Theme().Warning));
 			ImGui::TextWrapped("%s", text);
 			ImGui::PopStyleColor();
+		}
+
+		bool IEquals(const std::string& a, const char* b)
+		{
+			size_t i = 0;
+			for (; b[i]; i++)
+			{
+				if (i >= a.size())
+					return false;
+				if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i]))
+					return false;
+			}
+			return i == a.size();
+		}
+
+		bool IEndsWithToken(const std::string& a, const char* token)
+		{
+			const size_t n = std::strlen(token);
+			if (a.size() < n)
+				return false;
+			const size_t start = a.size() - n;
+			for (size_t i = 0; i < n; i++)
+			{
+				if (std::tolower((unsigned char)a[start + i]) != std::tolower((unsigned char)token[i]))
+					return false;
+			}
+			if (start == 0)
+				return true;
+			return !std::isalnum((unsigned char)a[start - 1]);
+		}
+
+		bool IContains(const std::string& a, const char* token)
+		{
+			const size_t n = std::strlen(token);
+			if (n == 0 || a.size() < n)
+				return false;
+			for (size_t start = 0; start + n <= a.size(); start++)
+			{
+				bool match = true;
+				for (size_t i = 0; i < n; i++)
+				{
+					if (std::tolower((unsigned char)a[start + i]) != std::tolower((unsigned char)token[i]))
+					{
+						match = false;
+						break;
+					}
+				}
+				if (match)
+					return true;
+			}
+			return false;
+		}
+
+		int32_t FindJointNamed(const Skeleton& skeleton, const char* token, bool skipHeadAffixes)
+		{
+			int32_t suffix = -1;
+			for (uint32_t i = 0; i < skeleton.JointCount(); i++)
+			{
+				if (i >= skeleton.JointNames.size())
+					break;
+				const std::string& name = skeleton.JointNames[i];
+				if (skipHeadAffixes && (IContains(name, "Top") || IContains(name, "Hint")
+					|| IEndsWithToken(name, "End")))
+				{
+					continue;
+				}
+				if (IEquals(name, token))
+					return (int32_t)i;
+				if (suffix < 0 && IEndsWithToken(name, token))
+					suffix = (int32_t)i;
+			}
+			return suffix;
+		}
+
+		int32_t FindRootJoint(const Skeleton& skeleton)
+		{
+			for (uint32_t i = 0; i < skeleton.JointCount(); i++)
+			{
+				if (i >= skeleton.ParentIndices.size())
+					break;
+				if (skeleton.ParentIndices[i] < 0)
+					return (int32_t)i;
+			}
+			return skeleton.JointCount() > 0 ? 0 : -1;
+		}
+
+		int32_t FindHipsJoint(const Skeleton& skeleton)
+		{
+			int32_t hips = FindJointNamed(skeleton, "Hips", false);
+			if (hips < 0)
+				hips = FindJointNamed(skeleton, "Pelvis", false);
+			return hips >= 0 ? hips : FindRootJoint(skeleton);
+		}
+
+		int32_t FindHeadJoint(const Skeleton& skeleton)
+		{
+			int32_t head = FindJointNamed(skeleton, "Head", true);
+			if (head < 0)
+				head = FindJointNamed(skeleton, "Head", false);
+			return head;
+		}
+
+		glm::vec3 Vec3Nearly(const glm::vec4& v)
+		{
+			return glm::vec3(v);
+		}
+
+		bool Vec3Equal(const glm::vec3& a, const glm::vec3& b, float eps = 1.0e-4f)
+		{
+			return glm::all(glm::lessThanEqual(glm::abs(a - b), glm::vec3(eps)));
+		}
+
+		const char* JointName(const Skeleton& skeleton, int32_t joint)
+		{
+			if (joint < 0 || (uint32_t)joint >= skeleton.JointNames.size())
+				return "(unknown)";
+			return skeleton.JointNames[(uint32_t)joint].c_str();
 		}
 
 	}
@@ -480,6 +600,10 @@ namespace GanymedE {
 		m_Mesh.Bounds = mesh->GetBounds();
 		m_Mesh.HasSkin = mesh->HasSkeleton() && !mesh->GetSkinVertices().empty();
 		m_Mesh.JointCount = mesh->GetSkeleton().JointCount();
+		m_Mesh.OverJointLimit = m_Mesh.JointCount > Skeleton::MaxBones;
+		m_Mesh.RootJointName.clear();
+		m_Mesh.HipsJointName.clear();
+		m_Mesh.HeadJointName.clear();
 
 		m_Mesh.TriangleCount = 0;
 		m_Mesh.Submeshes.clear();
@@ -498,12 +622,137 @@ namespace GanymedE {
 		}
 
 		m_Mesh.Clips.clear();
-		m_Mesh.Clips.reserve(mesh->GetClips().size());
-		for (const AnimationClip& clip : mesh->GetClips())
-			m_Mesh.Clips.push_back({ clip.Name, clip.Duration });
+		if (mesh->HasSkeleton())
+		{
+			const Skeleton& skeleton = mesh->GetSkeleton();
+			const int32_t rootJoint = FindRootJoint(skeleton);
+			const int32_t hipsJoint = FindHipsJoint(skeleton);
+			const int32_t headJoint = FindHeadJoint(skeleton);
+			if (rootJoint >= 0)
+				m_Mesh.RootJointName = JointName(skeleton, rootJoint);
+			if (hipsJoint >= 0)
+				m_Mesh.HipsJointName = JointName(skeleton, hipsJoint);
+			if (headJoint >= 0)
+				m_Mesh.HeadJointName = JointName(skeleton, headJoint);
+
+			std::vector<JointPose> locals;
+			std::vector<glm::mat4> globals;
+			m_Mesh.Clips.reserve(mesh->GetClips().size());
+			for (const AnimationClip& clip : mesh->GetClips())
+			{
+				ClipRow row;
+				FillClipRow(skeleton, clip, rootJoint, hipsJoint, headJoint, locals, globals, row);
+				m_Mesh.Clips.push_back(std::move(row));
+			}
+		}
 
 		m_Mesh.MirroredUvShells = MeshHasMirroredUvShells(*mesh);
 		m_Mesh.Ready = true;
+	}
+
+	void AssetInspectorPanel::FillClipRow(const Skeleton& skeleton, const AnimationClip& clip,
+		int32_t rootJoint, int32_t hipsJoint, int32_t headJoint,
+		std::vector<JointPose>& locals, std::vector<glm::mat4>& globals, ClipRow& row)
+	{
+		row = {};
+		row.Name = clip.Name;
+		row.Duration = clip.Duration;
+		row.ChannelCount = (uint32_t)clip.Channels.size();
+
+		std::unordered_set<uint32_t> joints;
+		for (const AnimationClip::Channel& channel : clip.Channels)
+		{
+			joints.insert(channel.Joint);
+			switch (channel.Target)
+			{
+				case AnimationClip::Channel::Path::Translation: row.HasTranslation = true; break;
+				case AnimationClip::Channel::Path::Rotation:    row.HasRotation = true; break;
+				case AnimationClip::Channel::Path::Scale:       row.HasScale = true; break;
+			}
+
+			if (channel.Target != AnimationClip::Channel::Path::Scale || channel.Values.empty())
+				continue;
+
+			const glm::vec3 first = Vec3Nearly(channel.Values.front());
+			bool constant = true;
+			for (const glm::vec4& value : channel.Values)
+			{
+				if (!Vec3Equal(Vec3Nearly(value), first))
+				{
+					constant = false;
+					break;
+				}
+			}
+			if (!constant || Vec3Equal(first, glm::vec3(1.0f)))
+				continue;
+
+			ClipScaleHit hit;
+			hit.Joint = JointName(skeleton, (int32_t)channel.Joint);
+			hit.Scale = first;
+			hit.Uniform = std::abs(first.x - first.y) < 1.0e-4f
+				&& std::abs(first.y - first.z) < 1.0e-4f;
+			row.ConstantScale.push_back(std::move(hit));
+		}
+		row.JointsAnimated = (uint32_t)joints.size();
+
+		if (rootJoint < 0 || !SampleClipGlobals(skeleton, &clip, 0.0f, locals, globals))
+			return;
+
+		auto origin = [](const glm::mat4& m) { return glm::vec3(m[3]); };
+
+		const glm::vec3 start = origin(globals[(uint32_t)rootJoint]);
+		if (!SampleClipGlobals(skeleton, &clip, clip.Duration, locals, globals))
+			return;
+		const glm::vec3 end = origin(globals[(uint32_t)rootJoint]);
+		row.RootNet = end - start;
+
+		std::vector<float> samples;
+		samples.push_back(0.0f);
+		samples.push_back(clip.Duration);
+		for (const AnimationClip::Channel& channel : clip.Channels)
+		{
+			if (channel.Target != AnimationClip::Channel::Path::Translation
+				|| (int32_t)channel.Joint != rootJoint)
+			{
+				continue;
+			}
+			samples.insert(samples.end(), channel.Times.begin(), channel.Times.end());
+		}
+		std::sort(samples.begin(), samples.end());
+		samples.erase(std::unique(samples.begin(), samples.end()), samples.end());
+
+		const size_t maxSamples = 32;
+		const size_t stride = samples.size() > maxSamples
+			? (samples.size() + maxSamples - 1) / maxSamples : 1;
+
+		glm::vec3 residualMax{ 0.0f };
+		const float duration = clip.Duration > 1.0e-6f ? clip.Duration : 1.0f;
+		for (size_t i = 0; i < samples.size(); i += stride)
+		{
+			if (!SampleClipGlobals(skeleton, &clip, samples[i], locals, globals))
+				break;
+			const float u = samples[i] / duration;
+			const glm::vec3 expected = glm::mix(start, end, u);
+			const glm::vec3 residual = glm::abs(origin(globals[(uint32_t)rootJoint]) - expected);
+			residualMax = glm::max(residualMax, residual);
+		}
+		row.RootResidualMax = residualMax;
+
+		if (!SampleClipGlobals(skeleton, &clip, 0.0f, locals, globals))
+			return;
+
+		if (headJoint >= 0)
+		{
+			row.HeadY = origin(globals[(uint32_t)headJoint]).y;
+			row.HasHead = true;
+		}
+		if (hipsJoint >= 0)
+		{
+			const glm::vec3 hips = origin(globals[(uint32_t)hipsJoint]);
+			row.HipsY = hips.y;
+			row.HipsZ = hips.z;
+			row.HasHips = true;
+		}
 	}
 
 	void AssetInspectorPanel::DrawMeshBody()
@@ -626,24 +875,206 @@ namespace GanymedE {
 
 		if (mesh->HasSkeleton() && ImGui::CollapsingHeader("Skeleton", ImGuiTreeNodeFlags_DefaultOpen))
 		{
-			ImGui::Text("Joints: %u", m_Mesh.JointCount);
+			if (m_Mesh.OverJointLimit)
+			{
+				char buf[160];
+				std::snprintf(buf, sizeof(buf),
+					"Joints: %u - over the %u-bone palette limit; joints past the limit will not animate.",
+					m_Mesh.JointCount, Skeleton::MaxBones);
+				WarningLine(buf);
+			}
+			else
+			{
+				ImGui::Text("Joints: %u", m_Mesh.JointCount);
+			}
+
+			ImGui::TextDisabled("Root %s · Hips %s · Head %s",
+				m_Mesh.RootJointName.empty() ? "(none)" : m_Mesh.RootJointName.c_str(),
+				m_Mesh.HipsJointName.empty() ? "(not found)" : m_Mesh.HipsJointName.c_str(),
+				m_Mesh.HeadJointName.empty() ? "(not found)" : m_Mesh.HeadJointName.c_str());
+
 			if (m_Mesh.Clips.empty())
 			{
 				ImGui::TextDisabled("No animation clips");
 			}
-			else if (ImGui::BeginTable("##clips", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
-				| ImGuiTableFlags_SizingStretchProp))
+			else
 			{
-				ImGui::TableSetupColumn("Clip");
-				ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-				ImGui::TableHeadersRow();
-				for (const ClipRow& clip : m_Mesh.Clips)
+				ImGui::TextDisabled("Read-only. Numbers are measurements, not a verdict.");
+
+				if (ImGui::BeginTable("##clips", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+					| ImGuiTableFlags_SizingStretchProp))
 				{
-					ImGui::TableNextRow();
-					ImGui::TableNextColumn(); ImGui::TextUnformatted(clip.Name.c_str());
-					ImGui::TableNextColumn(); ImGui::Text("%.3f s", clip.Duration);
+					ImGui::TableSetupColumn("Clip");
+					ImGui::TableSetupColumn("Duration", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+					ImGui::TableSetupColumn("Ch", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+					ImGui::TableSetupColumn("Joints", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+					ImGui::TableSetupColumn("Paths", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+					ImGui::TableHeadersRow();
+					for (const ClipRow& clip : m_Mesh.Clips)
+					{
+						ImGui::TableNextRow();
+						ImGui::TableNextColumn(); ImGui::TextUnformatted(clip.Name.c_str());
+						ImGui::TableNextColumn(); ImGui::Text("%.3f s", clip.Duration);
+						ImGui::TableNextColumn(); ImGui::Text("%u", clip.ChannelCount);
+						ImGui::TableNextColumn(); ImGui::Text("%u", clip.JointsAnimated);
+						ImGui::TableNextColumn();
+						ImGui::Text("%s %s %s",
+							clip.HasTranslation ? "T" : "-",
+							clip.HasRotation ? "R" : "-",
+							clip.HasScale ? "S" : "-");
+					}
+					ImGui::EndTable();
 				}
-				ImGui::EndTable();
+
+				bool anyConstantScale = false;
+				for (const ClipRow& clip : m_Mesh.Clips)
+					anyConstantScale = anyConstantScale || !clip.ConstantScale.empty();
+				if (anyConstantScale)
+				{
+					ImGui::Spacing();
+					ImGui::TextUnformatted("Constant scale");
+					ImGui::TextDisabled("A Scale channel whose keys are all equal and not 1. A clip may scale a joint on purpose.");
+					for (const ClipRow& clip : m_Mesh.Clips)
+					{
+						for (const ClipScaleHit& hit : clip.ConstantScale)
+						{
+							char buf[192];
+							if (hit.Uniform)
+							{
+								std::snprintf(buf, sizeof(buf), "%s / %s  scale is constant at %.4f (not 1)",
+									clip.Name.c_str(), hit.Joint.c_str(), hit.Scale.x);
+							}
+							else
+							{
+								std::snprintf(buf, sizeof(buf),
+									"%s / %s  scale is constant at (%.4f, %.4f, %.4f) (not 1)",
+									clip.Name.c_str(), hit.Joint.c_str(),
+									hit.Scale.x, hit.Scale.y, hit.Scale.z);
+							}
+							WarningLine(buf);
+						}
+					}
+				}
+
+				ImGui::Spacing();
+				ImGui::TextUnformatted("Root motion");
+				ImGui::TextDisabled("Net = root translation at Duration minus t=0, mesh space. Residual is max |sample − lerp(start,end)| on any axis.");
+				if (ImGui::BeginTable("##rootmotion", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+					| ImGuiTableFlags_SizingStretchProp))
+				{
+					ImGui::TableSetupColumn("Clip");
+					ImGui::TableSetupColumn("Δx", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+					ImGui::TableSetupColumn("Δy", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+					ImGui::TableSetupColumn("Δz", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+					ImGui::TableSetupColumn("max |r|", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+					ImGui::TableHeadersRow();
+					for (const ClipRow& clip : m_Mesh.Clips)
+					{
+						ImGui::TableNextRow();
+						ImGui::TableNextColumn(); ImGui::TextUnformatted(clip.Name.c_str());
+						ImGui::TableNextColumn(); ImGui::Text("%+.3f", clip.RootNet.x);
+						ImGui::TableNextColumn(); ImGui::Text("%+.3f", clip.RootNet.y);
+						ImGui::TableNextColumn(); ImGui::Text("%+.3f", clip.RootNet.z);
+						ImGui::TableNextColumn();
+						ImGui::Text("%.3f", std::max({ clip.RootResidualMax.x,
+							clip.RootResidualMax.y, clip.RootResidualMax.z }));
+					}
+					ImGui::EndTable();
+				}
+
+				ImGui::Spacing();
+				ImGui::TextUnformatted("Pose at t = 0");
+				ImGui::TextDisabled("Head Y, Hips Y, Hips Z in mesh metres at the first frame.");
+				if (ImGui::BeginTable("##pose0", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+					| ImGuiTableFlags_SizingStretchProp))
+				{
+					ImGui::TableSetupColumn("Clip");
+					ImGui::TableSetupColumn("Head Y", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+					ImGui::TableSetupColumn("Hips Y", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+					ImGui::TableSetupColumn("Hips Z", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+					ImGui::TableHeadersRow();
+
+					float headMin = 0.0f, headMax = 0.0f, hipsMin = 0.0f, hipsMax = 0.0f, zMin = 0.0f, zMax = 0.0f;
+					bool anyHead = false, anyHips = false;
+					for (const ClipRow& clip : m_Mesh.Clips)
+					{
+						ImGui::TableNextRow();
+						ImGui::TableNextColumn(); ImGui::TextUnformatted(clip.Name.c_str());
+						ImGui::TableNextColumn();
+						if (clip.HasHead)
+							ImGui::Text("%.3f", clip.HeadY);
+						else
+							ImGui::TextDisabled("—");
+						ImGui::TableNextColumn();
+						if (clip.HasHips)
+						{
+							ImGui::Text("%.3f", clip.HipsY);
+							ImGui::TableNextColumn();
+							ImGui::Text("%.3f", clip.HipsZ);
+						}
+						else
+						{
+							ImGui::TextDisabled("—");
+							ImGui::TableNextColumn();
+							ImGui::TextDisabled("—");
+						}
+
+						if (clip.HasHead)
+						{
+							if (!anyHead)
+							{
+								headMin = headMax = clip.HeadY;
+								anyHead = true;
+							}
+							else
+							{
+								headMin = std::min(headMin, clip.HeadY);
+								headMax = std::max(headMax, clip.HeadY);
+							}
+						}
+						if (clip.HasHips)
+						{
+							if (!anyHips)
+							{
+								hipsMin = hipsMax = clip.HipsY;
+								zMin = zMax = clip.HipsZ;
+								anyHips = true;
+							}
+							else
+							{
+								hipsMin = std::min(hipsMin, clip.HipsY);
+								hipsMax = std::max(hipsMax, clip.HipsY);
+								zMin = std::min(zMin, clip.HipsZ);
+								zMax = std::max(zMax, clip.HipsZ);
+							}
+						}
+					}
+					ImGui::EndTable();
+
+					if (anyHead || anyHips)
+					{
+						char span[192];
+						if (anyHead && anyHips)
+						{
+							std::snprintf(span, sizeof(span),
+								"Span  Head Y %.1f cm   Hips Y %.1f cm   Hips Z %.1f cm",
+								(headMax - headMin) * 100.0f,
+								(hipsMax - hipsMin) * 100.0f,
+								(zMax - zMin) * 100.0f);
+						}
+						else if (anyHead)
+						{
+							std::snprintf(span, sizeof(span), "Span  Head Y %.1f cm",
+								(headMax - headMin) * 100.0f);
+						}
+						else
+						{
+							std::snprintf(span, sizeof(span), "Span  Hips Y %.1f cm   Hips Z %.1f cm",
+								(hipsMax - hipsMin) * 100.0f, (zMax - zMin) * 100.0f);
+						}
+						ImGui::TextDisabled("%s", span);
+					}
+				}
 			}
 		}
 	}

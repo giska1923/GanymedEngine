@@ -127,35 +127,37 @@ namespace GanymedE {
 		return nullptr;
 	}
 
-	void AnimationSystem::BuildPalette(const Skeleton& skeleton, const AnimationClip* clip, float time,
-		std::vector<glm::mat4>& outPalette)
+	bool SampleClipGlobals(const Skeleton& skeleton, const AnimationClip* clip, float time,
+		std::vector<JointPose>& localsScratch, std::vector<glm::mat4>& outGlobals)
 	{
 		const uint32_t jointCount = skeleton.JointCount();
-		if (skeleton.LocalRestPose.size() != jointCount || skeleton.InverseBind.size() != jointCount)
+		if (skeleton.LocalRestPose.size() != jointCount
+			|| skeleton.InverseBind.size() != jointCount
+			|| skeleton.ParentIndices.size() != jointCount)
 		{
-			GE_CORE_ERROR("Skeleton arrays disagree on joint count - skipping palette");
-			outPalette.clear();
-			return;
+			outGlobals.clear();
+			return false;
 		}
 
-		// Start from the rest pose: a channel only overwrites the one path it drives, and a joint
-		// with no channels at all has to keep its authored transform.
-		m_Locals = skeleton.LocalRestPose;
+		localsScratch = skeleton.LocalRestPose;
 
 		if (clip)
 		{
 			for (const AnimationClip::Channel& channel : clip->Channels)
 			{
-				if (channel.Joint >= jointCount || channel.Times.empty() || channel.Values.empty())
+				if (channel.Joint >= jointCount || channel.Times.empty() || channel.Values.empty()
+					|| channel.Values.size() != channel.Times.size())
+				{
 					continue;
+				}
 
 				KeyPair key = FindKeys(channel.Times, time);
 				if (channel.Mode == AnimationClip::Channel::Interp::Step)
-					key.Alpha = 0.0f; // hold the left key
+					key.Alpha = 0.0f;
 
 				const glm::vec4& a = channel.Values[key.Lower];
 				const glm::vec4& b = channel.Values[key.Upper];
-				JointPose& pose = m_Locals[channel.Joint];
+				JointPose& pose = localsScratch[channel.Joint];
 
 				switch (channel.Target)
 				{
@@ -180,20 +182,31 @@ namespace GanymedE {
 			}
 		}
 
-		m_Globals.resize(jointCount);
-		outPalette.resize(jointCount);
-
-		// One forward pass - the importer sorts joints parents-before-children precisely so this
-		// needs no recursion. Roots start from RootTransform, not identity: it carries whatever
-		// sits above the skeleton in the glTF scene graph, which the inverse binds already
-		// include (see Animation.h).
+		outGlobals.resize(jointCount);
 		for (uint32_t i = 0; i < jointCount; i++)
 		{
 			const int32_t parent = skeleton.ParentIndices[i];
-			const glm::mat4& base = parent >= 0 ? m_Globals[parent] : skeleton.RootTransform;
-
-			m_Globals[i] = base * m_Locals[i].ToMatrix();
-			outPalette[i] = m_Globals[i] * skeleton.InverseBind[i];
+			const glm::mat4& base = (parent >= 0 && (uint32_t)parent < jointCount)
+				? outGlobals[(uint32_t)parent] : skeleton.RootTransform;
+			outGlobals[i] = base * localsScratch[i].ToMatrix();
 		}
+
+		return true;
+	}
+
+	void AnimationSystem::BuildPalette(const Skeleton& skeleton, const AnimationClip* clip, float time,
+		std::vector<glm::mat4>& outPalette)
+	{
+		if (!SampleClipGlobals(skeleton, clip, time, m_Locals, m_Globals))
+		{
+			GE_CORE_ERROR("Skeleton arrays disagree on joint count - skipping palette");
+			outPalette.clear();
+			return;
+		}
+
+		const uint32_t jointCount = skeleton.JointCount();
+		outPalette.resize(jointCount);
+		for (uint32_t i = 0; i < jointCount; i++)
+			outPalette[i] = m_Globals[i] * skeleton.InverseBind[i];
 	}
 }

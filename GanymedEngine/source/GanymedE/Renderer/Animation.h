@@ -78,6 +78,20 @@ namespace GanymedE {
 		std::vector<Channel> Channels;
 	};
 
+	// Joint globals in mesh space at `time`. A channel overwrites only the path it drives;
+	// everything else stays on LocalRestPose. Roots are seeded from RootTransform.
+	//
+	// This is the pose AnimationSystem samples before multiplying InverseBind to make a
+	// skinning palette. The clip inspector needs the same pose (head / hips / root at t=0),
+	// so both call this rather than re-deriving the sampler.
+	//
+	// False if LocalRestPose / InverseBind / ParentIndices disagree on JointCount.
+	// Does not log: AnimationSystem attributes that to the entity.
+	// Defined in AnimationSystem.cpp — that was already the sampler, and the inspector is
+	// the second caller.
+	bool SampleClipGlobals(const Skeleton& skeleton, const AnimationClip* clip, float time,
+		std::vector<JointPose>& localsScratch, std::vector<glm::mat4>& outGlobals);
+
 	// Skin weights ride a second vertex stream rather than widening MeshVertex:
 	// widening taxes every static mesh 32 bytes a vertex, forces a cache migration
 	// for all existing content, and touches the one struct the cache memcpy's whole.

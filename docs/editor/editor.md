@@ -1103,7 +1103,7 @@ with no compiler reports `n/a`.
 
 | Type | What it shows |
 |---|---|
-| Mesh | Submesh table (index, name, material slot, triangles, local extents), vertex / index / triangle counts, total bounds, skin present or not, material slots as *imported defaults* (the entity inspector's rows are per-entity overrides), a Generate-sidecars button, and a skeleton summary (joint count, clip names and durations) when the mesh has one |
+| Mesh | Submesh table (index, name, material slot, triangles, local extents), vertex / index / triangle counts, total bounds, skin present or not, material slots as *imported defaults* (the entity inspector's rows are per-entity overrides), a Generate-sidecars button, and a skeleton section when the mesh has one: joint count (and a warning if over `Skeleton::MaxBones`), identified Root / Hips / Head names, and per-clip duration, channel count, joints animated, T/R/S paths, constant non-unit scale, root-motion net+residual, and a t=0 pose table (Head Y, Hips Y, Hips Z) with a cross-clip span. Read-only. |
 | Texture | Dimensions, source format (extension), mip count, compiled GPU format and size |
 | Material | The same `DrawMaterialAssetEditor` Properties uses on a slot override — live on the shared `Ref`, not undoable, Save / Revert |
 | Anything else | "No inspector for this type" |
@@ -1129,8 +1129,12 @@ shell — the AABB fills the interior. The inspector shows those numbers
 read-only; the 3D overlay is P5. Flipping `Collision` does not recompile. Same global-edit
 warning as the `.gmat` editor.
 
-Triangle counts, clip lists and the mirrored-UV walk are computed **once per selection**, not per
-frame. A mesh that is not yet resident leaves those sections empty until Apply lands it.
+Triangle counts, clip lists, clip measurements and the mirrored-UV walk are computed **once per
+selection**, not per frame. A mesh that is not yet resident leaves those sections empty until Apply
+lands it. A mesh with a skeleton and no clips says so rather than rendering empty tables. Constant
+scale, root drift and the t=0 pose table are measurements — they do not block import and they do
+not rewrite the file. Pose sampling is `SampleClipGlobals` (the same function `AnimationSystem`
+uses before multiplying `InverseBind`), so the numbers match what the runtime would pose.
 
 **Warnings**, the ones `MeshImporter` already knew and only logged:
 
