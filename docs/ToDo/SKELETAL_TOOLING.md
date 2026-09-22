@@ -1,6 +1,6 @@
 # Milestone — Skeletal joint tooling
 
-**Status: planned. Nothing here is built.**
+**Status: S1 landed. S2–S6 are not built.**
 
 > **Editor milestone.** Every phase touches `GanymedEditor/source/` or `GanymedEngine/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`; the game branch
@@ -97,6 +97,8 @@ every clip download into a readout.
 
 ## Phase S1 — one owner for joint → world
 
+**Done.**
+
 ### Goal
 
 One function computes a joint's world matrix. The attachment system calls it; so does every tool
@@ -109,7 +111,7 @@ fold in the skinned submesh's `LocalTransform` and then divide the bind pose's o
 out, because a Meshy rig has joints in centimetres and vertices in metres with `LocalTransform`
 (0.01) the factor between them. Getting that wrong is what put a socket at **141 metres instead of
 1.41** — recorded in [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)'s A2 follow-up and in
-[BoneAttachmentSystem.h:20-27](../../GanymedEngine/source/GanymedE/Scene/Systems/BoneAttachmentSystem.h).
+[`TryGetJointFrame`](../../GanymedEngine/source/GanymedE/Renderer/Mesh.h).
 
 A visualizer that re-derives that formula will drift from the system that uses it, and the drift
 looks like *"the bones are drawn slightly wrong"* rather than like a bug. That is the same
@@ -128,9 +130,11 @@ two-owners failure the attachment milestone already argued through when it chose
    bool TryGetJointFrame(const Mesh& mesh, const std::vector<glm::mat4>& palette,
                          int32_t joint, glm::mat4& outFrame);
    ```
-2. It keeps the existing guards: a singular inverse bind warns and returns false; an out-of-range
-   joint returns false. The `IsSkinned` submesh search moves in with it — `Submesh::IsSkinned` is
-   already the single gate the colour pass, shadow pass and bounds all honour.
+2. It keeps the existing guards: a singular inverse bind returns false; an out-of-range joint
+   returns false. The warn stays on `BoneAttachmentSystem` (`WarnOnce`, entity-attributed) rather
+   than inside the function — S2 skipping a bad joint should not spam. The `IsSkinned` submesh
+   search moves in with it — `Submesh::IsSkinned` is already the single gate the colour pass,
+   shadow pass and bounds all honour.
 3. `BoneAttachmentSystem::Evaluate` becomes a call to it. **The system's behaviour must not change
    at all.**
 
@@ -141,12 +145,15 @@ two-owners failure the attachment milestone already argued through when it chose
 
 ### Verification
 
-| Probe | Expected |
+**Done.** `TryGetJointFrame` lives in `Mesh.h` / `Mesh.cpp`. `BoneAttachmentSystem::Evaluate` calls
+it. The statements that produce `jointGlobal` moved unchanged.
+
+| Probe | Result |
 |---|---|
-| The committed Rifle socket, same scene, same clip, same `Time` | `WorldTransformComponent::World` identical before and after to 1e-6 |
-| A rig with a non-identity `LocalTransform` (the centimetre case) | Socket lands at 1.41 m, not 141 m — the regression that motivated this cannot recur silently |
-| A joint whose inverse bind is singular | Still warns once, still leaves the entity at its parent transform |
-| An out-of-range or unresolved joint | Returns false; no read past the end of the palette |
+| The committed Rifle socket, same scene, same clip, same `Time` | Not re-run: `ProvingGround.ganymede` lives on `first-game`. The matrix is the same product (`targetWorld * jointGlobal * offset * localScale`) with `jointGlobal` from the moved statements, so it is identical by construction. |
+| A rig with a non-identity `LocalTransform` (the centimetre case) | Self-check on first `TryGetJointFrame`: `LocalTransform` = 0.01, joint at y = 141.4 cm, palette = bind-pose `Global * InverseBind`. Origin lands at `(0, 1.414, 0)`, unit basis. Omitting `LocalTransform` is the 141 m case. |
+| A joint whose inverse bind is singular | Function returns false. System still `WarnOnce`s and `Restore()`s. Self-checked with a zero matrix. |
+| An out-of-range or unresolved joint | Returns false before indexing `InverseBind` or `palette` (`joint < 0`, `joint >= size`). Self-checked. |
 
 ---
 
@@ -378,14 +385,12 @@ person measuring, per clip, per download.
 ## Phase S6 — docs, and closing the attachment milestone
 
 1. Update the docs in the table below, in the same changes rather than at the end.
-2. Re-run [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)'s A2 and A3 gates with the tooling in
-   place — the A3 gate (rifle stays in hand through idle, walk, run and the backpedal turn) has
-   never been written up, and S2 makes it observable rather than a judgement call.
-3. Decide the one item that milestone still leaves open: **hiding an entity whose socket does not
-   resolve.** There is no visibility flag on any component today, so it is new surface either way —
-   an `Enabled` / `Visible` bit that `RenderSystem` honours (useful well beyond sockets) or a
-   socket-local suppression. This milestone does not build it; it should say which one is intended
-   before something else needs a visibility bit and invents a second one.
+2. Re-run [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)'s A3 visual gate with the tooling in
+   place — rifle stays in hand through idle, walk, run and the reverse-turn. Mechanical A2 is
+   written up; the picture is not.
+3. Hide-unresolved is **decided**: a general `Visible` / `Enabled` bit `RenderSystem` honours, not
+   a socket-local flag. Not built. See that file's A2 follow-up. This phase does not invent a
+   second one.
 4. Retire `SKELETAL_ATTACHMENTS.md` to `docs/history/` once its gates are recorded.
 
 ---

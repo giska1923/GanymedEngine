@@ -253,9 +253,8 @@ namespace GanymedE {
 				continue;
 			}
 
-			const glm::mat4& inverseBind = skeleton.InverseBind[(size_t)attachment.Resolved];
-			const float det = glm::determinant(inverseBind);
-			if (glm::abs(det) < 1e-8f)
+			glm::mat4 jointGlobal{ 1.0f };
+			if (!TryGetJointFrame(mesh, animator->Palette, attachment.Resolved, jointGlobal))
 			{
 				attachment.Resolved = -1;
 				WarnOnce(item.second,
@@ -263,43 +262,6 @@ namespace GanymedE {
 					"' has a singular inverse bind - leaving the entity at its parent transform");
 				Restore();
 				continue;
-			}
-
-			// Renderer3D draws a skinned submesh as entityWorld * LocalTransform * Palette * v, and
-			// a socket has to ride the same chain or it is not in the same space as the mesh it is
-			// pinned to. Palette * inverse(InverseBind) recovers the joint global alone, which is in
-			// whatever unit the JOINTS were authored in - for a Meshy rig, centimetres, while the
-			// vertices are metres. LocalTransform (the skinned mesh node's world, which the importer
-			// deliberately keeps) is the factor between the two. Omit it and a socket lands at 141
-			// *metres* instead of 1.41: a correctly sized prop, far enough away to look tiny.
-			glm::mat4 skinTransform{ 1.0f };
-			for (const Submesh& submesh : mesh.GetSubmeshes())
-			{
-				if (submesh.IsSkinned)
-				{
-					skinTransform = submesh.LocalTransform;
-					break;
-				}
-			}
-
-			// inverse(InverseBind) is LocalTransform * bindGlobal, so it is exactly this frame in
-			// the bind pose: translation in metres, basis carrying LocalTransform's scale. That
-			// scale is cancelled for *vertices* by the 1/scale inside the palette, and nothing
-			// cancels it for a socket - left in, an attached entity renders at 1% and Offset
-			// silently means centimetres.
-			const glm::mat4 bindGlobal = glm::inverse(inverseBind);
-			glm::mat4 jointGlobal = skinTransform
-				* animator->Palette[(size_t)attachment.Resolved] * bindGlobal;
-
-			// Divided out per column rather than normalised to unit length, so a clip that scales
-			// the joint still scales what is attached to it - the palette's scale is relative to
-			// bind, and only the bind part is the authoring artifact. For a rig whose mesh node is
-			// identity every column is already 1 and this loop does nothing.
-			for (int column = 0; column < 3; column++)
-			{
-				const float bindScale = glm::length(glm::vec3(bindGlobal[column]));
-				if (bindScale > 1e-6f)
-					jointGlobal[column] /= bindScale;
 			}
 
 			m_Warned.erase(item.second);

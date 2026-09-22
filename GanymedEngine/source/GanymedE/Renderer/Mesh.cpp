@@ -1,6 +1,8 @@
 #include "gepch.h"
 #include "Mesh.h"
 
+#include <glm/gtc/matrix_transform.hpp>
+
 namespace GanymedE {
 
 	Mesh::Mesh(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices,
@@ -155,6 +157,126 @@ namespace GanymedE {
 			count = MaxInstancesPerDraw;
 
 		m_InstanceData.assign(data, data + count);
+	}
+
+	namespace {
+
+		bool ComputeJointFrame(const Skeleton& skeleton, const glm::mat4& skinTransform,
+			const std::vector<glm::mat4>& palette, int32_t joint, glm::mat4& outFrame)
+		{
+			if (joint < 0 || (size_t)joint >= skeleton.InverseBind.size()
+				|| (size_t)joint >= palette.size())
+			{
+				return false;
+			}
+
+			const glm::mat4& inverseBind = skeleton.InverseBind[(size_t)joint];
+			const float det = glm::determinant(inverseBind);
+			if (glm::abs(det) < 1e-8f)
+				return false;
+
+			// inverse(InverseBind) is LocalTransform * bindGlobal, so it is exactly this frame in
+			// the bind pose: translation in metres, basis carrying LocalTransform's scale. That
+			// scale is cancelled for *vertices* by the 1/scale inside the palette, and nothing
+			// cancels it for a socket - left in, an attached entity renders at 1% and Offset
+			// silently means centimetres.
+			const glm::mat4 bindGlobal = glm::inverse(inverseBind);
+			glm::mat4 jointGlobal = skinTransform * palette[(size_t)joint] * bindGlobal;
+
+			// Divided out per column rather than normalised to unit length, so a clip that scales
+			// the joint still scales what is attached to it - the palette's scale is relative to
+			// bind, and only the bind part is the authoring artifact. For a rig whose mesh node is
+			// identity every column is already 1 and this loop does nothing.
+			for (int column = 0; column < 3; column++)
+			{
+				const float bindScale = glm::length(glm::vec3(bindGlobal[column]));
+				if (bindScale > 1e-6f)
+					jointGlobal[column] /= bindScale;
+			}
+
+			outFrame = jointGlobal;
+			return true;
+		}
+
+		void VerifyJointFrameOnce()
+		{
+			static bool done = false;
+			if (done)
+				return;
+			done = true;
+
+			// Centimetre-authored joint, metre-authored vertices, LocalTransform 0.01 between
+			// them — the Meshy case that put a socket at 141 m instead of 1.41. Palette is the
+			// bind-pose skinning matrix Global_cm * InverseBind, matching AnimationSystem.
+			const glm::mat4 skin = glm::scale(glm::mat4(1.0f), glm::vec3(0.01f));
+			const glm::mat4 globalCm = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 141.4f, 0.0f));
+			const glm::mat4 inverseBind = glm::inverse(skin * globalCm);
+
+			Skeleton skeleton;
+			skeleton.ParentIndices = { -1 };
+			skeleton.InverseBind = { inverseBind };
+			skeleton.LocalRestPose = { JointPose{} };
+			skeleton.JointNames = { "RightHand" };
+
+			const std::vector<glm::mat4> palette{ globalCm * inverseBind };
+
+			glm::mat4 frame{ 1.0f };
+			if (!ComputeJointFrame(skeleton, skin, palette, 0, frame))
+			{
+				GE_CORE_ERROR("TryGetJointFrame self-check: centimetre case returned false");
+				return;
+			}
+
+			const glm::vec3 origin = glm::vec3(frame[3]);
+			const float expectedY = 141.4f * 0.01f;
+			if (glm::abs(origin.y - expectedY) > 1e-4f || glm::abs(origin.x) > 1e-4f
+				|| glm::abs(origin.z) > 1e-4f)
+			{
+				GE_CORE_ERROR("TryGetJointFrame self-check: expected origin (0, {0}, 0), got "
+					"({1}, {2}, {3})", expectedY, origin.x, origin.y, origin.z);
+			}
+
+			for (int column = 0; column < 3; column++)
+			{
+				const float axisLen = glm::length(glm::vec3(frame[column]));
+				if (glm::abs(axisLen - 1.0f) > 1e-4f)
+				{
+					GE_CORE_ERROR("TryGetJointFrame self-check: expected unit basis, column {0} "
+						"length {1}", column, axisLen);
+				}
+			}
+
+			glm::mat4 ignored{ 1.0f };
+			if (ComputeJointFrame(skeleton, skin, palette, -1, ignored)
+				|| ComputeJointFrame(skeleton, skin, palette, 1, ignored))
+			{
+				GE_CORE_ERROR("TryGetJointFrame self-check: out-of-range joint should fail");
+			}
+
+			Skeleton singular = skeleton;
+			singular.InverseBind[0] = glm::mat4(0.0f);
+			if (ComputeJointFrame(singular, skin, palette, 0, ignored))
+				GE_CORE_ERROR("TryGetJointFrame self-check: singular InverseBind should fail");
+		}
+
+	}
+
+	bool TryGetJointFrame(const Mesh& mesh, const std::vector<glm::mat4>& palette,
+		int32_t joint, glm::mat4& outFrame)
+	{
+		VerifyJointFrameOnce();
+
+		glm::mat4 skinTransform{ 1.0f };
+		for (const Submesh& submesh : mesh.GetSubmeshes())
+		{
+			if (submesh.IsSkinned)
+			{
+				skinTransform = submesh.LocalTransform;
+				break;
+			}
+		}
+
+		return ComputeJointFrame(mesh.GetSkeleton(), skinTransform, palette, joint, outFrame);
 	}
 
 }

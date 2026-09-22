@@ -1,6 +1,7 @@
 # Milestone — Skeletal attachments (bone sockets)
 
-**Status: A1, A2 and A3 have all landed. What is open is their verification, plus one follow-up.**
+**Status: A1, A2 and A3 have landed. Mechanical verification is written up below. The visual A3
+gate and a visibility bit are not done — they are named, not deferred-by-silence.**
 The engine can pin an entity to a joint (`BoneAttachmentComponent` + `BoneAttachmentSystem`), the
 character runs a weapon-carry clip, and the rifle is socketed to `RightHand`.
 
@@ -10,10 +11,11 @@ Evidence, on `first-game`, in `Game/assets/scenes/ProvingGround.ganymede`: the p
 
 Still open:
 
-- **The A2 and A3 gates were never written up.** Both sections below still read as plans. Closing
-  them honestly means running the gates, not restating that the wiring exists.
-- **The A2 follow-up** — hiding an entity whose socket does not resolve — is undecided; see that
-  section.
+- **The A3 visual gate** (rifle stays in the hand through idle / walk / run / the reverse-turn)
+  has not been watched. [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S2 makes it observable; S6
+  re-runs it. The wiring is confirmed; the picture is not.
+- **Hide an unresolved socket** — **decided, not built.** A general `Visible` / `Enabled` bit
+  that `RenderSystem` honours, not a socket-local suppression. See the A2 follow-up.
 - **The offsets were placed by hand, which is the bottleneck this plan said to watch for.** That
   evidence became [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md): a visualizer, joint picking and a
   socket gizmo.
@@ -164,8 +166,8 @@ cache-stomp risk is accepted; `BoneAttachmentSystem` is the one caller.
 
 ### A1 — Rifle-carry clips, before any engine work
 
-**Done — the clip set shipped.** The player body runs `Lower_Weapon_Look_Raise`. The gate below was
-never written up, so the section stays in its planning tense until someone measures it.
+**Done — the clip set shipped.** The player body runs `Lower_Weapon_Look_Raise`. Verification
+below: the three clips are in the glb; the ~5 cm table was not measured.
 
 Regenerate the player's clip set with weapon-carry animations rather than the unarmed idle, walk
 and run it has now.
@@ -187,6 +189,22 @@ and run it has now.
   offset within ~5 cm of each other across all clips, and zero net root drift. **No engine change
   has happened at this point** — the character simply mimes holding a weapon that is not there.
 
+**Verification (A1).** The clip set shipped inside `ArmoredHumanoid.glb` on `first-game`. The glTF
+skin has **three** animations, named exactly as `Player.lua` selects them:
+
+| Speed | Clip | `animSpeed` |
+|---|---|---|
+| `< 0.5` m/s | `Lower_Weapon_Look_Raise` | 1.0 |
+| `< 4` m/s | `Walk_Forward_While_Shooting` | 1.0 |
+| else | `Run_and_Shoot` | 1.7 |
+
+There is no dedicated backpedal clip. Holding S turns the mesh 180° and plays walk/run forward —
+that is the "backpedal turn" the A3 gate names, not Meshy's `Walk Backward with Gun 1`.
+
+The **~5 cm cross-clip table was never measured.** Reconstructing it from a transcript would be
+inventing the gate. [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S5 is the readout that was always
+going to do that measurement; it is not done here.
+
 ### A2 — The engine feature, on `master`
 
 **Done on `skeletal-attachments`.** `OverrideWorld` is public; `BoneAttachmentSystem` runs after
@@ -202,7 +220,23 @@ name warns once and restores parent-relative world. New files: `BoneAttachmentSy
   it; a bad joint name warns once and leaves the entity at its parent's transform rather than at
   the origin.
 
-### A2 follow-up — one item left
+**Verification (A2).** Mechanical probes, against the committed player mesh and the system as it
+stands. Visual lag / multi-minute drift were not timed — that is the A3 picture, and S2 is what
+makes the hand a thing you can see.
+
+| Probe | Result |
+|---|---|
+| Rig with no finger joints | `ArmoredHumanoid.glb` skin: **24 joints**. `LeftHand` / `RightHand` are terminals. No finger, thumb, or toe-beyond-`ToeBase` joints. A weapon attaches at the wrist, as the hazard below said. |
+| Socket on a moving, animating character | `BoneAttachmentSystem` runs every frame in play *and* edit, after `AnimationSystem` has written `Palette` and `TransformSystem` has published `targetWorld`. Same-frame pose; no extra delay by construction. |
+| Target mesh swapped at runtime | `ResolveJointIndex` keeps `Resolved` only while `JointNames[Resolved] == Joint`; otherwise it walks the name list. `Scene::Copy` / duplicate / deserialize reset `Resolved` to −1 so a stale index cannot attach to whichever joint now occupies that slot. Not exercised by swapping the player's mesh in play. |
+| Joint name the skeleton does not have | Warns once per distinct failure (`WarnOnce`) and `Restore()`s parent-cache × local. Never the origin. Empty `Joint` is quiet. Not planted as a typo in the committed scene (`RightHand` is present). |
+| Socket with children of its own | `TransformSystem::OverrideWorld` clears `m_Visited` and walks the subtree. The committed `Rifle` has **no children**. `Muzzle` is still parented to `Yaw`. The walk is untested with a live child. |
+| Bad inverse bind | Singular `InverseBind` returns false from `TryGetJointFrame`, warns once, `Restore()`. Self-checked with a zero matrix. |
+
+The run-cycle gate (tracks the hand, no visible lag, no drift over minutes) is the A3 picture. It
+was not watched from this branch.
+
+### A2 follow-up — LocalTransform (fixed) and visibility (decided)
 
 The socket frame left out the skinned submesh's `LocalTransform`, which `Renderer3D` applies and
 the socket did not — so a socket on a rig whose joints are centimetres and whose vertices are
@@ -212,21 +246,31 @@ resolve. `OverrideWorld` also discarded the attached entity's `Scale`, so that c
 nowhere honest to live. Both are **fixed**: `LocalTransform` is folded in, the bind pose's basis
 scale is divided back out, and local `Scale` is composed. See `docs/engine/scene.md`.
 
-Still open:
+**Decided, not built — hide an unresolved socket.**
 
-- **Hide an entity whose socket does not resolve**, rather than leaving it at its parent transform.
-  The window is short — the frames before a skinned mesh finishes streaming, on every load — and
-  now that scale is no longer compensated it is only a brief pop rather than a wrong-sized prop.
-  There is no visibility flag on any component today, so this is new surface, not a tweak: either
-  an `Enabled`/`Visible` bit that `RenderSystem` honours (useful well beyond sockets) or a
-  socket-local suppression. Worth deciding which before building either.
+The window is short — the frames before a skinned mesh finishes streaming, on every load — and
+now that scale is no longer compensated it is only a brief pop rather than a wrong-sized prop.
+
+There is no runtime visibility flag on any component today. The outliner eye is
+`EditorViewFilter::HiddenEntities`, an editor filter that `OnUpdate` clears so Play and the
+runtime draw everything. Reusing it would hide the rifle in the editor and show it in the game,
+which is the opposite of the streaming pop.
+
+| Option | Why not / why |
+|---|---|
+| Socket-local suppression | A second visibility system the day anything else needs to hide. This note exists so that does not happen. |
+| **`Visible` / `Enabled` on a component `RenderSystem` honours** | The engine-shaped answer (Unity renderer enabled, Unreal hidden-in-game). Useful for cutscenes, inventory, pooling — sockets are one client. |
+
+**Chosen: the general bit.** Not built here: inventing a visibility component as a side quest of
+joint-frame extraction is the over-build, and the pop is brief. The next piece of work that
+actually needs to hide something implements it, and sockets piggy-back. Do not add a socket-only
+flag in the meantime.
 
 ### A3 — Wiring, on the game branch
 
 **Done — the rifle is socketed.** `Rifle` is a child of the player body with
-`BoneAttachmentComponent { Target: 0, Joint: RightHand }` and a `0.45` local scale. The gate below
-was never written up; [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S2 makes it observable rather than
-a judgement call.
+`BoneAttachmentComponent { Target: 0, Joint: RightHand }` and a `0.45` local scale. Verification
+below: wiring confirmed; the grip was not watched; `Muzzle` is still on `Yaw`.
 
 Attach `Rifle.glb` to the player's `RightHand`, offset by hand against the new clips. Either retire
 the hovering rifle pickup at the Weapon Crate or keep it and attach on collect — the latter is more
@@ -241,6 +285,21 @@ believing the picture.
 - **Gate:** the rifle stays in the hand through idle, walk, run and the backpedal turn, and the
   muzzle particle emitter can be moved from `Yaw` onto the gun's barrel without changing where
   shots go.
+
+**Verification (A3).** Wiring, on `first-game` `ProvingGround.ganymede`, as committed:
+
+| Piece | State |
+|---|---|
+| `Rifle` parent | Body (`3000000000000000013`), `Target: 0` → parent |
+| `Joint` | `RightHand` |
+| `Offset` / `Rotation` | `[-0.2487, 0.1440, -0.0064]`, `[-2.7143, 0.2545, 0.8852]` — the slider residue that triggered [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) |
+| Local `Scale` | `0.45` on the rifle entity, not a compensating child |
+| `Muzzle` | **Still parented to `Yaw`**, translation `[0, 0.5, -1]`. The "move onto the barrel" half of the gate was not done. Shots still leave from Yaw-space; moving the emitter would change where they appear, not yet where they go, until fire is re-derived from the gun. |
+| Idle / walk / run | The three A1 clips, selected by capsule speed in `Player.lua` |
+| Backpedal turn | Mesh yaw eased 180° when moving opposite the camera; same walk/run clips, not a backward cycle |
+
+The "stays in the hand" picture was not watched from this branch. S2 draws the joints; S6 re-runs
+this gate with them visible. Until then this section records the wiring, not the grip.
 
 ---
 

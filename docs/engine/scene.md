@@ -100,11 +100,12 @@ copyable, no behavior beyond small helpers.
 - **`BoneAttachmentComponent`** — pins this entity to a named joint of another entity's skinned
   mesh. `Target` is an entity UUID (zero = hierarchy parent); `Joint` is a name, for the same
   reason clips are; `Offset` / `Rotation` are the rest pose in joint space (Euler radians, X·Y·Z).
-  `Resolved` is a runtime index, not serialized, reset by `Scene::Copy`. The system recovers
-  `jointGlobal` as `Palette[i] * inverse(InverseBind[i])` rather than keeping AnimationSystem's
-  scratch globals on the animator — attachments are counted in ones and twos, and a second
-  per-joint array would add 2–8 KB per animated entity for `Scene::Copy` to shuffle on every play.
-  Writes `WorldTransformComponent` directly: feeding a joint quaternion through
+  `Resolved` is a runtime index, not serialized, reset by `Scene::Copy`. The joint frame is
+  `TryGetJointFrame` ([`Mesh.h`](../../GanymedEngine/source/GanymedE/Renderer/Mesh.h)) — one
+  function, so a visualizer cannot re-derive the formula and drift. Recovery rather than
+  keeping AnimationSystem's scratch globals: attachments are counted in ones and twos, and a
+  second per-joint array would add 2–8 KB per animated entity for `Scene::Copy` to shuffle on
+  every play. Writes `WorldTransformComponent` directly: feeding a joint quaternion through
   `TransformComponent`'s Euler storage is lossy. Local translation and rotation are ignored while
   the socket resolves — `Offset`/`Rotation` are what replace them — but local **`Scale`** is kept:
   nothing on this component replaces it, and reading one field on both the attached and the
@@ -271,10 +272,12 @@ entity track the socket. The cache-stomp risk is accepted; that system is the on
 Pins entities with `BoneAttachmentComponent` to a joint. Per socket, in hierarchy-depth order
 (so a nested attachment sees its target's already-rewritten world; an explicit `Target` that is
 itself socketed is treated as deeper still): resolve the target (zero = parent), re-resolve
-`Joint` by name against the target's skeleton when `Resolved` is stale, recover
-`jointGlobal = skinnedSubmesh.LocalTransform * Palette[i] * inverse(InverseBind[i])`, **divide the
-bind pose's basis scale out of it**, then
+`Joint` by name against the target's skeleton when `Resolved` is stale, then
+`TryGetJointFrame(mesh, palette, joint, jointGlobal)` and
 `OverrideWorld(entity, targetWorld * jointGlobal * offset * localScale)`.
+The frame function is the one owner of
+`jointGlobal = skinnedSubmesh.LocalTransform * Palette[i] * inverse(InverseBind[i])` plus
+**dividing the bind pose's basis scale out of it**.
 A missing target, a mesh with no
 palette, a singular inverse bind, or a joint name the skeleton does not have warns once per
 distinct failure and leaves the entity at its **parent** transform (parent cache × local), never

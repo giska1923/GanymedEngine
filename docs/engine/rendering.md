@@ -440,9 +440,14 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
   (base vertex/index, count, material index, local transform, name, local AABB, `IsSkinned`) +
   material list + the built `Geometry`, plus the skeleton and clips on a rigged asset. Bounds are
   computed on build and used for culling. `Build` also creates the optional stream-1 buffer
-  (`GetSkinVertexBuffer()`, null when there is no skin data) from `SkinVertex{JointIndices,
+  (  `GetSkinVertexBuffer()`, null when there is no skin data) from `SkinVertex{JointIndices,
   JointWeights}`; the skin attributes ride a second stream rather than widening `MeshVertex`, which
   would cost every static vertex in the engine 32 bytes to serve the few that are rigged.
+  `TryGetJointFrame(mesh, palette, joint, outFrame)` recovers a joint's frame in the mesh
+  entity's local space — `LocalTransform * Palette[i] * inverse(InverseBind[i])`, then the bind
+  pose's basis scale divided out — so sockets and skeleton tooling share one formula. False on
+  an out-of-range joint or a singular inverse bind; the caller multiplies by the target's world
+  matrix.
 
 ### Per-entity material overrides
 

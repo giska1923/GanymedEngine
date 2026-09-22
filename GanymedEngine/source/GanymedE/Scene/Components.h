@@ -221,9 +221,9 @@ namespace GanymedE {
 	};
 
 	// Pins this entity to a joint of a skinned mesh. The joint transform is recovered from
-	// AnimatorComponent::Palette each frame (Palette[i] * inverse(InverseBind[i])) rather than
-	// stored beside it: most entities never attach anything, and keeping a second per-joint
-	// array would add 2-8 KB per animator for Scene::Copy to shuffle on every play.
+	// AnimatorComponent::Palette each frame via TryGetJointFrame rather than stored beside it:
+	// most entities never attach anything, and keeping a second per-joint array would add
+	// 2-8 KB per animator for Scene::Copy to shuffle on every play.
 	//
 	// Writes WorldTransformComponent directly, after TransformSystem, because feeding a joint
 	// quaternion through TransformComponent's Euler storage is lossy. Local Translation and
@@ -233,8 +233,8 @@ namespace GanymedE {
 	// resolve shows a correctly sized prop rather than a compensated one.
 	//
 	// Offset is in the target mesh's own units — metres for any mesh authored that way — whatever
-	// unit the *rig* uses: the system folds in the skinned submesh's LocalTransform and divides the
-	// bind pose's basis scale back out (see BoneAttachmentSystem.h). What the *clip* does to the
+	// unit the *rig* uses: TryGetJointFrame folds in the skinned submesh's LocalTransform and
+	// divides the bind pose's basis scale back out (see Mesh.h). What the *clip* does to the
 	// joint chain still carries, scale included — a constant scale on Hips will grow the attached
 	// entity for as long as that clip plays, which is a clip bug, not something this component
 	// papers over.

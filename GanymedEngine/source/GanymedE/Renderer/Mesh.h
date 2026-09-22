@@ -137,4 +137,14 @@ namespace GanymedE {
 		std::string m_Path;
 	};
 
+	// Joint frame in the mesh entity's local space. The caller multiplies by the target
+	// entity's world matrix. Recovers Palette[i] * inverse(InverseBind[i]), folds in the first
+	// skinned submesh's LocalTransform, and divides the bind pose's basis scale back out —
+	// the same chain Renderer3D uses, so a visualizer cannot drift from a socket.
+	//
+	// False if `joint` is out of range of the palette or InverseBind, or if InverseBind[joint]
+	// is singular. Does not log: BoneAttachmentSystem attributes the failure to an entity.
+	bool TryGetJointFrame(const Mesh& mesh, const std::vector<glm::mat4>& palette,
+		int32_t joint, glm::mat4& outFrame);
+
 }
