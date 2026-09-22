@@ -150,6 +150,13 @@ namespace GanymedE {
 		bool m_GizmoUsing = false;
 		std::vector<std::pair<UUID, TransformComponent>> m_GizmoBefore;
 
+		// Socket gizmo: writes BoneAttachmentComponent Offset/Rotation and TransformComponent
+		// Scale, never WorldTransformComponent. Does not group-drag the rest of the selection.
+		bool m_SocketGizmo = false;
+		UUID m_SocketGizmoEntity{ 0 };
+		BoneAttachmentComponent m_SocketBefore;
+		TransformComponent m_SocketTransformBefore;
+
 		enum class SceneState
 		{
 			Edit = 0,

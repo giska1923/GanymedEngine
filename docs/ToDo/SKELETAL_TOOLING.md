@@ -1,6 +1,6 @@
 # Milestone — Skeletal joint tooling
 
-**Status: S1–S3 landed. S4–S6 are not built.**
+**Status: S1–S4 landed. S5–S6 are not built.**
 
 > **Editor milestone.** Every phase touches `GanymedEditor/source/` or `GanymedEngine/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`; the game branch
@@ -280,6 +280,8 @@ Viewport picking and the tree were not clicked in a running editor this landing.
 
 ## Phase S4 — the socket gizmo
 
+**Done.**
+
 ### Goal
 
 Drag the rifle into the hand.
@@ -326,14 +328,16 @@ below tests it rather than assuming it**.
 
 ### Verification
 
-| Probe | Expected |
+**Done as code.** The editor was not run; visual and Euler-pop probes are open.
+
+| Probe | Result |
 |---|---|
-| Drag the rifle to a correct-looking grip | Resulting `Offset` lands in the same neighbourhood as the hand-tuned committed values |
-| Scrub the clip afterwards | The rifle stays in the hand across the whole cycle |
-| One Ctrl+Z | Restores the pre-drag offset and rotation in a single step |
-| Drag a socket through vertical (±90° pitch) | Either no pop, or the pop is reproduced and **recorded here** as the trigger for option (b) |
-| Drag with the target animating | Handles track the joint; no feedback loop between gizmo and system |
-| A socket that does not resolve | No gizmo, and a reason shown — not a gizmo at the origin |
+| Drag the rifle to a correct-looking grip | Not run. `ProvingGround.ganymede` lives on `first-game`. Conversion is `inverse(targetWorld * jointFrame) * draggedWorld` into `Offset`/`Rotation`/`Scale`. |
+| Scrub the clip afterwards | Not run. Each frame's joint world is sampled from this frame's palette; Offset is rest in joint space, so the system should keep the grip across the cycle. |
+| One Ctrl+Z | By construction: rising-edge snapshot of `BoneAttachmentComponent` and `TransformComponent::Scale`, one `Gizmo Socket` command (or a two-child composite if both changed). Not clicked in the editor. |
+| Drag a socket through vertical (±90° pitch) | **Not run.** Option (a) matches the entity gizmo (`Rotation += decomposed - Rotation`). A pop here is still the trigger for option (b). |
+| Drag with the target animating | Not run. Each ImGui frame inverts that frame's `jointWorld`, so the handle cannot accumulate against a stale joint. Mesh trails the handle by one frame, same as the entity gizmo. |
+| A socket that does not resolve | No gizmo. Viewport banner states the reason (`Socket has no target`, `Set a joint…`, `Joint name does not resolve`, …). Not seen in the editor. |
 
 ---
 
@@ -424,6 +428,9 @@ person measuring, per clip, per download.
    ([MAP_EDITOR](MAP_EDITOR.md) M4) and now skeletons all follow the same engine-default-off,
    editor-opts-in-per-frame pattern on a settings singleton. Whichever milestone lands second should
    collapse them into one bitfield rather than adding a fourth boolean.
+7. **Mixed selection still uses the entity gizmo.** The socket path skips group-drag; the entity
+   path does not skip sockets. A crate multi-selected with a resolved rifle still writes the
+   rifle's ignored local TR (and its Scale). Out of S4's scope.
 
 ## Docs this milestone must update
 

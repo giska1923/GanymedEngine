@@ -184,6 +184,102 @@ namespace GanymedE {
 			scene.MarkChanged<TransformComponent>(entity);
 		}
 
+		// Joint world = targetWorld * TryGetJointFrame. The socket gizmo inverts this, not the
+		// parent chain: GetWorldSpaceTransform walks local TR, which BoneAttachmentSystem ignores
+		// while the socket resolves, so that walk would put the handle at the parent.
+		struct SocketGizmoQuery
+		{
+			bool IsSocket = false;
+			bool Ready = false;
+			const char* Reason = nullptr;
+			glm::mat4 JointWorld{ 1.0f };
+		};
+
+		SocketGizmoQuery QuerySocketGizmo(Scene& scene, Entity socket)
+		{
+			SocketGizmoQuery query;
+			if (!socket || !socket.HasComponent<BoneAttachmentComponent>())
+				return query;
+
+			query.IsSocket = true;
+			const auto& attachment = socket.GetComponent<BoneAttachmentComponent>();
+
+			UUID id = attachment.Target;
+			if (id == UUID{ 0 } && socket.HasComponent<RelationshipComponent>())
+				id = socket.GetComponent<RelationshipComponent>().Parent;
+			if (id == UUID{ 0 })
+			{
+				query.Reason = "Socket has no target";
+				return query;
+			}
+
+			Entity target = scene.FindEntityByUUID(id);
+			if (!target)
+			{
+				query.Reason = "Socket has no target";
+				return query;
+			}
+			if (target == socket)
+			{
+				query.Reason = "Socket cannot target itself";
+				return query;
+			}
+
+			if (!target.HasComponent<StaticMeshComponent>())
+			{
+				query.Reason = "Socket target has no rigged mesh";
+				return query;
+			}
+			const Ref<Mesh>& mesh = target.GetComponent<StaticMeshComponent>().Mesh.Get();
+			if (!mesh || !mesh->HasSkeleton())
+			{
+				query.Reason = "Socket target has no rigged mesh";
+				return query;
+			}
+			if (!EntityHasSkinnedPose(target))
+			{
+				query.Reason = "Socket target has no joint palette";
+				return query;
+			}
+
+			if (attachment.Joint.empty())
+			{
+				query.Reason = "Set a joint to place this socket";
+				return query;
+			}
+			if (attachment.Resolved < 0)
+			{
+				query.Reason = "Joint name does not resolve";
+				return query;
+			}
+
+			if (!target.HasComponent<WorldTransformComponent>()
+				|| !socket.HasComponent<WorldTransformComponent>()
+				|| !socket.HasComponent<TransformComponent>())
+			{
+				query.Reason = "Socket has no world transform";
+				return query;
+			}
+
+			glm::mat4 jointLocal{ 1.0f };
+			if (!TryGetJointFrame(*mesh, target.GetComponent<AnimatorComponent>().Palette,
+				attachment.Resolved, jointLocal))
+			{
+				query.Reason = "Joint frame is invalid";
+				return query;
+			}
+
+			query.JointWorld = target.GetComponent<WorldTransformComponent>().World * jointLocal;
+			if (std::abs(glm::determinant(query.JointWorld)) < 1.0e-8f)
+			{
+				query.Reason = "Joint frame is invalid";
+				return query;
+			}
+
+			query.Ready = true;
+			return query;
+		}
+
 		glm::vec3 Quantize(const glm::vec3& p, float step)
 		{
 			if (step <= 1.0e-6f)
@@ -1720,7 +1816,22 @@ namespace GanymedE {
 		Entity gizmoEntity = selectedEntity;
 		if (gizmoEntity && m_SceneHierarchyPanel.IsLocked(gizmoEntity))
 			gizmoEntity = {};
-		if (gizmoEntity && m_GizmoType != -1 && editing && !IsPlacing() && !IsScattering())
+
+		const SocketGizmoQuery socketGizmo = m_ActiveScene
+			? QuerySocketGizmo(*m_ActiveScene, gizmoEntity) : SocketGizmoQuery{};
+
+		if (!m_JointTool.PickForSocket && socketGizmo.IsSocket && socketGizmo.Reason
+			&& editing && !IsPlacing())
+		{
+			ImDrawList* draw = ImGui::GetWindowDrawList();
+			const ImVec2 pos = ImVec2(m_ViewportBounds[0].x + 10.0f, m_ViewportBounds[0].y + 10.0f);
+			draw->AddText(pos, theme.Warning, socketGizmo.Reason);
+		}
+
+		const bool gizmoGates = gizmoEntity && m_GizmoType != -1 && editing
+			&& !IsPlacing() && !IsScattering() && !m_JointTool.PickForSocket;
+		const bool showGizmo = gizmoGates && (!socketGizmo.IsSocket || socketGizmo.Ready);
+		if (showGizmo)
 		{
 			glm::mat4 cameraProjection = m_EditorCamera.GetProjection();
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
@@ -1742,86 +1853,146 @@ namespace GanymedE {
 			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
 				m_ViewportBounds[1].x - m_ViewportBounds[0].x, m_ViewportBounds[1].y - m_ViewportBounds[0].y);
 
-			auto& tc = gizmoEntity.GetComponent<TransformComponent>();
-			glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(gizmoEntity);
-
-			bool snap = SnapActive();
-			float snapValue = m_SnapSettings.Translate;
-			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
-				snapValue = m_SnapSettings.Rotate;
-			else if (m_GizmoType == ImGuizmo::OPERATION::SCALE)
-				snapValue = m_SnapSettings.Scale;
-			float snapValues[3] = { snapValue, snapValue, snapValue };
-
-			// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
-			// kept: it is what the rest of the selection's delta is measured against.
-			const glm::mat4 worldBefore = transform;
-
-			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-				(ImGuizmo::OPERATION)m_GizmoType,
-				m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
-				glm::value_ptr(transform),
-				nullptr, snap ? snapValues : nullptr);
-
-			if (ImGuizmo::IsUsing())
+			if (socketGizmo.Ready)
 			{
-				const std::vector<Entity>& selection = m_SceneHierarchyPanel.GetSelection();
+				auto& tc = gizmoEntity.GetComponent<TransformComponent>();
+				auto& attachment = gizmoEntity.GetComponent<BoneAttachmentComponent>();
+				glm::mat4 transform = gizmoEntity.GetComponent<WorldTransformComponent>().World;
 
-				// Rising edge. This is the last moment the pre-drag transforms still exist:
-				// rotation below is accumulated as a delta against the current value, so one
-				// frame later there is nothing left to reconstruct them from.
-				if (!m_GizmoUsing)
+				const bool snap = SnapActive();
+				float snapValue = 0.0f;
+				bool useSnap = false;
+				if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
 				{
-					m_GizmoUsing = true;
-					m_GizmoBefore.clear();
-					m_GizmoBefore.emplace_back(gizmoEntity.GetUUID(), tc);
+					snapValue = m_SnapSettings.Rotate;
+					useSnap = snap;
+				}
+				else if (m_GizmoType == ImGuizmo::OPERATION::SCALE)
+				{
+					snapValue = m_SnapSettings.Scale;
+					useSnap = snap;
+				}
+				float snapValues[3] = { snapValue, snapValue, snapValue };
 
-					for (Entity other : selection)
+				ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+					(ImGuizmo::OPERATION)m_GizmoType,
+					m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
+					glm::value_ptr(transform),
+					nullptr, useSnap ? snapValues : nullptr);
+
+				if (ImGuizmo::IsUsing())
+				{
+					if (!m_GizmoUsing)
 					{
-						if (other == gizmoEntity || !other.HasComponent<TransformComponent>())
-							continue;
+						m_GizmoUsing = true;
+						m_SocketGizmo = true;
+						m_SocketGizmoEntity = gizmoEntity.GetUUID();
+						m_SocketBefore = attachment;
+						m_SocketTransformBefore = tc;
+						m_GizmoBefore.clear();
+					}
 
-						// Skip anything that already moves because an ancestor of it is selected
-						// too - it would otherwise take the delta twice, once from its parent's
-						// transform and once from its own.
-						if (IsDescendantOfSelection(*m_ActiveScene, other, selection))
-							continue;
-
-						m_GizmoBefore.emplace_back(other.GetUUID(),
-							other.GetComponent<TransformComponent>());
+					if (gizmoEntity.GetUUID() == m_SocketGizmoEntity)
+					{
+						const glm::mat4 socketLocal = glm::inverse(socketGizmo.JointWorld) * transform;
+						glm::vec3 offset, rotation, scale;
+						if (Math::DecomposeTransform(socketLocal, offset, rotation, scale))
+						{
+							attachment.Offset = offset;
+							attachment.Rotation += rotation - attachment.Rotation;
+							if (tc.Scale != scale)
+							{
+								tc.Scale = scale;
+								m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+							}
+						}
 					}
 				}
+			}
+			else
+			{
+				auto& tc = gizmoEntity.GetComponent<TransformComponent>();
+				glm::mat4 transform = m_ActiveScene->GetWorldSpaceTransform(gizmoEntity);
 
-				// The world-space change the gizmo just made. Applied to every other entity in
-				// the selection, which is what makes a group drag rotate and scale about the
-				// primary rather than each object about its own origin.
-				const glm::mat4 worldDelta = transform * glm::inverse(worldBefore);
+				bool snap = SnapActive();
+				float snapValue = m_SnapSettings.Translate;
+				if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
+					snapValue = m_SnapSettings.Rotate;
+				else if (m_GizmoType == ImGuizmo::OPERATION::SCALE)
+					snapValue = m_SnapSettings.Scale;
+				float snapValues[3] = { snapValue, snapValue, snapValue };
 
-				UUID parentID = gizmoEntity.GetComponent<RelationshipComponent>().Parent;
-				if (parentID != UUID{ 0 })
+				// Manipulate rewrites `transform` in place, so the pre-drag world matrix has to be
+				// kept: it is what the rest of the selection's delta is measured against.
+				const glm::mat4 worldBefore = transform;
+
+				ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+					(ImGuizmo::OPERATION)m_GizmoType,
+					m_GizmoWorldSpace ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
+					glm::value_ptr(transform),
+					nullptr, snap ? snapValues : nullptr);
+
+				if (ImGuizmo::IsUsing())
 				{
-					Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
-					if (parent)
-						transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
-				}
+					const std::vector<Entity>& selection = m_SceneHierarchyPanel.GetSelection();
 
-				glm::vec3 translation, rotation, scale;
-				Math::DecomposeTransform(transform, translation, rotation, scale);
+					// Rising edge. This is the last moment the pre-drag transforms still exist:
+					// rotation below is accumulated as a delta against the current value, so one
+					// frame later there is nothing left to reconstruct them from.
+					if (!m_GizmoUsing)
+					{
+						m_GizmoUsing = true;
+						m_SocketGizmo = false;
+						m_GizmoBefore.clear();
+						m_GizmoBefore.emplace_back(gizmoEntity.GetUUID(), tc);
 
-				glm::vec3 deltaRotation = rotation - tc.Rotation;
-				tc.Translation = translation;
-				tc.Rotation += deltaRotation;
-				tc.Scale = scale;
+						for (Entity other : selection)
+						{
+							if (other == gizmoEntity || !other.HasComponent<TransformComponent>())
+								continue;
 
-				m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+							// Skip anything that already moves because an ancestor of it is selected
+							// too - it would otherwise take the delta twice, once from its parent's
+							// transform and once from its own.
+							if (IsDescendantOfSelection(*m_ActiveScene, other, selection))
+								continue;
 
-				// The rest of the selection. Driven from m_GizmoBefore rather than from the live
-				// selection, so an entity that leaves the selection mid-drag is not left half
-				// moved, and the ancestor filter above is applied once rather than per frame.
-				for (std::size_t i = 1; i < m_GizmoBefore.size(); i++)
-				{
-					ApplyWorldDelta(*m_ActiveScene,
-						m_ActiveScene->FindEntityByUUID(m_GizmoBefore[i].first), worldDelta);
+							m_GizmoBefore.emplace_back(other.GetUUID(),
+								other.GetComponent<TransformComponent>());
+						}
+					}
+
+					// The world-space change the gizmo just made. Applied to every other entity in
+					// the selection, which is what makes a group drag rotate and scale about the
+					// primary rather than each object about its own origin.
+					const glm::mat4 worldDelta = transform * glm::inverse(worldBefore);
+
+					UUID parentID = gizmoEntity.GetComponent<RelationshipComponent>().Parent;
+					if (parentID != UUID{ 0 })
+					{
+						Entity parent = m_ActiveScene->FindEntityByUUID(parentID);
+						if (parent)
+							transform = glm::inverse(m_ActiveScene->GetWorldSpaceTransform(parent)) * transform;
+					}
+
+					glm::vec3 translation, rotation, scale;
+					Math::DecomposeTransform(transform, translation, rotation, scale);
+
+					glm::vec3 deltaRotation = rotation - tc.Rotation;
+					tc.Translation = translation;
+					tc.Rotation += deltaRotation;
+					tc.Scale = scale;
+
+					m_ActiveScene->MarkChanged<TransformComponent>(gizmoEntity);
+
+					// The rest of the selection. Driven from m_GizmoBefore rather than from the live
+					// selection, so an entity that leaves the selection mid-drag is not left half
+					// moved, and the ancestor filter above is applied once rather than per frame.
+					for (std::size_t i = 1; i < m_GizmoBefore.size(); i++)
+					{
+						ApplyWorldDelta(*m_ActiveScene,
+							m_ActiveScene->FindEntityByUUID(m_GizmoBefore[i].first), worldDelta);
+					}
 				}
 			}
 		}
@@ -1834,40 +2005,85 @@ namespace GanymedE {
 
 			if (m_EditorScene && editing)
 			{
-				std::vector<Scope<EditorCommand>> moved;
-				moved.reserve(m_GizmoBefore.size());
-
-				for (const auto& entry : m_GizmoBefore)
+				if (m_SocketGizmo)
 				{
-					Entity dragged = m_EditorScene->FindEntityByUUID(entry.first);
-					if (!dragged || !dragged.HasComponent<TransformComponent>())
-						continue;
+					Entity dragged = m_EditorScene->FindEntityByUUID(m_SocketGizmoEntity);
+					std::vector<Scope<EditorCommand>> moved;
+					if (dragged && dragged.HasComponent<BoneAttachmentComponent>())
+					{
+						const auto& after = dragged.GetComponent<BoneAttachmentComponent>();
+						if (after.Offset != m_SocketBefore.Offset
+							|| after.Rotation != m_SocketBefore.Rotation)
+						{
+							moved.push_back(CreateScope<ComponentEditCommand<BoneAttachmentComponent>>(
+								"Gizmo Socket", m_SocketGizmoEntity, m_SocketBefore, after));
+						}
+					}
+					if (dragged && dragged.HasComponent<TransformComponent>())
+					{
+						const auto& after = dragged.GetComponent<TransformComponent>();
+						if (after.Scale != m_SocketTransformBefore.Scale)
+						{
+							moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
+								"Gizmo Socket", m_SocketGizmoEntity, m_SocketTransformBefore, after));
+						}
+					}
 
-					moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
-						"Gizmo Transform", entry.first, entry.second,
-						dragged.GetComponent<TransformComponent>()));
+					if (moved.size() == 1)
+					{
+						m_UndoStack.Push(std::move(moved.front()));
+					}
+					else if (!moved.empty())
+					{
+						m_UndoStack.Push(CreateScope<CompositeCommand>(
+							"Gizmo Socket", std::move(moved)));
+					}
 				}
+				else
+				{
+					std::vector<Scope<EditorCommand>> moved;
+					moved.reserve(m_GizmoBefore.size());
 
-				// One drag is one undo entry, the same rule the inspector's multi-edit follows.
-				if (moved.size() == 1)
-				{
-					m_UndoStack.Push(std::move(moved.front()));
-				}
-				else if (!moved.empty())
-				{
-					m_UndoStack.Push(CreateScope<CompositeCommand>(
-						"Gizmo Transform (" + std::to_string(moved.size()) + " entities)",
-						std::move(moved)));
+					for (const auto& entry : m_GizmoBefore)
+					{
+						Entity dragged = m_EditorScene->FindEntityByUUID(entry.first);
+						if (!dragged || !dragged.HasComponent<TransformComponent>())
+							continue;
+
+						moved.push_back(CreateScope<ComponentEditCommand<TransformComponent>>(
+							"Gizmo Transform", entry.first, entry.second,
+							dragged.GetComponent<TransformComponent>()));
+					}
+
+					// One drag is one undo entry, the same rule the inspector's multi-edit follows.
+					if (moved.size() == 1)
+					{
+						m_UndoStack.Push(std::move(moved.front()));
+					}
+					else if (!moved.empty())
+					{
+						m_UndoStack.Push(CreateScope<CompositeCommand>(
+							"Gizmo Transform (" + std::to_string(moved.size()) + " entities)",
+							std::move(moved)));
+					}
 				}
 			}
 
+			m_SocketGizmo = false;
 			m_GizmoBefore.clear();
 		}
 
 		if (selectedEntity && selectedEntity.HasComponent<TransformComponent>())
 		{
 			glm::vec3 t = selectedEntity.GetComponent<TransformComponent>().Translation;
-			if (m_GizmoWorldSpace)
+			if (selectedEntity.HasComponent<BoneAttachmentComponent>()
+				&& selectedEntity.GetComponent<BoneAttachmentComponent>().Resolved >= 0)
+			{
+				t = selectedEntity.GetComponent<BoneAttachmentComponent>().Offset;
+				if (m_GizmoWorldSpace && selectedEntity.HasComponent<WorldTransformComponent>())
+					t = glm::vec3(selectedEntity.GetComponent<WorldTransformComponent>().World[3]);
+			}
+			else if (m_GizmoWorldSpace)
 				t = glm::vec3(m_ActiveScene->GetWorldSpaceTransform(selectedEntity)[3]);
 
 			ImDrawList* draw = ImGui::GetWindowDrawList();

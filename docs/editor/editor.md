@@ -291,11 +291,28 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   transform and once from its own. One drag is one undo entry: the falling edge folds every moved
   entity into a single `CompositeCommand`, the same rule the inspector's multi-edit follows.
 
+  **A resolved `BoneAttachmentComponent` takes over the gizmo.** ImGuizmo still manipulates a
+  world matrix, but that matrix is `WorldTransformComponent::World` (what the attachment system
+  wrote this frame), not `GetWorldSpaceTransform` — local translation and rotation are ignored
+  while the socket resolves, so the parent-chain walk would put the handle at the parent.
+  Each drag converts `socketLocal = inverse(targetWorld * jointFrame) * draggedWorld` and
+  writes `Offset` / `Rotation` on the component plus `TransformComponent::Scale`. It never
+  writes `WorldTransformComponent`; the system recomputes next update. Rotation is applied as
+  a delta, matching the entity gizmo (Euler option (a) in
+  [SKELETAL_TOOLING.md](../ToDo/SKELETAL_TOOLING.md); a ±90° pitch pop is the trigger for a
+  quaternion field). Translation snap is skipped — a grip point is not on a grid; rotate and
+  scale still read `MapSnapSettings`. Group-drag is skipped: the rest of the selection does
+  not orbit the socket. Hidden while the socket does not resolve, with the reason on the
+  viewport instead of a gizmo at the origin. Hidden while viewport joint-pick is armed.
+  One drag is one undo entry (`Gizmo Socket`), snapshot on the rising edge of
+  `ImGuizmo::IsUsing()`.
+
 - **Transform readout** (bottom-left of the image, `ImDrawList`, no layout): `X`/`Y`/`Z` of the
   primary selection in `AxisX/Y/Z`, values in `TextPrimary`. Local translation, or world
-  translation when the gizmo is in World space, so the numbers match the handles. Nothing
-  selected → nothing drawn. Entity/draw/FPS counters live on the status bar rather than being
-  duplicated here.
+  translation when the gizmo is in World space, so the numbers match the handles. A resolved
+  socket shows `Offset` (or the cached world translation in World space) rather than the
+  ignored local `Translation`. Nothing selected → nothing drawn. Entity/draw/FPS counters live
+  on the status bar rather than being duplicated here.
 
 ### Surface raycast
 
@@ -344,14 +361,14 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 | Esc / RMB while placing                 | Cancel and destroy the preview (no undo entry)                                                                                               |
 | Esc / RMB while scatter-painting        | Abort an in-progress stroke (no undo entry) and disarm the brush. New / Open / Play do the same                                              |
 | `[` / `]` while placing                 | Yaw by `MapSnapSettings::Rotate`                                                                                                             |
-| Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
+| Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state. On a resolved socket, translates/rotates/scales the socket (Offset / Rotation / Scale), not the ignored local TR |
 | Local / World combo (viewport header)   | ImGuizmo LOCAL (default) / WORLD                                                                                                             |
 | Icons (viewport header)                 | Toggle `MarkerComponent` gizmos (`ShowMarkers`). Default on. Independent of Visualizers                                                      |
 | Visualizers → Skeletons                 | Posed joint overlay (`ShowSkeletons`). Default on, selection hierarchy only. All / X-ray are in the same popup. Engine default off. Bone click selects a joint; it does not change the entity. Delete still acts on the entity |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z          | Undo / redo (Edit state only)                                                                                                                |
 | Ctrl+D / Delete                         | Duplicate / delete the selected entity, subtree included (Edit state only). While placing, Delete cancels instead                            |
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene. New, Open and Play cancel an uncommitted preview and abort scatter                                        |
-| Ctrl (held while dragging gizmo)        | **Inverts** snap. Snapping is on by default; steps are `MapSnapSettings`                                                                     |
+| Ctrl (held while dragging gizmo)        | **Inverts** snap. Snapping is on by default; steps are `MapSnapSettings`. Socket gizmos skip translation snap; rotate and scale still snap   |
 | Ctrl+U                                  | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only)                                                          |
 | View → Reset Layout                     | Rebuild the default dock tree. Existing `imgui.ini` otherwise hides layout work                                                              |
 | View → Theme                            | Dark (default) or Light — same lilac accent, inverted chrome. Not persisted                                                                  |
@@ -395,7 +412,7 @@ mirrors how `EditorCamera` lives engine-side while the _editing model_ does not.
 | `ComponentEditCommand<T>`                              | Before/after values. The after-value is filled in at the commit boundary, not at construction                                                                                   |
 | `AddComponentCommand<T>` / `RemoveComponentCommand<T>` | Remove stores the whole value, so undo is a re-add rather than a default-construct                                                                                              |
 | `AddEntitiesCommand` / `DeleteEntitiesCommand`         | One subtree-snapshot mechanism, differing only in which way `Undo` runs. Create, duplicate, prefab instantiate and map placement are all built on it |
-| `CompositeCommand`                                     | Several commands that undo as one. Gizmo group-drags and duplicate-along-axis are both this: N entities, one Ctrl+Z                                                              |
+| `CompositeCommand`                                     | Several commands that undo as one. Gizmo group-drags, socket Offset+Scale, and duplicate-along-axis are this: N steps, one Ctrl+Z |
 | `ReparentCommand`                                      | Records the **old sibling index** explicitly - `Scene::SetParent` push_backs, and since the canonical save order is a hierarchy DFS, sibling order is content                   |
 
 **Every command keys entities by UUID**, resolved through `Scene::FindEntityByUUID`. `entt::entity`
@@ -907,8 +924,9 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   the combo arms viewport pick: the next bone click writes `Joint` (one undo entry) if it belongs
   to that target, Esc cancels. Selecting the socket still highlights its named joint until the
   user picks a different one. Offset and Rotation are reflected (`Trait::Radians` on Rotation).
-  Local transform is ignored while the socket resolves; edit Offset, not the gizmo, to place the
-  attached mesh in the hand.
+  Local transform is ignored while the socket resolves; W/E/R on a resolved socket drive Offset,
+  Rotation and Scale through ImGuizmo. An unresolved socket hides the gizmo and shows the reason
+  on the viewport.
 - Script: shows the `.lua` asset (handle + path) with a Clear button — assign with
   `AcceptAssetDropHandle(Script)`. Below it, one row per property the
   script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The

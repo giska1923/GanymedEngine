@@ -28,7 +28,7 @@ Key entry points:
 | `DuplicateEntity(source)` | Deep-copies an entity and its descendants with **fresh** UUIDs, attaching the copy as a *sibling* of the source. `IDComponent` is minted; `RelationshipComponent` and `BoneAttachmentComponent::Target` are remapped when they name entities inside the copy — see below |
 | `CollectSubtree(root, out, visited)` | `root` plus its descendants, depth-first through each `Children` in authored order: the canonical order the scene and prefab formats both save in. The visited set keeps a corrupted hierarchy from becoming an infinite walk |
 | `Copy(other)` | Play-mode snapshot: recreate entities by UUID, then copy every `ComponentList` component via `ForEachType`; script `Instance` pointers are nulled so runtime instances are recreated on play |
-| `GetWorldSpaceTransform(entity)` | Walks the parent chain from locals — for **editor/tooling** (gizmos). Renderable code reads the cached `WorldTransformComponent` instead |
+| `GetWorldSpaceTransform(entity)` | Walks the parent chain from locals — for **editor/tooling** (gizmos). Renderable code reads the cached `WorldTransformComponent` instead. A resolved socket is the exception: local TR is ignored, so the socket gizmo reads `WorldTransformComponent::World` that `BoneAttachmentSystem` wrote this frame |
 | `SetParent(child, parent)` / `Unparent(child)` | Maintains both sides of the relationship, rejects self/descendant parenting, and calls `MarkChanged<RelationshipComponent>` so the transform cache reacts |
 | `MarkChanged<T>(entity)` | Report an out-of-view write of a tracked component (see [ecs.md](ecs.md#accessors-and-the-modify-invariant)) |
 
