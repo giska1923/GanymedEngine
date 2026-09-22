@@ -137,7 +137,7 @@ Copying nine floats beats both problems at script call rates.
 
 Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, `Cross`), `Entity`
 (`GetName`, `GetUUID`, `GetChildByName`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians),
-`Get/SetScale`, `HasRigidBody`, `GetMarkerKind`, the physics, animation, audio and particle calls below), `Input`,
+`Get/SetScale`, `GetWorldPosition` / `GetWorldForward` (read-only, last frame), `HasRigidBody`, `GetMarkerKind`, the physics, animation, audio and particle calls below), `Input`,
 `Key`, `Mouse`, `Log`
 (routed to the **client** logger — script output is game output),
 `Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.FindMarkers` / `Scene.Spawn`, `Entity:Destroy`,
@@ -390,6 +390,31 @@ if sparks then
     sparks:PlayParticles()
     sparks:EmitBurst(24)
 end
+```
+
+### World transform
+
+`Entity:GetWorldPosition()` and `Entity:GetWorldForward()` read the `WorldTransformComponent`
+cache: position is its translation column, forward its **-Z** column normalised (the column carries
+world scale, so a 0.45-scaled rifle would otherwise return a 0.45-long "direction"). Read-only —
+`TransformSystem` owns the cache and would overwrite a write on its next pass.
+
+**Why the cache and not a walk of local transforms.** An entity on a bone socket, or any child of
+one, has a world that `BoneAttachmentSystem` writes directly; no chain of `TransformComponent`s
+reproduces it, and `Scene::GetWorldSpaceTransform` puts a socketed rifle at its parent. A muzzle
+under the rifle is exactly that case, and it is the reason these exist. Unity's
+`transform.position` and Unreal's `GetComponentLocation` are the same read of a cached world.
+
+**The cost is one frame.** The script systems run before `TransformSystem` and
+`BoneAttachmentSystem`, so the value is where the entity was drawn *last* frame. A `Set*` earlier in
+the same `OnUpdate` is not reflected, and an entity's first frame reads the origin. Unity and Unreal
+answer the same question freshly because they recompute on read (Unity's dirty hierarchy) or order
+the tick around it (Unreal's tick groups); both would mean moving the script systems or evaluating
+sockets on demand, which is not worth it for a muzzle that moves a few centimetres a frame.
+
+```lua
+local muzzle = rifle:GetChildByName("Muzzle")
+local from, dir = muzzle:GetWorldPosition(), muzzle:GetWorldForward()
 ```
 
 ### Mouse look

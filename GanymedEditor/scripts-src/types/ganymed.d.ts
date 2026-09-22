@@ -72,6 +72,18 @@ declare interface Entity {
 	GetScale(): Vec3;
 	SetScale(value: Vec3): void;
 
+	/**
+	 * Where the entity was drawn LAST frame, in world space. Read-only.
+	 *
+	 * The only correct way to find an entity on a bone socket (or under one): its local
+	 * transform is not where it is drawn. One frame old because scripts run before the
+	 * transform and socket systems, so a Set* earlier in the same update is not reflected,
+	 * and an entity's first frame reads the origin.
+	 */
+	GetWorldPosition(): Vec3;
+	/** The entity's world -Z (engine forward), unit length, with the same one-frame lag. */
+	GetWorldForward(): Vec3;
+
 	HasRigidBody(): boolean;
 	HasAnimator(): boolean;
 	HasAudioSource(): boolean;
