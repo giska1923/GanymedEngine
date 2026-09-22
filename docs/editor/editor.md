@@ -300,7 +300,7 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   writes `Offset` / `Rotation` on the component plus `TransformComponent::Scale`. It never
   writes `WorldTransformComponent`; the system recomputes next update. Rotation is applied as
   a delta, matching the entity gizmo (Euler option (a) in
-  [SKELETAL_TOOLING.md](../ToDo/SKELETAL_TOOLING.md); a ±90° pitch pop is the trigger for a
+  [SKELETAL_TOOLING.md](../history/SKELETAL_TOOLING.md); a ±90° pitch pop is the trigger for a
   quaternion field). Translation snap is skipped — a grip point is not on a grid; rotate and
   scale still read `MapSnapSettings`. Group-drag is skipped: the rest of the selection does
   not orbit the socket. Hidden while the socket does not resolve, with the reason on the

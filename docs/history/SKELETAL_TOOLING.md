@@ -1,16 +1,13 @@
 # Milestone — Skeletal joint tooling
 
-**Status: S1–S5 landed. S6 is not built.**
+**Status: complete. S1–S6 landed.** The live behaviour is in
+[editor.md](../editor/editor.md) and [scene.md](../engine/scene.md). Leftovers that this close
+did not invent a second time — hide-unresolved, and the A3 grip picture — are in
+[cross-cutting.md](../ToDo/cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
 
 > **Editor milestone.** Every phase touches `GanymedEditor/source/` or `GanymedEngine/source/`,
-> which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`; the game branch
-> receives that work by merge and never sends anything back.
->
-> **`MAP_EDITOR.md` and `MODEL_EDITOR.md` are referenced throughout and live on the `map-editor`
-> branch, not here.** Those links dangle until that branch merges. The three milestones share
-> machinery on purpose — S3 wants the map editor's screen-to-world ray, S5 wants the model editor's
-> asset panel, and all three add editor-opt-in visualizer flags to the same settings singleton — so
-> the references are worth keeping rather than cutting. Delete this note when they land.
+> which the [branch policy](../ToDo/PROVING_GROUND.md#branch-policy) puts on `master`; the game
+> branch receives that work by merge and never sends anything back.
 
 Seeing joints, selecting them, and placing a socket by dragging it rather than by typing radians.
 The counterpart to [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md), which built the mechanism and
@@ -84,8 +81,8 @@ three numbers with no handle.
 |---|---|---|---|
 | **S1** | One owner for joint → world | ~0.5 day | — |
 | **S2** | Skeleton visualization | ~1 day | S1 |
-| **S3** | Joint selection: picking + a joint tree | ~1.5 days | [MAP_EDITOR](MAP_EDITOR.md) M0's ray |
-| **S4** | The socket gizmo | ~1.5 days | S3, [MAP_EDITOR](MAP_EDITOR.md) M1's snap settings |
+| **S3** | Joint selection: picking + a joint tree | ~1.5 days | [MAP_EDITOR](../ToDo/MAP_EDITOR.md) M0's ray |
+| **S4** | The socket gizmo | ~1.5 days | S3, [MAP_EDITOR](../ToDo/MAP_EDITOR.md) M1's snap settings |
 | **S5** | The clip inspector | ~1.5 days | [MODEL_EDITOR](MODEL_EDITOR.md) P1's panel |
 | **S6** | Docs, and closing the attachment milestone | ~0.5 day | all |
 
@@ -197,7 +194,7 @@ See the joints.
 need the editor to walk skeletons and palettes itself and to reimplement the frame maths S1 just
 centralised. `RenderSystem` already reads `AnimatorComponent::Palette` through declared access; it
 is the natural owner. The cost is one more flag on a settings singleton — and if
-[MAP_EDITOR](MAP_EDITOR.md) M2 lands first (which turns collider gizmos on in Edit for the same
+[MAP_EDITOR](../ToDo/MAP_EDITOR.md) M2 lands first (which turns collider gizmos on in Edit for the same
 reason), these should share one *editor visualizers* bitfield rather than accumulating parallel
 booleans.
 
@@ -237,7 +234,7 @@ Click a bone. Know which one it is. Hand it to the tools.
 1. **Editor-side selection state**: `{ UUID entity, int32_t joint }`, held by the editor exactly as
    the outliner holds entity selection. It is not a scene concept and must not become one.
 2. **Picking**: build the ray with `Math::ScreenPointToRay` — **the same function
-   [MAP_EDITOR](MAP_EDITOR.md) M0 introduces**. Then ray-vs-segment distance for each bone and
+   [MAP_EDITOR](../ToDo/MAP_EDITOR.md) M0 introduces**. Then ray-vs-segment distance for each bone and
    ray-vs-sphere for each joint marker, nearest hit within a screen-space threshold. Brute force
    over at most `Skeleton::MaxBones` (128) is free, and unlike entity picking it is **synchronous** —
    the GPU pick buffer cannot see joints at all, since joints are not entities and carry no ID.
@@ -304,7 +301,7 @@ Drag the rifle into the hand.
    `OverrideWorld` a frame later anyway.
 4. One drag is one undo entry: snapshot on the rising edge of `ImGuizmo::IsUsing()`, commit on the
    falling edge, exactly as `EditorLayer::m_GizmoBefore` already does for entities.
-5. Snapping reads [MAP_EDITOR](MAP_EDITOR.md) M1's `MapSnapSettings` when it exists. Rotation
+5. Snapping reads [MAP_EDITOR](../ToDo/MAP_EDITOR.md) M1's `MapSnapSettings` when it exists. Rotation
    snapping is the useful one here; translation snapping on a socket mostly is not, because the grip
    point is wherever the hand is, not on a grid.
 
@@ -402,14 +399,20 @@ clip set is on `first-game`; it was not opened here.
 
 ## Phase S6 — docs, and closing the attachment milestone
 
-1. Update the docs in the table below, in the same changes rather than at the end.
-2. Re-run [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)'s A3 visual gate with the tooling in
-   place — rifle stays in hand through idle, walk, run and the reverse-turn. Mechanical A2 is
-   written up; the picture is not.
-3. Hide-unresolved is **decided**: a general `Visible` / `Enabled` bit `RenderSystem` honours, not
-   a socket-local flag. Not built. See that file's A2 follow-up. This phase does not invent a
-   second one.
-4. Retire `SKELETAL_ATTACHMENTS.md` to `docs/history/` once its gates are recorded.
+**Done.**
+
+S1–S5 already updated the live docs in the table below in those changes. S6 audited them in
+place: `TryGetJointFrame` in [rendering.md](../engine/rendering.md), attachment maths and
+skeleton gizmos in [scene.md](../engine/scene.md), clip measurements in
+[assets.md](../engine/assets.md), Joints panel / picking / socket gizmo / Controls in
+[editor.md](../editor/editor.md). No second changelog.
+
+| Probe | Result |
+|---|---|
+| Live docs vs the table | Present. S1–S5 wrote them; this phase did not append "recent changes". |
+| A3 visual (idle / walk / run / 180° backpedal, Skeletons on) | **Not watched.** `ProvingGround.ganymede` lives on `first-game`. Named in [cross-cutting.md](../ToDo/cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close). |
+| Hide-unresolved | **Decided, not built.** General `Visible` / `Enabled` bit, not a socket-local flag. Same leftover file. This phase did not invent a second one. |
+| Retire attachments | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) → `docs/history/`. |
 
 ---
 
@@ -431,7 +434,7 @@ clip set is on `first-game`; it was not opened here.
 5. **X-ray is the default.** A depth-tested skeleton inside a character is an invisible skeleton;
    the toggle exists for the cases where occlusion is the information.
 6. **Visualizer flags are accumulating.** Collider gizmos, physics debug draw, markers
-   ([MAP_EDITOR](MAP_EDITOR.md) M4) and now skeletons all follow the same engine-default-off,
+   ([MAP_EDITOR](../ToDo/MAP_EDITOR.md) M4) and now skeletons all follow the same engine-default-off,
    editor-opts-in-per-frame pattern on a settings singleton. Whichever milestone lands second should
    collapse them into one bitfield rather than adding a fourth boolean.
 7. **Mixed selection still uses the entity gizmo.** The socket path skips group-drag; the entity
@@ -447,7 +450,7 @@ clip set is on `first-game`; it was not opened here.
 | S3 | [editor/editor.md](../editor/editor.md) — the joint tree panel, picking precedence, and the selection rule |
 | S4 | [editor/editor.md](../editor/editor.md) — gizmo modes and the Controls table |
 | S5 | [editor/editor.md](../editor/editor.md); [engine/assets.md](../engine/assets.md) if the checks are described beside the clip data |
-| S6 | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) → `docs/history/`, and strike what closed from [README.md](README.md) |
+| S6 | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) → `docs/history/`, leftovers in [cross-cutting.md](../ToDo/cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close) |
 
 **New source files in S3 (the joint tree panel) mean premake regeneration** —
 `GanymedEditor/premake5.lua` globs `source/**`, expanded at generation time.

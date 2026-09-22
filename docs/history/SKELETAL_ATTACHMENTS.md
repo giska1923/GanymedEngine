@@ -1,7 +1,10 @@
 # Milestone — Skeletal attachments (bone sockets)
 
-**Status: A1, A2 and A3 have landed. Mechanical verification is written up below. The visual A3
-gate and a visibility bit are not done — they are named, not deferred-by-silence.**
+**Status: A1, A2 and A3 have landed as mechanism and wiring. S6 retired this file to
+`docs/history/`.** Mechanical verification is written up below. The visual A3 gate (rifle stays
+in the hand through the carry clips) and a visibility bit were named rather than deferred by
+silence; they now live in
+[cross-cutting.md](../ToDo/cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
 The engine can pin an entity to a joint (`BoneAttachmentComponent` + `BoneAttachmentSystem`), the
 character runs a weapon-carry clip, and the rifle is socketed to `RightHand`.
 
@@ -9,16 +12,8 @@ Evidence, on `first-game`, in `Game/assets/scenes/ProvingGround.ganymede`: the p
 `AnimatorComponent { Clip: Lower_Weapon_Look_Raise }` and its `Rifle` child carries a
 `BoneAttachmentComponent` naming `RightHand` with a hand-tuned offset and rotation.
 
-Still open:
-
-- **The A3 visual gate** (rifle stays in the hand through idle / walk / run / the reverse-turn)
-  has not been watched. [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S2 makes it observable; S6
-  re-runs it. The wiring is confirmed; the picture is not.
-- **Hide an unresolved socket** — **decided, not built.** A general `Visible` / `Enabled` bit
-  that `RenderSystem` honours, not a socket-local suppression. See the A2 follow-up.
-- **The offsets were placed by hand, which is the bottleneck this plan said to watch for.** That
-  evidence became [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md): a visualizer, joint picking and a
-  socket gizmo.
+The offsets were placed by hand, which is the bottleneck this plan said to watch for. That
+evidence became [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md).
 
 ---
 
@@ -35,7 +30,7 @@ rubber. That generation was discarded and re-rolled unarmed.
 
 > The detailed record of that — the prompts, the measurements, the re-roll — is in
 > `PROVING_GROUND.md` **on the game branch**, not in this copy. The milestone's own branch policy
-> splits its write-ups that way; see [README.md](README.md). The facts this plan depends on are
+> splits its write-ups that way; see [ToDo README](../ToDo/README.md). The facts this plan depends on are
 > restated here rather than linked, so nothing below relies on reading the other branch.
 
 **Parent the weapon to the character entity.** It then hangs at a fixed offset from the capsule and
@@ -202,8 +197,8 @@ There is no dedicated backpedal clip. Holding S turns the mesh 180° and plays w
 that is the "backpedal turn" the A3 gate names, not Meshy's `Walk Backward with Gun 1`.
 
 The **~5 cm cross-clip table was never measured.** Reconstructing it from a transcript would be
-inventing the gate. [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S5 is the readout that was always
-going to do that measurement; it is not done here.
+inventing the gate. [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S5 is the readout; it reports Head Y /
+Hips Y / Hips Z at t=0 per clip. Those figures were not compared to a hand table on this branch.
 
 ### A2 — The engine feature, on `master`
 
@@ -298,8 +293,10 @@ believing the picture.
 | Idle / walk / run | The three A1 clips, selected by capsule speed in `Player.lua` |
 | Backpedal turn | Mesh yaw eased 180° when moving opposite the camera; same walk/run clips, not a backward cycle |
 
-The "stays in the hand" picture was not watched from this branch. S2 draws the joints; S6 re-runs
-this gate with them visible. Until then this section records the wiring, not the grip.
+The "stays in the hand" picture was not watched from this branch. S2 draws the joints; S6 did not
+re-run the gate (`ProvingGround` lives on `first-game`). Until then this section records the
+wiring, not the grip. Leftover:
+[cross-cutting.md](../ToDo/cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
 
 ---
 
@@ -314,12 +311,12 @@ this gate with them visible. Until then this section records the wiring, not the
   weapon attaches at the wrist and the hand cannot close around it. With a carry clip the grip pose
   is baked into the animation, which is why A1 comes first. Without one, no socket offset will make
   it look held.
-- ~~**The editor needs the *target's* skeleton to populate a joint dropdown.**~~ **Built.** The
+- **The editor needs the *target's* skeleton to populate a joint dropdown.** **Built.** The
   `BoneAttachmentComponent` section resolves the target entity (drop from the outliner, or the
   hierarchy parent when `Target` is zero) and fills a combo from
   `mesh->GetSkeleton().JointNames` on *that* entity — the first inspector section to read a
-  component off a different entity than the one selected. What it still cannot do is show where any
-  of those joints *is*; that is [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md) S2.
+  component off a different entity than the one selected. [SKELETAL_TOOLING.md](SKELETAL_TOOLING.md)
+  S2 draws where those joints are; S3 picks them.
 - **`Scene::Copy` runs on play.** `Resolved` is a runtime index and must reset, the same way
   `AnimatorComponent::Time` and `Palette` already do.
 
@@ -343,7 +340,7 @@ system:
 
 ## Branch policy
 
-Unchanged from [PROVING_GROUND.md](PROVING_GROUND.md): A2 is engine work and lands on `master`
+Unchanged from [PROVING_GROUND.md](../ToDo/PROVING_GROUND.md): A2 is engine work and lands on `master`
 first; A1 and A3 are content and wiring and live on the game branch. The check stays mechanical:
 
 ```
