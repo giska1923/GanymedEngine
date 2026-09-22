@@ -804,6 +804,45 @@ namespace GanymedE {
 		GE_CORE_INFO("Reloading asset '{0}'", metadata->FilePath);
 	}
 
+	bool AssetManager::SetAssetConfig(AssetHandle handle, const AssetConfig& config)
+	{
+		if (!IsAssetHandleValid(handle) || !IsAssetsWritable())
+			return false;
+
+		auto it = s_Data.Registry.find(handle);
+		if (it == s_Data.Registry.end())
+			return false;
+
+		const std::filesystem::path fullPath = GetAssetRoot() / it->second.FilePath;
+
+		// Disk first, so a hand-added unknown key survives even if the in-memory index
+		// has not been rescanned. Incoming keys overlay; nothing is dropped.
+		AssetMeta meta;
+		if (AssetMetaSerializer::Read(fullPath, meta) != AssetMetaSerializer::ReadResult::Ok)
+		{
+			meta.Handle = it->second.Handle;
+			meta.Type = it->second.Type;
+			meta.ImportConfigVersion = CurrentImportConfigVersion;
+			meta.Config = it->second.Config;
+		}
+
+		for (const auto& [key, value] : config)
+			meta.Config[key] = value;
+
+		if (!AssetMetaSerializer::Write(fullPath, meta))
+			return false;
+
+		// Index first. Reload only when the compile-affecting hash moved — Collision
+		// lives in this bag but is not an input to MeshCompiler, and evicting the live
+		// mesh because a crate's default flipped is a hitch for no compiled-byte change.
+		const bool compileChanged =
+			CompiledCache::HashConfig(it->second.Config) != CompiledCache::HashConfig(meta.Config);
+		it->second.Config = meta.Config;
+		if (compileChanged)
+			Reload(handle);
+		return true;
+	}
+
 	namespace {
 
 		bool UsesTexture(const Material& material, AssetHandle texture)

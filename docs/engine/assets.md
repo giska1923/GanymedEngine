@@ -84,6 +84,7 @@ one derived index plus a registry of per-type managers (see *Managers and cachin
 | `GetHandle(path)` / `GetMetadata(handle)` / `GetAssetType(handle)` | Lookups |
 | `GetAsset<T>(handle)` | Cached load through the type’s manager. Available for `Mesh`, `Environment`, `Texture2D`, `Material` — and only those, enforced by an `IsAssetType<T>` `static_assert`. Prefer an [`AssetRef<T>`](#assetreft) member; this is for one-shot lookups |
 | `Reload(handle)` | Evict the loaded asset so the next `GetAsset` re-reads it from disk |
+| `SetAssetConfig(handle, config)` | Overlay keys onto the sidecar’s Config (unknown keys on disk survive), write atomically, update the index, `Reload` only when `CompiledCache::HashConfig` moved. Authoring keys (`Collision`) share the bag but do not evict the live asset. Writing a `.meta` does not trip `AssetWatcher` — it stamps the asset file, not the sidecar — so a compile-affecting write has to Reload itself |
 | `GetCacheStats()` | One `{TypeName, Resident, Retained}` row per registered manager, for the editor’s Stats panel |
 | `OrphanedMetaCount()` / `CleanOrphanedMeta()` | `.meta` sidecars the last scan found with no asset beside them, and the action that deletes them. Split because detection is safe and deletion is not — see [Orphaned sidecars](#orphaned-sidecars) |
 | `IsAssetsWritable()` | "This process may write into `assets/`" — one flag, one meaning, for sidecars and every other asset-file writer |
@@ -452,9 +453,10 @@ resolves through the `AssetRef` it is about to store rather than through a local
 Two things that hold assets alive and are easy to forget: `Renderer3D` keeps a `Ref<Environment>`
 for the duration of a frame, and the editor's undo stack snapshots whole components, so an
 `AssetRef` in undo history keeps its asset resident. Both are correct — they are real references —
-but they mean resident counts lag a scene close until the undo stack is cleared. The content
-browser needs no such care: its icons are fixed `resources/` textures outside the asset cache, so
-the thumbnail-cache hazard the design anticipated does not exist here.
+but they mean resident counts lag a scene close until the undo stack is cleared. The Content
+Browser's type icons are still fixed `resources/` textures. Mesh thumbnails are a separate
+128×128 `Texture2D` cache on `AssetPreview` — they are not `Mesh` refs, so opening a folder of
+200 meshes does not pin 200 meshes resident. See [Thumbnail cache](#thumbnail-cache).
 
 ## `AssetRef<T>`
 
@@ -1219,7 +1221,21 @@ with their project folder as CWD (each app has its own `assets/`; the editor's i
 2.0 (`.gltf`/`.glb`) via the header-only cgltf into a
 [`MeshSource`](../../GanymedEngine/source/GanymedE/Renderer/MeshSource.h) — **CPU data only, no bgfx
 call anywhere below it**, which is what lets it run on a worker. `BuildMesh` is the main-thread half
-that turns one into a live `Mesh`.
+that turns one into a live `Mesh`. `MeshCompiler` passes the sidecar Config through; the epoch
+hashes the compile-affecting keys (`ConfigAffectsCompile`), so a changed importer key invalidates
+the blob with no new machinery and an authoring key (`Collision`) does not. Defaults live
+in `MeshImportSettings` and match what the importer did before the keys existed — an empty sidecar
+does not change a mesh. Compiler `Version()` is therefore not bumped.
+
+| Key | Values | Default | What it does |
+|---|---|---|---|
+| `ImportScale` | float > 0 | `1.0` | Uniform scale baked at import. Static verts bake it; skinned verts keep bind space and the same matrix rides `Submesh::LocalTransform`, because the draw is `entity * LocalTransform * Palette * v` |
+| `TangentPolicy` | `WhenMissing`, `Always`, `Never` | `WhenMissing` | `WhenMissing` is the previous hard-coded rule. `Always` regenerates even when the file shipped tangents. `Never` trusts the file and, if it has none, leaves the pre-generation constant +X |
+| `UpAxis` | `Y`, `Z` | `Y` | glTF is Y-up by spec. `Z` applies a −90° rotation about X (Z-up DCC → Y-up) through the same import matrix as `ImportScale` |
+| `Collision` | `None`, `Box` | `None` | Placement seed, not an importer input. `Box` makes `MeshImporter::Instantiate` add a `BoxColliderComponent` fitted from `Mesh::GetBounds()`. Existing entities keep the component they already have. `ConfigAffectsCompile` excludes this key, so flipping it does not invalidate the blob. Leave `None` on a hollow building shell — the AABB is the outer volume and a Box seed would fill the interior |
+
+The Asset Inspector writes these keys. A bad `ImportScale` rescales every existing placement and
+is not undoable — the panel says so in the same words the `.gmat` editor uses.
 
 ### Tangents are generated when the file has none
 
@@ -1266,6 +1282,11 @@ Two deliberate limits:
   file supplied one. A mirrored UV shell lights as though it were not mirrored. Carrying `w` means a
   vertex-format change; nothing in the project has mirrored shells yet.
 
+`MeshImporter::InspectSource` is the read-only half of the same parse: glTF JSON only (skins,
+whether any primitive lacks `TANGENT`, whether any material names a normal map), no buffer load
+and no `Mesh`. The Asset Inspector asks once per selection so the warnings the importer already
+logs are visible without bumping the compiled blob to carry them.
+
 - Walks the node tree **depth-first into a vector**, flattening every mesh primitive into one
   interleaved vertex/index buffer with a `Submesh` per primitive. Traversal order is part of the
   contract: submesh order must be stable across runs or cache diffs and joint↔submesh correlation
@@ -1280,7 +1301,9 @@ Two deliberate limits:
   `BuildMesh` is where a path becomes a texture, through `TextureImporter::LoadMaterialMap` so it
   de-duplicates through the asset index.
 - `MeshImporter::Instantiate(scene, path)` — used by viewport drag-drop — imports the asset (minting
-  its handle and sidecar if new) and creates an entity with a `StaticMeshComponent`.
+  its handle and sidecar if new) and creates an entity with a `StaticMeshComponent`. It does not add
+  an `AnimatorComponent`; `RenderSystem` skins a `HasSkeleton()` mesh from `Mesh::GetRestPalette()`
+  so a dropped character draws at rest without authoring a clip first.
 
 ### Skinning data
 
@@ -1312,9 +1335,15 @@ with it:
 
   It is kept out of `LocalRestPose` because animation channels replace joint locals wholesale. The
   correctness test is that at the rest pose `Global[i] * InverseBind[i]` comes out as identity for
-  every joint; anything else means one of the two terms is wrong. Of the Khronos samples, both
-  CesiumMan and RiggedFigure exercise it and Fox does not — every node in Fox is at identity, so it
-  cannot distinguish a right answer from several wrong ones.
+  every joint **on a file whose mesh node is identity** (Fox, CesiumMan after the RootTransform
+  fix). Anything else on those files means one of the two terms is wrong. Meshy files fail that
+  test on purpose: vertices are metres, joints are centimetres, `LocalTransform` is 0.01, and the
+  rest palette is ~scale 100 so `LocalTransform * Palette` cancel. `SubmitMesh` applies only the
+  0.01 and draws a 1.8 cm character; that is why a `HasSkeleton()` mesh always goes through
+  `SubmitSkinnedMesh` with `Mesh::GetRestPalette()` when no animator has built a clip palette.
+  Of the Khronos samples, both CesiumMan and RiggedFigure exercise the identity test and Fox does
+  not — every node in Fox is at identity, so it cannot distinguish a right answer from several
+  wrong ones.
 - **Conditional world bake.** Skinned primitives skip the world-space bake and keep their vertices
   in skin space, because glTF places them via `globalJointTransform * inverseBindMatrix` and the
   spec says a skinned mesh node's own transform is ignored. Static primitives are baked exactly as
@@ -1326,10 +1355,22 @@ with it:
   instead of double-applying. Clearing it leaves the mesh in raw bind space, which for any file with
   a Y-up correction node means the character renders lying on its side. Both halves of that
   cancellation have to be present; either alone is wrong.
+- **`Mesh::GetRestPalette()`** is `BuildSkinningPalette(skeleton, nullptr, …)` cached at
+  `Mesh::Build`. Not stored in the compiled blob — the skeleton already is. `RenderSystem`,
+  `AssetPreview`, and rest-sized `Submesh::Bounds` all read it so a dropped or thumbnailed
+  character does not go through `SubmitMesh`.
 - **Clips**: LINEAR and STEP are supported; CUBICSPLINE degrades to linear (the middle value of each
   in-tangent/value/out-tangent triple) with a warning. Morph-target weight channels are skipped.
   Duration is the maximum key time across channels. Rotation values are stored **xyzw** — glTF's
   order, not `glm::quat`'s `(w, x, y, z)` constructor order.
+  The Asset Inspector reports, per clip, duration, channel count, joints animated, and which of
+  T/R/S are present, plus four measurements that do not rewrite the file: a Scale channel whose
+  keys are all equal and not 1 (joint + factor); root-joint translation at `Duration` minus `t=0`
+  per axis, with a detrended residual (max |sample − lerp(start,end)|); Head Y / Hips Y / Hips Z
+  at `t=0` across every clip on the mesh; and `JointCount() > Skeleton::MaxBones` (128), already
+  warned at import and clamped at upload. Wording is what was measured, not a defect. A mesh with
+  no clips states that. Sampling is `SampleClipGlobals` in
+  [`Animation.h`](../../GanymedEngine/source/GanymedE/Renderer/Animation.h).
 - Skin weights ride a **second vertex stream** (`SkinVertex`) rather than widening `MeshVertex`,
   which would tax every static mesh 32 bytes a vertex. Because both bgfx streams are bound with one
   `startVertex`, `Mesh::GetSkinVertices()` is either empty or exactly parallel to the vertex array:
@@ -1345,6 +1386,7 @@ DDS, and a `.glb` becomes the binary mesh blob that used to live in `assets/.ass
 ```
 assets/.compiled/<h0h1>/<h>.gres    the artifact
 assets/.compiled/<h0h1>/<h>.dep     its epoch record
+assets/.compiled/<h0h1>/<h>.thumb   editor thumbnail (RGBA8, 128×128)
 ```
 
 `h` is a 64-bit FNV-1a of the asset-root-relative *source path*, so the tree is flat and bounded
@@ -1353,6 +1395,11 @@ files in a project with tens of thousands of assets. Hashing happens in one func
 (`CompiledCache::OutputPath`), which is what makes adding a platform tag to the key a one-line
 change the day a second build target exists — the machinery for that is deliberately *not* built
 (roadmap decision 9).
+
+`CompiledCache::QueryOutput` is the editor's non-compiling status: Missing / Stale / Current /
+None (type has no compiler). It compares the `.dep`'s cheap fields and does **not** content-hash
+the source — that is `Open`'s job. A touched-but-identical file therefore reports Stale until
+the next Open refreshes the record.
 
 ### Compilers
 
@@ -1380,7 +1427,7 @@ a cold import. `MeshSource` split that in Phase 5; both compilers honour the con
 ### Epoch invalidation
 
 The `.dep` holds compiler version, source size, source mtime, source **content hash**, a hash of
-the `.meta` Config block, and a `{path, hash}` pair per declared dependency. `EpochDiff` is a
+the `.meta` Config block (keys `ConfigAffectsCompile` accepts — `Collision` is skipped), and a `{path, hash}` pair per declared dependency. `EpochDiff` is a
 bitflag set naming which of those moved, and it is in the recompile log line because "why did this
 rebuild" is the question an invalidation bug makes you ask:
 
@@ -1425,6 +1472,23 @@ cannot write its own directory still runs — it just recompiles every boot, and
 **Compilation is a build-time step, and a shipped game should ship its `.compiled/` tree**, the way
 UE ships cooked content. The fallback exists so a missing tree is slow rather than fatal.
 
+### Thumbnail cache
+
+Editor-only. `AssetPreview` writes a 128×128 RGBA8 `.thumb` next to the `.gres`, with a header
+holding `CompiledCache::HashConfig` and a version (`kThumbVersion`, currently 2 — bumped when
+skinned preview switched from `SubmitMesh` to the rest palette, so Meshy centimetre-characters
+are not kept as empty images). A file is trusted only when `QueryOutput` is Current *and*
+that hash matches *and* the version matches, so a reimport or a compile-affecting config change
+invalidates it for free — `CompiledCache::Invalidate` deletes the `.thumb` with the `.gres`.
+`Collision` is skipped from `HashConfig`, so changing the collision default does not rebuild a
+thumbnail (the wire box is an inspector overlay, not part of the image).
+
+The GPU cache holds those small `Texture2D`s, not `Mesh` refs, and is capped at 256. Disk size
+is reported on the Stats panel next to the compiled-output counters. A texture or material edit
+is not a mesh-epoch change — the blob stores paths, not pixels — so the live session drops GPU
+thumbs and rebuilds visible cells; neighbours that were never on screen keep their previous
+`.thumb` until they are.
+
 ## Texture compilation
 
 [`TextureCompiler`](../../GanymedEngine/source/GanymedE/Assets/TextureCompiler.h) decodes the source
@@ -1434,11 +1498,13 @@ generates mips and block-compresses into a DDS. `Texture2D` takes the container 
 `bgfx::createTexture`, which parses DDS itself — so a mipped, compressed texture costs the engine no
 more code than an uncompressed one.
 
-`.meta` Config keys, all optional:
+`.meta` Config keys, all optional. Defaults live in `TextureImportSettings`; the Asset Inspector
+reads the same constants.
 
 | Key | Values | Default |
 |---|---|---|
 | `Format` | `auto`, `BC1`, `BC3`, `BC4`, `BC5`, `BC7`, `RGBA8` | `auto` |
+| `NormalMap` | `true`, `false` | `false` (`BC5` implies true in the encoder) |
 | `GenerateMips` | `true`, `false` | `true` |
 | `MaxSize` | integer, longest edge; 0 for no limit | `0` |
 

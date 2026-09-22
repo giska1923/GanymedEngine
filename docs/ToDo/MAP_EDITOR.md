@@ -247,8 +247,8 @@ you asked.
 2. **`Panels/MapPanel.{h,cpp}`** (new files → premake regeneration). Sections: palette, placement
    options, parity audit (M2), scatter (M3), markers (M4).
 3. **Palette**: enumerate candidates with `AssetManager::ForEachAsset` filtered to `Prefab` and
-   `StaticMesh`; a pinned subset is what the palette shows. Rows are `AssetTint` icon + name —
-   **there is no thumbnail system and this milestone does not build one**.
+   `StaticMesh`; a pinned subset is what the palette shows. Rows are `AssetTint` icon + name
+   until a thumbnail exists; [MODEL_EDITOR.md](../history/MODEL_EDITOR.md) P6 is the cache that fills them.
 4. **Palette persistence** at `<project>/.editor/map_palette.yaml`. Project-relative, not
    `imgui.ini`: a palette is a fact about the *content*, and `imgui.ini` is per-install window
    layout that no one wants merged.
@@ -379,10 +379,12 @@ audit that implies a guarantee it does not make is worse than no audit.
 it on the static mesh asset; Unity computes bounds when a `BoxCollider` is added to a renderer.
 Ganymed's colliders live on components, so the same crate mesh can carry different collision per
 placement — more flexible, and the reason the wrong value can be typed in the first place.
-**The better long-term answer is a collision default in the mesh's `.meta` sidecar**, so a crate
-brings its collider with it and placement never types anything. That is a real design change with an
-asset-format consequence and it is not folded in here — it is written into
-[assets.md](assets.md) as a follow-up instead.
+The mesh sidecar now carries a `Collision` seed (`None` | `Box`) from
+[MODEL_EDITOR](../history/MODEL_EDITOR.md) P3: placement copies a fitted `BoxColliderComponent` onto the new
+entity and stops there. Generate-from-mesh is the repair for entities that arrived before the
+default existed, or for a mesh that still says `None`; it shares `MeshCollision::SeedBoxCollider`
+with add-component and still live-fits from `Mesh::GetBounds()`. The component remains the
+override — two placements of the same crate can still disagree.
 
 ### Risks
 
@@ -741,7 +743,6 @@ the editor pointing `--project=` at `Game/assets`.
 | Heightfield terrain | A renderer path, an asset type and a Jolt collider type. Its own milestone |
 | Brush / CSG geometry | Would make collider-mesh disagreement structurally impossible; needs a procedural-mesh path and a second authoring model. M2's audit is what tells us whether we still need it |
 | Vertex / edge / face snapping | Unreal's V-key, Blender's snap-to-vertex. Needs a per-mesh vertex acceleration structure — the same BVH M0 defers |
-| Asset thumbnails in the palette | Needs an offscreen thumbnail renderer and a disk cache. Icons and names are honest; a blank thumbnail grid is not |
 | Instance-array scattering | The right answer at scale, and the reason M3 has a cap. Written into ToDo instead |
 | Level streaming / sublevels | One scene, one file, unchanged |
 | Navmesh, lighting bake, occlusion volumes | PROVING_GROUND cut navmesh on purpose and nothing since has changed that argument |

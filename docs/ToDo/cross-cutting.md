@@ -510,3 +510,25 @@ Two things would make this repeatable, and they are separable:
 - **Resolving engine chrome against the executable** rather than the working directory, which
   would let a shipped game's `assets/` hold only the game. Bigger, and it touches every
   `Shader::Create` call site.
+
+## Skeletal leftovers after the attachment and tooling close
+
+[SKELETAL_ATTACHMENTS.md](../history/SKELETAL_ATTACHMENTS.md) and
+[SKELETAL_TOOLING.md](../history/SKELETAL_TOOLING.md) are in history. Two items they named were
+deliberately not built, so they live here rather than vanishing with the plans.
+
+**A general `Visible` / `Enabled` bit `RenderSystem` honours.** Decided in the attachments A2
+follow-up: hide an unresolved socket during the frames a skinned mesh is still streaming. Not a
+socket-local flag — that would be a second visibility system the day anything else needs to hide.
+Unity's renderer enabled / Unreal's hidden-in-game. Useful for cutscenes, inventory, pooling;
+sockets are one client. Do not add a socket-only suppression in the meantime. The pop is brief
+now that scale is no longer compensated on fail-to-resolve. The outliner eye is the wrong hook:
+`EditorViewFilter` is cleared on Play, so reusing it would hide the rifle in the editor and show
+it in the game.
+
+**The A3 visual gate was not watched from master.** Wiring is recorded (Rifle child of Body,
+`Joint: RightHand`, hand-tuned Offset/Rotation, Scale 0.45). The picture — rifle stays in the
+hand through idle / walk / run and the 180° backpedal turn, with Skeletons on so the wrist is
+visible — needs `ProvingGround.ganymede` on `first-game`. The other half of that gate is content:
+`Muzzle` is still parented to `Yaw`; moving it onto the barrel was not done, and fire is still
+Yaw-space until it is re-derived from the gun.

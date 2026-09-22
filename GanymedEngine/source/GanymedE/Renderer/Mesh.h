@@ -29,7 +29,10 @@ namespace GanymedE {
 		uint32_t MaterialIndex = 0;
 		glm::mat4 LocalTransform{ 1.0f };
 		std::string Name;
-		AABB Bounds; // local-space bounds (before LocalTransform), rebuilt on load
+		// Local-space (before LocalTransform). Skinned: rest-pose AABB — bind box transformed
+		// by the root joint's rest palette, then padded. That is the box vs_PhongSkinned draws
+		// with GetRestPalette(), so preview framing and collision seeds match the visible mesh.
+		AABB Bounds;
 
 		// Skinned primitives keep their vertices in skin space - glTF places them via
 		// jointMatrix = globalJointTransform * inverseBindMatrix, and the spec says
@@ -78,6 +81,11 @@ namespace GanymedE {
 		const Skeleton& GetSkeleton() const { return m_Skeleton; }
 		const std::vector<SkinVertex>& GetSkinVertices() const { return m_SkinVertices; }
 
+		// Rest-pose palette: SampleClipGlobals(nullptr) then Global * InverseBind, built once
+		// with the mesh. Empty if there is no skeleton or the skeleton arrays disagree.
+		// RenderSystem and AssetPreview submit this when no animator has built a clip palette.
+		const std::vector<glm::mat4>& GetRestPalette() const { return m_RestPalette; }
+
 		const std::vector<AnimationClip>& GetClips() const { return m_Clips; }
 		const AnimationClip* FindClip(const std::string& name) const;
 
@@ -117,7 +125,9 @@ namespace GanymedE {
 			std::vector<SkinVertex> skinVertices, Skeleton skeleton, std::vector<AnimationClip> clips);
 	private:
 		void Build();
+		void BuildRestPalette();
 		void ComputeBounds();
+		glm::mat4 RestBoundsMatrix() const;
 	private:
 		std::vector<MeshVertex> m_Vertices;
 		std::vector<uint32_t> m_Indices;
@@ -129,6 +139,7 @@ namespace GanymedE {
 		std::vector<SkinVertex> m_SkinVertices;
 		Skeleton m_Skeleton;
 		std::vector<AnimationClip> m_Clips;
+		std::vector<glm::mat4> m_RestPalette;
 
 		Geometry m_Geometry;
 		Ref<VertexBuffer> m_SkinGeometry;
@@ -136,5 +147,15 @@ namespace GanymedE {
 
 		std::string m_Path;
 	};
+
+	// Joint frame in the mesh entity's local space. The caller multiplies by the target
+	// entity's world matrix. Recovers Palette[i] * inverse(InverseBind[i]), folds in the first
+	// skinned submesh's LocalTransform, and divides the bind pose's basis scale back out —
+	// the same chain Renderer3D uses, so a visualizer cannot drift from a socket.
+	//
+	// False if `joint` is out of range of the palette or InverseBind, or if InverseBind[joint]
+	// is singular. Does not log: BoneAttachmentSystem attributes the failure to an entity.
+	bool TryGetJointFrame(const Mesh& mesh, const std::vector<glm::mat4>& palette,
+		int32_t joint, glm::mat4& outFrame);
 
 }

@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,18 @@ namespace GanymedE {
 		ContentBrowserPanel();
 
 		void OnImGuiRender();
+
+		// Absolute path of the selected file or folder; empty when nothing is selected.
+		const std::filesystem::path& GetSelectedPath() const { return m_Selected; }
+
+		// Fired when the selection actually changes, including a clear. EditorLayer wires
+		// this to the Asset Inspector the same way it wires MapPanel's place handler.
+		void SetSelectionChangedCallback(std::function<void(const std::filesystem::path&)> callback)
+		{
+			m_OnSelectionChanged = std::move(callback);
+		}
 	private:
+		void SetSelected(const std::filesystem::path& path);
 		enum class SortMode { Name, Type };
 		enum class ViewMode { Grid, List };
 
@@ -63,6 +75,8 @@ namespace GanymedE {
 		void DrawItemContextMenu(const ListingItem& item);
 		void BeginItemDrag(const ListingItem& item);
 
+		std::function<void(const std::filesystem::path&)> m_OnSelectionChanged;
+
 		std::filesystem::path m_BaseDirectory;
 		std::filesystem::path m_CurrentDirectory;
 		std::filesystem::path m_Selected;
@@ -84,5 +98,8 @@ namespace GanymedE {
 
 		Ref<Texture2D> m_DirectoryIcon;
 		Ref<Texture2D> m_FileIcon;
+
+		float m_LastScrollY = 0.0f;
+		std::chrono::steady_clock::time_point m_LastScrollChange{};
 	};
 }

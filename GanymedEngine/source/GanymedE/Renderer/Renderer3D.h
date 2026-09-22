@@ -33,11 +33,11 @@ namespace GanymedE {
 		static void SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID = -1,
 			const Ref<Material>* materialOverrides = nullptr, uint32_t overrideCount = 0);
 
-		// Draws the mesh with a joint palette (AnimatorComponent::Palette) instead of
-		// the static path. The palette is copied here, so the caller may reuse or
-		// rebuild its storage immediately. Skinned submeshes cannot batch - each is
-		// one draw call with its own palette upload - so this falls back to
-		// SubmitMesh when there is nothing to skin with.
+		// Draws the mesh with a joint palette instead of the static path. Null / empty
+		// palette uses Mesh::GetRestPalette(). The palette is copied here, so the
+		// caller may reuse or rebuild its storage immediately. Skinned submeshes cannot
+		// batch - each is one draw call with its own palette upload. Falls back to
+		// SubmitMesh only when there is no rest palette and nothing to skin with.
 		static void SubmitSkinnedMesh(const Ref<Mesh>& mesh, const glm::mat4& transform,
 			const glm::mat4* palette, uint32_t jointCount, int entityID = -1,
 			const Ref<Material>* materialOverrides = nullptr, uint32_t overrideCount = 0);
@@ -55,8 +55,12 @@ namespace GanymedE {
 		static void DrawSkybox();
 		static void DrawGrid();
 
-		// Immediate-ish debug drawing (accumulated and flushed in EndScene)
-		static void DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color = glm::vec4(1.0f));
+		// Immediate-ish debug drawing (accumulated and flushed in EndScene).
+		// `depthTest` false is the x-ray overlay: a second line submit with depth
+		// testing off, so a skeleton inside a mesh is still visible. Default true
+		// keeps collider / marker gizmos occluded as before.
+		static void DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color = glm::vec4(1.0f),
+			bool depthTest = true);
 		static void DrawWireBox(const glm::mat4& transform, const glm::vec4& color = glm::vec4(0.2f, 0.9f, 0.35f, 1.0f));
 		static void DrawWireSphere(const glm::vec3& center, float radius, const glm::vec4& color = glm::vec4(0.3f, 0.7f, 1.0f, 1.0f), int segments = 24);
 		static void DrawWireCapsule(const glm::vec3& center, const glm::quat& rotation, float radius, float halfHeight,
@@ -74,6 +78,8 @@ namespace GanymedE {
 			uint32_t ParticleBillboards = 0;     // quads that actually drew (truncation-honest)
 			uint32_t ParticleDrawCalls = 0;      // one per visible billboard emitter
 			uint32_t ParticleCulledEmitters = 0; // skipped by the Phase 2 AABB
+			uint32_t DebugLines = 0;             // line segments submitted (collider, marker, skeleton)
+			uint32_t DebugLineDraws = 0;         // 0-2 submits (depth-tested batch + optional x-ray)
 		};
 		static void ResetStats();
 		static Statistics GetStats();

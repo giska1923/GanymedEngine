@@ -92,6 +92,12 @@ namespace GanymedE {
 		// pending-pick queue on top - see docs/history/BGFX_MIGRATION.md §7.
 		uint32_t RequestPixelRead(uint16_t viewId, uint32_t attachmentIndex, int x, int y, void* dest);
 
+		// Full-attachment readback, same latency as RequestPixelRead. `dest` must
+		// hold Width*Height*bpp and stay alive until that frame number. The
+		// staging texture is per-framebuffer; do not mix this with 1×1 picking
+		// on the same Framebuffer in the same frame.
+		uint32_t RequestImageRead(uint16_t viewId, uint32_t attachmentIndex, void* dest);
+
 		// True when the attachment resolved to an integer format. The entity-ID
 		// target falls back to R32F where R32I is not renderable, and readback
 		// has to reinterpret the bytes accordingly.
@@ -122,8 +128,10 @@ namespace GanymedE {
 		std::vector<bgfx::TextureHandle> m_ColorAttachments;
 		bgfx::TextureHandle m_DepthAttachment = BGFX_INVALID_HANDLE;
 
-		// 1x1 staging texture for RequestPixelRead, created on first use.
+		// Staging texture for RequestPixelRead / RequestImageRead, created on first use.
 		bgfx::TextureHandle m_ReadBack = BGFX_INVALID_HANDLE;
 		bgfx::TextureFormat::Enum m_ReadBackFormat = bgfx::TextureFormat::Count;
+		uint16_t m_ReadBackWidth = 0;
+		uint16_t m_ReadBackHeight = 0;
 	};
 }

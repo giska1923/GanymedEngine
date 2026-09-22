@@ -128,6 +128,7 @@ namespace GanymedE {
 			glm::vec4 Color;
 		};
 		std::vector<LineVertex> LineVertices;
+		std::vector<LineVertex> OverlayLineVertices;
 		Ref<Shader> LineShader;
 		Geometry LineGeometry;
 		Ref<VertexBuffer> LineVertexBuffer;
@@ -201,6 +202,7 @@ namespace GanymedE {
 		});
 		s_Data.LineGeometry.Vertices = s_Data.LineVertexBuffer;
 		s_Data.LineVertices.reserve(s_Data.MaxLineVertices);
+		s_Data.OverlayLineVertices.reserve(s_Data.MaxLineVertices);
 
 		ParticleRenderer::Init();
 	}
@@ -226,6 +228,7 @@ namespace GanymedE {
 		s_Data.LineGeometry = {};
 		s_Data.LineVertexBuffer = nullptr;
 		s_Data.LineVertices.clear();
+		s_Data.OverlayLineVertices.clear();
 
 		// The environment the last frame drew with, and the one member of s_Data that used to be
 		// missed here. `s_Data` is a static, so anything it still holds is destroyed *after*
@@ -245,6 +248,7 @@ namespace GanymedE {
 		s_Data.DrawList.clear();
 		s_Data.PaletteStorage.clear();
 		s_Data.LineVertices.clear();
+		s_Data.OverlayLineVertices.clear();
 
 		s_Data.LightBuffer = LightsUBO{};
 		s_Data.HasShadowLight = false;
@@ -265,7 +269,7 @@ namespace GanymedE {
 		// The matrices ride on the view rather than in a uniform block; only the
 		// camera position still needs uploading. Culling keeps using the CPU-side
 		// copy, which is why CameraBuffer survives the UBO removal.
-		FrameUniforms::SetCamera(RenderPass::SceneHDR, view, projection, cameraPos);
+		FrameUniforms::SetCamera(RenderPass::Id(RenderPass::SceneHDR), view, projection, cameraPos);
 
 		s_Data.CameraFrustum = Frustum::FromViewProjection(s_Data.CameraBuffer.ViewProjection);
 	}
@@ -459,9 +463,16 @@ namespace GanymedE {
 		if (!mesh)
 			return;
 
-		// Degrade to the static path rather than dropping the entity: a rig whose
-		// palette has not been built yet, or whose program failed to compile, should
-		// still draw in its bind pose instead of vanishing.
+		if ((!palette || jointCount == 0) && !mesh->GetRestPalette().empty())
+		{
+			palette = mesh->GetRestPalette().data();
+			jointCount = (uint32_t)mesh->GetRestPalette().size();
+		}
+
+		// Last resort is the static path: no rest palette (corrupt skeleton) or the
+		// skinned program failed to compile. SubmitMesh is not a bind-pose equivalent
+		// when LocalTransform is a unit conversion — it is just better than dropping
+		// the entity entirely.
 		if (!palette || jointCount == 0 || !mesh->GetSkinVertexBuffer()
 			|| !s_Data.SkinnedShader || !s_Data.SkinnedShader->IsValid())
 		{
@@ -686,6 +697,12 @@ namespace GanymedE {
 
 	static void RenderShadowPass(std::vector<const DrawCommand*>& casters)
 	{
+		// Shadow maps live on Renderer3D's singleton framebuffers. A preview
+		// SceneRenderer shares those textures; writing them from a second base
+		// would overwrite the main viewport's cascades in the same bgfx::frame().
+		if (RenderPass::ActiveBase() != RenderPass::MainViewBase)
+			return;
+
 		if (!s_Data.HasShadowLight || !s_Data.ShadowDepthShader || casters.empty())
 			return;
 
@@ -717,7 +734,7 @@ namespace GanymedE {
 				continue;
 
 			// One view per cascade, so bgfx renders them in a defined order.
-			const uint16_t view = RenderPass::Shadow + (uint16_t)c;
+			const uint16_t view = RenderPass::Id(RenderPass::Shadow + (uint16_t)c);
 			s_Data.ShadowFramebuffers[c]->BindToView(view);
 			RenderCommand::SetViewId(view);
 			bgfx::setViewClear(view, BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
@@ -871,7 +888,7 @@ namespace GanymedE {
 		// RenderShadowPass leaves the current view pointing at the last cascade.
 		// Every colour draw below belongs to the scene view - without this they
 		// are submitted into the shadow framebuffer and simply never appear.
-		RenderCommand::SetViewId(RenderPass::SceneHDR);
+		RenderCommand::SetViewId(RenderPass::Id(RenderPass::SceneHDR));
 
 		// Opaque: group by material -> mesh -> submesh (instancing batches within a
 		// group), front-to-back inside each group for early-z
@@ -986,22 +1003,30 @@ namespace GanymedE {
 		RenderCommand::SetCullFace(true);
 		s_Data.DrawList.clear();
 
-		// Debug line overlay (after opaque, depth-tested)
-		if (!s_Data.LineVertices.empty() && s_Data.LineShader && s_Data.LineVertexBuffer)
+		// Debug lines (after opaque). Depth-tested batch first, then the x-ray overlay
+		// with depth testing off — a skeleton inside a mesh is otherwise invisible.
+		auto flushLines = [](auto& verts, bool depthTest)
 		{
-			uint32_t count = (uint32_t)s_Data.LineVertices.size();
+			if (verts.empty() || !s_Data.LineShader || !s_Data.LineVertexBuffer)
+				return;
+
+			uint32_t count = (uint32_t)verts.size();
 			if (count > s_Data.MaxLineVertices)
 				count = s_Data.MaxLineVertices;
 
-			s_Data.LineVertexBuffer->SetData(s_Data.LineVertices.data(), count * sizeof(Renderer3DData::LineVertex));
+			s_Data.LineVertexBuffer->SetData(verts.data(), count * sizeof(verts[0]));
 			s_Data.LineShader->Bind();
-			RenderCommand::SetDepthTest(true);
+			RenderCommand::SetDepthTest(depthTest);
 			RenderCommand::SetDepthWrite(false);
 			RenderCommand::DrawLines(s_Data.LineGeometry, count);
 			RenderCommand::SetDepthWrite(true);
 			s_Data.Stats.DrawCalls++;
-			s_Data.LineVertices.clear();
-		}
+			s_Data.Stats.DebugLineDraws++;
+			verts.clear();
+		};
+		flushLines(s_Data.LineVertices, true);
+		flushLines(s_Data.OverlayLineVertices, false);
+		RenderCommand::SetDepthTest(true);
 	}
 
 	void Renderer3D::DrawSkybox()
@@ -1121,13 +1146,15 @@ namespace GanymedE {
 		s_Data.Stats.ParticleCulledEmitters++;
 	}
 
-	void Renderer3D::DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color)
+	void Renderer3D::DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color, bool depthTest)
 	{
-		if (s_Data.LineVertices.size() + 2 > s_Data.MaxLineVertices)
+		auto& verts = depthTest ? s_Data.LineVertices : s_Data.OverlayLineVertices;
+		if (verts.size() + 2 > s_Data.MaxLineVertices)
 			return;
 
-		s_Data.LineVertices.push_back({ p0, color });
-		s_Data.LineVertices.push_back({ p1, color });
+		verts.push_back({ p0, color });
+		verts.push_back({ p1, color });
+		s_Data.Stats.DebugLines++;
 	}
 
 	void Renderer3D::DrawWireBox(const glm::mat4& transform, const glm::vec4& color)

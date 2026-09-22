@@ -15,12 +15,22 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
    to a *view* (`Framebuffer::BindToView(viewId)`); every draw submitted to that view lands in it.
    bgfx sorts the frame by view ID, so the pass schedule is the table in
    [`RenderPassIDs.h`](../../GanymedEngine/source/GanymedE/Renderer/RenderPassIDs.h) — never a
-   magic number at a call site. The current view ID is *sticky state*
-   (`RenderCommand::SetViewId`); forgetting to restore it after a pass sends subsequent draws into
-   the wrong target silently (this exact bug made all meshes invisible once — migration §8.6).
-   Views that depend on submission order (scene, transparent) are set to `Sequential` mode.
-   A view that receives no draws is skipped *including its clear* — hence the `bgfx::touch()`
-   calls on scene/tonemap/FXAA views and the backbuffer.
+   magic number at a call site. Scene passes in that table are **offsets from a base**.
+   `SceneRenderer::BeginFrame` pushes its `viewBase` as the active base; `EndFrame` pops it;
+   `Renderer3D` / `Renderer2D` / `Environment` resolve through `RenderPass::Id`. The main
+   renderer uses `MainViewBase = 69`, and `static_assert`s lock `MainViewBase + offset` onto the
+   IDs the table used when they were absolute (SceneHDR still 73, Tonemap still 92). A second
+   `SceneRenderer` (the inspector preview at 100, thumbnails at 130) constructs with a non-main
+   base and binds a different framebuffer to the same *offset*. Global passes — backbuffer 0, `EnvironmentBake` 1–67,
+   `UI` 96, `ImGui` 200 — stay absolute; a preview must not steal the game UI. Scene renders do
+   not nest: `Renderer3D`'s frame state is a single static, so a preview is a complete
+   `BeginFrame … EndFrame` outside the main one, and `PushActiveBase` asserts that.
+   The current view ID is *sticky state* (`RenderCommand::SetViewId`); forgetting to restore it
+   after a pass sends subsequent draws into the wrong target silently (this exact bug made all
+   meshes invisible once — migration §8.6). Views that depend on submission order (scene,
+   transparent) are set to `Sequential` mode. A view that receives no draws is skipped
+   *including its clear* — hence the `bgfx::touch()` calls on scene/tonemap/FXAA views and the
+   backbuffer.
 2. **Uniforms are per-draw, not per-frame.** `bgfx::setUniform` contributes to the next submit and
    is consumed by it; setting the same uniform twice before a submit is a hard assert.
    [`FrameUniforms`](../../GanymedEngine/source/GanymedE/Renderer/FrameUniforms.h) therefore only
@@ -292,7 +302,7 @@ up to 20k quads per batch in a CPU array, flushed to a dynamic vertex buffer; 16
 discrete samplers, since bgfx has no sampler arrays); per-vertex color/tiling/entity-ID.
 `DrawQuad`/`DrawRotatedQuad` overloads take positions or a full transform; the ECS `RenderSystem`
 uses the transform+entityID form for sprites. Renders into **its own view**
-(`RenderPass::SceneTransparent`) — a view transform is per-view state, so 2D sharing the 3D view
+(`RenderPass::Id(SceneTransparent)`) — a view transform is per-view state, so 2D sharing the 3D view
 would retroactively re-project the 3D geometry (migration §8.6).
 
 ## Renderer3D
@@ -307,7 +317,7 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    an off-screen mesh still casts a visible shadow) vs. opaque/transparent (frustum-culled against
    per-submesh world AABBs).
 3. **Shadow pass** — directional cascaded shadow maps: 4 cascades, 2048² D32F depth-only targets,
-   one view per cascade (`RenderPass::Shadow + n`). Cascade fitting is stable (bounding-sphere) and
+   one view per cascade (`RenderPass::Id(Shadow + n)`). Cascade fitting is stable (bounding-sphere) and
    texel-snapped to kill edge shimmer; front-face culling reduces acne. Color writes are disabled
    (a depth-only FB rejects draws whose write mask targets missing attachments). Split scheme:
    log/linear blend (λ=0.7) capped at 200 units. An **orthographic** camera (the editor's Top
@@ -319,8 +329,10 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    caster list and redrawn through `ShadowDepthSkinned` in **every** cascade — a character standing
    in cascade 0 casting into cascade 2 is ordinary, and a bind-pose shadow under a moving character
    reads as a bug even though nothing errored.
-4. **View restore** — back to `RenderPass::SceneHDR` (the shadow pass left the sticky view ID on
-   the last cascade).
+4. **View restore** — back to `RenderPass::Id(SceneHDR)` (the shadow pass left the sticky view ID on
+   the last cascade). A non-main `ActiveBase` skips the shadow pass entirely: the cascade
+   framebuffers are singleton state on `Renderer3D`, and writing them from a preview base would
+   overwrite the main viewport's shadows in the same `bgfx::frame()`.
 5. **Opaque** — sorted material → mesh → submesh → front-to-back; contiguous runs of the same
    (mesh, submesh) draw as **instanced chunks** (≤1024 instances per draw, transient instance
    buffer). Material binds carry the per-pass extras: cascade matrices (one `mat4[4]`), splits
@@ -342,8 +354,12 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    draws over it) — accepted v1 artifact; Unity interleaves the queues, Ganymed does not because
    that means injecting into the transparent sort.
 8. **Debug lines** — accumulated `DrawLine/DrawWireBox/DrawWireSphere/DrawWireCapsule` calls flush
-   as one lines draw (20k-vertex dynamic buffer), depth-tested but not written. Used by collider
-   gizmos, marker gizmos (`DrawWireSphere` + optional forward `DrawLine`), and Jolt debug draw.
+   as one or two line draws (20k-vertex dynamic buffer). The default batch is depth-tested but not
+   written (collider gizmos, marker gizmos, Jolt debug draw, depth-tested skeletons).
+   `DrawLine(..., depthTest=false)` goes to a second overlay submit with depth testing off — the
+   skeleton visualizer's x-ray default, so bones inside a mesh are visible. A 90-joint rig is still
+   one overlay submit, not one per bone; `Statistics::DebugLines` counts segments,
+   `DebugLineDraws` is 0–2.
 
 Also owned here: the procedural **skybox** (fullscreen quad, sky/ground gradient + sun) or the
 **cubemap skybox** when an environment is active; the editor **grid** (fragment-shader infinite
@@ -354,11 +370,11 @@ numbers; ortho sizes both to the visible XZ extent so a 200 m plan view still ha
 corners. The active environment is whatever `SubmitEnvironment` set this frame — caching
 environments by path is
 `AssetManager`'s job, not the renderer's. `GetStats()` reports
-draws/meshes/culled/instanced/transparent/skinned plus particle emitters/billboards/draws/culled
-(shown in the editor Stats panel). Per-emitter frustum cull uses the CPU AABB `ParticleSystem`
-wrote; there is no per-billboard cull. Budget: billboards carry the high counts; mesh debris is
-hundreds, not tens of thousands (one `DrawCommand` + frustum test per particle, and opaque casters
-are pushed unculled ×4 shadow cascades).
+draws/meshes/culled/instanced/transparent/skinned, debug-line segments/submits, plus particle
+emitters/billboards/draws/culled (shown in the editor Stats panel). Per-emitter frustum cull uses
+the CPU AABB `ParticleSystem` wrote; there is no per-billboard cull. Budget: billboards carry the
+high counts; mesh debris is hundreds, not tens of thousands (one `DrawCommand` + frustum test per
+particle, and opaque casters are pushed unculled ×4 shadow cascades).
 
 Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5–8 shadow cascades,
 9–11 IBL, 12 skybox cubemap.
@@ -366,8 +382,12 @@ Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5�
 ### Skinned meshes
 
 `Renderer3D::SubmitSkinnedMesh(mesh, transform, palette, jointCount, entityID)` is the skinned
-entry point; `RenderSystem` calls it for entities whose mesh has a skeleton and whose animator has
-built a palette. Everything else about the command — sorting, culling, material binding, entity-ID
+entry point; `RenderSystem` calls it for every entity whose mesh `HasSkeleton()`. The animator's
+palette is used when it is present and sized to the rig; a null or empty palette uses
+`Mesh::GetRestPalette()` (built once at mesh load from `SampleClipGlobals(nullptr)` then
+`Global * InverseBind`). `SubmitMesh` is not a rest-pose equivalent — it applies `LocalTransform`
+with no palette, and on a file whose mesh node is a unit conversion (Meshy: 0.01) that draws a
+~2 cm character. Everything else about the command — sorting, culling, material binding, entity-ID
 picking — goes through the same path as a static draw. Only three things differ:
 
 - **The palette is copied at submit** into a frame-lifetime `PaletteStorage`, one `MaxBones`-sized
@@ -414,14 +434,20 @@ so the measured AABB is not the box that gets drawn; `Mesh::ComputeBounds` pads 
 `SkinnedBoundsPadding` (25%) of the box's **largest** extent — not per axis, because a limb can
 swing about as far as the rig is long, so a narrow axis needs the same absolute slack as a wide one
 (CesiumMan stands arms-down with an X extent of 0.31 against a height of 1.51, and its walk cycle
-overruns a per-axis 50% pad). Exact posed bounds mean skinning every vertex on the CPU each frame to
-decide one culling test. The failure mode is a character popping at the screen edge if a clip swings
-wider than the pad.
+overruns a per-axis 50% pad) — then transforms that box by the root joint's rest palette so
+`LocalTransform * box` matches `LocalTransform * RestPalette * v`. Without that rest matrix, a
+Meshy character's `GetBounds()` is ~2 cm while the skinned draw is 1.8 m: preview framing parks
+the camera 1 m away from a full-size character, and a Box collision seed is a postage stamp.
+Exact posed bounds mean skinning every vertex on the CPU each frame to decide one culling test.
+The failure mode is a character popping at the screen edge if a clip swings wider than the pad.
 
 Order of operations in `vs_PhongSkinned`: blend the palette in mesh space **first**, apply the
 per-instance model matrix after, exactly where `vs_Phong` applies it. The palette is
-`Global * InverseBind`, which is identity at the bind pose, so an unposed rig lands precisely where
-`vs_Phong` would have put it.
+`Global * InverseBind`. On Khronos samples (Fox, CesiumMan) that is identity at rest, so
+`vs_PhongSkinned` with the rest palette lands where `vs_Phong` would. That is **not** true when
+`LocalTransform` is a unit conversion (Meshy: vertices in metres, joints in centimetres, mesh node
+0.01): the rest palette is ~scale 100, and `LocalTransform * Palette` cancel. An unposed rig
+therefore still has to go through `SubmitSkinnedMesh`.
 
 One last trap. `Submesh::LocalTransform` is *kept* for skinned submeshes, where static ones have it
 reset to identity by the world-space bake, and re-applying it here is what cancels the
@@ -445,9 +471,14 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
   (base vertex/index, count, material index, local transform, name, local AABB, `IsSkinned`) +
   material list + the built `Geometry`, plus the skeleton and clips on a rigged asset. Bounds are
   computed on build and used for culling. `Build` also creates the optional stream-1 buffer
-  (`GetSkinVertexBuffer()`, null when there is no skin data) from `SkinVertex{JointIndices,
+  (  `GetSkinVertexBuffer()`, null when there is no skin data) from `SkinVertex{JointIndices,
   JointWeights}`; the skin attributes ride a second stream rather than widening `MeshVertex`, which
   would cost every static vertex in the engine 32 bytes to serve the few that are rigged.
+  `TryGetJointFrame(mesh, palette, joint, outFrame)` recovers a joint's frame in the mesh
+  entity's local space — `LocalTransform * Palette[i] * inverse(InverseBind[i])`, then the bind
+  pose's basis scale divided out — so sockets and skeleton tooling share one formula. False on
+  an out-of-range joint or a singular inverse bind; the caller multiplies by the target's world
+  matrix.
 
 ### Per-entity material overrides
 
@@ -632,9 +663,10 @@ applies in already renders the baked skybox, and the following frames are pixel-
 
 Two consequences worth knowing if you add a pass:
 
-- **Everything that samples the bake must sort above 67.** The pass table leaves views 1–68 to the
-  bake and starts the frame proper at `Shadow = 69`; `ViewAllocator` asserts against `Shadow` rather
-  than counting. A bake takes 67 views the first time and **66 after that** — see the BRDF LUT below.
+- **Everything that samples the bake must sort above 67.** The pass table leaves views 1–67 to the
+  bake and starts the main frame at `MainViewBase = 69`; `ViewAllocator` asserts against
+  `EnvironmentBake + EnvironmentBakeViewCount`, not against the scene `Shadow` offset. A bake
+  takes 67 views the first time and **66 after that** — see the BRDF LUT below.
 - Destroying the bake's 67 transient framebuffers immediately after submission is safe: bgfx defers
   handle destruction until the frame that used them has been rendered. The cube textures they wrote
   into are owned by the `Environment`.
@@ -650,13 +682,22 @@ scene HDR (RGBA16F + entityID + D24S8)
   → tonemap (ACES-style, exposure; bloom composited additively in HDR before the curve)
   → FXAA (optional)
   → composite (LDR, shown in the editor viewport via GetFinalImageRendererID)
-  → game UI (RmlUi, RenderPass::UI = 96) composited into that same LDR target
+  → game UI (RmlUi, absolute RenderPass::UI = 96) composited into that same LDR target
 ```
 
 (Or, with `SetOutputToBackbuffer(true)`, the final post pass and the UI both land on the backbuffer
 instead — see [Backbuffer output mode](#backbuffer-output-mode).)
 
-The UI pass sits after Composite purely by view ID, which is what keeps it in display space
+`BeginFrame` / `EndFrame` push and pop the instance's `viewBase`. The editor's `AssetPreview`
+is two further instances: the inspector at `PreviewViewBase = 100` (palette slots 2/3) and a
+128×128 thumbnail renderer at `ThumbnailViewBase = 130` (palette 4/5). They tick after the main
+`EndFrame`, do not bake their own environment, and do not write shadow maps. The inspector and
+a thumbnail cannot share a framebuffer — filling the browser would clobber the preview image —
+so they are separate `SceneRenderer`s and share only the one-render-per-frame budget. The game
+UI view stays absolute so a preview cannot steal it. See
+[editor.md](../editor/editor.md#asset-inspector-panel).
+
+The UI pass sits after the main Composite purely by view ID, which is what keeps it in display space
 instead of being tonemapped with the scene — see [ui.md](ui.md). Note that
 `SetViewportSize` rebuilds the post-stack targets, so anything holding the composite framebuffer
 (the UI does) has to re-fetch it on resize.

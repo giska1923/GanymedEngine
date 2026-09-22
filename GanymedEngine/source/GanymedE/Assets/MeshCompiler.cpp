@@ -263,7 +263,7 @@ namespace GanymedE {
 		GE_PROFILE_FUNCTION();
 
 		MeshSource source;
-		if (!MeshImporter::Import(input.SourceFullPath, source, &output.Dependencies))
+		if (!MeshImporter::Import(input.SourceFullPath, source, &output.Dependencies, input.Config))
 			return false;
 
 		std::ostringstream out(std::ios::binary);

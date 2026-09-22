@@ -28,7 +28,7 @@ Key entry points:
 | `DuplicateEntity(source)` | Deep-copies an entity and its descendants with **fresh** UUIDs, attaching the copy as a *sibling* of the source. `IDComponent` is minted; `RelationshipComponent` and `BoneAttachmentComponent::Target` are remapped when they name entities inside the copy — see below |
 | `CollectSubtree(root, out, visited)` | `root` plus its descendants, depth-first through each `Children` in authored order: the canonical order the scene and prefab formats both save in. The visited set keeps a corrupted hierarchy from becoming an infinite walk |
 | `Copy(other)` | Play-mode snapshot: recreate entities by UUID, then copy every `ComponentList` component via `ForEachType`; script `Instance` pointers are nulled so runtime instances are recreated on play |
-| `GetWorldSpaceTransform(entity)` | Walks the parent chain from locals — for **editor/tooling** (gizmos). Renderable code reads the cached `WorldTransformComponent` instead |
+| `GetWorldSpaceTransform(entity)` | Walks the parent chain from locals — for **editor/tooling** (gizmos). Renderable code reads the cached `WorldTransformComponent` instead. A resolved socket is the exception: local TR is ignored, so the socket gizmo reads `WorldTransformComponent::World` that `BoneAttachmentSystem` wrote this frame |
 | `SetParent(child, parent)` / `Unparent(child)` | Maintains both sides of the relationship, rejects self/descendant parenting, and calls `MarkChanged<RelationshipComponent>` so the transform cache reacts |
 | `MarkChanged<T>(entity)` | Report an out-of-view write of a tracked component (see [ecs.md](ecs.md#accessors-and-the-modify-invariant)) |
 
@@ -92,19 +92,24 @@ copyable, no behavior beyond small helpers.
   whether it has a skeleton and a second component would duplicate the drag-drop, serialization,
   inspector and `RenderSystem` plumbing to say nothing new.
 - **`AnimatorComponent`** — `Clip` (by name), `Speed`, `Playing`, `Loop`, `Time`, and a runtime
-  `Palette` of joint matrices. An entity is skinned iff its mesh `HasSkeleton()` *and* it has an
-  animator. Clips are named rather than indexed because indices shift whenever a DCC reorders or
-  adds a clip on re-export; the cost is that a rename detaches the reference silently, which
-  `AnimationSystem` compensates for by warning once and holding the bind pose. `Time` and `Palette`
-  are not serialized — a scene loads at the head of its clip, and the palette is rebuilt per frame.
+  `Palette` of joint matrices. The animator is what *plays* a clip. Drawing a rigged mesh does not
+  require one: `RenderSystem` skins any mesh that `HasSkeleton()`, using `Mesh::GetRestPalette()`
+  when no clip palette exists. `SubmitMesh` is not a bind-pose equivalent once `LocalTransform` is
+  a unit conversion (Meshy: vertices in metres, joints in centimetres, mesh node 0.01) — the rest
+  palette is ~scale 100 and is what cancels that scale. Clips are named rather than indexed because
+  indices shift whenever a DCC reorders or adds a clip on re-export; the cost is that a rename
+  detaches the reference silently, which `AnimationSystem` compensates for by warning once and
+  holding the bind pose. `Time` and `Palette` are not serialized — a scene loads at the head of
+  its clip, and the palette is rebuilt per frame.
 - **`BoneAttachmentComponent`** — pins this entity to a named joint of another entity's skinned
   mesh. `Target` is an entity UUID (zero = hierarchy parent); `Joint` is a name, for the same
   reason clips are; `Offset` / `Rotation` are the rest pose in joint space (Euler radians, X·Y·Z).
-  `Resolved` is a runtime index, not serialized, reset by `Scene::Copy`. The system recovers
-  `jointGlobal` as `Palette[i] * inverse(InverseBind[i])` rather than keeping AnimationSystem's
-  scratch globals on the animator — attachments are counted in ones and twos, and a second
-  per-joint array would add 2–8 KB per animated entity for `Scene::Copy` to shuffle on every play.
-  Writes `WorldTransformComponent` directly: feeding a joint quaternion through
+  `Resolved` is a runtime index, not serialized, reset by `Scene::Copy`. The joint frame is
+  `TryGetJointFrame` ([`Mesh.h`](../../GanymedEngine/source/GanymedE/Renderer/Mesh.h)) — one
+  function, so a visualizer cannot re-derive the formula and drift. Recovery rather than
+  keeping AnimationSystem's scratch globals: attachments are counted in ones and twos, and a
+  second per-joint array would add 2–8 KB per animated entity for `Scene::Copy` to shuffle on
+  every play. Writes `WorldTransformComponent` directly: feeding a joint quaternion through
   `TransformComponent`'s Euler storage is lossy. Local translation and rotation are ignored while
   the socket resolves — `Offset`/`Rotation` are what replace them — but local **`Scale`** is kept:
   nothing on this component replaces it, and reading one field on both the attached and the
@@ -235,16 +240,19 @@ registered before `TransformSystem`. Details: [scripting.md](scripting.md).
 
 ### AnimationSystem — [`Systems/AnimationSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/AnimationSystem.h)
 Samples each `AnimatorComponent`'s clip and leaves a joint palette on the component. Per animator:
-advance `Time` (wrapped or clamped by clip duration), binary-search each channel's key pair and
-interpolate — lerp for translation/scale, **slerp** for rotation, `Step` holding the left key —
-over a copy of the skeleton's rest pose, so joints and paths the clip does not drive keep their
-authored transform. Globals are then composed in a single forward pass (the importer sorts joints
-parents-before-children so no recursion is needed), seeded from `Skeleton::RootTransform` rather
-than identity, giving `Palette[i] = Global[i] * InverseBind[i]`.
+advance `Time` (wrapped or clamped by clip duration), then `SampleClipGlobals` — binary-search each
+channel's key pair and interpolate — lerp for translation/scale, **slerp** for rotation, `Step`
+holding the left key — over a copy of the skeleton's rest pose, so joints and paths the clip does
+not drive keep their authored transform. Globals are composed in a single forward pass (the importer
+sorts joints parents-before-children so no recursion is needed), seeded from
+`Skeleton::RootTransform` rather than identity. The palette is then `Palette[i] = Global[i] *
+InverseBind[i]`. The clip inspector samples the same globals (head / hips / root at a given time)
+so a visualizer cannot re-derive the sampler and drift.
 
 An unresolvable clip name warns once per distinct name and holds the bind pose; a missing skeleton
-clears the palette, which is also the signal to the renderer to use the static path. Scratch pose
-and global arrays are system members reused across entities and frames.
+clears the palette. `RenderSystem` then uses `Mesh::GetRestPalette()` if the mesh still has a
+skeleton, or `SubmitMesh` if it does not. Scratch pose and global arrays are system members reused
+across entities and frames.
 
 **Runs in edit mode, but samples without advancing.** Evaluating poses is what makes the
 inspector's Time scrub move the model; running the clock as well would leave every rig in the scene
@@ -271,10 +279,12 @@ entity track the socket. The cache-stomp risk is accepted; that system is the on
 Pins entities with `BoneAttachmentComponent` to a joint. Per socket, in hierarchy-depth order
 (so a nested attachment sees its target's already-rewritten world; an explicit `Target` that is
 itself socketed is treated as deeper still): resolve the target (zero = parent), re-resolve
-`Joint` by name against the target's skeleton when `Resolved` is stale, recover
-`jointGlobal = skinnedSubmesh.LocalTransform * Palette[i] * inverse(InverseBind[i])`, **divide the
-bind pose's basis scale out of it**, then
+`Joint` by name against the target's skeleton when `Resolved` is stale, then
+`TryGetJointFrame(mesh, palette, joint, jointGlobal)` and
 `OverrideWorld(entity, targetWorld * jointGlobal * offset * localScale)`.
+The frame function is the one owner of
+`jointGlobal = skinnedSubmesh.LocalTransform * Palette[i] * inverse(InverseBind[i])` plus
+**dividing the bind pose's basis scale out of it**.
 A missing target, a mesh with no
 palette, a singular inverse bind, or a joint name the skeleton does not have warns once per
 distinct failure and leaves the entity at its **parent** transform (parent cache × local), never
@@ -366,8 +376,8 @@ Pure submission — everything that used to be inlined in `Scene::OnUpdate*`. Re
 begins Renderer3D with the main camera (or the editor fallback), submits lights, sky/environment,
 meshes, **particles** (billboards queued into `ParticleRenderer`, mesh particles as ordinary
 `SubmitMesh` opaques), collider gizmos (or Jolt debug draw when enabled during play), marker
-gizmos, ends the scene, then does the 2D pass (sprites) in its own render view. The editor path
-additionally draws the grid, and looks through `RenderContext::PreviewCamera` when the viewport
+gizmos, skeleton gizmos, ends the scene, then does the 2D pass (sprites) in its own render view.
+The editor path additionally draws the grid, and looks through `RenderContext::PreviewCamera` when the viewport
 dropdown has selected a scene camera (otherwise `EditorViewCamera`). Its eleven view declarations
 are live documentation of exactly what rendering reads.
 `SkyView` includes `EntityId` so the editor hide filter can skip a hidden sky light.
@@ -378,7 +388,7 @@ The editor outliner eye is honoured only on the editor path: `EditorViewFilter::
 and the runtime draw everything. Hidden entities therefore vanish from the entity-ID buffer and
 cannot be picked. This is an editor filter, not a runtime visibility component.
 
-Two policies live in this system:
+These policies live in this system:
 
 - **Collider gizmos are opt-in on both paths.** With Jolt debug draw off, the authored-collider
   wireframes are drawn only when `PhysicsSettings::ShowColliderGizmos` is set. It defaults
@@ -392,19 +402,29 @@ Two policies live in this system:
   accumulate and flush as one debug-line batch in `EndScene` — 100 markers are not 100 draws.
   The flag lives on `PhysicsSettings` next to `ShowColliderGizmos` rather than a one-bool
   singleton; the name is debt.
+- **Skeleton gizmos are the same opt-in.** `DrawSkeletonGizmos` reads `ShowSkeletons` (engine
+  default false; editor Visualizers, default on). Joint frames come from `TryGetJointFrame`, so
+  the overlay cannot drift from a socket. Per posed entity: a line to each parent, a 3-line cross
+  at the joint (sized from bone length, not a wire sphere), a short +Y stub on leaves, and an
+  axis triad only on the highlighted joint. `ShowAllSkeletons` draws every rig; otherwise only
+  the current selection and its hierarchy (select the capsule, see the body's bones).
+  `SkeletonXRay` (default true) submits those lines with depth testing off. Joint-name labels
+  are editor-side ImGui, and only for the highlighted joint plus its parent and children.
 - **No camera is loud, not silent.** With no primary camera *and* no fallback, the frame is the
   scene target's clear colour and the system logs an error at most once every 5 s. Throttled rather
   than per-frame: a 60 Hz error would bury everything else in the log to say the same thing.
 
-The mesh view carries `OptRO<AnimatorComponent>`, so one iteration covers both draw paths: an
-entity with an animator, a mesh that `HasSkeleton()`, and a non-empty palette goes to
-`Renderer3D::SubmitSkinnedMesh`, everything else to `SubmitMesh`. A rigged mesh with no animator
-therefore draws as static geometry in its bind pose, which is the sane result of dropping a
-character into a scene before authoring anything. Declaring that optional read is also what made
-  the `AnimationSystem`-before-`RenderSystem` ordering checkable at last — see
-  [ecs.md](ecs.md#systemmanager). `ParticleSystem` is the same shape: `RenderSystem` declares
-  `RO<ParticleEmitterComponent>` so the Audio-then-Particle-then-Render slot is enforced rather
-  than conventional.
+The mesh view carries `OptRO<AnimatorComponent>`, so one iteration covers both palettes: a mesh
+that `HasSkeleton()` always goes to `Renderer3D::SubmitSkinnedMesh`. The animator's palette is used
+when it is present and sized to the rig; otherwise the mesh's rest palette
+(`SampleClipGlobals(nullptr)` then `Global * InverseBind`, cached on the asset). `SubmitMesh` is
+the path for meshes with no skeleton. Dropping a character therefore draws at rest without adding
+an animator first — and it draws at the right size, which the old static fallback did not for a
+file whose `LocalTransform` is a unit conversion. Declaring that optional read is also what made
+the `AnimationSystem`-before-`RenderSystem` ordering checkable at last — see
+[ecs.md](ecs.md#systemmanager). `ParticleSystem` is the same shape: `RenderSystem` declares
+`RO<ParticleEmitterComponent>` so the Audio-then-Particle-then-Render slot is enforced rather
+than conventional.
 
 ## Singletons
 
@@ -420,14 +440,18 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
   *Known misnomer:* now that a non-editor host exists, `EditorViewCamera` is really "fallback view
   camera" and is simply null there. Flagged as debt rather than renamed — the rename ripples
   through docs and editor for zero behaviour change.
-- **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `ShowMarkers`, `FixedTimestep` (1/60),
-  `MaxStepsPerFrame` (5). `ShowMarkers` is editor visualization, not a physics flag; it sits here
+- **`PhysicsSettings`** — `DebugDraw` toggles, `ShowColliderGizmos`, `ShowMarkers`,
+  `ShowSkeletons` / `ShowAllSkeletons` / `SkeletonXRay`, `FixedTimestep` (1/60),
+  `MaxStepsPerFrame` (5). The Show* flags are editor visualization, not physics; they sit here
   because this is already the bag those per-frame editor pushes go through.
-- **`EditorViewFilter`** — editor-only. A pointer to the outliner's hidden-UUID set, asserted each
-  edit frame by `EditorLayer`. Null means draw everything. `RenderSystem::OnUpdateEditor` expands
-  each hidden UUID to its subtree via `CollectSubtree` and skips those submits (meshes, sprites,
-  lights, sky, particles, collider gizmos, marker gizmos). Play/runtime ignore it, so a hidden entity still
-  simulates and draws in Play. Not serialized; `Scene::Copy` does not carry it.
+- **`EditorViewFilter`** — editor-only. Pointers to the outliner's hidden-UUID set and the
+  current selection, asserted each frame by `EditorLayer`. `HiddenEntities` null means draw
+  everything. `RenderSystem::OnUpdateEditor` expands each hidden UUID to its subtree via
+  `CollectSubtree` and skips those submits. Play/runtime ignore hidden, so a hidden entity still
+  simulates and draws in Play. `SelectedEntities` and `HighlightSkeletonEntity` / `HighlightJoint`
+  drive the skeleton overlay on both Edit and Play (the editor pushes them onto the play copy).
+  Highlight comes from editor joint picking / the Joints panel, falling back to a selected
+  `BoneAttachmentComponent`'s resolved joint. Not serialized; `Scene::Copy` does not carry it.
 - **`EditorBoundsOverlay`** — editor-only extra wire geometry, drawn after collider gizmos in
   `OnUpdateEditor`. The Map panel's parity audit fills `Boxes` with the focused finding's mesh AABB
   (cyan) and box collider (orange). Scatter fills `Spheres` with the brush (cyan paint, red erase).
@@ -436,8 +460,8 @@ singleton views (systems) or `Scene::GetSingleton/FindSingleton/SetSingleton` (t
 **Singletons are not carried by `Scene::Copy`.** The copy constructs a fresh `Scene`, whose
 constructor default-constructs its own `ctx()` entries, and then copies entities and components only.
 Anything a host needs true on the play-mode scene must be (re)written after the copy — which is why
-`EditorLayer` pushes `DebugDraw`, `ShowColliderGizmos` and `ShowMarkers` onto the active scene every Edit and
-Play frame rather than once on play.
+`EditorLayer` pushes `DebugDraw`, `ShowColliderGizmos`, `ShowMarkers` and the skeleton flags onto the
+active scene every Edit and Play frame rather than once on play.
 
 ## Member reflection
 

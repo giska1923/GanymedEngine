@@ -1,5 +1,6 @@
 #include "ContentBrowserPanel.h"
 
+#include "../AssetPreview.h"
 #include "../EditorIcons.h"
 #include "../EditorTheme.h"
 #include "../EditorWidgets.h"
@@ -157,6 +158,15 @@ namespace GanymedE {
 		m_FileIcon = Texture2D::Create("resources/icons/ContentBrowser/FileIcon.png");
 	}
 
+	void ContentBrowserPanel::SetSelected(const std::filesystem::path& path)
+	{
+		if (m_Selected == path)
+			return;
+		m_Selected = path;
+		if (m_OnSelectionChanged)
+			m_OnSelectionChanged(m_Selected);
+	}
+
 	bool ContentBrowserPanel::IsUnderAssetRoot(const std::filesystem::path& path) const
 	{
 		const auto base = Normalize(m_BaseDirectory);
@@ -190,7 +200,7 @@ namespace GanymedE {
 		}
 
 		m_CurrentDirectory = next;
-		m_Selected.clear();
+		SetSelected({});
 		{
 			std::error_code mtimeEc;
 			m_ListingMtime = std::filesystem::last_write_time(m_CurrentDirectory, mtimeEc);
@@ -609,7 +619,7 @@ namespace GanymedE {
 			}
 
 			if (ImGui::IsItemClicked())
-				m_Selected = item->Path;
+				SetSelected(item->Path);
 
 			if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && item->IsDirectory)
 				TryNavigate(item->Path, true);
@@ -620,8 +630,20 @@ namespace GanymedE {
 			BeginItemDrag(*item);
 			DrawItemContextMenu(*item);
 
-			Ref<Texture2D> icon = item->IsDirectory ? m_DirectoryIcon : m_FileIcon;
-			const ImU32 tint = ImGui::ColorConvertFloat4ToU32(
+			Ref<Texture2D> thumb;
+			if (!item->IsDirectory && item->Type == AssetType::StaticMesh)
+			{
+				const AssetHandle handle = AssetManager::GetHandle(item->Relative);
+				if (IsAssetHandleValid(handle) && ImGui::IsItemVisible())
+				{
+					AssetPreview::RequestVisible(handle);
+					thumb = AssetPreview::GetThumbnail(handle);
+				}
+			}
+
+			Ref<Texture2D> icon = thumb ? thumb
+				: (item->IsDirectory ? m_DirectoryIcon : m_FileIcon);
+			const ImU32 tint = thumb ? IM_COL32_WHITE : ImGui::ColorConvertFloat4ToU32(
 				GetAssetIconTint(item->Type, item->IsDirectory));
 			ImDrawList* draw = ImGui::GetWindowDrawList();
 			draw->AddImage((ImTextureID)(uintptr_t)icon->GetRendererID(),
@@ -672,7 +694,7 @@ namespace GanymedE {
 				ImGui::PopStyleColor(3);
 
 			if (ImGui::IsItemClicked())
-				m_Selected = item->Path;
+				SetSelected(item->Path);
 			if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
 				&& item->IsDirectory)
 				TryNavigate(item->Path, true);
@@ -714,13 +736,28 @@ namespace GanymedE {
 		ImGui::BeginChild("##files", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
 		DrawAssetTreeContextMenu();
 
+		const float scrollY = ImGui::GetScrollY();
+		const bool scrolling = scrollY != m_LastScrollY
+			|| (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f);
+		if (scrolling)
+			m_LastScrollChange = std::chrono::steady_clock::now();
+		m_LastScrollY = scrollY;
+
 		if (m_View == ViewMode::Grid)
+		{
+			const float idleSeconds = std::chrono::duration<float>(
+				std::chrono::steady_clock::now() - m_LastScrollChange).count();
+			AssetPreview::SetGridIdle(idleSeconds >= 0.15f);
 			DrawGrid();
+		}
 		else
+		{
+			AssetPreview::SetGridIdle(true);
 			DrawList();
+		}
 
 		if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
-			m_Selected.clear();
+			SetSelected({});
 
 		ImGui::EndChild();
 	}

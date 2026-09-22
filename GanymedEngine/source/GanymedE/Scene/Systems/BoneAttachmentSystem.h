@@ -12,19 +12,11 @@
 
 namespace GanymedE {
 
-	// Pins entities to joints. Recovers jointGlobal from Palette[i] * inverse(InverseBind[i])
+	// Pins entities to joints. Recovers the joint frame through TryGetJointFrame (Mesh.h)
 	// rather than keeping AnimationSystem's scratch globals: attachments are counted in ones
 	// and twos, and a second per-joint array on every animator is 2-8 KB for Scene::Copy to
-	// shuffle on every play.
-	//
-	// That frame alone is NOT the space the mesh is drawn in. Renderer3D draws a skinned
-	// submesh as entityWorld * LocalTransform * Palette * v, and the joints may be authored in
-	// a different unit than the vertices - a Meshy rig has joints in centimetres and vertices
-	// in metres, with LocalTransform (0.01) the factor between them. So the skinned submesh's
-	// LocalTransform is folded in, and the bind pose's own column scales are then divided out:
-	// that scale is cancelled for vertices by the palette and cancelled for nothing else, so
-	// left in it renders an attached entity at 1%. Dividing by the BIND scale rather than
-	// normalising keeps animated scale, and is a no-op when the mesh node is identity.
+	// shuffle on every play. That function is the one owner of the joint-in-mesh-space maths;
+	// this system multiplies by targetWorld and the authored offset.
 	//
 	// Writes WorldTransformComponent after TransformSystem (never TransformComponent: Euler
 	// decomposition of a joint quaternion is lossy). CameraSystem is the first reader of

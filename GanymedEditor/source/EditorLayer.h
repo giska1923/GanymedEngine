@@ -3,12 +3,16 @@
 #include "GanymedE.h"
 #include "Panels/SceneHierarchyPanel.h"
 #include "Panels/ContentBrowserPanel.h"
+#include "Panels/AssetInspectorPanel.h"
 #include "Panels/MapPanel.h"
+#include "Panels/JointTreePanel.h"
+#include "EditorJoint.h"
 #include "EditorPicking.h"
 #include "EditorUndo.h"
 
 #include "GanymedE/Core/Random.h"
 
+#include <glm/glm.hpp>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -83,12 +87,24 @@ namespace GanymedE {
 		void UI_StatusBar();
 		void UI_Viewport();
 
+		void PushEditorVisualizers();
+		void DrawSkeletonLabels();
+		void SyncJointToolToEntitySelection();
+		void ResolveJointHighlight(UUID& entity, int32_t& joint);
+		glm::mat4 GetViewportViewProjection();
+		bool TryPickViewportJoint();
+
 		void SetEditorTopOrtho(bool enabled);
 	private:
 		Ref<SceneRenderer> m_SceneRenderer; // owns the HDR target + post stack (bloom, tonemap, FXAA)
 		PhysicsDebugDrawSettings m_PhysicsDebugDraw;
 		bool m_ShowColliderGizmos = true;
 		bool m_ShowMarkers = true;
+		bool m_ShowSkeletons = true;
+		bool m_ShowAllSkeletons = false;
+		bool m_SkeletonXRay = true;
+		std::unordered_set<UUID> m_SelectedIDs;
+		EditorJointTool m_JointTool;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;
@@ -134,6 +150,13 @@ namespace GanymedE {
 		bool m_GizmoUsing = false;
 		std::vector<std::pair<UUID, TransformComponent>> m_GizmoBefore;
 
+		// Socket gizmo: writes BoneAttachmentComponent Offset/Rotation and TransformComponent
+		// Scale, never WorldTransformComponent. Does not group-drag the rest of the selection.
+		bool m_SocketGizmo = false;
+		UUID m_SocketGizmoEntity{ 0 };
+		BoneAttachmentComponent m_SocketBefore;
+		TransformComponent m_SocketTransformBefore;
+
 		enum class SceneState
 		{
 			Edit = 0,
@@ -144,7 +167,9 @@ namespace GanymedE {
 		// Panels
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
+		AssetInspectorPanel m_AssetInspectorPanel;
 		MapPanel m_MapPanel;
+		JointTreePanel m_JointTreePanel;
 		MapSnapSettings m_SnapSettings;
 
 		// Placement preview is a real entity, excluded from the surface ray so it cannot

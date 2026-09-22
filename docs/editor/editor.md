@@ -3,7 +3,7 @@
 The editor application (`GanymedEditor/source/`). It is a thin client of the engine: one
 `Application` subclass ([`GanymedEditorApp.cpp`](../../GanymedEditor/source/GanymedEditorApp.cpp))
 pushing a single [`EditorLayer`](../../GanymedEditor/source/EditorLayer.h), plus the hierarchy,
-content browser, and Map panels.
+Joints, content browser, Asset Inspector, and Map panels.
 Run it with `GanymedEditor/` as the working directory — the editor's *own* assets (Inter, Lucide,
 the checkerboard, its HUD document) resolve relative to CWD. A scene path may be passed
 positionally, and `--renderer=<backend>` selects the graphics backend (see
@@ -40,13 +40,14 @@ and shows a host scrollbar. The host itself is `NoScrollbar`. None of those stri
 docked window: they cannot be resized, undocked, or given a tab. On Wayland the title bar is
 omitted and the ImGui menu bar stays, because an undecorated window cannot be moved. On first
 run, after **View → Reset Layout**, or when the dock-layout version in `imgui.ini` mismatches
-(`[GanymedEditor][Dock] Version`, currently 3), `EditorLayer` builds a default DockBuilder
-tree: Scene Hierarchy left, Properties below it, Viewport center, Stats and Map tabbed on the
-right, Content
-Browser bottom. After that, panel layout persists in `GanymedEditor/imgui.ini`. Later chrome
-changes that alter the default tree bump that version so an existing ini does not keep a
-stale split. The title bar and status bar sit outside the dock tree, so they did not need a
-version bump.
+(`[GanymedEditor][Dock] Version`, currently 5), `EditorLayer` builds a default DockBuilder
+tree: Scene Hierarchy left (Joints tabbed with it), Properties below it (Asset Inspector tabbed with Properties),
+Viewport center, Stats and Map tabbed on the right, Content Browser bottom. After that, panel
+layout persists in `GanymedEditor/imgui.ini`. Later chrome changes that alter the default tree
+bump that version so an existing ini does not keep a stale split. The title bar and status bar
+sit outside the dock tree, so they did not need a version bump. The Asset Inspector is a
+separate panel — not a mode of Properties — so entity multi-select and asset selection stay
+two domains; the cost is one extra dock tab.
 
 ## Look and feel
 
@@ -162,7 +163,7 @@ not flush. `PanelToolbarRow` is a 44 px `SurfaceBg` strip (the sampled per-panel
 `ToolbarSeparator` / `OverflowMenuButton` / `RowActionIcons` / `StatusBarItem` are the rest.
 Do not hand-roll these, and do not call `OverflowMenuButton` unless a real popup follows.
 
-The outliner, Properties, Content Browser, Map, and Viewport are wrapped (`BeginPanel`). The host
+The outliner, Joints, Properties, Content Browser, Asset Inspector, Map, and Viewport are wrapped (`BeginPanel`). The host
 title bar is `EditorTitleBar.cpp`, not a furniture helper — it has to talk to `Window` hit-testing.
 
 ### Title bar
@@ -194,14 +195,16 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
    scatter stroke **before** `OnUpdateEditor`, so `TransformSystem` this frame sees the hover pose
    and the preview renders where the cursor is, not where it was last frame. Then
    `OnUpdateEditor(ts, editorCamera)` (and `RenderContext::PreviewCamera` from the viewport camera
-   combo). `ShowColliderGizmos`, `ShowMarkers`, and the Map-panel `EditorBoundsOverlay` (audit boxes
+   combo). `ShowColliderGizmos`, `ShowMarkers`, the skeleton flags (`ShowSkeletons` /
+   `ShowAllSkeletons` / `SkeletonXRay`), and the Map-panel `EditorBoundsOverlay` (audit boxes
    plus the scatter brush sphere) are pushed on this branch too. In Play:
    `OnUpdateRuntime(ts, &editorCamera)` (the editor camera is the fallback when the scene
-   has no primary `CameraComponent`; the physics-debug toggles, **`ShowColliderGizmos`** (Visualizers)
-   and **`ShowMarkers`** (Icons) are pushed into the scene's `PhysicsSettings` each frame). Those
-   gizmo flags are engine-default **false** so a non-editor front-end draws no collider wireframes
-   or marker spheres — the editor opts in, and it has to do so every frame because `Scene::Copy`
-   does not carry singletons onto the play-mode scene.
+   has no primary `CameraComponent`; the physics-debug toggles, **`ShowColliderGizmos`** and
+   **`ShowSkeletons`** (Visualizers) and **`ShowMarkers`** (Icons) are pushed into the scene's
+   `PhysicsSettings` each frame). Those gizmo flags are engine-default **false** so a non-editor
+   front-end draws no collider wireframes, marker spheres, or skeletons — the editor opts in, and
+   it has to do so every frame because `Scene::Copy` does not carry singletons onto the play-mode
+   scene.
 4. **Hover picking**: mouse position → viewport-local coordinates (Y flipped only when
    `bgfx::getCaps()->originBottomLeft` — render-target origin is backend-dependent), then
    `RequestEntityID` + `PollEntityID`. Picking is asynchronous under bgfx (~3 frames latency),
@@ -240,7 +243,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   next to it: `OrthoHeight / viewportHeight`.
 - **Header, right:** magnet (opens `MapSnapSettings`; accent-filled while snapping is enabled) ·
   Visualizers popup (`Collider gizmos`, default on — authored box/sphere/capsule wireframes in
-  Edit and Play — plus the Jolt debug-draw toggles, still Play-only because they read live body
+  Edit and Play; **Skeletons**, default on — posed joint overlay on the selection, with All and
+  X-ray; plus the Jolt debug-draw toggles, still Play-only because they read live body
   state) · Icons (`ICON_LC_MAP_PIN`, default on — `MarkerComponent` wire-spheres) · Local / World
   combo wired to `ImGuizmo::Manipulate`'s mode.
   Previously LOCAL was hard-coded. The magnet is the same snap struct placement reads.
@@ -250,13 +254,20 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   material. A dropdown whose only working item is Lit is dead furniture.
 - Shows the composite target via `ImGui::Image`; UVs flip vertically per
   `originBottomLeft` (a render target's orientation follows the backend — hard-coding either way
-  is wrong on half of them).
+  is wrong on half of them). Joint-name labels for the highlighted socket joint (and its parent
+  and children) are ImGui text on that same window after the image, projected through the camera
+  the viewport is looking through. The highlight is the editor joint selection (viewport pick or
+  Joints panel), falling back to the selected `BoneAttachmentComponent`'s `Resolved` index.
+  While Skeletons is on, a click whose screen-space distance to a bone or joint marker is within
+  12 px selects that joint and does **not** change the entity selection; otherwise entity picking
+  proceeds. The GPU pick buffer cannot see joints — they are not entities and carry no ID.
 - **`m_ViewportHovered` is the image**, not the window. A click on the camera combo must not
   also click-select whatever the pick buffer last saw. `BlockEvents` still uses
   focused-or-hovered, so Q/W/E/R keep working while the viewport window is focused.
 - **Drag-drop from the Content Browser** via `EditorUI::AcceptAssetDrop` (see
   [below](#typed-drag-drop)): a `Scene` drop opens the scene; a `StaticMesh` drop (edit mode only)
-  instantiates it via `MeshImporter::Instantiate` and selects it.
+  instantiates it via `MeshImporter::Instantiate` and selects it. A rigged mesh draws at rest
+  without an animator (`Mesh::GetRestPalette()`).
 - **Gizmos** (edit mode, with a selection): ImGuizmo manipulates the entity's **world** transform
   (`Scene::GetWorldSpaceTransform`, so parented entities gizmo correctly), converts back to local
   through the parent's inverse world matrix, decomposes (`Math::DecomposeTransform`), applies
@@ -281,11 +292,28 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   transform and once from its own. One drag is one undo entry: the falling edge folds every moved
   entity into a single `CompositeCommand`, the same rule the inspector's multi-edit follows.
 
+  **A resolved `BoneAttachmentComponent` takes over the gizmo.** ImGuizmo still manipulates a
+  world matrix, but that matrix is `WorldTransformComponent::World` (what the attachment system
+  wrote this frame), not `GetWorldSpaceTransform` — local translation and rotation are ignored
+  while the socket resolves, so the parent-chain walk would put the handle at the parent.
+  Each drag converts `socketLocal = inverse(targetWorld * jointFrame) * draggedWorld` and
+  writes `Offset` / `Rotation` on the component plus `TransformComponent::Scale`. It never
+  writes `WorldTransformComponent`; the system recomputes next update. Rotation is applied as
+  a delta, matching the entity gizmo (Euler option (a) in
+  [SKELETAL_TOOLING.md](../history/SKELETAL_TOOLING.md); a ±90° pitch pop is the trigger for a
+  quaternion field). Translation snap is skipped — a grip point is not on a grid; rotate and
+  scale still read `MapSnapSettings`. Group-drag is skipped: the rest of the selection does
+  not orbit the socket. Hidden while the socket does not resolve, with the reason on the
+  viewport instead of a gizmo at the origin. Hidden while viewport joint-pick is armed.
+  One drag is one undo entry (`Gizmo Socket`), snapshot on the rising edge of
+  `ImGuizmo::IsUsing()`.
+
 - **Transform readout** (bottom-left of the image, `ImDrawList`, no layout): `X`/`Y`/`Z` of the
   primary selection in `AxisX/Y/Z`, values in `TextPrimary`. Local translation, or world
-  translation when the gizmo is in World space, so the numbers match the handles. Nothing
-  selected → nothing drawn. Entity/draw/FPS counters live on the status bar rather than being
-  duplicated here.
+  translation when the gizmo is in World space, so the numbers match the handles. A resolved
+  socket shows `Offset` (or the cached world translation in World space) rather than the
+  ignored local `Translation`. Nothing selected → nothing drawn. Entity/draw/FPS counters live
+  on the status bar rather than being duplicated here.
 
 ### Surface raycast
 
@@ -327,19 +355,21 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera. In Top (Ortho): Alt+LMB yaws only, scroll changes `OrthoHeight`, RMB fly is off |
 | Viewport combo → Top (Ortho)            | Pitch-locked orthographic plan view. Metres-per-pixel readout appears beside Free Aspect                             |
-| LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed)                            |
+| LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed). While Skeletons is on, a bone within 12 px wins and does not change the entity |
+| Esc while assigning a socket joint      | Cancel viewport joint pick                                                                                                                                               |
 | LMB while placing                       | Commit the preview (`AddEntitiesCommand` after the transform is final). Shift+LMB chains; Alt+LMB places unsnapped                           |
 | LMB while scatter-painting              | Paint instances into the active group. Shift+LMB erases that group's instances inside the brush radius. Mode (paint vs erase) is locked at mouse-down |
 | Esc / RMB while placing                 | Cancel and destroy the preview (no undo entry)                                                                                               |
 | Esc / RMB while scatter-painting        | Abort an in-progress stroke (no undo entry) and disarm the brush. New / Open / Play do the same                                              |
 | `[` / `]` while placing                 | Yaw by `MapSnapSettings::Rotate`                                                                                                             |
-| Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state |
+| Q / W / E / R                           | Gizmo: select / translate / rotate / scale (viewport-gated; ignored while using the gizmo or RMB-flying). Toolbar icons write the same state. On a resolved socket, translates/rotates/scales the socket (Offset / Rotation / Scale), not the ignored local TR |
 | Local / World combo (viewport header)   | ImGuizmo LOCAL (default) / WORLD                                                                                                             |
 | Icons (viewport header)                 | Toggle `MarkerComponent` gizmos (`ShowMarkers`). Default on. Independent of Visualizers                                                      |
+| Visualizers → Skeletons                 | Posed joint overlay (`ShowSkeletons`). Default on, selection hierarchy only. All / X-ray are in the same popup. Engine default off. Bone click selects a joint; it does not change the entity. Delete still acts on the entity |
 | Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z          | Undo / redo (Edit state only)                                                                                                                |
 | Ctrl+D / Delete                         | Duplicate / delete the selected entity, subtree included (Edit state only). While placing, Delete cancels instead                            |
 | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S | New / Open / Save / Save-As scene. New, Open and Play cancel an uncommitted preview and abort scatter                                        |
-| Ctrl (held while dragging gizmo)        | **Inverts** snap. Snapping is on by default; steps are `MapSnapSettings`                                                                     |
+| Ctrl (held while dragging gizmo)        | **Inverts** snap. Snapping is on by default; steps are `MapSnapSettings`. Socket gizmos skip translation snap; rotate and scale still snap   |
 | Ctrl+U                                  | Toggle the RmlUi game-UI Debugger (also View → Game UI Debugger; Debug builds only)                                                          |
 | View → Reset Layout                     | Rebuild the default dock tree. Existing `imgui.ini` otherwise hides layout work                                                              |
 | View → Theme                            | Dark (default) or Light — same lilac accent, inverted chrome. Not persisted                                                                  |
@@ -383,7 +413,7 @@ mirrors how `EditorCamera` lives engine-side while the _editing model_ does not.
 | `ComponentEditCommand<T>`                              | Before/after values. The after-value is filled in at the commit boundary, not at construction                                                                                   |
 | `AddComponentCommand<T>` / `RemoveComponentCommand<T>` | Remove stores the whole value, so undo is a re-add rather than a default-construct                                                                                              |
 | `AddEntitiesCommand` / `DeleteEntitiesCommand`         | One subtree-snapshot mechanism, differing only in which way `Undo` runs. Create, duplicate, prefab instantiate and map placement are all built on it |
-| `CompositeCommand`                                     | Several commands that undo as one. Gizmo group-drags and duplicate-along-axis are both this: N entities, one Ctrl+Z                                                              |
+| `CompositeCommand`                                     | Several commands that undo as one. Gizmo group-drags, socket Offset+Scale, and duplicate-along-axis are this: N steps, one Ctrl+Z |
 | `ReparentCommand`                                      | Records the **old sibling index** explicitly - `Scene::SetParent` push_backs, and since the canonical save order is a hierarchy DFS, sibling order is content                   |
 
 **Every command keys entities by UUID**, resolved through `Scene::FindEntityByUUID`. `entt::entity`
@@ -568,11 +598,13 @@ are omitted for the same reason.
 
 ### Stats panel
 
-Hovered entity, Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
+Hovered entity, selected joint (or `none`), Renderer2D/3D counters (draw calls, quads, meshes, frustum-culled, instanced,
 transparent, particle emitters/billboards/draws/culled), an **Asset Cache** readout (below),
 and live post-processing settings (exposure, bloom threshold/knee/intensity/radius, FXAA).
-Jolt debug-draw toggles and the collider-gizmo checkbox live on the viewport header's Visualizers
-popup, not here. Marker gizmos are the separate Icons toggle on that same header.
+Jolt debug-draw toggles, the collider-gizmo checkbox, and the skeleton overlay live on the viewport
+header's Visualizers popup, not here. Marker gizmos are the separate Icons toggle on that same header.
+`Debug lines` on this panel is `Renderer3D::Statistics::DebugLines` (segments) and `DebugLineDraws`
+(0–2 submits).
 
 A **Compiled** line sits under them: assets built this session, the wall clock they cost, and how
 many came out of `assets/.compiled/` instead. A second run over an unchanged project must read
@@ -650,6 +682,24 @@ OnUpdateEditor` via the `EditorViewFilter` singleton (play/runtime still draw th
 - Deletion is deferred to after the hierarchy walk. Destroying a subtree mid-walk would invalidate
   the entt view the enclosing loop is iterating.
 - ImGui IDs use the entt handle, not the UUID — old scene files could contain colliding UUIDs.
+
+## Joints panel
+
+[`JointTreePanel`](../../GanymedEditor/source/Panels/JointTreePanel.h) — `BeginPanel("Joints")`,
+tabbed with Scene Hierarchy in the default tree (dock-layout version 5). Hierarchy from
+`Skeleton::ParentIndices`. `EditorUI::SearchField` filters by a case-insensitive name substring;
+ancestors of a match stay visible and are forced open.
+
+**Joint selection is subordinate to entity selection.** It is `{ UUID skinnedEntity, int32_t joint }`
+on `EditorLayer`, not a scene singleton and not an entity. Clicking a row selects that joint and
+does not change the outliner. Changing the primary entity clears the joint. Delete and Ctrl+D
+still act on the entity — they never attempt to delete a joint. Viewport picking (12 px screen-space
+threshold against markers and parent–child segments, `Math::ScreenPointToRay`) writes the same
+state. Existing `imgui.ini` will not show the tab until **View → Reset Layout** or a dock-version
+mismatch rebuilds the tree.
+
+Empty: "Select a skinned entity." The tree follows the selection hierarchy the same way the overlay
+does (select the capsule, see the body's joints).
 
 ### Properties (drawn by the same panel)
 
@@ -871,9 +921,13 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   through `PlayAnimation` and friends — see [scripting.md](../engine/scripting.md).
 - Bone attachment: **Target** is a drop from the outliner (zero / Parent button = hierarchy parent),
   and **Joint** is a combo over the *target's* `skeleton.JointNames`, not this entity's — the
-  inspector has not previously read another entity's mesh for any component. Offset and Rotation
-  are reflected (`Trait::Radians` on Rotation). Local transform is ignored while the socket
-  resolves; edit Offset, not the gizmo, to place the attached mesh in the hand.
+  inspector has not previously read another entity's mesh for any component. A crosshair next to
+  the combo arms viewport pick: the next bone click writes `Joint` (one undo entry) if it belongs
+  to that target, Esc cancels. Selecting the socket still highlights its named joint until the
+  user picks a different one. Offset and Rotation are reflected (`Trait::Radians` on Rotation).
+  Local transform is ignored while the socket resolves; W/E/R on a resolved socket drive Offset,
+  Rotation and Scale through ImGuizmo. An unresolved socket hides the gizmo and shows the reason
+  on the viewport.
 - Script: shows the `.lua` asset (handle + path) with a Clear button — assign with
   `AcceptAssetDropHandle(Script)`. Below it, one row per property the
   script declares in its `Properties` table, typed (checkbox / drag float / text / vec3). The
@@ -979,7 +1033,15 @@ Grid selection is a solid `Accent` cell fill (same contrast contract). List alre
 those Header colours. The legacy `ImGui::Columns` grid is gone.
 
 **Footer.** Visible item count (after the search filter) on the left; grid / list toggle on the
-right. Grid keeps the PNG directory/file thumbnails with `AssetTint`. List uses Lucide type icons.
+right. Grid shows a 3D thumbnail for a mesh when `AssetPreview` has one, and the PNG
+directory/file icon with `AssetTint` otherwise — pending, absent, or a non-mesh. List uses
+Lucide type icons.
+
+**Selection** is readable. `GetSelectedPath()` returns the absolute path (empty when nothing is
+selected); `SetSelectionChangedCallback` fires on a real change, including a clear. `EditorLayer`
+wires that to the Asset Inspector the same way it wires MapPanel's place handler. `m_Selected`
+stays private. Navigating a folder, clicking empty space, or picking a cell all go through
+`SetSelected` so the inspector cannot miss a clear.
 
 **Cache.** One recursive walk fills a flat index of every visible file and folder _and_ the
 sidebar tree. It rebuilds when a watched directory's `last_write_time` moves, when
@@ -1014,12 +1076,105 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
   [assets.md](../engine/assets.md#orphaned-sidecars) for why the editor asks a person rather than
   reaping at boot.
 
+**Thumbnails.** Grid cells that are actually visible (`ImGui::IsItemVisible`) call
+`AssetPreview::RequestVisible`. `Tick` consumes last frame's set, loads a current `.thumb` from
+`assets/.compiled/` if one exists, and otherwise spends the leftover one-render budget on a
+128×128 studio shot — but only when the file pane has been idle for 150 ms, so a fast scroll
+across 200 meshes queues nothing. The inspector preview wins the budget when it is dirty. Map
+palette rows use the same `GetThumbnail` / `RequestVisible` pair. See
+[assets.md](../engine/assets.md#thumbnail-cache).
+
+## Asset Inspector panel
+
+[`AssetInspectorPanel`](../../GanymedEditor/source/Panels/AssetInspectorPanel.h) — `BeginPanel("Asset
+Inspector")`, tabbed with Properties in the default tree (dock-layout version 5). It inspects
+**assets**, not entities. Selecting a file in the Content Browser fills it; selecting nothing
+clears it. Properties stays entity-scoped and multi-select-aware. The two selection domains do
+not arbitrate.
+
+**Header, every type.** Relative path, `AssetHandle` (or "not indexed"), `AssetType`, source file
+size, sidecar state, and compiled-output status for the current epoch. Sidecar state is read
+from disk (`present` / `missing` / `quarantined` as `.meta.bad`) — the panel never calls
+`ImportAsset` or `ScanAssets` to "fix" a missing sidecar, which is what would silently re-mint
+one. Compiled status is `CompiledCache::QueryOutput`: cheap epoch fields only (compiler version,
+size, mtime, config), no content hash, so a selection click cannot hitch on a 4K texture. A type
+with no compiler reports `n/a`.
+
+**Bodies.**
+
+| Type | What it shows |
+|---|---|
+| Mesh | Submesh table (index, name, material slot, triangles, local extents), vertex / index / triangle counts, total bounds, skin present or not, material slots as *imported defaults* (the entity inspector's rows are per-entity overrides), a Generate-sidecars button, and a skeleton section when the mesh has one: joint count (and a warning if over `Skeleton::MaxBones`), identified Root / Hips / Head names, and per-clip duration, channel count, joints animated, T/R/S paths, constant non-unit scale, root-motion net+residual, and a t=0 pose table (Head Y, Hips Y, Hips Z) with a cross-clip span. Read-only. |
+| Texture | Dimensions, source format (extension), mip count, compiled GPU format and size |
+| Material | The same `DrawMaterialAssetEditor` Properties uses on a slot override — live on the shared `Ref`, not undoable, Save / Revert |
+| Anything else | "No inspector for this type" |
+| Mid-load mesh or texture | "Loading..." — `GetAsset` returning null is the async contract; there are no placeholders |
+
+**Import settings** (mesh and texture). Written to `AssetMeta::Config` through
+`AssetManager::SetAssetConfig`, which overlays keys onto the sidecar (unknown keys survive),
+updates the index, and `Reload`s only when a compile-affecting key changed. The watcher stamps
+the asset file, not the sidecar, so a `.meta` write cannot double-fire. Defaults are the
+compiler’s (`TextureImportSettings` / `MeshImportSettings`); the widgets read `Config*` with
+those fallbacks so an unset sidecar and a UI-default sidecar cannot disagree.
+
+Commits on **deactivate**, not per-drag. `MaxSize` and `ImportScale` would otherwise kick a
+recompile every mouse move — a BC7 encode is seconds. Combos and checkboxes commit on the click.
+Reimport forces the round trip when a source edit did not trip the watcher.
+
+Texture keys: `Format` (auto / BC1 / BC3 / BC5 / BC7 / raw=`RGBA8`), `NormalMap`, `GenerateMips`,
+`MaxSize`. Mesh keys: `ImportScale`, `TangentPolicy` (`WhenMissing` / `Always` / `Never`),
+`UpAxis` (`Y` / `Z`), `Collision` (`None` / `Box`). `Collision` is a placement seed, not an
+importer input: `Box` makes viewport drop / map place / scatter arrive with a
+`BoxColliderComponent` fitted from `Mesh::GetBounds()`. Leave `None` on a hollow building
+shell — the AABB fills the interior. The inspector shows those numbers
+read-only; the 3D overlay is P5. Flipping `Collision` does not recompile. Same global-edit
+warning as the `.gmat` editor.
+
+Triangle counts, clip lists, clip measurements and the mirrored-UV walk are computed **once per
+selection**, not per frame. A mesh that is not yet resident leaves those sections empty until Apply
+lands it. A mesh with a skeleton and no clips says so rather than rendering empty tables. Constant
+scale, root drift and the t=0 pose table are measurements — they do not block import and they do
+not rewrite the file. Pose sampling is `SampleClipGlobals` (the same function `AnimationSystem`
+uses before multiplying `InverseBind`), so the numbers match what the runtime would pose.
+
+**Warnings**, the ones `MeshImporter` already knew and only logged:
+
+- more than one `cgltf_skin` — only the first is imported
+- a normal map present and no `TANGENT` attribute — tangents were generated
+- mirrored UV shells — `MeshVertex::Tangent` is a `vec3`, so glTF's tangent `w` is dropped and a
+  mirrored shell lights as though it were not. The engine cannot fix this without a vertex-format
+  change; the inspector stops it being a mystery
+
+The first two come from `MeshImporter::InspectSource`, a glTF-JSON parse that does not load
+buffers and does not build a `Mesh`. They are not stored on the compiled blob: bumping the mesh
+format to carry three bits would invalidate every `.gres` for UI copy. The mirrored-shell test
+walks the resident mesh's triangles once.
+
+`.gmat` edits follow the existing asset transaction model: live, not undoable, Save / Revert.
+The warning text is the same sentence Properties already uses, because a global edit that looks
+local is the worst version of this UI. `DrawMaterialAssetEditor` lives in `EditorInspector` so
+the two call sites cannot drift.
+
+**3D preview** (`AssetPreview`). A second `SceneRenderer` at `PreviewViewBase = 100`, constructed
+lazily when a mesh is selected and destroyed when it is not. `Tick` runs after the main
+`EndFrame` — scene renders do not nest. One mesh goes through `Renderer3D::SubmitMesh`, or
+`SubmitSkinnedMesh` with a null palette (rest pose) when the mesh `HasSkeleton()`, with a
+fixed directional light and a studio environment (`environments/studio_small_08_1k.hdr` when
+the project has it, procedural sky otherwise). No scratch `Scene`. Renders on demand: dirty on
+selection, orbit, zoom, `SetAssetConfig` / Reimport, live `.gmat` edits, and
+`AddAssetChangedListener`. Budget is one render per frame shared with thumbnails; the inspector
+wins when it is dirty. A mesh that is still pending stays dirty and retries. Skinned meshes
+draw their bind pose via the rest palette, labelled as such — not via `SubmitMesh`, which on a
+Meshy file is a ~2 cm character and an empty thumbnail. `Collision = Box`
+draws the fitted wire box over the image. LMB orbits, wheel zooms; camera state is remembered
+per handle for the session. Hover the image for the session render count.
+
 ## Map panel
 
 [`MapPanel`](../../GanymedEditor/source/Panels/MapPanel.h) — `BeginPanel("Map")`, docked with Stats
 on the right (dock-layout version 3). Palette, placement options, duplicate-along-axis, parity
-audit, scatter, and markers. There is no thumbnail system; rows are
-`AssetTint` icon + filename.
+audit, scatter, and markers. Mesh rows show the same `AssetPreview` thumbnail as the Content
+Browser when one is cached, and the `AssetTint` type icon otherwise.
 
 **Snap model.** `MapSnapSettings` is owned by `EditorLayer` and read by both placement and
 ImGuizmo. Defaults: enabled, translate 0.5 m, rotate 15° (45° is a preset), scale 0.1, snap to

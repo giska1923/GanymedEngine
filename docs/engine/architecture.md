@@ -43,8 +43,9 @@ configuration, not compilation. `CreateApplication` returns an `Application` bui
 `ApplicationSpecification`, and `EnableImGui = false` is the whole opt-out that separates
 [`GanymedEditor`](../editor/editor.md) (ImGui chrome, scene rendered into a viewport panel) from
 [`GanymedRuntime`](../runtime/runtime.md) (no ImGui, scene rendered straight to the backbuffer).
-Anything that reads as editor-only behaviour inside the engine is a bug; the collider-gizmo gate on
-`PhysicsSettings::ShowColliderGizmos` is there because it *was* one. The same rule owns the look:
+Anything that reads as editor-only behaviour inside the engine is a bug; the visualizer gates on
+`PhysicsSettings` (`ShowColliderGizmos`, `ShowMarkers`, `ShowSkeletons`) are there because
+collider gizmos *were* one. The same rule owns the look:
 `ImGuiLayer` ships `StyleColorsDark()` and the embedded font; Inter, Lucide and `EditorTheme` are
 applied from the editor after attach, so the runtime never loads editor assets.
 
@@ -95,9 +96,11 @@ Application::Run loop
 Two ordering facts worth internalizing:
 
 - **bgfx executes the frame in view-ID order, not call order.** "Where a draw goes" is the current
-  view ID ([`RenderPassIDs.h`](../../GanymedEngine/source/GanymedE/Renderer/RenderPassIDs.h)), and
-  the whole frame's pass schedule is that table: shadows (1–4) → scene HDR (5) → 2D/transparent (6)
-  → bloom (7–23) → tonemap (24) → FXAA (25) → composite (26) → picking blit (27) → ImGui (200).
+  view ID ([`RenderPassIDs.h`](../../GanymedEngine/source/GanymedE/Renderer/RenderPassIDs.h)). Scene
+  passes in that table are offsets from a `SceneRenderer` viewBase (`MainViewBase = 69` keeps the
+  main IDs where they were when the table was absolute): environment bake (1–67) → shadows (69–72)
+  → scene HDR (73) → 2D/transparent (74) → bloom (75–90) → tonemap (92) → FXAA (93) → composite (94)
+  → picking blit (95) → game UI (96, absolute) → ImGui (200). A preview instance uses base 100.
 - **Structural ECS changes made by systems are deferred.** They queue through
   `Scene::Commands()` and apply at the *next* `FrameBegin`, so nothing mutates the registry while
   views iterate it. Editor/tooling code outside the update loop uses the immediate `Entity` API.

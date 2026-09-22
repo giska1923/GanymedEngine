@@ -2,6 +2,7 @@
 
 #include "GanymedE/Core/Core.h"
 #include "GanymedE/Renderer/Framebuffer.h"
+#include "GanymedE/Renderer/RenderPassIDs.h"
 #include "GanymedE/Renderer/Shader.h"
 
 #include <glm/glm.hpp>
@@ -30,7 +31,15 @@ namespace GanymedE {
 	class SceneRenderer
 	{
 	public:
-		SceneRenderer(uint32_t width, uint32_t height);
+		// `viewBase` is the first view ID this instance owns. The default is
+		// RenderPass::MainViewBase (69), which keeps the main viewport on the
+		// same IDs it used when the pass table was absolute. A preview passes
+		// RenderPass::PreviewViewBase (100) or ThumbnailViewBase (130). `paletteBase` is
+		// the first of two bgfx clear-palette slots (colour, entity-ID); they are global
+		// per frame, so a second instance must not reuse 0/1 or it overwrites the
+		// main clear. Range and overlap assert at construction.
+		SceneRenderer(uint32_t width, uint32_t height,
+			uint16_t viewBase = RenderPass::MainViewBase, uint8_t paletteBase = 0);
 
 		void SetViewportSize(uint32_t width, uint32_t height);
 
@@ -42,7 +51,7 @@ namespace GanymedE {
 		// rather than adding a present/blit pass. A dedicated present pass is the
 		// production norm (Unity/Unreal both end on one) because it carries resolution
 		// scaling and HDR-display duties; none of those exist here yet, and it would
-		// cost a new view ID above RenderPass::UI plus a new shader, because
+		// cost a new view ID above the absolute RenderPass::UI plus a new shader, because
 		// vs_Blit.sc wants a_texcoord0 while the fullscreen quad only supplies
 		// a_Position. See docs/engine/rendering.md for the escape hatch.
 		//
@@ -78,9 +87,10 @@ namespace GanymedE {
 		const Ref<Framebuffer>& GetSceneFramebuffer() const { return m_SceneFramebuffer; }
 
 		// The LDR target the post stack resolves into, and what the viewport image
-		// shows. Exposed so the game UI can composite into it: RenderPass::UI sorts
-		// after Composite, so anything drawn there lands on the finished image in
-		// display space rather than being tonemapped with the scene.
+		// shows. Exposed so the game UI can composite into it: RenderPass::UI is
+		// absolute and sorts after the main Composite, so anything drawn there
+		// lands on the finished image in display space rather than being
+		// tonemapped with the scene.
 		//
 		// Unused in backbuffer mode - a host in that mode passes nullptr to
 		// UIEngine::SetTarget so the UI view lands on the backbuffer too.
@@ -91,6 +101,7 @@ namespace GanymedE {
 
 		uint32_t GetWidth() const { return m_Width; }
 		uint32_t GetHeight() const { return m_Height; }
+		uint16_t GetViewBase() const { return m_ViewBase; }
 	private:
 		void RebuildBloomChain();
 		// Returns the framebuffer holding the final blurred bloom (half resolution)
@@ -101,6 +112,9 @@ namespace GanymedE {
 		void BindFinalPassToBackbuffer(uint16_t viewId) const;
 	private:
 		uint32_t m_Width = 0, m_Height = 0;
+		uint16_t m_ViewBase = RenderPass::MainViewBase;
+		uint8_t m_ColourPalette = 0;
+		uint8_t m_EntityIdPalette = 1;
 		bool m_OutputToBackbuffer = false;
 		SceneRendererSettings m_Settings;
 

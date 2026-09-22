@@ -18,7 +18,7 @@ namespace GanymedE {
 
 		FormatChoice ChooseFormat(const AssetConfig& config, const std::string& assetPath)
 		{
-			const std::string requested = ConfigString(config, "Format", "auto");
+			const std::string requested = ConfigString(config, "Format", TextureImportSettings::Format);
 
 			// `auto` leaves the choice to the encoder, which is the side holding the pixels and
 			// can therefore see whether the alpha channel is used. Everything else is taken at
@@ -66,9 +66,14 @@ namespace GanymedE {
 
 		EncodeOptions options;
 		options.Format = choice.Format;
-		options.NormalMap = choice.NormalMap;
-		options.GenerateMips = ConfigBool(config, "GenerateMips", true);
-		options.MaxSize = (uint32_t)std::max(0, ConfigInt(config, "MaxSize", 0));
+		// BC5 is the two-channel normal-map format and always wants angular error.
+		// The explicit key is for a Format that is not BC5; it is a no-op on BC1/BC3/BC7
+		// (TextureEncode says so) and exists so the inspector can write the same four keys
+		// the compiler reads.
+		options.NormalMap = choice.NormalMap
+			|| ConfigBool(config, "NormalMap", TextureImportSettings::NormalMap);
+		options.GenerateMips = ConfigBool(config, "GenerateMips", TextureImportSettings::GenerateMips);
+		options.MaxSize = (uint32_t)std::max(0, ConfigInt(config, "MaxSize", TextureImportSettings::MaxSize));
 
 		// The threading milestone's first consumer (THREADING_ROADMAP.md T3), and the reason it
 		// is the right one: this is offline work with no frame budget and no lifetime hazards,

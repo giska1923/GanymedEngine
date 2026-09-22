@@ -26,9 +26,9 @@ namespace GanymedE {
 
 			uint16_t Take()
 			{
-				GE_CORE_ASSERT(Next < RenderPass::Shadow,
+				GE_CORE_ASSERT(Next < RenderPass::EnvironmentBake + RenderPass::EnvironmentBakeViewCount,
 					"Ran out of environment bake views - raise EnvironmentBakeViewCount and shift "
-					"the passes after it in RenderPassIDs.h");
+					"MainViewBase in RenderPassIDs.h");
 				return Next++;
 			}
 		};
@@ -437,7 +437,7 @@ namespace GanymedE {
 		}
 
 		// Leave the renderer in a sane state for the frame that follows.
-		RenderCommand::SetViewId(RenderPass::SceneHDR);
+		RenderCommand::SetViewId(RenderPass::Id(RenderPass::SceneHDR));
 		RenderCommand::SetDepthTest(true);
 		RenderCommand::SetDepthWrite(true);
 		RenderCommand::SetCullFace(true);
