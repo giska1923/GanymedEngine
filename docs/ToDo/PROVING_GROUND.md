@@ -811,9 +811,10 @@ appears, lower the hop limit rather than re-rigging.
   aim-mode backpedal was not exercised.
 
   **Still open:** rounds leave from a chest point 1 m ahead of the capsule, not from the barrel,
-  and the muzzle flash is still under `Yaw`. Lua reads only local transforms, and the rifle's
-  world is written by the socket, so a `Muzzle` under the Rifle cannot be read yet — that needs a
-  world-transform binding on `master`. The idle clip `Lower_Weapon_Look_Raise` also still lowers
+  and the muzzle flash is still under `Yaw`. The rifle's world is written by the socket, so its
+  local transform is useless for this; `Entity:GetWorldPosition` / `GetWorldForward` (landed on
+  `master`, last frame's values) now read it, so a `Muzzle` under the Rifle is a content change
+  here, not an engine one. The idle clip `Lower_Weapon_Look_Raise` also still lowers
   the rifle while standing; an aim-idle with a stable grip is a download, chosen by the same
   grip-consistency rule as A1.
 - **`Fox.glb` is now unreferenced** and still in the tree. It is the only asset with clips that
