@@ -86,6 +86,12 @@ namespace GanymedE {
 		// RenderSystem and AssetPreview submit this when no animator has built a clip palette.
 		const std::vector<glm::mat4>& GetRestPalette() const { return m_RestPalette; }
 
+		// The first skinned submesh's LocalTransform: what takes SampleClipGlobals' joint space
+		// into mesh space. Joints and vertices can be authored in different units - a Meshy rig
+		// has joints in centimetres and this at 0.01 - so a joint position read without it is in
+		// the rig's unit, not metres. Identity when nothing is skinned.
+		glm::mat4 GetSkinTransform() const;
+
 		const std::vector<AnimationClip>& GetClips() const { return m_Clips; }
 		const AnimationClip* FindClip(const std::string& name) const;
 

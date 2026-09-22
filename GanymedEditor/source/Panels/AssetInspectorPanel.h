@@ -88,8 +88,8 @@ namespace GanymedE {
 		void CommitConfig(const AssetConfig& keys);
 		void Reimport();
 		void EnsureMeshCache();
-		void FillClipRow(const Skeleton& skeleton, const AnimationClip& clip,
-			int32_t rootJoint, int32_t hipsJoint, int32_t headJoint,
+		void FillClipRow(const Skeleton& skeleton, const glm::mat4& skinTransform,
+			const AnimationClip& clip, int32_t rootJoint, int32_t hipsJoint, int32_t headJoint,
 			std::vector<JointPose>& locals, std::vector<glm::mat4>& globals, ClipRow& row);
 
 		std::filesystem::path m_Absolute;

@@ -112,6 +112,16 @@ namespace GanymedE {
 		}
 	}
 
+	glm::mat4 Mesh::GetSkinTransform() const
+	{
+		for (const Submesh& submesh : m_Submeshes)
+		{
+			if (submesh.IsSkinned)
+				return submesh.LocalTransform;
+		}
+		return glm::mat4(1.0f);
+	}
+
 	glm::mat4 Mesh::RestBoundsMatrix() const
 	{
 		if (m_RestPalette.empty())
@@ -298,18 +308,7 @@ namespace GanymedE {
 		int32_t joint, glm::mat4& outFrame)
 	{
 		VerifyJointFrameOnce();
-
-		glm::mat4 skinTransform{ 1.0f };
-		for (const Submesh& submesh : mesh.GetSubmeshes())
-		{
-			if (submesh.IsSkinned)
-			{
-				skinTransform = submesh.LocalTransform;
-				break;
-			}
-		}
-
-		return ComputeJointFrame(mesh.GetSkeleton(), skinTransform, palette, joint, outFrame);
+		return ComputeJointFrame(mesh.GetSkeleton(), mesh.GetSkinTransform(), palette, joint, outFrame);
 	}
 
 }

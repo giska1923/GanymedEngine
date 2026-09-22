@@ -1370,7 +1370,12 @@ with it:
   at `t=0` across every clip on the mesh; and `JointCount() > Skeleton::MaxBones` (128), already
   warned at import and clamped at upload. Wording is what was measured, not a defect. A mesh with
   no clips states that. Sampling is `SampleClipGlobals` in
-  [`Animation.h`](../../GanymedEngine/source/GanymedE/Renderer/Animation.h).
+  [`Animation.h`](../../GanymedEngine/source/GanymedE/Renderer/Animation.h), whose globals are in
+  the rig's joint unit; every position is multiplied by `Mesh::GetSkinTransform()` (the skinned
+  submesh's `LocalTransform`) before it is reported, so the figures are mesh metres. On a Meshy rig
+  — joints in centimetres, that transform at 0.01 — leaving it out reads a 1.5 m head height as
+  150 and the cm span line as 100x too large. `TryGetJointFrame` uses the same accessor, so the
+  inspector and a bone socket cannot disagree about where a joint is.
 - Skin weights ride a **second vertex stream** (`SkinVertex`) rather than widening `MeshVertex`,
   which would tax every static mesh 32 bytes a vertex. Because both bgfx streams are bound with one
   `startVertex`, `Mesh::GetSkinVertices()` is either empty or exactly parallel to the vertex array:
