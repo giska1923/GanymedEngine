@@ -1072,7 +1072,8 @@ Texture keys: `Format` (auto / BC1 / BC3 / BC5 / BC7 / raw=`RGBA8`), `NormalMap`
 `MaxSize`. Mesh keys: `ImportScale`, `TangentPolicy` (`WhenMissing` / `Always` / `Never`),
 `UpAxis` (`Y` / `Z`), `Collision` (`None` / `Box`). `Collision` is a placement seed, not an
 importer input: `Box` makes viewport drop / map place / scatter arrive with a
-`BoxColliderComponent` fitted from `Mesh::GetBounds()`. The inspector shows those numbers
+`BoxColliderComponent` fitted from `Mesh::GetBounds()`. Leave `None` on a hollow building
+shell — the AABB fills the interior. The inspector shows those numbers
 read-only; the 3D overlay is P5. Flipping `Collision` does not recompile. Same global-edit
 warning as the `.gmat` editor.
 

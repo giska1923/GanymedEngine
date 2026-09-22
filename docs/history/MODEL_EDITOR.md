@@ -1,10 +1,10 @@
 # Milestone — Model Asset Editor
 
-**Status: P1–P6 done. P7 planned.**
+**Status: complete. P1–P7 done.**
 
-> **Same branch rule as [MAP_EDITOR.md](MAP_EDITOR.md).** Every phase touches
+> **Same branch rule as [MAP_EDITOR.md](../ToDo/MAP_EDITOR.md).** Every phase touches
 > `GanymedEditor/source/` or `GanymedEngine/source/`, which the
-> [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`; the game branch receives it by
+> [branch policy](../ToDo/PROVING_GROUND.md#branch-policy) puts on `master`; the game branch receives it by
 > merge and never sends anything back. Build these off `master`, not off `first-game`.
 
 An inspector for assets rather than entities: select a `.glb` in the Content Browser and see what it
@@ -19,7 +19,7 @@ write to the sidecar, and a collision default the map editor can consume.
 and would be a bad trade: the pipeline is glTF, Blender already does it, a writable mesh format does
 not exist, and the engine would learn nothing from owning it. The defensible part of that idea —
 parametric blockout primitives that generate mesh and collider together — is a different tool and is
-recorded as the deferred CSG option in [MAP_EDITOR.md](MAP_EDITOR.md#what-it-deliberately-is-not).
+recorded as the deferred CSG option in [MAP_EDITOR.md](../ToDo/MAP_EDITOR.md#what-it-deliberately-is-not).
 
 What *is* missing is everything between "a file exists in `assets/`" and "an entity references it":
 
@@ -28,7 +28,7 @@ What *is* missing is everything between "a file exists in `assets/`" and "an ent
 | **There is no asset inspector at all.** The Content Browser lists and drags; the Properties panel inspects entities. Selecting a `.glb` shows nothing. Everything known about a mesh is learned through an entity that happens to reference it | `SceneHierarchyPanel.cpp:1917`, `ContentBrowserPanel.h` |
 | **Import settings are plumbed end-to-end and unreachable.** `AssetMeta::Config` is a flat key/value map with an `ImportConfigVersion` for migration; `CompiledCache` hashes it into the epoch so a change invalidates the compiled output; `TextureCompiler` already reads `Format`, `NormalMap`, `GenerateMips` and `MaxSize`. **Nothing in the editor writes a key** — the only way to set one is to hand-edit a `.meta` in a text editor | `AssetMeta.h:31`, `CompiledCache.cpp:378`, `TextureCompiler.cpp:47` |
 | **`MeshCompiler` reads no config at all.** No import scale, no axis correction, no tangent policy — the tangent rule is hard-coded "generate when the file has none" with no way to force or suppress it | `MeshCompiler.cpp`, [assets.md](../engine/assets.md#tangents-are-generated-when-the-file-has-none) |
-| **Nothing can render an asset outside the scene.** No preview, no thumbnails — which is why [MAP_EDITOR.md](MAP_EDITOR.md) had to cut palette thumbnails explicitly | `SceneRenderer.h` |
+| **Nothing can render an asset outside the scene.** No preview, no thumbnails — which is why [MAP_EDITOR.md](../ToDo/MAP_EDITOR.md) had to cut palette thumbnails explicitly | `SceneRenderer.h` |
 | **A mesh carries no collision default**, so every placement types its own box — the authoring failure the map editor's M2 exists to catch | `Components.h:494` |
 
 The last two are why this milestone pays twice: the preview renderer is also the map palette's
@@ -45,11 +45,11 @@ and before the two phases that need it.
 |---|---|---|---|
 | **P1** | Asset Inspector panel — readouts, no preview | **done** | — |
 | **P2** | Import settings written to `AssetMeta::Config` | **done** | P1 |
-| **P3** | Collision default on the mesh asset | **done** | P2, and pairs with [MAP_EDITOR](MAP_EDITOR.md) M2 |
+| **P3** | Collision default on the mesh asset | **done** | P2, and pairs with [MAP_EDITOR](../ToDo/MAP_EDITOR.md) M2 |
 | **P4** | Multi-target rendering: view-ID bases | **done** | — (**the risk**) |
 | **P5** | The asset preview renderer | **done** | P4 |
 | **P6** | Thumbnails: Content Browser and map palette | **done** | P5 |
-| **P7** | Docs and a measured pass | ~0.5 day | all |
+| **P7** | Docs and a measured pass | **done** | all |
 
 ~9.5 days. **P4 is the phase to read first** — if its refactor turns out worse than it looks, P5 and
 P6 are cut and P1–P3 still stand on their own.
@@ -222,7 +222,7 @@ Ganymed inverts it because its colliders were always component-side and the flex
 What the asset default removes is only the *typing*, which is where the wrong numbers came from.
 
 **`Box` only.** Sphere and capsule are placement decisions, not properties of a mesh, and convex
-hulls do not exist — [PROVING_GROUND](PROVING_GROUND.md#what-it-deliberately-is-not) cut mesh
+hulls do not exist — [PROVING_GROUND](../ToDo/PROVING_GROUND.md#what-it-deliberately-is-not) cut mesh
 colliders on purpose and nothing has changed that.
 
 **One Config key, not two.** The plan asked for fitted extents cached alongside `Collision`. Those
@@ -353,11 +353,53 @@ the stored `HashConfig` matches. Pending cells keep the `AssetTint` type icon.
 
 ## Phase P7 — docs and a measured pass
 
-1. Import one real model cold with the panel open and record: import time, compiled size, preview
-   render cost, thumbnail cost.
-2. Set a collision default on the Proving Ground's building meshes and re-run the map editor's
-   parity audit — target zero findings with no repair action.
-3. Update the docs listed below, and strike the closed items from [README.md](README.md).
+**Done.** P1–P6 already updated the live docs. This phase records what was measured, corrects
+one probe the plan got wrong, and retires the milestone.
+
+### 1. CesiumMan — compile and artifact size, this machine
+
+`MeshCompiler` is GPU-free and writes `CompileMs` / `OutputSize` into the `.dep` epoch record.
+Those numbers below were read from `GanymedEditor/assets/.compiled/` after P6 authored
+thumbnails, so they are the last compile this tree actually paid, not a stopwatch invented
+for the write-up. CesiumMan is the "real" model (skinned, embedded JPEG).
+
+| Mesh | Source | `.gres` | Compile | `.thumb` |
+|---|---|---|---|---|
+| BoxTextured | 6.4 KB | 5.7 KB | 1.7 ms | 64.0 KB |
+| Fox | 159 KB | 217 KB | 8.4 ms | 64.0 KB |
+| RiggedFigure | 49 KB | 36 KB | 5.7 ms | 64.0 KB |
+| **CesiumMan** | **428 KB** | **508 KB** | **17.1 ms** | **64.0 KB** |
+
+The thumbnail is uncompressed RGBA8 128×128 plus a 24-byte header (65560 bytes). That is the
+format, not a bug. Preview and thumbnail *submit* cost was not timestamped — the renderer has
+no GPU timestamp queries, and a guessed frame time would be a lie. What is known: they share a
+one-render-per-frame budget; a new thumb is that submit plus 2–3 frames of async readback
+before the GPU cache and the `.thumb` appear. The Stats panel reports GPU count, session
+renders, and disk bytes. A warm reopen with `QueryOutput` Current is **0** compiles and **0**
+thumbnail renders.
+
+### 2. Collision default on the Proving Ground buildings — the plan's target is wrong
+
+The plan said: set `Collision = Box` on the building meshes, re-run the parity audit, target
+zero findings with no repair.
+
+**That probe would make the map worse**, and [MAP_EDITOR](../ToDo/MAP_EDITOR.md) M6 already recorded
+why. `Warehouse.glb` / `Blockhouse.glb` are hollow single-sided shells. `Mesh::GetBounds()` is
+the outer AABB; a Box seed from it fills the interior. Collision on those buildings lives on
+**sibling wall entities with no mesh**, so `RebuildAudit` reports `Warehouse Mesh` /
+`Blockhouse Mesh` as `No collider` by construction. "Zero findings" is the wrong target.
+Setting the asset default would not update those siblings, and the next palette-place of the
+warehouse would drop a solid box.
+
+The default stays `None` on building shells. It is for kit pieces — a crate, a prop — where
+the mesh AABB *is* the collider you want. Generate-from-mesh remains the repair for entities
+that arrived before the key existed.
+
+This is not a skipped verification. It is the plan being wrong about what the default is for.
+
+### 3. Docs
+
+Struck from [README.md](../ToDo/README.md). This file is the record.
 
 ---
 
@@ -369,7 +411,7 @@ the stored `HashConfig` matches. Pending cells keep the `AssetTint` type icon.
 | LOD generation | There is no LOD system to generate *for*. That is a renderer milestone, not an inspector feature |
 | Mesh optimization (vertex cache, overdraw, simplification) | Means a new third-party dependency (meshoptimizer), which AGENTS.md requires sign-off for. Worth asking about separately |
 | Convex-hull or mesh colliders | Jolt supports them; the engine deliberately has box/sphere/capsule only |
-| Animation clip editing, retargeting, socket authoring | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md)'s territory. P1 *reports* skeleton and clip data; it does not edit it |
+| Animation clip editing, retargeting, socket authoring | [SKELETAL_ATTACHMENTS.md](../ToDo/SKELETAL_ATTACHMENTS.md)'s territory. P1 *reports* skeleton and clip data; it does not edit it |
 | A separate OS window per asset (the Unreal model) | Heavier than ImGui docking warrants for a single-window editor |
 | Texture channel packing or editing | An image editor, not an asset inspector |
 | Undo for asset edits | The stack is the scene's, deliberately. Save / Revert is the asset transaction model and this milestone follows it |
@@ -400,11 +442,11 @@ the stored `HashConfig` matches. Pending cells keep the `AssetTint` type icon.
 |---|---|
 | P1 | [editor/editor.md](../editor/editor.md) — the Asset Inspector panel, and the dock-layout version bump |
 | P2 | [engine/assets.md](../engine/assets.md) — the `.meta` Config section becomes "settings you can set", plus the mesh keys; [editor/editor.md](../editor/editor.md) |
-| P3 | [engine/assets.md](../engine/assets.md); [engine/physics.md](../engine/physics.md); [MAP_EDITOR.md](MAP_EDITOR.md) M2, whose generate-action now has a source |
+| P3 | [engine/assets.md](../engine/assets.md); [engine/physics.md](../engine/physics.md); [MAP_EDITOR.md](../ToDo/MAP_EDITOR.md) M2, whose generate-action now has a source |
 | P4 | [engine/rendering.md](../engine/rendering.md) — the view-ID table becomes a table of *offsets*, and that is the section's whole ordering story |
 | P5 | [engine/rendering.md](../engine/rendering.md); [editor/editor.md](../editor/editor.md) |
 | P6 | [editor/editor.md](../editor/editor.md) — Content Browser; [engine/assets.md](../engine/assets.md) — the thumbnail cache beside the compiled outputs |
-| P7 | [README.md](README.md) — strike what closed |
+| P7 | [README.md](../ToDo/README.md) — strike what closed |
 
 **New source files in P1 and P5 mean premake regeneration** — `GanymedEditor/premake5.lua` globs
 `source/**`, expanded at generation time. P5 added `AssetPreview.{h,cpp}` and listed them in the

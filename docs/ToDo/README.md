@@ -32,7 +32,6 @@ documented.** A file here is a promise, not a description.
 | [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7        |
 | [SKELETAL_ATTACHMENTS.md](SKELETAL_ATTACHMENTS.md) | **Milestone plan** — attaching entities to joints, so a character can hold something                                                                                                                                                    | A2 done; A1, A3 remain |
 | [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done |
-| [MODEL_EDITOR.md](MODEL_EDITOR.md)                 | **Milestone plan** — an inspector for assets rather than entities: readouts, import settings written to `.meta`, a collision default, a preview renderer, thumbnails                                                                    | P1–P6 done; P7 remains |
 | [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the skinned bind-pose fallback; the frustum's near-plane depth convention                                                            | 5                      |
 | [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                      |
 | [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                      |
@@ -50,11 +49,11 @@ before this moves to `docs/history/`:
 - The merge direction is master → game, so nothing written on the branch ever arrives here. The
   milestone has to be assembled from `first-game` when it is retired.
 
-**[MAP_EDITOR.md](MAP_EDITOR.md) and [MODEL_EDITOR.md](MODEL_EDITOR.md) are editor milestones, so
-they live off `master`, not off the game branch.** Every phase of either touches
-`GanymedEditor/source/` or `GanymedEngine/source/`, which the branch policy above puts on `master`;
-the game branch receives that work by merge and never sends anything back. Both were drafted on
-`first-game` and moved to a branch off `master` for exactly that reason.
+**[MAP_EDITOR.md](MAP_EDITOR.md) is an editor milestone, so it lives off `master`, not off the
+game branch.** Every phase touches `GanymedEditor/source/` or `GanymedEngine/source/`, which the
+branch policy above puts on `master`; the game branch receives that work by merge and never
+sends anything back. The model editor — the other half of the same authoring problem — is
+**done**: [MODEL_EDITOR.md](../history/MODEL_EDITOR.md).
 
 **[MAP_EDITOR.md](MAP_EDITOR.md) executed on `map-editor`, which was based on `master`.** M0–M6
 have landed. M6's scene and Lua edits (the step-up ledge, the P2 footprint doors, the Sentry's
@@ -63,12 +62,10 @@ file.
 
 The map editor exists because the Proving Ground's buildings were hand-assembled from typed-in box
 colliders, which is what produced the wall holes above — two of its gates (P2's interiors, P4's
-`+Z` occlusion re-run) were the milestone's own closing verification. The model editor is the
-other half of the same problem: a mesh asset carries no collision default, so every placement
-types its own box. It also picks up two gaps found while planning it — import settings that are
-plumbed end-to-end but reachable only by hand-editing a `.meta`, and the fact that
-`RenderPassIDs.h` holds absolute view IDs, so a second `SceneRenderer` cannot exist and nothing
-can render an asset outside the scene.
+`+Z` occlusion re-run) were the milestone's own closing verification. The model editor closed the
+other half: an inspector, import settings on the sidecar, a collision *seed* (not an override —
+and not for hollow building shells), a second `SceneRenderer` for preview, and thumbnails. The
+collision default does not zero the parity audit on those buildings; M6 already recorded why.
 
 **Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
 managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three

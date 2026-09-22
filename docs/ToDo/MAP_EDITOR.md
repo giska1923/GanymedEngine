@@ -248,7 +248,7 @@ you asked.
    options, parity audit (M2), scatter (M3), markers (M4).
 3. **Palette**: enumerate candidates with `AssetManager::ForEachAsset` filtered to `Prefab` and
    `StaticMesh`; a pinned subset is what the palette shows. Rows are `AssetTint` icon + name
-   until a thumbnail exists; [MODEL_EDITOR.md](MODEL_EDITOR.md) P6 is the cache that fills them.
+   until a thumbnail exists; [MODEL_EDITOR.md](../history/MODEL_EDITOR.md) P6 is the cache that fills them.
 4. **Palette persistence** at `<project>/.editor/map_palette.yaml`. Project-relative, not
    `imgui.ini`: a palette is a fact about the *content*, and `imgui.ini` is per-install window
    layout that no one wants merged.
@@ -380,7 +380,7 @@ it on the static mesh asset; Unity computes bounds when a `BoxCollider` is added
 Ganymed's colliders live on components, so the same crate mesh can carry different collision per
 placement — more flexible, and the reason the wrong value can be typed in the first place.
 The mesh sidecar now carries a `Collision` seed (`None` | `Box`) from
-[MODEL_EDITOR](MODEL_EDITOR.md) P3: placement copies a fitted `BoxColliderComponent` onto the new
+[MODEL_EDITOR](../history/MODEL_EDITOR.md) P3: placement copies a fitted `BoxColliderComponent` onto the new
 entity and stops there. Generate-from-mesh is the repair for entities that arrived before the
 default existed, or for a mesh that still says `None`; it shares `MeshCollision::SeedBoxCollider`
 with add-component and still live-fits from `Mesh::GetBounds()`. The component remains the

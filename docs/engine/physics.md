@@ -372,7 +372,9 @@ the same crate must still be allowed to disagree.
 `BoxColliderComponent` whose `HalfExtents` / `Offset` come from `Mesh::GetBounds()` — the same
 AABB `ComputeBounds` already wrote at import, in mesh local space, which is the space
 `PhysicsScene::CreateBodies` already applies the entity transform on top of. `None` is a no-op,
-so every existing scene and every mesh that has not opted in behaves as it did.
+so every existing scene and every mesh that has not opted in behaves as it did. Leave `None`
+on a hollow building shell: `GetBounds()` is the outer AABB, and a Box seed would fill the
+interior. The key is for kit pieces whose mesh *is* the collider you want.
 
 Add-component and the map panel's generate-from-mesh share `MeshCollision::SeedBoxCollider` and
 do **not** wait on the key: asking for a collider on a mesh that still says `None` must still

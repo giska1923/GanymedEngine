@@ -1232,7 +1232,7 @@ does not change a mesh. Compiler `Version()` is therefore not bumped.
 | `ImportScale` | float > 0 | `1.0` | Uniform scale baked at import. Static verts bake it; skinned verts keep bind space and the same matrix rides `Submesh::LocalTransform`, because the draw is `entity * LocalTransform * Palette * v` |
 | `TangentPolicy` | `WhenMissing`, `Always`, `Never` | `WhenMissing` | `WhenMissing` is the previous hard-coded rule. `Always` regenerates even when the file shipped tangents. `Never` trusts the file and, if it has none, leaves the pre-generation constant +X |
 | `UpAxis` | `Y`, `Z` | `Y` | glTF is Y-up by spec. `Z` applies a −90° rotation about X (Z-up DCC → Y-up) through the same import matrix as `ImportScale` |
-| `Collision` | `None`, `Box` | `None` | Placement seed, not an importer input. `Box` makes `MeshImporter::Instantiate` add a `BoxColliderComponent` fitted from `Mesh::GetBounds()`. Existing entities keep the component they already have. `ConfigAffectsCompile` excludes this key, so flipping it does not invalidate the blob |
+| `Collision` | `None`, `Box` | `None` | Placement seed, not an importer input. `Box` makes `MeshImporter::Instantiate` add a `BoxColliderComponent` fitted from `Mesh::GetBounds()`. Existing entities keep the component they already have. `ConfigAffectsCompile` excludes this key, so flipping it does not invalidate the blob. Leave `None` on a hollow building shell — the AABB is the outer volume and a Box seed would fill the interior |
 
 The Asset Inspector writes these keys. A bad `ImportScale` rescales every existing placement and
 is not undoable — the panel says so in the same words the `.gmat` editor uses.
