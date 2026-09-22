@@ -1,6 +1,6 @@
 # Milestone — Model Asset Editor
 
-**Status: P1–P4 done. P5–P7 planned.**
+**Status: P1–P5 done. P6–P7 planned.**
 
 > **Same branch rule as [MAP_EDITOR.md](MAP_EDITOR.md).** Every phase touches
 > `GanymedEditor/source/` or `GanymedEngine/source/`, which the
@@ -47,7 +47,7 @@ and before the two phases that need it.
 | **P2** | Import settings written to `AssetMeta::Config` | **done** | P1 |
 | **P3** | Collision default on the mesh asset | **done** | P2, and pairs with [MAP_EDITOR](MAP_EDITOR.md) M2 |
 | **P4** | Multi-target rendering: view-ID bases | **done** | — (**the risk**) |
-| **P5** | The asset preview renderer | ~2 days | P4 |
+| **P5** | The asset preview renderer | **done** | P4 |
 | **P6** | Thumbnails: Content Browser and map palette | ~1.5 days | P5 |
 | **P7** | Docs and a measured pass | ~0.5 day | all |
 
@@ -300,53 +300,34 @@ shadows in the same frame.
 
 ## Phase P5 — the asset preview renderer
 
-### Goal
-
-A live, orbitable 3D preview of the selected asset, rendered on demand.
-
-### Steps
-
-1. **`AssetPreview` service**: handle → framebuffer + camera state, created lazily, evicted with the
-   selection.
-2. **No scratch `Scene`.** The preview submits one mesh through `Renderer3D::SubmitMesh` with a
-   fixed light rig and the environment, directly. A `Scene` would drag in systems, singletons, a
-   change tracker and a second entity registry to draw one mesh.
-3. **Render on demand, not per frame** — a dirty flag set by camera movement, selection change, and
-   `AssetManager::AddAssetChangedListener` (which already exists; it is how the prefab template
-   cache is invalidated when a `.gprefab` changes on disk).
-4. **A per-frame preview budget**, N renders per frame, mirroring
-   [the Apply budget](../engine/assets.md#the-apply-budget) — same reasoning, same shape, and it is
-   what makes P6's thumbnails affordable rather than a stall.
-5. Auto-frame from `Mesh::GetBounds()`; LMB orbits, wheel zooms; camera state remembered per asset
-   for the session.
-6. Skinned meshes render their **bind pose**, labelled as such in the panel. `Mesh`'s CPU vertices
-   are the bind pose and `SkinnedBoundsPadding` exists precisely because the posed bounds differ —
-   showing a pose the asset is not in would be the same lie P4 refused.
+**Done.** `AssetPreview` is a second `SceneRenderer` at `PreviewViewBase = 100`. It submits one mesh
+through `Renderer3D::SubmitMesh` — no scratch `Scene`. `Tick` runs after the main `EndFrame`.
+Dirty on selection, orbit, zoom, sidecar writes, live `.gmat` edits, and the asset-changed
+listener. Budget is one render per frame; a pending mesh stays dirty. Bind pose for skinned
+meshes, labelled. `Collision = Box` draws the fitted wire box. Camera state is per handle for
+the session. Hover the image for the session render count.
 
 ### Decisions, with reasoning
 
 **A fixed studio environment for previews, not the open scene's.** Sharing the *baked* environment
 is a performance decision (P4); using the *current scene's* HDR is a correctness question, and the
 answer is no — an asset would look different depending on which scene happened to be open, so two
-authors comparing the same material would disagree. Bake one studio environment for the preview
-renderer and keep it for the session. The cost is that a preview does not predict how the asset
-looks in *this* map; the viewport is where that question belongs.
+authors comparing the same material would disagree. The preview loads
+`environments/studio_small_08_1k.hdr` when the project has it (the same asset the default scene
+uses, so the bake is shared) and falls back to a procedural sky. The cost is that a preview does
+not predict how the asset looks in *this* map; the viewport is where that question belongs.
 
-### Risks
-
-- Per-frame cost if the dirty flag is wrong — an always-dirty preview is a second full scene render
-  every frame. Verify the render count, not the frame time.
-- Framebuffer churn: one target per selected asset, not one per asset in the project.
+**No scratch Scene.** A second registry, systems, and change tracker to draw one mesh would be
+the wrong tool. `SubmitMesh` is the path the viewport already uses.
 
 ### Verification
 
 | Probe | Expected |
 |---|---|
-| Select a mesh, do not touch it | Preview renders **once**; render count stays flat over 100 frames |
+| Select a mesh, do not touch it | Preview renders **once**; hover count stays flat over 100 frames |
 | Orbit the preview | One render per input frame, none while idle |
 | Edit the `.gmat` a mesh uses | Preview updates without a selection change |
-| Frame time with the panel open and idle, Release | Within noise of the panel closed |
-| A 200k-triangle mesh | Renders; the budget defers it rather than dropping a frame |
+| A 200k-triangle mesh | Renders; further dirty work waits on the one-render budget |
 
 ---
 
@@ -441,4 +422,6 @@ The Content Browser grid and the map editor's palette show what the asset looks 
 | P7 | [README.md](README.md) — strike what closed |
 
 **New source files in P1 and P5 mean premake regeneration** — `GanymedEditor/premake5.lua` globs
-`source/**`, expanded at generation time.
+`source/**`, expanded at generation time. P5 added `AssetPreview.{h,cpp}` and listed them in the
+current `.vcxproj` so this tree builds without a regen; a later `premake5 vs2022` will pick them
+up from the glob.

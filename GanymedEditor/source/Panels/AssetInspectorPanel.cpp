@@ -1,6 +1,7 @@
 #include "GanymedE/Core/Log.h"
 #include "AssetInspectorPanel.h"
 
+#include "../AssetPreview.h"
 #include "../EditorInspector.h"
 #include "../EditorTheme.h"
 #include "../EditorWidgets.h"
@@ -159,7 +160,10 @@ namespace GanymedE {
 		m_FileSize = 0;
 
 		if (m_Absolute.empty())
+		{
+			AssetPreview::SetSelection(InvalidAssetHandle, AssetType::None);
 			return;
+		}
 
 		std::error_code ec;
 		m_IsDirectory = std::filesystem::is_directory(m_Absolute, ec);
@@ -189,6 +193,8 @@ namespace GanymedE {
 			m_Sidecar = SidecarState::Quarantined;
 		else
 			m_Sidecar = SidecarState::Missing;
+
+		AssetPreview::SetSelection(m_Handle, m_Type);
 	}
 
 	void AssetInspectorPanel::OnImGuiRender()
@@ -267,6 +273,7 @@ namespace GanymedE {
 	{
 		if (!AssetManager::SetAssetConfig(m_Handle, keys))
 			return;
+		AssetPreview::MarkDirty();
 
 		// Collision is authoring metadata: SetAssetConfig does not Reload, so the
 		// resident mesh is still valid. Import settings do Reload, and the cache
@@ -289,6 +296,7 @@ namespace GanymedE {
 		AssetManager::Reload(m_Handle);
 		m_Mesh.Ready = false;
 		ResolveSelection();
+		AssetPreview::MarkDirty();
 	}
 
 	void AssetInspectorPanel::DrawImportSettings()
@@ -532,6 +540,7 @@ namespace GanymedE {
 			}
 		}
 
+		AssetPreview::DrawInspector(ImGui::GetContentRegionAvail().x);
 		ImGui::Text("Vertices: %u", m_Mesh.VertexCount);
 		ImGui::Text("Indices: %u", m_Mesh.IndexCount);
 		ImGui::Text("Triangles: %u", m_Mesh.TriangleCount);

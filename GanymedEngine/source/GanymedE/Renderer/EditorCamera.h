@@ -50,6 +50,13 @@ namespace GanymedE {
 		// `radius` fits the vertical FOV (or OrthoHeight, in ortho). Used by the collider
 		// audit to frame a finding.
 		void Frame(const glm::vec3& center, float radius);
+
+		// Preview / inspector orbit. Pixel delta and wheel steps, same feel as the
+		// viewport, without going through OnUpdate (which reads the global mouse).
+		void Orbit(const glm::vec2& pixelDelta);
+		void Zoom(float wheel);
+		void GetOrbitState(float& pitch, float& yaw, float& distance, glm::vec3& focal) const;
+		void SetOrbitState(float pitch, float yaw, float distance, const glm::vec3& focal);
 	private:
 		void UpdateProjection();
 		void UpdateView();

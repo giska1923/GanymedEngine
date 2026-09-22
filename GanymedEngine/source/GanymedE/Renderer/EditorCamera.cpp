@@ -261,4 +261,33 @@ namespace GanymedE {
 		}
 		UpdateView();
 	}
+
+	void EditorCamera::Orbit(const glm::vec2& pixelDelta)
+	{
+		MouseRotate(pixelDelta);
+		UpdateView();
+	}
+
+	void EditorCamera::Zoom(float wheel)
+	{
+		MouseZoom(wheel);
+		UpdateView();
+	}
+
+	void EditorCamera::GetOrbitState(float& pitch, float& yaw, float& distance, glm::vec3& focal) const
+	{
+		pitch = m_Pitch;
+		yaw = m_Yaw;
+		distance = m_Distance;
+		focal = m_FocalPoint;
+	}
+
+	void EditorCamera::SetOrbitState(float pitch, float yaw, float distance, const glm::vec3& focal)
+	{
+		m_Pitch = pitch;
+		m_Yaw = yaw;
+		m_Distance = distance;
+		m_FocalPoint = focal;
+		UpdateView();
+	}
 }

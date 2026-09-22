@@ -3,6 +3,7 @@
 #include "EditorPrefabOverrides.h"
 #include "EditorUndo.h"
 #include "AssetDragDrop.h"
+#include "AssetPreview.h"
 #include "EditorFonts.h"
 #include "EditorIcons.h"
 #include "EditorInspector.h"
@@ -409,6 +410,7 @@ namespace GanymedE {
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 
 		m_SceneRenderer = CreateRef<SceneRenderer>(1280, 720);
+		AssetPreview::Init();
 
 		// Game UI composites into the same LDR target the viewport image shows, so
 		// the HUD appears inside the viewport rather than over the whole editor.
@@ -450,6 +452,7 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 		EditorUI::ShutdownTitleBar();
+		AssetPreview::Shutdown();
 		AssetManager::Shutdown();
 	}
 
@@ -604,6 +607,11 @@ namespace GanymedE {
 
 		// Post stack: bloom -> tonemap -> FXAA into the composite shown in the viewport
 		m_SceneRenderer->EndFrame();
+
+		// After the main EndFrame: Renderer3D frame state is a singleton and
+		// scene renders do not nest. A dirty preview is one sequential
+		// BeginFrame...EndFrame on its own view base.
+		AssetPreview::Tick();
 	}
 
 	void EditorLayer::OnImGuiRender()

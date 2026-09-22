@@ -1,6 +1,7 @@
 #include "EditorInspector.h"
 
 #include "AssetDragDrop.h"
+#include "AssetPreview.h"
 #include "GanymedE/Math/Curve.h"
 #include "EditorTheme.h"
 #include "EditorWidgets.h"
@@ -704,25 +705,42 @@ namespace GanymedE::EditorUI {
 		ImGui::Text("%s", metadata->FilePath.c_str());
 		ImGui::TextDisabled("Edits apply to this asset everywhere it is used, and are not undoable");
 
+		bool previewDirty = false;
+
 		glm::vec4 albedo = material->GetAlbedoColor();
 		if (ImGui::ColorEdit4("Albedo", glm::value_ptr(albedo)))
+		{
 			material->SetAlbedoColor(albedo);
+			previewDirty = true;
+		}
 
 		float metallic = material->GetMetallic();
 		if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
+		{
 			material->SetMetallic(metallic);
+			previewDirty = true;
+		}
 
 		float roughness = material->GetRoughness();
 		if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.0f, 1.0f))
+		{
 			material->SetRoughness(roughness);
+			previewDirty = true;
+		}
 
 		bool transparent = material->IsTransparent();
 		if (ImGui::Checkbox("Transparent", &transparent))
+		{
 			material->SetTransparent(transparent);
+			previewDirty = true;
+		}
 		ImGui::SameLine();
 		bool twoSided = material->IsTwoSided();
 		if (ImGui::Checkbox("Two Sided", &twoSided))
+		{
 			material->SetTwoSided(twoSided);
+			previewDirty = true;
+		}
 
 		struct MapRow
 		{
@@ -750,6 +768,7 @@ namespace GanymedE::EditorUI {
 				const std::string relative = dropped->generic_string();
 				(material.get()->*row.SetPath)(relative);
 				(material.get()->*row.SetTexture)(TextureImporter::LoadMaterialMap(relative));
+				previewDirty = true;
 			}
 
 			if (!path.empty())
@@ -759,6 +778,7 @@ namespace GanymedE::EditorUI {
 				{
 					(material.get()->*row.SetPath)(std::string());
 					(material.get()->*row.SetTexture)(nullptr);
+					previewDirty = true;
 				}
 			}
 
@@ -775,7 +795,13 @@ namespace GanymedE::EditorUI {
 
 		ImGui::SameLine();
 		if (ImGui::Button("Revert"))
+		{
 			AssetManager::Reload(handle);
+			previewDirty = true;
+		}
+
+		if (previewDirty)
+			AssetPreview::MarkDirty();
 
 		ImGui::PopID();
 	}

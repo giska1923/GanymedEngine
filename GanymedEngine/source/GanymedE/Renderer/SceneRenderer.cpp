@@ -34,8 +34,13 @@ namespace GanymedE {
 			const uint16_t mainEnd = RenderPass::MainViewBase + RenderPass::SceneViewCount;
 			GE_CORE_ASSERT(thisEnd <= RenderPass::MainViewBase || viewBase >= mainEnd,
 				"View-ID range overlaps the main SceneRenderer");
-			GE_CORE_ASSERT(thisEnd <= RenderPass::UI,
+			// UI (96) and ImGui (200) are absolute. Preview sits at 100–126 on
+			// purpose — after the HUD, before the editor — so "ends before UI"
+			// is the wrong test. Overlap is a single view landing in this span.
+			GE_CORE_ASSERT(viewBase > RenderPass::UI || thisEnd <= RenderPass::UI,
 				"View-ID range collides with RenderPass::UI");
+			GE_CORE_ASSERT(thisEnd <= RenderPass::ImGui,
+				"View-ID range collides with RenderPass::ImGui");
 			GE_CORE_ASSERT(paletteBase != 0,
 				"A second SceneRenderer must use its own clear-palette slots");
 		}

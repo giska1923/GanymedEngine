@@ -652,10 +652,11 @@ scene HDR (RGBA16F + entityID + D24S8)
 (Or, with `SetOutputToBackbuffer(true)`, the final post pass and the UI both land on the backbuffer
 instead — see [Backbuffer output mode](#backbuffer-output-mode).)
 
-`BeginFrame` / `EndFrame` push and pop the instance's `viewBase`. A second instance is constructible
-(`PreviewViewBase = 100`, a palette base other than 0 — bgfx's clear palette is global per frame,
-so slots 0/1 stay with the main renderer). It does not bake its own environment and does not write
-shadow maps. The game UI view stays absolute so a preview cannot steal it.
+`BeginFrame` / `EndFrame` push and pop the instance's `viewBase`. The editor's `AssetPreview`
+is the second instance (`PreviewViewBase = 100`, palette slots 2/3 — bgfx's clear palette is
+global per frame, so slots 0/1 stay with the main renderer). It ticks after the main `EndFrame`,
+does not bake its own environment, and does not write shadow maps. The game UI view stays
+absolute so a preview cannot steal it. See [editor.md](../editor/editor.md#asset-inspector-panel).
 
 The UI pass sits after the main Composite purely by view ID, which is what keeps it in display space
 instead of being tonemapped with the scene — see [ui.md](ui.md). Note that

@@ -1087,7 +1087,16 @@ The warning text is the same sentence Properties already uses, because a global 
 local is the worst version of this UI. `DrawMaterialAssetEditor` lives in `EditorInspector` so
 the two call sites cannot drift.
 
-There is no 3D preview. That is P5, and it is blocked on the view-ID-base refactor in P4.
+**3D preview** (`AssetPreview`). A second `SceneRenderer` at `PreviewViewBase = 100`, constructed
+lazily when a mesh is selected and destroyed when it is not. `Tick` runs after the main
+`EndFrame` — scene renders do not nest. One mesh goes through `Renderer3D::SubmitMesh` with a
+fixed directional light and a studio environment (`environments/studio_small_08_1k.hdr` when
+the project has it, procedural sky otherwise). No scratch `Scene`. Renders on demand: dirty on
+selection, orbit, zoom, `SetAssetConfig` / Reimport, live `.gmat` edits, and
+`AddAssetChangedListener`. Budget is one render per frame; a mesh that is still pending stays
+dirty and retries. Skinned meshes draw their bind pose, labelled as such. `Collision = Box`
+draws the fitted wire box over the image. LMB orbits, wheel zooms; camera state is remembered
+per handle for the session. Hover the image for the session render count.
 
 ## Map panel
 
