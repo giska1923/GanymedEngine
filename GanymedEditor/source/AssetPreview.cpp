@@ -43,7 +43,7 @@ namespace GanymedE {
 		constexpr uint8_t kPreviewPaletteBase = 2;
 		constexpr uint8_t kThumbPaletteBase = 4;
 		constexpr uint32_t kThumbMagic = 0x42485447; // 'GTHB' little-endian
-		constexpr uint32_t kThumbVersion = 1;
+		constexpr uint32_t kThumbVersion = 2;
 		constexpr const char* kStudioEnvironment = "environments/studio_small_08_1k.hdr";
 
 		struct OrbitState
@@ -355,6 +355,16 @@ namespace GanymedE {
 					1.0f, true);
 		}
 
+		void SubmitPreviewMesh(const Ref<Mesh>& mesh)
+		{
+			// Rest palette, not SubmitMesh: LocalTransform without InverseBind is the
+			// centimetre-character that made Meshy thumbnails empty.
+			if (mesh->HasSkeleton())
+				Renderer3D::SubmitSkinnedMesh(mesh, glm::mat4(1.0f), nullptr, 0);
+			else
+				Renderer3D::SubmitMesh(mesh, glm::mat4(1.0f));
+		}
+
 		void RenderMesh(State& s, const Ref<Mesh>& mesh)
 		{
 			if (!s.Renderer)
@@ -373,7 +383,7 @@ namespace GanymedE {
 			s.Renderer->BeginFrame();
 			Renderer3D::BeginScene(s.Camera);
 			SubmitPreviewLighting(s);
-			Renderer3D::SubmitMesh(mesh, glm::mat4(1.0f));
+			SubmitPreviewMesh(mesh);
 
 			const AssetMetadata* meta = AssetManager::GetMetadata(s.Handle);
 			if (meta && MeshCollision::WantsBoxCollider(meta->Config))
@@ -411,7 +421,7 @@ namespace GanymedE {
 			s.ThumbRenderer->BeginFrame();
 			Renderer3D::BeginScene(s.ThumbCamera);
 			SubmitPreviewLighting(s);
-			Renderer3D::SubmitMesh(mesh, glm::mat4(1.0f));
+			SubmitPreviewMesh(mesh);
 			Renderer3D::EndScene();
 			s.ThumbRenderer->EndFrame();
 

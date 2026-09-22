@@ -92,11 +92,15 @@ copyable, no behavior beyond small helpers.
   whether it has a skeleton and a second component would duplicate the drag-drop, serialization,
   inspector and `RenderSystem` plumbing to say nothing new.
 - **`AnimatorComponent`** — `Clip` (by name), `Speed`, `Playing`, `Loop`, `Time`, and a runtime
-  `Palette` of joint matrices. An entity is skinned iff its mesh `HasSkeleton()` *and* it has an
-  animator. Clips are named rather than indexed because indices shift whenever a DCC reorders or
-  adds a clip on re-export; the cost is that a rename detaches the reference silently, which
-  `AnimationSystem` compensates for by warning once and holding the bind pose. `Time` and `Palette`
-  are not serialized — a scene loads at the head of its clip, and the palette is rebuilt per frame.
+  `Palette` of joint matrices. The animator is what *plays* a clip. Drawing a rigged mesh does not
+  require one: `RenderSystem` skins any mesh that `HasSkeleton()`, using `Mesh::GetRestPalette()`
+  when no clip palette exists. `SubmitMesh` is not a bind-pose equivalent once `LocalTransform` is
+  a unit conversion (Meshy: vertices in metres, joints in centimetres, mesh node 0.01) — the rest
+  palette is ~scale 100 and is what cancels that scale. Clips are named rather than indexed because
+  indices shift whenever a DCC reorders or adds a clip on re-export; the cost is that a rename
+  detaches the reference silently, which `AnimationSystem` compensates for by warning once and
+  holding the bind pose. `Time` and `Palette` are not serialized — a scene loads at the head of
+  its clip, and the palette is rebuilt per frame.
 - **`BoneAttachmentComponent`** — pins this entity to a named joint of another entity's skinned
   mesh. `Target` is an entity UUID (zero = hierarchy parent); `Joint` is a name, for the same
   reason clips are; `Offset` / `Rotation` are the rest pose in joint space (Euler radians, X·Y·Z).
@@ -246,8 +250,9 @@ InverseBind[i]`. The clip inspector samples the same globals (head / hips / root
 so a visualizer cannot re-derive the sampler and drift.
 
 An unresolvable clip name warns once per distinct name and holds the bind pose; a missing skeleton
-clears the palette, which is also the signal to the renderer to use the static path. Scratch pose
-and global arrays are system members reused across entities and frames.
+clears the palette. `RenderSystem` then uses `Mesh::GetRestPalette()` if the mesh still has a
+skeleton, or `SubmitMesh` if it does not. Scratch pose and global arrays are system members reused
+across entities and frames.
 
 **Runs in edit mode, but samples without advancing.** Evaluating poses is what makes the
 inspector's Time scrub move the model; running the clock as well would leave every rig in the scene
@@ -409,15 +414,17 @@ These policies live in this system:
   scene target's clear colour and the system logs an error at most once every 5 s. Throttled rather
   than per-frame: a 60 Hz error would bury everything else in the log to say the same thing.
 
-The mesh view carries `OptRO<AnimatorComponent>`, so one iteration covers both draw paths: an
-entity with an animator, a mesh that `HasSkeleton()`, and a non-empty palette goes to
-`Renderer3D::SubmitSkinnedMesh`, everything else to `SubmitMesh`. A rigged mesh with no animator
-therefore draws as static geometry in its bind pose, which is the sane result of dropping a
-character into a scene before authoring anything. Declaring that optional read is also what made
-  the `AnimationSystem`-before-`RenderSystem` ordering checkable at last — see
-  [ecs.md](ecs.md#systemmanager). `ParticleSystem` is the same shape: `RenderSystem` declares
-  `RO<ParticleEmitterComponent>` so the Audio-then-Particle-then-Render slot is enforced rather
-  than conventional.
+The mesh view carries `OptRO<AnimatorComponent>`, so one iteration covers both palettes: a mesh
+that `HasSkeleton()` always goes to `Renderer3D::SubmitSkinnedMesh`. The animator's palette is used
+when it is present and sized to the rig; otherwise the mesh's rest palette
+(`SampleClipGlobals(nullptr)` then `Global * InverseBind`, cached on the asset). `SubmitMesh` is
+the path for meshes with no skeleton. Dropping a character therefore draws at rest without adding
+an animator first — and it draws at the right size, which the old static fallback did not for a
+file whose `LocalTransform` is a unit conversion. Declaring that optional read is also what made
+the `AnimationSystem`-before-`RenderSystem` ordering checkable at last — see
+[ecs.md](ecs.md#systemmanager). `ParticleSystem` is the same shape: `RenderSystem` declares
+`RO<ParticleEmitterComponent>` so the Audio-then-Particle-then-Render slot is enforced rather
+than conventional.
 
 ## Singletons
 

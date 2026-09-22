@@ -444,9 +444,16 @@ namespace GanymedE {
 		if (!mesh)
 			return;
 
-		// Degrade to the static path rather than dropping the entity: a rig whose
-		// palette has not been built yet, or whose program failed to compile, should
-		// still draw in its bind pose instead of vanishing.
+		if ((!palette || jointCount == 0) && !mesh->GetRestPalette().empty())
+		{
+			palette = mesh->GetRestPalette().data();
+			jointCount = (uint32_t)mesh->GetRestPalette().size();
+		}
+
+		// Last resort is the static path: no rest palette (corrupt skeleton) or the
+		// skinned program failed to compile. SubmitMesh is not a bind-pose equivalent
+		// when LocalTransform is a unit conversion — it is just better than dropping
+		// the entity entirely.
 		if (!palette || jointCount == 0 || !mesh->GetSkinVertexBuffer()
 			|| !s_Data.SkinnedShader || !s_Data.SkinnedShader->IsValid())
 		{

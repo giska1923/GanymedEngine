@@ -1301,7 +1301,9 @@ logs are visible without bumping the compiled blob to carry them.
   `BuildMesh` is where a path becomes a texture, through `TextureImporter::LoadMaterialMap` so it
   de-duplicates through the asset index.
 - `MeshImporter::Instantiate(scene, path)` — used by viewport drag-drop — imports the asset (minting
-  its handle and sidecar if new) and creates an entity with a `StaticMeshComponent`.
+  its handle and sidecar if new) and creates an entity with a `StaticMeshComponent`. It does not add
+  an `AnimatorComponent`; `RenderSystem` skins a `HasSkeleton()` mesh from `Mesh::GetRestPalette()`
+  so a dropped character draws at rest without authoring a clip first.
 
 ### Skinning data
 
@@ -1333,9 +1335,15 @@ with it:
 
   It is kept out of `LocalRestPose` because animation channels replace joint locals wholesale. The
   correctness test is that at the rest pose `Global[i] * InverseBind[i]` comes out as identity for
-  every joint; anything else means one of the two terms is wrong. Of the Khronos samples, both
-  CesiumMan and RiggedFigure exercise it and Fox does not — every node in Fox is at identity, so it
-  cannot distinguish a right answer from several wrong ones.
+  every joint **on a file whose mesh node is identity** (Fox, CesiumMan after the RootTransform
+  fix). Anything else on those files means one of the two terms is wrong. Meshy files fail that
+  test on purpose: vertices are metres, joints are centimetres, `LocalTransform` is 0.01, and the
+  rest palette is ~scale 100 so `LocalTransform * Palette` cancel. `SubmitMesh` applies only the
+  0.01 and draws a 1.8 cm character; that is why a `HasSkeleton()` mesh always goes through
+  `SubmitSkinnedMesh` with `Mesh::GetRestPalette()` when no animator has built a clip palette.
+  Of the Khronos samples, both CesiumMan and RiggedFigure exercise the identity test and Fox does
+  not — every node in Fox is at identity, so it cannot distinguish a right answer from several
+  wrong ones.
 - **Conditional world bake.** Skinned primitives skip the world-space bake and keep their vertices
   in skin space, because glTF places them via `globalJointTransform * inverseBindMatrix` and the
   spec says a skinned mesh node's own transform is ignored. Static primitives are baked exactly as
@@ -1347,6 +1355,10 @@ with it:
   instead of double-applying. Clearing it leaves the mesh in raw bind space, which for any file with
   a Y-up correction node means the character renders lying on its side. Both halves of that
   cancellation have to be present; either alone is wrong.
+- **`Mesh::GetRestPalette()`** is `BuildSkinningPalette(skeleton, nullptr, …)` cached at
+  `Mesh::Build`. Not stored in the compiled blob — the skeleton already is. `RenderSystem`,
+  `AssetPreview`, and rest-sized `Submesh::Bounds` all read it so a dropped or thumbnailed
+  character does not go through `SubmitMesh`.
 - **Clips**: LINEAR and STEP are supported; CUBICSPLINE degrades to linear (the middle value of each
   in-tangent/value/out-tangent triple) with a warning. Morph-target weight channels are skipped.
   Duration is the maximum key time across channels. Rotation values are stored **xyzw** — glTF's
@@ -1463,11 +1475,13 @@ UE ships cooked content. The fallback exists so a missing tree is slow rather th
 ### Thumbnail cache
 
 Editor-only. `AssetPreview` writes a 128×128 RGBA8 `.thumb` next to the `.gres`, with a header
-holding `CompiledCache::HashConfig`. A file is trusted only when `QueryOutput` is Current *and*
-that hash matches, so a reimport or a compile-affecting config change invalidates it for free —
-`CompiledCache::Invalidate` deletes the `.thumb` with the `.gres`. `Collision` is skipped from
-`HashConfig`, so changing the collision default does not rebuild a thumbnail (the wire box is
-an inspector overlay, not part of the image).
+holding `CompiledCache::HashConfig` and a version (`kThumbVersion`, currently 2 — bumped when
+skinned preview switched from `SubmitMesh` to the rest palette, so Meshy centimetre-characters
+are not kept as empty images). A file is trusted only when `QueryOutput` is Current *and*
+that hash matches *and* the version matches, so a reimport or a compile-affecting config change
+invalidates it for free — `CompiledCache::Invalidate` deletes the `.thumb` with the `.gres`.
+`Collision` is skipped from `HashConfig`, so changing the collision default does not rebuild a
+thumbnail (the wire box is an inspector overlay, not part of the image).
 
 The GPU cache holds those small `Texture2D`s, not `Mesh` refs, and is capped at 256. Disk size
 is reported on the Stats panel next to the compiled-output counters. A texture or material edit

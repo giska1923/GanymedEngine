@@ -72,8 +72,9 @@ namespace GanymedE {
 			const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
 			if (!mesh || !mesh->HasSkeleton())
 			{
-				// An animator on a static mesh is a user error, not a crash. An empty palette is
-				// also how RenderSystem tells "draw this the static way".
+				// An animator on a static mesh is a user error, not a crash. Empty palette
+				// used to mean "draw static"; RenderSystem now skins any HasSkeleton() mesh
+				// from GetRestPalette() when the animator palette is empty.
 				animator.Palette.clear();
 				continue;
 			}
@@ -194,19 +195,27 @@ namespace GanymedE {
 		return true;
 	}
 
-	void AnimationSystem::BuildPalette(const Skeleton& skeleton, const AnimationClip* clip, float time,
+	bool BuildSkinningPalette(const Skeleton& skeleton, const AnimationClip* clip, float time,
+		std::vector<JointPose>& localsScratch, std::vector<glm::mat4>& globalsScratch,
 		std::vector<glm::mat4>& outPalette)
 	{
-		if (!SampleClipGlobals(skeleton, clip, time, m_Locals, m_Globals))
+		if (!SampleClipGlobals(skeleton, clip, time, localsScratch, globalsScratch))
 		{
-			GE_CORE_ERROR("Skeleton arrays disagree on joint count - skipping palette");
 			outPalette.clear();
-			return;
+			return false;
 		}
 
 		const uint32_t jointCount = skeleton.JointCount();
 		outPalette.resize(jointCount);
 		for (uint32_t i = 0; i < jointCount; i++)
-			outPalette[i] = m_Globals[i] * skeleton.InverseBind[i];
+			outPalette[i] = globalsScratch[i] * skeleton.InverseBind[i];
+		return true;
+	}
+
+	void AnimationSystem::BuildPalette(const Skeleton& skeleton, const AnimationClip* clip, float time,
+		std::vector<glm::mat4>& outPalette)
+	{
+		if (!BuildSkinningPalette(skeleton, clip, time, m_Locals, m_Globals, outPalette))
+			GE_CORE_ERROR("Skeleton arrays disagree on joint count - skipping palette");
 	}
 }

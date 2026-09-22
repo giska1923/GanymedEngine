@@ -104,15 +104,22 @@ namespace GanymedE {
 			const Ref<Material>* overrides = m_ResolvedOverrides.empty() ? nullptr : m_ResolvedOverrides.data();
 			const uint32_t overrideCount = (uint32_t)m_ResolvedOverrides.size();
 
-			// An entity is skinned iff its mesh has a skeleton and it has an animator -
-			// the same gate the AnimationSystem poses on. A rigged mesh with no animator
-			// draws as static geometry in its bind pose, which is the sane default for
-			// dropping a character into a scene before authoring anything.
-			if (animator && mesh->HasSkeleton() && !animator->Palette.empty())
+			// HasSkeleton() always goes through vs_PhongSkinned. SubmitMesh applies
+			// LocalTransform with no palette; on a Meshy rig that is 0.01 and the
+			// character draws at ~2 cm. The rest palette (Global * InverseBind at rest)
+			// is what cancels that scale. An animator palette, when present and sized
+			// to the rig, replaces it.
+			if (mesh->HasSkeleton())
 			{
+				const glm::mat4* palette = nullptr;
+				uint32_t jointCount = 0;
+				if (animator && animator->Palette.size() == mesh->GetSkeleton().JointCount())
+				{
+					palette = animator->Palette.data();
+					jointCount = (uint32_t)animator->Palette.size();
+				}
 				Renderer3D::SubmitSkinnedMesh(mesh, worldTransform.World,
-					animator->Palette.data(), (uint32_t)animator->Palette.size(), (int)entity,
-					overrides, overrideCount);
+					palette, jointCount, (int)entity, overrides, overrideCount);
 			}
 			else
 			{

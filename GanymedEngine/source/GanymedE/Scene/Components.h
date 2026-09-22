@@ -194,9 +194,10 @@ namespace GanymedE {
 	};
 
 	// Plays one of the clips carried by the entity's StaticMeshComponent mesh. There is no
-	// SkinnedMeshComponent: an entity is skinned iff its mesh asset HasSkeleton() and it has an
-	// animator, so a second mesh component would duplicate drag-drop, serialization, inspector and
-	// RenderSystem plumbing to express something the asset already knows.
+	// SkinnedMeshComponent: whether the mesh is rigged is a fact of the asset (HasSkeleton).
+	// The animator is what plays a clip; RenderSystem skins any HasSkeleton() mesh even
+	// without one, using Mesh::GetRestPalette(). A second mesh component would duplicate
+	// drag-drop, serialization, inspector and RenderSystem plumbing to express that.
 	//
 	// Clips are referenced by name rather than index because indices shift whenever a DCC
 	// reorders or adds a clip on re-export. A name that no longer resolves warns once and falls

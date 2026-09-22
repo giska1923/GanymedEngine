@@ -92,6 +92,16 @@ namespace GanymedE {
 	bool SampleClipGlobals(const Skeleton& skeleton, const AnimationClip* clip, float time,
 		std::vector<JointPose>& localsScratch, std::vector<glm::mat4>& outGlobals);
 
+	// Palette[i] = Global[i] * InverseBind[i] at `time`. `clip == nullptr` is the rest pose.
+	// Mesh caches that rest result as GetRestPalette so a rigged mesh can be submitted through
+	// vs_PhongSkinned without an AnimatorComponent — SubmitMesh is not equivalent once
+	// LocalTransform is a unit conversion (Meshy 0.01).
+	//
+	// Same failure rule as SampleClipGlobals: false and empty outPalette, no log.
+	bool BuildSkinningPalette(const Skeleton& skeleton, const AnimationClip* clip, float time,
+		std::vector<JointPose>& localsScratch, std::vector<glm::mat4>& globalsScratch,
+		std::vector<glm::mat4>& outPalette);
+
 	// Skin weights ride a second vertex stream rather than widening MeshVertex:
 	// widening taxes every static mesh 32 bytes a vertex, forces a cache migration
 	// for all existing content, and touches the one struct the cache memcpy's whole.

@@ -382,8 +382,12 @@ Slot budget (Phong): 0–2 material maps (albedo/normal/metallic-roughness), 5�
 ### Skinned meshes
 
 `Renderer3D::SubmitSkinnedMesh(mesh, transform, palette, jointCount, entityID)` is the skinned
-entry point; `RenderSystem` calls it for entities whose mesh has a skeleton and whose animator has
-built a palette. Everything else about the command — sorting, culling, material binding, entity-ID
+entry point; `RenderSystem` calls it for every entity whose mesh `HasSkeleton()`. The animator's
+palette is used when it is present and sized to the rig; a null or empty palette uses
+`Mesh::GetRestPalette()` (built once at mesh load from `SampleClipGlobals(nullptr)` then
+`Global * InverseBind`). `SubmitMesh` is not a rest-pose equivalent — it applies `LocalTransform`
+with no palette, and on a file whose mesh node is a unit conversion (Meshy: 0.01) that draws a
+~2 cm character. Everything else about the command — sorting, culling, material binding, entity-ID
 picking — goes through the same path as a static draw. Only three things differ:
 
 - **The palette is copied at submit** into a frame-lifetime `PaletteStorage`, one `MaxBones`-sized
@@ -413,14 +417,20 @@ measured AABB is not the box that gets drawn; `Mesh::ComputeBounds` pads it by
 `SkinnedBoundsPadding` (25%) of the box's **largest** extent — not per axis, because a limb can
 swing about as far as the rig is long, so a narrow axis needs the same absolute slack as a wide one
 (CesiumMan stands arms-down with an X extent of 0.31 against a height of 1.51, and its walk cycle
-overruns a per-axis 50% pad). Exact posed bounds mean skinning every vertex on the CPU each frame to
-decide one culling test. The failure mode is a character popping at the screen edge if a clip swings
-wider than the pad.
+overruns a per-axis 50% pad) — then transforms that box by the root joint's rest palette so
+`LocalTransform * box` matches `LocalTransform * RestPalette * v`. Without that rest matrix, a
+Meshy character's `GetBounds()` is ~2 cm while the skinned draw is 1.8 m: preview framing parks
+the camera 1 m away from a full-size character, and a Box collision seed is a postage stamp.
+Exact posed bounds mean skinning every vertex on the CPU each frame to decide one culling test.
+The failure mode is a character popping at the screen edge if a clip swings wider than the pad.
 
 Order of operations in `vs_PhongSkinned`: blend the palette in mesh space **first**, apply the
 per-instance model matrix after, exactly where `vs_Phong` applies it. The palette is
-`Global * InverseBind`, which is identity at the bind pose, so an unposed rig lands precisely where
-`vs_Phong` would have put it.
+`Global * InverseBind`. On Khronos samples (Fox, CesiumMan) that is identity at rest, so
+`vs_PhongSkinned` with the rest palette lands where `vs_Phong` would. That is **not** true when
+`LocalTransform` is a unit conversion (Meshy: vertices in metres, joints in centimetres, mesh node
+0.01): the rest palette is ~scale 100, and `LocalTransform * Palette` cancel. An unposed rig
+therefore still has to go through `SubmitSkinnedMesh`.
 
 One last trap. `Submesh::LocalTransform` is *kept* for skinned submeshes, where static ones have it
 reset to identity by the world-space bake, and re-applying it here is what cancels the

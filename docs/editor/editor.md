@@ -266,7 +266,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   focused-or-hovered, so Q/W/E/R keep working while the viewport window is focused.
 - **Drag-drop from the Content Browser** via `EditorUI::AcceptAssetDrop` (see
   [below](#typed-drag-drop)): a `Scene` drop opens the scene; a `StaticMesh` drop (edit mode only)
-  instantiates it via `MeshImporter::Instantiate` and selects it.
+  instantiates it via `MeshImporter::Instantiate` and selects it. A rigged mesh draws at rest
+  without an animator (`Mesh::GetRestPalette()`).
 - **Gizmos** (edit mode, with a selection): ImGuizmo manipulates the entity's **world** transform
   (`Scene::GetWorldSpaceTransform`, so parented entities gizmo correctly), converts back to local
   through the parent's inverse world matrix, decomposes (`Math::DecomposeTransform`), applies
@@ -1156,13 +1157,15 @@ the two call sites cannot drift.
 
 **3D preview** (`AssetPreview`). A second `SceneRenderer` at `PreviewViewBase = 100`, constructed
 lazily when a mesh is selected and destroyed when it is not. `Tick` runs after the main
-`EndFrame` — scene renders do not nest. One mesh goes through `Renderer3D::SubmitMesh` with a
+`EndFrame` — scene renders do not nest. One mesh goes through `Renderer3D::SubmitMesh`, or
+`SubmitSkinnedMesh` with a null palette (rest pose) when the mesh `HasSkeleton()`, with a
 fixed directional light and a studio environment (`environments/studio_small_08_1k.hdr` when
 the project has it, procedural sky otherwise). No scratch `Scene`. Renders on demand: dirty on
 selection, orbit, zoom, `SetAssetConfig` / Reimport, live `.gmat` edits, and
 `AddAssetChangedListener`. Budget is one render per frame shared with thumbnails; the inspector
 wins when it is dirty. A mesh that is still pending stays dirty and retries. Skinned meshes
-draw their bind pose, labelled as such. `Collision = Box`
+draw their bind pose via the rest palette, labelled as such — not via `SubmitMesh`, which on a
+Meshy file is a ~2 cm character and an empty thumbnail. `Collision = Box`
 draws the fitted wire box over the image. LMB orbits, wheel zooms; camera state is remembered
 per handle for the session. Hover the image for the session render count.
 

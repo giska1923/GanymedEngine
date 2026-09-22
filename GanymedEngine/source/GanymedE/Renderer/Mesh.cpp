@@ -94,7 +94,36 @@ namespace GanymedE {
 
 		m_Geometry.Indices = IndexBuffer::Create(m_Indices.data(), (uint32_t)m_Indices.size());
 
+		BuildRestPalette();
 		ComputeBounds();
+	}
+
+	void Mesh::BuildRestPalette()
+	{
+		m_RestPalette.clear();
+		if (!HasSkeleton())
+			return;
+
+		std::vector<JointPose> locals;
+		std::vector<glm::mat4> globals;
+		if (!BuildSkinningPalette(m_Skeleton, nullptr, 0.0f, locals, globals, m_RestPalette))
+		{
+			GE_CORE_ERROR("Skeleton arrays disagree on joint count - rest palette empty");
+		}
+	}
+
+	glm::mat4 Mesh::RestBoundsMatrix() const
+	{
+		if (m_RestPalette.empty())
+			return glm::mat4(1.0f);
+
+		const uint32_t jointCount = m_Skeleton.JointCount();
+		for (uint32_t i = 0; i < jointCount && i < (uint32_t)m_RestPalette.size(); i++)
+		{
+			if (m_Skeleton.ParentIndices[i] < 0)
+				return m_RestPalette[i];
+		}
+		return m_RestPalette[0];
 	}
 
 	void Mesh::ComputeBounds()
@@ -123,12 +152,16 @@ namespace GanymedE {
 
 			// A skinned submesh's vertices are the bind pose; the palette moves them
 			// at draw time, so the measured box is not the box that gets drawn. Pad
-			// it rather than compute the real thing per frame.
+			// it rather than compute the real thing per frame, then bring it into
+			// rest-pose skin space so LocalTransform * box matches LocalTransform *
+			// RestPalette * v. Skipping the rest matrix leaves a Meshy character's
+			// GetBounds() at ~2 cm while vs_PhongSkinned draws 1.8 m.
 			if (submesh.IsSkinned && !first)
 			{
 				const glm::vec3 extent = submesh.Bounds.Max - submesh.Bounds.Min;
 				const float pad = glm::max(glm::max(extent.x, extent.y), extent.z) * SkinnedBoundsPadding;
 				submesh.Bounds = AABB(submesh.Bounds.Min - pad, submesh.Bounds.Max + pad);
+				submesh.Bounds = submesh.Bounds.Transformed(RestBoundsMatrix());
 			}
 
 			// Whole-mesh bounds include the submesh's local transform

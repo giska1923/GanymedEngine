@@ -33,11 +33,11 @@ namespace GanymedE {
 		static void SubmitMesh(const Ref<Mesh>& mesh, const glm::mat4& transform, int entityID = -1,
 			const Ref<Material>* materialOverrides = nullptr, uint32_t overrideCount = 0);
 
-		// Draws the mesh with a joint palette (AnimatorComponent::Palette) instead of
-		// the static path. The palette is copied here, so the caller may reuse or
-		// rebuild its storage immediately. Skinned submeshes cannot batch - each is
-		// one draw call with its own palette upload - so this falls back to
-		// SubmitMesh when there is nothing to skin with.
+		// Draws the mesh with a joint palette instead of the static path. Null / empty
+		// palette uses Mesh::GetRestPalette(). The palette is copied here, so the
+		// caller may reuse or rebuild its storage immediately. Skinned submeshes cannot
+		// batch - each is one draw call with its own palette upload. Falls back to
+		// SubmitMesh only when there is no rest palette and nothing to skin with.
 		static void SubmitSkinnedMesh(const Ref<Mesh>& mesh, const glm::mat4& transform,
 			const glm::mat4* palette, uint32_t jointCount, int entityID = -1,
 			const Ref<Material>* materialOverrides = nullptr, uint32_t overrideCount = 0);
