@@ -3,6 +3,7 @@
 #include "EditorPrefabOverrides.h"
 #include "EditorUndo.h"
 #include "AssetDragDrop.h"
+#include "AssetPreview.h"
 #include "EditorFonts.h"
 #include "EditorIcons.h"
 #include "EditorInspector.h"
@@ -61,7 +62,7 @@ namespace GanymedE {
 		// Bump when the DockBuilder default tree changes. Existing imgui.ini otherwise keeps
 		// the old splits — including the phase-1 6% toolbar node — and View → Reset Layout
 		// is easy to miss on the first launch after a chrome change.
-		constexpr int kDockLayoutVersion = 3;
+		constexpr int kDockLayoutVersion = 4;
 		int s_IniDockLayoutVersion = 0;
 
 		void* DockLayoutReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
@@ -104,6 +105,7 @@ namespace GanymedE {
 
 			ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
 			ImGui::DockBuilderDockWindow("Properties", dockLeftBottom);
+			ImGui::DockBuilderDockWindow("Asset Inspector", dockLeftBottom);
 			ImGui::DockBuilderDockWindow("Viewport", dockMain);
 			ImGui::DockBuilderDockWindow("Stats", dockRight);
 			ImGui::DockBuilderDockWindow("Map", dockRight);
@@ -408,6 +410,7 @@ namespace GanymedE {
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 
 		m_SceneRenderer = CreateRef<SceneRenderer>(1280, 720);
+		AssetPreview::Init();
 
 		// Game UI composites into the same LDR target the viewport image shows, so
 		// the HUD appears inside the viewport rather than over the whole editor.
@@ -430,6 +433,8 @@ namespace GanymedE {
 			if (m_SceneState == SceneState::Edit)
 				BeginMarkerPlacement(kind, color, size);
 		});
+		m_ContentBrowserPanel.SetSelectionChangedCallback(
+			[this](const std::filesystem::path& path) { m_AssetInspectorPanel.SetSelectedPath(path); });
 
 		// Optional scene on the command line: GanymedEditor [--renderer=<backend>] [path/to/scene.ganymede]
 		// FirstPositional, not Args[1]: an option may come first.
@@ -447,6 +452,7 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 		EditorUI::ShutdownTitleBar();
+		AssetPreview::Shutdown();
 		AssetManager::Shutdown();
 	}
 
@@ -601,6 +607,11 @@ namespace GanymedE {
 
 		// Post stack: bloom -> tonemap -> FXAA into the composite shown in the viewport
 		m_SceneRenderer->EndFrame();
+
+		// After the main EndFrame: Renderer3D frame state is a singleton and
+		// scene renders do not nest. A dirty preview is one sequential
+		// BeginFrame...EndFrame on its own view base.
+		AssetPreview::Tick();
 	}
 
 	void EditorLayer::OnImGuiRender()
@@ -698,6 +709,7 @@ namespace GanymedE {
 
 		m_SceneHierarchyPanel.OnImGuiRender();
 		m_ContentBrowserPanel.OnImGuiRender();
+		m_AssetInspectorPanel.OnImGuiRender();
 		m_MapPanel.OnImGuiRender(m_SnapSettings, m_SceneState == SceneState::Edit, IsPlacing(),
 			m_ActiveScene.get(), m_SceneState == SceneState::Edit ? &m_UndoStack : nullptr,
 			&m_SceneHierarchyPanel,
@@ -782,6 +794,11 @@ namespace GanymedE {
 		ImGui::Text("Compiled: %u built (%.0f ms), %u from cache, %u running",
 			compiled.Compiles, compiled.TotalCompileMs, compiled.CacheHits,
 			CompiledCache::CompilesInFlight());
+
+		const uint64_t thumbBytes = AssetPreview::ThumbnailDiskBytes();
+		ImGui::Text("Thumbnails: %zu gpu, %u rendered, %.1f KB disk",
+			AssetPreview::ThumbnailResident(), AssetPreview::ThumbnailRenderCount(),
+			thumbBytes / 1024.0);
 
 		// The switch exists for one situation and it is worth naming: a `git checkout` across a
 		// branch that touches many assets generates a change event for every one of them.

@@ -42,19 +42,26 @@ namespace GanymedE {
 			return HashBytes(str.data(), str.size(), seed);
 		}
 
-		uint64_t HashConfig(const AssetConfig& config)
+	}
+
+	uint64_t CompiledCache::HashConfig(const AssetConfig& config)
+	{
+		// std::map iterates in key order, so the hash does not depend on insertion order -
+		// which matters because the sidecar reader and a hand-edited file can produce the
+		// same settings in a different order. Authoring-only keys (Collision) are skipped
+		// so flipping a mesh's collider default does not invalidate the blob.
+		uint64_t hash = 0xcbf29ce484222325ull;
+		for (const auto& [key, value] : config)
 		{
-			// std::map iterates in key order, so the hash does not depend on insertion order -
-			// which matters because the sidecar reader and a hand-edited file can produce the
-			// same settings in a different order.
-			uint64_t hash = 0xcbf29ce484222325ull;
-			for (const auto& [key, value] : config)
-			{
-				hash = HashString(key, hash);
-				hash = HashString(value, hash);
-			}
-			return hash;
+			if (!ConfigAffectsCompile(key))
+				continue;
+			hash = HashString(key, hash);
+			hash = HashString(value, hash);
 		}
+		return hash;
+	}
+
+	namespace {
 
 		uint64_t FileTimestamp(const std::filesystem::path& path)
 		{
@@ -302,6 +309,36 @@ namespace GanymedE {
 		return s_Data.Compilers[index].get();
 	}
 
+	CompiledCache::OutputStatus CompiledCache::QueryOutput(const AssetMetadata& metadata)
+	{
+		const IAssetCompiler* compiler = CompilerFor(metadata.Type);
+		if (!compiler)
+			return OutputStatus::None;
+
+		const std::filesystem::path output = OutputPath(metadata.FilePath);
+		std::filesystem::path depPath = output;
+		depPath.replace_extension(".dep");
+
+		if (!std::filesystem::exists(output))
+			return OutputStatus::Missing;
+
+		Epoch previous;
+		if (!ReadEpoch(depPath, previous))
+			return OutputStatus::Stale;
+
+		const std::filesystem::path sourceFull = GetAssetRoot() / metadata.FilePath;
+		if (previous.CompilerVersion != compiler->Version())
+			return OutputStatus::Stale;
+		if (previous.SourceSize != FileSize(sourceFull))
+			return OutputStatus::Stale;
+		if (previous.SourceMtime != FileTimestamp(sourceFull))
+			return OutputStatus::Stale;
+		if (previous.ConfigHash != HashConfig(metadata.Config))
+			return OutputStatus::Stale;
+
+		return OutputStatus::Current;
+	}
+
 	std::filesystem::path CompiledCache::OutputPath(const std::string& relativeSourcePath)
 	{
 		const uint64_t hash = HashString(relativeSourcePath);
@@ -342,6 +379,9 @@ namespace GanymedE {
 		std::error_code ec;
 		const bool removedOutput = std::filesystem::remove(output, ec);
 		std::filesystem::remove(dep, ec);
+		std::filesystem::path thumb = output;
+		thumb.replace_extension(".thumb");
+		std::filesystem::remove(thumb, ec);
 
 		if (removedOutput)
 			GE_CORE_INFO("Invalidated compiled output for '{0}'", metadata.FilePath);

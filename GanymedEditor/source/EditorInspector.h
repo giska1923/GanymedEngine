@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Reflection/Reflection.h"
 
 #include <entt/entt.hpp>
@@ -126,6 +127,11 @@ namespace GanymedE::EditorUI {
 	bool DrawProperty(entt::meta_any& instance, const entt::meta_data& field,
 		const OverrideHook& overrides = {}, const MultiEditHook& multi = {},
 		const FieldFilter& filter = {});
+
+	// The inline editor for one .gmat. Live on the shared Ref, not undoable — Save / Revert
+	// are the transaction. Shared by Properties (entity slot overrides) and the Asset Inspector
+	// (asset defaults), so the warning text cannot drift between the two.
+	void DrawMaterialAssetEditor(AssetHandle handle);
 
 	// `DrawReflectedProperties` for the component `T` on this entity, plus the type-level Note
 	// rendered underneath as the hand-written sections render theirs.

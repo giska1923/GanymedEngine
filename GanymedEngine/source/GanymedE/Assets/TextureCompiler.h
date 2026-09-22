@@ -11,9 +11,20 @@ namespace GanymedE {
 	// albedo cost 16 MB of VRAM and no mips. BC7 makes that 4 MB with a full mip chain, at a
 	// quality loss that is not visible on albedo.
 	//
+	// Defaults the compiler and the Asset Inspector both read. Unset in a sidecar means
+	// these values; the UI must not invent a second meaning of unset.
+	struct TextureImportSettings
+	{
+		static constexpr const char* Format = "auto";
+		static constexpr bool GenerateMips = true;
+		static constexpr bool NormalMap = false;
+		static constexpr int MaxSize = 0;
+	};
+
 	// `.meta` Config keys, all optional:
 	//
 	//   Format:       auto | BC1 | BC3 | BC4 | BC5 | BC7 | RGBA8   (default auto)
+	//   NormalMap:    true | false                                 (default false; BC5 implies true)
 	//   GenerateMips: true | false                                 (default true)
 	//   MaxSize:      <int>                                        (default 0 = no limit)
 	//

@@ -69,6 +69,9 @@ namespace GanymedE {
 
 		if (bgfx::isValid(m_ReadBack))
 			bgfx::destroy(m_ReadBack);
+		m_ReadBack = BGFX_INVALID_HANDLE;
+		m_ReadBackWidth = 0;
+		m_ReadBackHeight = 0;
 	}
 
 	void Framebuffer::Build()
@@ -171,8 +174,9 @@ namespace GanymedE {
 		const bgfx::TextureFormat::Enum format =
 			ResolveFormat(m_Specification.Attachments.Attachments[attachmentIndex].TextureFormat);
 
-		// Recreate the staging texture if the format changed under us.
-		if (!bgfx::isValid(m_ReadBack) || m_ReadBackFormat != format)
+		// Recreate the staging texture if the format or size changed under us.
+		if (!bgfx::isValid(m_ReadBack) || m_ReadBackFormat != format
+			|| m_ReadBackWidth != 1 || m_ReadBackHeight != 1)
 		{
 			if (bgfx::isValid(m_ReadBack))
 				bgfx::destroy(m_ReadBack);
@@ -180,6 +184,8 @@ namespace GanymedE {
 			m_ReadBack = bgfx::createTexture2D(1, 1, false, 1, format,
 				BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
 			m_ReadBackFormat = format;
+			m_ReadBackWidth = 1;
+			m_ReadBackHeight = 1;
 		}
 
 		if (!bgfx::isValid(m_ReadBack))
@@ -189,6 +195,40 @@ namespace GanymedE {
 
 		// The returned frame number is when dest actually holds the pixel -
 		// typically two frames out. The caller must not read it before then.
+		return bgfx::readTexture(m_ReadBack, dest);
+	}
+
+	uint32_t Framebuffer::RequestImageRead(uint16_t viewId, uint32_t attachmentIndex, void* dest)
+	{
+		bgfx::TextureHandle source = GetColorAttachment(attachmentIndex);
+		if (!bgfx::isValid(source) || !dest)
+			return 0;
+
+		const uint16_t width = (uint16_t)m_Specification.Width;
+		const uint16_t height = (uint16_t)m_Specification.Height;
+		if (width == 0 || height == 0)
+			return 0;
+
+		const bgfx::TextureFormat::Enum format =
+			ResolveFormat(m_Specification.Attachments.Attachments[attachmentIndex].TextureFormat);
+
+		if (!bgfx::isValid(m_ReadBack) || m_ReadBackFormat != format
+			|| m_ReadBackWidth != width || m_ReadBackHeight != height)
+		{
+			if (bgfx::isValid(m_ReadBack))
+				bgfx::destroy(m_ReadBack);
+
+			m_ReadBack = bgfx::createTexture2D(width, height, false, 1, format,
+				BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
+			m_ReadBackFormat = format;
+			m_ReadBackWidth = width;
+			m_ReadBackHeight = height;
+		}
+
+		if (!bgfx::isValid(m_ReadBack))
+			return 0;
+
+		bgfx::blit(viewId, m_ReadBack, 0, 0, source, 0, 0, width, height);
 		return bgfx::readTexture(m_ReadBack, dest);
 	}
 

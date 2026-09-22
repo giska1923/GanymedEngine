@@ -1,6 +1,7 @@
 #include "MapPanel.h"
 #include "SceneHierarchyPanel.h"
 
+#include "../AssetPreview.h"
 #include "../EditorIcons.h"
 #include "../EditorTheme.h"
 #include "../EditorUndo.h"
@@ -12,6 +13,7 @@
 #include "GanymedE/Math/BoundingVolumes.h"
 #include "GanymedE/Renderer/EditorCamera.h"
 #include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Renderer/Texture.h"
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
@@ -459,9 +461,25 @@ namespace GanymedE {
 			const std::string name = file.filename().string();
 
 			ImGui::BeginDisabled(!editing || !usable);
-			ImGui::PushStyleColor(ImGuiCol_Text, Color(usable ? TypeTint(type) : Theme().TextDim));
-			ImGui::TextUnformatted(TypeIcon(usable ? type : AssetType::None));
-			ImGui::PopStyleColor();
+
+			Ref<Texture2D> thumb;
+			if (usable && type == AssetType::StaticMesh && IsAssetHandleValid(handle))
+			{
+				AssetPreview::RequestVisible(handle);
+				thumb = AssetPreview::GetThumbnail(handle);
+			}
+
+			if (thumb)
+			{
+				const float size = ImGui::GetFrameHeight();
+				ImGui::Image((ImTextureID)(uintptr_t)thumb->GetRendererID(), ImVec2(size, size));
+			}
+			else
+			{
+				ImGui::PushStyleColor(ImGuiCol_Text, Color(usable ? TypeTint(type) : Theme().TextDim));
+				ImGui::TextUnformatted(TypeIcon(usable ? type : AssetType::None));
+				ImGui::PopStyleColor();
+			}
 			ImGui::SameLine();
 
 			if (ImGui::Selectable(name.c_str()) && usable && editing)

@@ -3,6 +3,7 @@
 #include "GanymedE.h"
 #include "Panels/SceneHierarchyPanel.h"
 #include "Panels/ContentBrowserPanel.h"
+#include "Panels/AssetInspectorPanel.h"
 #include "Panels/MapPanel.h"
 #include "EditorPicking.h"
 #include "EditorUndo.h"
@@ -144,6 +145,7 @@ namespace GanymedE {
 		// Panels
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
+		AssetInspectorPanel m_AssetInspectorPanel;
 		MapPanel m_MapPanel;
 		MapSnapSettings m_SnapSettings;
 

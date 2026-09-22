@@ -1,0 +1,7 @@
+Material:
+  Name: Default-effect
+  Albedo: [0.800000012, 0.800000012, 0.800000012, 1]
+  Metallic: 0
+  Roughness: 1
+  TwoSided: false
+  Transparent: false

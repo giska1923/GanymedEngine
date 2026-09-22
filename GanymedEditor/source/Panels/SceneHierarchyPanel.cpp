@@ -21,10 +21,9 @@
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
-#include "GanymedE/Assets/MaterialSerializer.h"
-#include "GanymedE/Assets/TextureImporter.h"
 #include "GanymedE/Renderer/Material.h"
 #include "GanymedE/Renderer/Mesh.h"
+#include "GanymedE/Renderer/MeshImporter.h"
 #include "GanymedE/Scene/PrefabSerializer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 #include "GanymedE/Utils/PlatformUtils.h"
@@ -1120,106 +1119,6 @@ namespace GanymedE {
 		m_Pending.Visited = false;
 	}
 
-	// The inline editor for one .gmat asset.
-	//
-	// These edits are live on the shared Ref, so they show up immediately in every entity and
-	// every scene using this material - the header text says so, because a global edit that
-	// looks local is the worst version of this UI. They are also **not undoable** (undo covers
-	// scene edits only); Save and Revert are the asset-level transaction model instead, and
-	// Revert is just AssetManager::Reload.
-	static void DrawMaterialAssetEditor(AssetHandle handle)
-	{
-		const AssetMetadata* metadata = AssetManager::GetMetadata(handle);
-		Ref<Material> material = AssetManager::GetAsset<Material>(handle);
-		if (!metadata || !material)
-		{
-			ImGui::TextDisabled("Material asset could not be loaded");
-			return;
-		}
-
-		ImGui::PushID((int)(uint64_t)handle);
-		ImGui::Separator();
-		ImGui::Text("%s", metadata->FilePath.c_str());
-		ImGui::TextDisabled("Edits apply to this asset everywhere it is used, and are not undoable");
-
-		glm::vec4 albedo = material->GetAlbedoColor();
-		if (ImGui::ColorEdit4("Albedo", glm::value_ptr(albedo)))
-			material->SetAlbedoColor(albedo);
-
-		float metallic = material->GetMetallic();
-		if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
-			material->SetMetallic(metallic);
-
-		float roughness = material->GetRoughness();
-		if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.0f, 1.0f))
-			material->SetRoughness(roughness);
-
-		bool transparent = material->IsTransparent();
-		if (ImGui::Checkbox("Transparent", &transparent))
-			material->SetTransparent(transparent);
-		ImGui::SameLine();
-		bool twoSided = material->IsTwoSided();
-		if (ImGui::Checkbox("Two Sided", &twoSided))
-			material->SetTwoSided(twoSided);
-
-		// Texture maps are assigned by dragging a texture asset; the material stores the path,
-		// because a .gmat has to stay self-describing and hand-mergeable.
-		struct MapRow
-		{
-			const char* Label;
-			const std::string& (Material::*GetPath)() const;
-			void (Material::*SetPath)(const std::string&);
-			void (Material::*SetTexture)(const Ref<Texture2D>&);
-		};
-
-		const MapRow rows[] = {
-			{ "Albedo Map",     &Material::GetAlbedoMapPath,            &Material::SetAlbedoMapPath,            &Material::SetAlbedoMap },
-			{ "Normal Map",     &Material::GetNormalMapPath,            &Material::SetNormalMapPath,            &Material::SetNormalMap },
-			{ "Metal/Rough Map",&Material::GetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMapPath, &Material::SetMetallicRoughnessMap },
-		};
-
-		for (const MapRow& row : rows)
-		{
-			ImGui::PushID(row.Label);
-
-			const std::string& path = (material.get()->*row.GetPath)();
-			ImGui::Text("%s: %s", row.Label, path.empty() ? "(none)" : path.c_str());
-
-			if (auto dropped = EditorUI::AcceptAssetDrop(AssetType::Texture))
-			{
-				const std::string relative = dropped->generic_string();
-				(material.get()->*row.SetPath)(relative);
-				(material.get()->*row.SetTexture)(TextureImporter::LoadMaterialMap(relative));
-			}
-
-			if (!path.empty())
-			{
-				ImGui::SameLine();
-				if (ImGui::SmallButton("Clear"))
-				{
-					(material.get()->*row.SetPath)(std::string());
-					(material.get()->*row.SetTexture)(nullptr);
-				}
-			}
-
-			ImGui::PopID();
-		}
-
-		ImGui::TextDisabled("Drop a texture on a map row to assign it");
-
-		if (ImGui::Button("Save"))
-		{
-			if (MaterialSerializer::Save(material, GetAssetRoot() / metadata->FilePath))
-				GE_INFO("Saved material '{0}'", metadata->FilePath);
-		}
-
-		ImGui::SameLine();
-		if (ImGui::Button("Revert"))
-			AssetManager::Reload(handle);
-
-		ImGui::PopID();
-	}
-
 	template<typename T, typename UIFunction>
 	void SceneHierarchyPanel::DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
 	{
@@ -1714,14 +1613,8 @@ namespace GanymedE {
 		if (!entity || !entity.HasComponent<StaticMeshComponent>())
 			return false;
 
-		const Ref<Mesh>& mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
-		if (!mesh)
-			return false;
-
-		const AABB& bounds = mesh->GetBounds();
-		collider.HalfExtents = (bounds.Max - bounds.Min) * 0.5f;
-		collider.Offset = (bounds.Max + bounds.Min) * 0.5f;
-		return true;
+		return MeshCollision::SeedBoxCollider(
+			collider, entity.GetComponent<StaticMeshComponent>().Mesh.Get());
 	}
 
 	// The inspector half of the instance UI: where the source came from, and the two propagation
@@ -2026,7 +1919,7 @@ namespace GanymedE {
 								edited = true;
 							}
 
-							DrawMaterialAssetEditor(slot);
+							EditorUI::DrawMaterialAssetEditor(slot);
 						}
 
 						ImGui::PopID();

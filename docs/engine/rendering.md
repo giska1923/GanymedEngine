@@ -15,12 +15,22 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
    to a *view* (`Framebuffer::BindToView(viewId)`); every draw submitted to that view lands in it.
    bgfx sorts the frame by view ID, so the pass schedule is the table in
    [`RenderPassIDs.h`](../../GanymedEngine/source/GanymedE/Renderer/RenderPassIDs.h) — never a
-   magic number at a call site. The current view ID is *sticky state*
-   (`RenderCommand::SetViewId`); forgetting to restore it after a pass sends subsequent draws into
-   the wrong target silently (this exact bug made all meshes invisible once — migration §8.6).
-   Views that depend on submission order (scene, transparent) are set to `Sequential` mode.
-   A view that receives no draws is skipped *including its clear* — hence the `bgfx::touch()`
-   calls on scene/tonemap/FXAA views and the backbuffer.
+   magic number at a call site. Scene passes in that table are **offsets from a base**.
+   `SceneRenderer::BeginFrame` pushes its `viewBase` as the active base; `EndFrame` pops it;
+   `Renderer3D` / `Renderer2D` / `Environment` resolve through `RenderPass::Id`. The main
+   renderer uses `MainViewBase = 69`, and `static_assert`s lock `MainViewBase + offset` onto the
+   IDs the table used when they were absolute (SceneHDR still 73, Tonemap still 92). A second
+   `SceneRenderer` (the inspector preview at 100, thumbnails at 130) constructs with a non-main
+   base and binds a different framebuffer to the same *offset*. Global passes — backbuffer 0, `EnvironmentBake` 1–67,
+   `UI` 96, `ImGui` 200 — stay absolute; a preview must not steal the game UI. Scene renders do
+   not nest: `Renderer3D`'s frame state is a single static, so a preview is a complete
+   `BeginFrame … EndFrame` outside the main one, and `PushActiveBase` asserts that.
+   The current view ID is *sticky state* (`RenderCommand::SetViewId`); forgetting to restore it
+   after a pass sends subsequent draws into the wrong target silently (this exact bug made all
+   meshes invisible once — migration §8.6). Views that depend on submission order (scene,
+   transparent) are set to `Sequential` mode. A view that receives no draws is skipped
+   *including its clear* — hence the `bgfx::touch()` calls on scene/tonemap/FXAA views and the
+   backbuffer.
 2. **Uniforms are per-draw, not per-frame.** `bgfx::setUniform` contributes to the next submit and
    is consumed by it; setting the same uniform twice before a submit is a hard assert.
    [`FrameUniforms`](../../GanymedEngine/source/GanymedE/Renderer/FrameUniforms.h) therefore only
@@ -292,7 +302,7 @@ up to 20k quads per batch in a CPU array, flushed to a dynamic vertex buffer; 16
 discrete samplers, since bgfx has no sampler arrays); per-vertex color/tiling/entity-ID.
 `DrawQuad`/`DrawRotatedQuad` overloads take positions or a full transform; the ECS `RenderSystem`
 uses the transform+entityID form for sprites. Renders into **its own view**
-(`RenderPass::SceneTransparent`) — a view transform is per-view state, so 2D sharing the 3D view
+(`RenderPass::Id(SceneTransparent)`) — a view transform is per-view state, so 2D sharing the 3D view
 would retroactively re-project the 3D geometry (migration §8.6).
 
 ## Renderer3D
@@ -307,7 +317,7 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    an off-screen mesh still casts a visible shadow) vs. opaque/transparent (frustum-culled against
    per-submesh world AABBs).
 3. **Shadow pass** — directional cascaded shadow maps: 4 cascades, 2048² D32F depth-only targets,
-   one view per cascade (`RenderPass::Shadow + n`). Cascade fitting is stable (bounding-sphere) and
+   one view per cascade (`RenderPass::Id(Shadow + n)`). Cascade fitting is stable (bounding-sphere) and
    texel-snapped to kill edge shimmer; front-face culling reduces acne. Color writes are disabled
    (a depth-only FB rejects draws whose write mask targets missing attachments). Split scheme:
    log/linear blend (λ=0.7) capped at 200 units. An **orthographic** camera (the editor's Top
@@ -319,8 +329,10 @@ resets per-frame state; `Submit*` calls only record; `EndScene` executes:
    caster list and redrawn through `ShadowDepthSkinned` in **every** cascade — a character standing
    in cascade 0 casting into cascade 2 is ordinary, and a bind-pose shadow under a moving character
    reads as a bug even though nothing errored.
-4. **View restore** — back to `RenderPass::SceneHDR` (the shadow pass left the sticky view ID on
-   the last cascade).
+4. **View restore** — back to `RenderPass::Id(SceneHDR)` (the shadow pass left the sticky view ID on
+   the last cascade). A non-main `ActiveBase` skips the shadow pass entirely: the cascade
+   framebuffers are singleton state on `Renderer3D`, and writing them from a preview base would
+   overwrite the main viewport's shadows in the same `bgfx::frame()`.
 5. **Opaque** — sorted material → mesh → submesh → front-to-back; contiguous runs of the same
    (mesh, submesh) draw as **instanced chunks** (≤1024 instances per draw, transient instance
    buffer). Material binds carry the per-pass extras: cascade matrices (one `mat4[4]`), splits
@@ -615,9 +627,10 @@ applies in already renders the baked skybox, and the following frames are pixel-
 
 Two consequences worth knowing if you add a pass:
 
-- **Everything that samples the bake must sort above 67.** The pass table leaves views 1–68 to the
-  bake and starts the frame proper at `Shadow = 69`; `ViewAllocator` asserts against `Shadow` rather
-  than counting. A bake takes 67 views the first time and **66 after that** — see the BRDF LUT below.
+- **Everything that samples the bake must sort above 67.** The pass table leaves views 1–67 to the
+  bake and starts the main frame at `MainViewBase = 69`; `ViewAllocator` asserts against
+  `EnvironmentBake + EnvironmentBakeViewCount`, not against the scene `Shadow` offset. A bake
+  takes 67 views the first time and **66 after that** — see the BRDF LUT below.
 - Destroying the bake's 67 transient framebuffers immediately after submission is safe: bgfx defers
   handle destruction until the frame that used them has been rendered. The cube textures they wrote
   into are owned by the `Environment`.
@@ -633,13 +646,22 @@ scene HDR (RGBA16F + entityID + D24S8)
   → tonemap (ACES-style, exposure; bloom composited additively in HDR before the curve)
   → FXAA (optional)
   → composite (LDR, shown in the editor viewport via GetFinalImageRendererID)
-  → game UI (RmlUi, RenderPass::UI = 96) composited into that same LDR target
+  → game UI (RmlUi, absolute RenderPass::UI = 96) composited into that same LDR target
 ```
 
 (Or, with `SetOutputToBackbuffer(true)`, the final post pass and the UI both land on the backbuffer
 instead — see [Backbuffer output mode](#backbuffer-output-mode).)
 
-The UI pass sits after Composite purely by view ID, which is what keeps it in display space
+`BeginFrame` / `EndFrame` push and pop the instance's `viewBase`. The editor's `AssetPreview`
+is two further instances: the inspector at `PreviewViewBase = 100` (palette slots 2/3) and a
+128×128 thumbnail renderer at `ThumbnailViewBase = 130` (palette 4/5). They tick after the main
+`EndFrame`, do not bake their own environment, and do not write shadow maps. The inspector and
+a thumbnail cannot share a framebuffer — filling the browser would clobber the preview image —
+so they are separate `SceneRenderer`s and share only the one-render-per-frame budget. The game
+UI view stays absolute so a preview cannot steal it. See
+[editor.md](../editor/editor.md#asset-inspector-panel).
+
+The UI pass sits after the main Composite purely by view ID, which is what keeps it in display space
 instead of being tonemapped with the scene — see [ui.md](ui.md). Note that
 `SetViewportSize` rebuilds the post-stack targets, so anything holding the composite framebuffer
 (the UI does) has to re-fetch it on resize.
