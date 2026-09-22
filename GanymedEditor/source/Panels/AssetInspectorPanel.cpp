@@ -635,13 +635,15 @@ namespace GanymedE {
 			if (headJoint >= 0)
 				m_Mesh.HeadJointName = JointName(skeleton, headJoint);
 
+			const glm::mat4 skinTransform = mesh->GetSkinTransform();
 			std::vector<JointPose> locals;
 			std::vector<glm::mat4> globals;
 			m_Mesh.Clips.reserve(mesh->GetClips().size());
 			for (const AnimationClip& clip : mesh->GetClips())
 			{
 				ClipRow row;
-				FillClipRow(skeleton, clip, rootJoint, hipsJoint, headJoint, locals, globals, row);
+				FillClipRow(skeleton, skinTransform, clip, rootJoint, hipsJoint, headJoint,
+					locals, globals, row);
 				m_Mesh.Clips.push_back(std::move(row));
 			}
 		}
@@ -650,8 +652,8 @@ namespace GanymedE {
 		m_Mesh.Ready = true;
 	}
 
-	void AssetInspectorPanel::FillClipRow(const Skeleton& skeleton, const AnimationClip& clip,
-		int32_t rootJoint, int32_t hipsJoint, int32_t headJoint,
+	void AssetInspectorPanel::FillClipRow(const Skeleton& skeleton, const glm::mat4& skinTransform,
+		const AnimationClip& clip, int32_t rootJoint, int32_t hipsJoint, int32_t headJoint,
 		std::vector<JointPose>& locals, std::vector<glm::mat4>& globals, ClipRow& row)
 	{
 		row = {};
@@ -698,7 +700,10 @@ namespace GanymedE {
 		if (rootJoint < 0 || !SampleClipGlobals(skeleton, &clip, 0.0f, locals, globals))
 			return;
 
-		auto origin = [](const glm::mat4& m) { return glm::vec3(m[3]); };
+		// Globals are in the rig's joint unit; every figure below is labelled mesh metres, so the
+		// skin transform goes on first. Without it a Meshy rig reads Head Y ~150 and the cm span
+		// line multiplies that by 100 again.
+		auto origin = [&skinTransform](const glm::mat4& m) { return glm::vec3(skinTransform * m[3]); };
 
 		const glm::vec3 start = origin(globals[(uint32_t)rootJoint]);
 		if (!SampleClipGlobals(skeleton, &clip, clip.Duration, locals, globals))

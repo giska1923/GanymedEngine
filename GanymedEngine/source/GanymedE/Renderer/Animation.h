@@ -78,8 +78,10 @@ namespace GanymedE {
 		std::vector<Channel> Channels;
 	};
 
-	// Joint globals in mesh space at `time`. A channel overwrites only the path it drives;
-	// everything else stays on LocalRestPose. Roots are seeded from RootTransform.
+	// Joint globals at `time`, in the rig's own joint space - **not** mesh space: that is one more
+	// multiply by Mesh::GetSkinTransform(), and on a centimetre rig the difference is 100x. A
+	// channel overwrites only the path it drives; everything else stays on LocalRestPose. Roots
+	// are seeded from RootTransform.
 	//
 	// This is the pose AnimationSystem samples before multiplying InverseBind to make a
 	// skinning palette. The clip inspector needs the same pose (head / hips / root at t=0),
