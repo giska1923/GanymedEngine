@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <unordered_set>
+#include <vector>
 
 namespace GanymedE {
 
@@ -36,6 +37,11 @@ namespace GanymedE {
 	// caller must have run TransformSystem this frame (or accept last frame's cache).
 	SurfaceHit RaycastScene(const Ref<Scene>& scene, const Math::Ray& ray, const RaycastFilter& filter = {});
 
+	// The pose `entity` is drawn in (ResolvePosePalette): its animator's palette, or the rest
+	// palette when it has no animator. Empty when it has no rigged mesh. The reference is to
+	// component or mesh storage - use it this frame, do not keep it.
+	const std::vector<glm::mat4>& EntityPosePalette(Entity entity);
+	// A rigged mesh with a usable pose - animator or not.
 	bool EntityHasSkinnedPose(Entity entity);
 	Entity FindSkinnedMeshInHierarchy(Scene& scene, Entity start);
 

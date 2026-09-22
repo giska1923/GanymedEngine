@@ -241,6 +241,9 @@ namespace GanymedE {
 			return true;
 		}
 
+#ifdef GE_ENABLE_ASSERTS
+		// A self-test on first use, so it runs in Debug and not in the shipped hot path -
+		// BoneAttachmentSystem calls TryGetJointFrame every frame per socket.
 		void VerifyJointFrameOnce()
 		{
 			static bool done = false;
@@ -301,14 +304,28 @@ namespace GanymedE {
 			if (ComputeJointFrame(singular, skin, palette, 0, ignored))
 				GE_CORE_ERROR("TryGetJointFrame self-check: singular InverseBind should fail");
 		}
+#endif
 
 	}
 
 	bool TryGetJointFrame(const Mesh& mesh, const std::vector<glm::mat4>& palette,
 		int32_t joint, glm::mat4& outFrame)
 	{
+#ifdef GE_ENABLE_ASSERTS
 		VerifyJointFrameOnce();
+#endif
 		return ComputeJointFrame(mesh.GetSkeleton(), mesh.GetSkinTransform(), palette, joint, outFrame);
+	}
+
+	const std::vector<glm::mat4>& ResolvePosePalette(const Mesh& mesh,
+		const std::vector<glm::mat4>* animatorPalette)
+	{
+		if (animatorPalette && !animatorPalette->empty()
+			&& animatorPalette->size() == mesh.GetSkeleton().JointCount())
+		{
+			return *animatorPalette;
+		}
+		return mesh.GetRestPalette();
 	}
 
 }

@@ -238,7 +238,7 @@ namespace GanymedE {
 			}
 			if (!EntityHasSkinnedPose(target))
 			{
-				query.Reason = "Socket target has no joint palette";
+				query.Reason = "Socket target's skeleton has no usable palette";
 				return query;
 			}
 
@@ -262,7 +262,7 @@ namespace GanymedE {
 			}
 
 			glm::mat4 jointLocal{ 1.0f };
-			if (!TryGetJointFrame(*mesh, target.GetComponent<AnimatorComponent>().Palette,
+			if (!TryGetJointFrame(*mesh, EntityPosePalette(target),
 				attachment.Resolved, jointLocal))
 			{
 				query.Reason = "Joint frame is invalid";
@@ -1500,16 +1500,11 @@ namespace GanymedE {
 			return;
 
 		Entity target = m_ActiveScene->FindEntityByUUID(highlightEntity);
-		if (!target || !target.HasComponent<StaticMeshComponent>()
-			|| !target.HasComponent<AnimatorComponent>())
-		{
+		const std::vector<glm::mat4>& palette = EntityPosePalette(target);
+		if (palette.empty())
 			return;
-		}
 
 		const Ref<Mesh>& mesh = target.GetComponent<StaticMeshComponent>().Mesh.Get();
-		const auto& animator = target.GetComponent<AnimatorComponent>();
-		if (!mesh || !mesh->HasSkeleton() || animator.Palette.empty())
-			return;
 
 		const Skeleton& skeleton = mesh->GetSkeleton();
 		const int32_t joint = highlightJoint;
@@ -1523,7 +1518,12 @@ namespace GanymedE {
 		if (viewportSize.x <= 1.0f || viewportSize.y <= 1.0f)
 			return;
 
-		const glm::mat4 entityWorld = m_ActiveScene->GetWorldSpaceTransform(target);
+		// The cached world, like the overlay and picking. GetWorldSpaceTransform walks local TRs,
+		// which is wrong for a rig whose world is written directly (a rig on a socket), and the
+		// labels would drift off the bones they name.
+		const glm::mat4 entityWorld = target.HasComponent<WorldTransformComponent>()
+			? target.GetComponent<WorldTransformComponent>().World
+			: m_ActiveScene->GetWorldSpaceTransform(target);
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 		const ImU32 textCol = EditorUI::Theme().TextPrimary;
 
@@ -1545,7 +1545,7 @@ namespace GanymedE {
 			if (index < 0 || (size_t)index >= skeleton.JointCount())
 				return;
 			glm::mat4 local{ 1.0f };
-			if (!TryGetJointFrame(*mesh, animator.Palette, index, local))
+			if (!TryGetJointFrame(*mesh, palette, index, local))
 				return;
 			ImVec2 pos;
 			if (!project(glm::vec3((entityWorld * local)[3]), pos))
