@@ -50,6 +50,15 @@ namespace GanymedE {
 				scene->MarkChanged<TransformComponent>(entity);
 		}
 
+		// Every entity is created with one (Scene::CreateEntity); the guard is the usual
+		// no-assert rule for bindings, not an expected case.
+		glm::mat4 WorldMatrix(Entity entity)
+		{
+			return entity.HasComponent<WorldTransformComponent>()
+				? entity.GetComponent<WorldTransformComponent>().World
+				: glm::mat4(1.0f);
+		}
+
 		// The live Jolt world, or null outside play. Reached through the system
 		// rather than held, because PhysicsScene exists only between play and stop.
 		PhysicsScene* Physics()
@@ -244,6 +253,25 @@ namespace GanymedE {
 				{
 					e.GetComponent<TransformComponent>().Scale = value;
 					MarkTransformChanged(e);
+				},
+
+				// --- World transform: read-only, and one frame old ---
+				// Read from the WorldTransformComponent cache rather than composed from local TRs,
+				// because the cache is the only correct answer for an entity on a bone socket or
+				// under one: BoneAttachmentSystem writes that world directly, and walking the locals
+				// puts a socketed rifle at its parent. The price is timing. Script systems run before
+				// TransformSystem and BoneAttachmentSystem, so this is where the entity was drawn
+				// last frame; a Set* earlier in the same OnUpdate is not in it yet, and an entity's
+				// first frame reads identity. No setters: TransformSystem owns the cache and would
+				// overwrite a write on its next pass - moving something is SetTranslation.
+				"GetWorldPosition", [](Entity& e) { return glm::vec3(WorldMatrix(e)[3]); },
+				// -Z, the engine's forward, normalised: the column carries the world scale, and a
+				// 0.45-scaled prop would otherwise hand back a 0.45-long "direction".
+				"GetWorldForward", [](Entity& e)
+				{
+					const glm::vec3 forward = -glm::vec3(WorldMatrix(e)[2]);
+					const float length = glm::length(forward);
+					return length > 1e-6f ? forward / length : glm::vec3(0.0f, 0.0f, -1.0f);
 				},
 
 				// Despawn. Queued like every structural change from inside an update, so the
