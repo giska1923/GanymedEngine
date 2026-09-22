@@ -980,7 +980,9 @@ Grid selection is a solid `Accent` cell fill (same contrast contract). List alre
 those Header colours. The legacy `ImGui::Columns` grid is gone.
 
 **Footer.** Visible item count (after the search filter) on the left; grid / list toggle on the
-right. Grid keeps the PNG directory/file thumbnails with `AssetTint`. List uses Lucide type icons.
+right. Grid shows a 3D thumbnail for a mesh when `AssetPreview` has one, and the PNG
+directory/file icon with `AssetTint` otherwise — pending, absent, or a non-mesh. List uses
+Lucide type icons.
 
 **Selection** is readable. `GetSelectedPath()` returns the absolute path (empty when nothing is
 selected); `SetSelectionChangedCallback` fires on a real change, including a clear. `EditorLayer`
@@ -1020,6 +1022,14 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
   because the action is not undoable: see
   [assets.md](../engine/assets.md#orphaned-sidecars) for why the editor asks a person rather than
   reaping at boot.
+
+**Thumbnails.** Grid cells that are actually visible (`ImGui::IsItemVisible`) call
+`AssetPreview::RequestVisible`. `Tick` consumes last frame's set, loads a current `.thumb` from
+`assets/.compiled/` if one exists, and otherwise spends the leftover one-render budget on a
+128×128 studio shot — but only when the file pane has been idle for 150 ms, so a fast scroll
+across 200 meshes queues nothing. The inspector preview wins the budget when it is dirty. Map
+palette rows use the same `GetThumbnail` / `RequestVisible` pair. See
+[assets.md](../engine/assets.md#thumbnail-cache).
 
 ## Asset Inspector panel
 
@@ -1093,8 +1103,9 @@ lazily when a mesh is selected and destroyed when it is not. `Tick` runs after t
 fixed directional light and a studio environment (`environments/studio_small_08_1k.hdr` when
 the project has it, procedural sky otherwise). No scratch `Scene`. Renders on demand: dirty on
 selection, orbit, zoom, `SetAssetConfig` / Reimport, live `.gmat` edits, and
-`AddAssetChangedListener`. Budget is one render per frame; a mesh that is still pending stays
-dirty and retries. Skinned meshes draw their bind pose, labelled as such. `Collision = Box`
+`AddAssetChangedListener`. Budget is one render per frame shared with thumbnails; the inspector
+wins when it is dirty. A mesh that is still pending stays dirty and retries. Skinned meshes
+draw their bind pose, labelled as such. `Collision = Box`
 draws the fitted wire box over the image. LMB orbits, wheel zooms; camera state is remembered
 per handle for the session. Hover the image for the session render count.
 
@@ -1102,8 +1113,8 @@ per handle for the session. Hover the image for the session render count.
 
 [`MapPanel`](../../GanymedEditor/source/Panels/MapPanel.h) — `BeginPanel("Map")`, docked with Stats
 on the right (dock-layout version 3). Palette, placement options, duplicate-along-axis, parity
-audit, scatter, and markers. There is no thumbnail system; rows are
-`AssetTint` icon + filename.
+audit, scatter, and markers. Mesh rows show the same `AssetPreview` thumbnail as the Content
+Browser when one is cached, and the `AssetTint` type icon otherwise.
 
 **Snap model.** `MapSnapSettings` is owned by `EditorLayer` and read by both placement and
 ImGuizmo. Defaults: enabled, translate 0.5 m, rotate 15° (45° is a preset), scale 0.1, snap to

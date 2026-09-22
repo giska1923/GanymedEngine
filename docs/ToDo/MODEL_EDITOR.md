@@ -1,6 +1,6 @@
 # Milestone — Model Asset Editor
 
-**Status: P1–P5 done. P6–P7 planned.**
+**Status: P1–P6 done. P7 planned.**
 
 > **Same branch rule as [MAP_EDITOR.md](MAP_EDITOR.md).** Every phase touches
 > `GanymedEditor/source/` or `GanymedEngine/source/`, which the
@@ -48,7 +48,7 @@ and before the two phases that need it.
 | **P3** | Collision default on the mesh asset | **done** | P2, and pairs with [MAP_EDITOR](MAP_EDITOR.md) M2 |
 | **P4** | Multi-target rendering: view-ID bases | **done** | — (**the risk**) |
 | **P5** | The asset preview renderer | **done** | P4 |
-| **P6** | Thumbnails: Content Browser and map palette | ~1.5 days | P5 |
+| **P6** | Thumbnails: Content Browser and map palette | **done** | P5 |
 | **P7** | Docs and a measured pass | ~0.5 day | all |
 
 ~9.5 days. **P4 is the phase to read first** — if its refactor turns out worse than it looks, P5 and
@@ -333,27 +333,12 @@ the wrong tool. `SubmitMesh` is the path the viewport already uses.
 
 ## Phase P6 — thumbnails
 
-### Goal
-
-The Content Browser grid and the map editor's palette show what the asset looks like.
-
-### Steps
-
-1. Render thumbnails through P5's budgeted queue, **only for grid cells actually visible**, and only
-   when the grid is idle.
-2. Cache to disk beside the other compiled outputs, keyed by the **same epoch** — so a reimport or a
-   config change invalidates the thumbnail for free rather than needing its own invalidation rule.
-3. Fall back to the existing `AssetTint`-ed type icon while a thumbnail is pending or absent. It is
-   the current behaviour, so nothing regresses if the queue is saturated.
-4. Wire the map editor's palette to the same source. This closes the item
-   [MAP_EDITOR](MAP_EDITOR.md#explicitly-not-doing) cut explicitly.
-
-### Risks
-
-- Scrolling a large folder must not queue hundreds of renders. The visible-cells rule plus the
-  budget is the answer; verify with a folder of 200 meshes.
-- Thumbnail cache size. Small images, but they are per-asset — report the total in the Stats panel's
-  Asset Cache readout rather than letting it grow unobserved.
+**Done.** `AssetPreview` owns a 128×128 `SceneRenderer` at `ThumbnailViewBase = 130` so filling
+the browser cannot clobber the inspector image. Visible grid cells (`ImGui::IsItemVisible`) and
+pinned map-palette meshes call `RequestVisible`; `Tick` consumes last frame's set. GPU renders
+spend the leftover one-render budget and only run when the file pane has been idle 150 ms.
+Disk cache is `assets/.compiled/<h0h1>/<h>.thumb`, trusted when `QueryOutput` is Current and
+the stored `HashConfig` matches. Pending cells keep the `AssetTint` type icon.
 
 ### Verification
 

@@ -795,6 +795,11 @@ namespace GanymedE {
 			compiled.Compiles, compiled.TotalCompileMs, compiled.CacheHits,
 			CompiledCache::CompilesInFlight());
 
+		const uint64_t thumbBytes = AssetPreview::ThumbnailDiskBytes();
+		ImGui::Text("Thumbnails: %zu gpu, %u rendered, %.1f KB disk",
+			AssetPreview::ThumbnailResident(), AssetPreview::ThumbnailRenderCount(),
+			thumbBytes / 1024.0);
+
 		// The switch exists for one situation and it is worth naming: a `git checkout` across a
 		// branch that touches many assets generates a change event for every one of them.
 		// Turning watching back on adopts the new state without reloading it.

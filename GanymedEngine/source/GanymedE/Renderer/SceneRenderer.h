@@ -34,9 +34,9 @@ namespace GanymedE {
 		// `viewBase` is the first view ID this instance owns. The default is
 		// RenderPass::MainViewBase (69), which keeps the main viewport on the
 		// same IDs it used when the pass table was absolute. A preview passes
-		// RenderPass::PreviewViewBase (100). `paletteBase` is the first of two
-		// bgfx clear-palette slots (colour, entity-ID); they are global per
-		// frame, so a second instance must not reuse 0/1 or it overwrites the
+		// RenderPass::PreviewViewBase (100) or ThumbnailViewBase (130). `paletteBase` is
+		// the first of two bgfx clear-palette slots (colour, entity-ID); they are global
+		// per frame, so a second instance must not reuse 0/1 or it overwrites the
 		// main clear. Range and overlap assert at construction.
 		SceneRenderer(uint32_t width, uint32_t height,
 			uint16_t viewBase = RenderPass::MainViewBase, uint8_t paletteBase = 0);

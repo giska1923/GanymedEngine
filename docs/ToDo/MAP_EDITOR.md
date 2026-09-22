@@ -247,8 +247,8 @@ you asked.
 2. **`Panels/MapPanel.{h,cpp}`** (new files → premake regeneration). Sections: palette, placement
    options, parity audit (M2), scatter (M3), markers (M4).
 3. **Palette**: enumerate candidates with `AssetManager::ForEachAsset` filtered to `Prefab` and
-   `StaticMesh`; a pinned subset is what the palette shows. Rows are `AssetTint` icon + name —
-   **there is no thumbnail system and this milestone does not build one**.
+   `StaticMesh`; a pinned subset is what the palette shows. Rows are `AssetTint` icon + name
+   until a thumbnail exists; [MODEL_EDITOR.md](MODEL_EDITOR.md) P6 is the cache that fills them.
 4. **Palette persistence** at `<project>/.editor/map_palette.yaml`. Project-relative, not
    `imgui.ini`: a palette is a fact about the *content*, and `imgui.ini` is per-install window
    layout that no one wants merged.
@@ -743,7 +743,6 @@ the editor pointing `--project=` at `Game/assets`.
 | Heightfield terrain | A renderer path, an asset type and a Jolt collider type. Its own milestone |
 | Brush / CSG geometry | Would make collider-mesh disagreement structurally impossible; needs a procedural-mesh path and a second authoring model. M2's audit is what tells us whether we still need it |
 | Vertex / edge / face snapping | Unreal's V-key, Blender's snap-to-vertex. Needs a per-mesh vertex acceleration structure — the same BVH M0 defers |
-| Asset thumbnails in the palette | Needs an offscreen thumbnail renderer and a disk cache. Icons and names are honest; a blank thumbnail grid is not |
 | Instance-array scattering | The right answer at scale, and the reason M3 has a cap. Written into ToDo instead |
 | Level streaming / sublevels | One scene, one file, unchanged |
 | Navmesh, lighting bake, occlusion volumes | PROVING_GROUND cut navmesh on purpose and nothing since has changed that argument |

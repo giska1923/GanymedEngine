@@ -379,6 +379,9 @@ namespace GanymedE {
 		std::error_code ec;
 		const bool removedOutput = std::filesystem::remove(output, ec);
 		std::filesystem::remove(dep, ec);
+		std::filesystem::path thumb = output;
+		thumb.replace_extension(".thumb");
+		std::filesystem::remove(thumb, ec);
 
 		if (removedOutput)
 			GE_CORE_INFO("Invalidated compiled output for '{0}'", metadata.FilePath);

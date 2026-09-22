@@ -453,9 +453,10 @@ resolves through the `AssetRef` it is about to store rather than through a local
 Two things that hold assets alive and are easy to forget: `Renderer3D` keeps a `Ref<Environment>`
 for the duration of a frame, and the editor's undo stack snapshots whole components, so an
 `AssetRef` in undo history keeps its asset resident. Both are correct — they are real references —
-but they mean resident counts lag a scene close until the undo stack is cleared. The content
-browser needs no such care: its icons are fixed `resources/` textures outside the asset cache, so
-the thumbnail-cache hazard the design anticipated does not exist here.
+but they mean resident counts lag a scene close until the undo stack is cleared. The Content
+Browser's type icons are still fixed `resources/` textures. Mesh thumbnails are a separate
+128×128 `Texture2D` cache on `AssetPreview` — they are not `Mesh` refs, so opening a folder of
+200 meshes does not pin 200 meshes resident. See [Thumbnail cache](#thumbnail-cache).
 
 ## `AssetRef<T>`
 
@@ -1365,6 +1366,7 @@ DDS, and a `.glb` becomes the binary mesh blob that used to live in `assets/.ass
 ```
 assets/.compiled/<h0h1>/<h>.gres    the artifact
 assets/.compiled/<h0h1>/<h>.dep     its epoch record
+assets/.compiled/<h0h1>/<h>.thumb   editor thumbnail (RGBA8, 128×128)
 ```
 
 `h` is a 64-bit FNV-1a of the asset-root-relative *source path*, so the tree is flat and bounded
@@ -1449,6 +1451,21 @@ cannot write its own directory still runs — it just recompiles every boot, and
 
 **Compilation is a build-time step, and a shipped game should ship its `.compiled/` tree**, the way
 UE ships cooked content. The fallback exists so a missing tree is slow rather than fatal.
+
+### Thumbnail cache
+
+Editor-only. `AssetPreview` writes a 128×128 RGBA8 `.thumb` next to the `.gres`, with a header
+holding `CompiledCache::HashConfig`. A file is trusted only when `QueryOutput` is Current *and*
+that hash matches, so a reimport or a compile-affecting config change invalidates it for free —
+`CompiledCache::Invalidate` deletes the `.thumb` with the `.gres`. `Collision` is skipped from
+`HashConfig`, so changing the collision default does not rebuild a thumbnail (the wire box is
+an inspector overlay, not part of the image).
+
+The GPU cache holds those small `Texture2D`s, not `Mesh` refs, and is capped at 256. Disk size
+is reported on the Stats panel next to the compiled-output counters. A texture or material edit
+is not a mesh-epoch change — the blob stores paths, not pixels — so the live session drops GPU
+thumbs and rebuilds visible cells; neighbours that were never on screen keep their previous
+`.thumb` until they are.
 
 ## Texture compilation
 

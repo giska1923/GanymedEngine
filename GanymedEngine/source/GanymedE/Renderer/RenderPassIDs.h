@@ -65,6 +65,11 @@ namespace GanymedE {
 		// BGFX_CONFIG_MAX_VIEWS is 256; ImGui sits at 200, so 97–199 is free.
 		constexpr uint16_t PreviewViewBase = 100;
 
+		// Thumbnails: a third SceneRenderer, 128×128, so filling the browser
+		// cannot clobber the inspector image. One view past SceneViewCount is
+		// the blit-to-readback slot (not a scene pass).
+		constexpr uint16_t ThumbnailViewBase = 130;
+
 		// Game UI (RmlUi), composited into the *main* LDR image.
 		//
 		// Absolute on purpose: a preview must not steal this view. Because bgfx
@@ -90,6 +95,10 @@ namespace GanymedE {
 		static_assert(UI == 96, "UI view moved");
 		static_assert(PreviewViewBase + SceneViewCount <= ImGui, "preview range collides with ImGui");
 		static_assert(PreviewViewBase >= MainViewBase + SceneViewCount, "preview range collides with main");
+		static_assert(PreviewViewBase + SceneViewCount <= ThumbnailViewBase,
+			"thumbnail range collides with preview");
+		static_assert(ThumbnailViewBase + SceneViewCount + 1 <= ImGui,
+			"thumbnail range (including readback blit) collides with ImGui");
 
 		inline uint16_t& ActiveBaseStorage()
 		{

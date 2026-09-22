@@ -98,5 +98,8 @@ namespace GanymedE {
 
 		Ref<Texture2D> m_DirectoryIcon;
 		Ref<Texture2D> m_FileIcon;
+
+		float m_LastScrollY = 0.0f;
+		std::chrono::steady_clock::time_point m_LastScrollChange{};
 	};
 }

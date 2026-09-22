@@ -20,8 +20,8 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
    `Renderer3D` / `Renderer2D` / `Environment` resolve through `RenderPass::Id`. The main
    renderer uses `MainViewBase = 69`, and `static_assert`s lock `MainViewBase + offset` onto the
    IDs the table used when they were absolute (SceneHDR still 73, Tonemap still 92). A second
-   `SceneRenderer` (a preview) constructs with `PreviewViewBase = 100` and binds a different
-   framebuffer to the same *offset*. Global passes — backbuffer 0, `EnvironmentBake` 1–67,
+   `SceneRenderer` (the inspector preview at 100, thumbnails at 130) constructs with a non-main
+   base and binds a different framebuffer to the same *offset*. Global passes — backbuffer 0, `EnvironmentBake` 1–67,
    `UI` 96, `ImGui` 200 — stay absolute; a preview must not steal the game UI. Scene renders do
    not nest: `Renderer3D`'s frame state is a single static, so a preview is a complete
    `BeginFrame … EndFrame` outside the main one, and `PushActiveBase` asserts that.
@@ -653,10 +653,13 @@ scene HDR (RGBA16F + entityID + D24S8)
 instead — see [Backbuffer output mode](#backbuffer-output-mode).)
 
 `BeginFrame` / `EndFrame` push and pop the instance's `viewBase`. The editor's `AssetPreview`
-is the second instance (`PreviewViewBase = 100`, palette slots 2/3 — bgfx's clear palette is
-global per frame, so slots 0/1 stay with the main renderer). It ticks after the main `EndFrame`,
-does not bake its own environment, and does not write shadow maps. The game UI view stays
-absolute so a preview cannot steal it. See [editor.md](../editor/editor.md#asset-inspector-panel).
+is two further instances: the inspector at `PreviewViewBase = 100` (palette slots 2/3) and a
+128×128 thumbnail renderer at `ThumbnailViewBase = 130` (palette 4/5). They tick after the main
+`EndFrame`, do not bake their own environment, and do not write shadow maps. The inspector and
+a thumbnail cannot share a framebuffer — filling the browser would clobber the preview image —
+so they are separate `SceneRenderer`s and share only the one-render-per-frame budget. The game
+UI view stays absolute so a preview cannot steal it. See
+[editor.md](../editor/editor.md#asset-inspector-panel).
 
 The UI pass sits after the main Composite purely by view ID, which is what keeps it in display space
 instead of being tonemapped with the scene — see [ui.md](ui.md). Note that
