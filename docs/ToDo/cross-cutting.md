@@ -529,9 +529,8 @@ it in the game.
 **The A3 visual gate was not watched from master.** Wiring is recorded (Rifle child of Body,
 `Joint: RightHand`, hand-tuned Offset/Rotation, Scale 0.45). The picture — rifle stays in the
 hand through idle / walk / run and the 180° backpedal turn, with Skeletons on so the wrist is
-visible — needs `ProvingGround.ganymede` on `first-game`. The other half of that gate is content:
-`Muzzle` is still parented to `Yaw`; moving it onto the barrel was not done. Mouse-aimed fire
-converges on the crosshair (pitch included) but leaves from a chest point in Yaw space, not from
-the gun. The engine half now exists — `Entity:GetWorldPosition` / `GetWorldForward` read a socketed
-entity's drawn world (see [scripting.md](../engine/scripting.md#world-transform)) — so what is left
-is content on `first-game`: a `Muzzle` under the Rifle, and `Player:Fire` spawning from it.
+visible — needs `ProvingGround.ganymede` on `first-game`. The muzzle half of that gate is done
+there: `Muzzle` is a child of the Rifle and `Player:Fire` spawns from it through
+`Entity:GetWorldPosition` / `GetWorldForward` (see
+[scripting.md](../engine/scripting.md#world-transform)), falling back to the chest while the idle
+clip holds the rifle lowered.

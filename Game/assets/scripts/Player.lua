@@ -270,15 +270,18 @@ function Player:OnCreate()
     -- not been given sound or particles yet, and a missing child is an authoring state rather
     -- than an error.
     self.footsteps = self.entity:GetChildByName("Footsteps")
-    if self.yawEntity then
-        self.muzzle = self.yawEntity:GetChildByName("Muzzle")
-    end
     -- Under Yaw, not under the capsule: the capsule is LockRotation and never turns, so a
     -- mesh parented to it cannot face where the player is aiming. Yaw is the entity the mouse
-    -- drives, and it already carries the camera and the muzzle.
+    -- drives, and it already carries the camera.
     self.body = self.yawEntity and self.yawEntity:GetChildByName("Body") or nil
+    -- The muzzle is the barrel tip, a child of the socketed Rifle: rifle-local (-0.97, 0.19, 0),
+    -- just past the bore, turned so its -Z (GetWorldForward) runs down the barrel - the rifle's
+    -- -X. +Y stays the rifle's up, so the flash still fans upward as it did under Yaw. Its local
+    -- transform says nothing about where it is drawn; Fire reads the world one.
+    local rifle = self.body and self.body:GetChildByName("Rifle") or nil
+    self.muzzle = rifle and rifle:GetChildByName("Muzzle") or nil
     if not self.footsteps then Log.Warn("Player: no 'Footsteps' child - no step sound") end
-    if not self.muzzle then Log.Warn("Player: no 'Muzzle' child under Yaw - no muzzle flash") end
+    if not self.muzzle then Log.Warn("Player: no 'Muzzle' under Body/Rifle - no muzzle flash, fire from the chest") end
     if not self.body then Log.Warn("Player: no 'Body' child - the player will not animate") end
 
     Log.Info("Player: click to look, Escape to release the cursor")
@@ -814,6 +817,37 @@ function Player:AimPoint()
     return origin + dir * 200.0
 end
 
+-- Where the round leaves the gun, or nil when the gun is not in a position to have fired it.
+--
+-- The barrel moves with the clip, and the clips were not authored for this gun: the idle lowers
+-- it to the floor, and in the first frames of a shot the body is still turning from its velocity
+-- to the aim (Player:Animate). Two ways that goes wrong, both caught by a probe run:
+--
+--   - A barrel behind or beside the player: the round flies through the player's own capsule,
+--     and Projectile:OnCollisionEnter counts that as a hit and despawns it. So the barrel has to
+--     be clear of the capsule (0.35 radius + the round's 0.075 + slack) and ahead along the yaw.
+--   - A barrel pointing at the floor: the round leaves a lowered gun and climbs to the crosshair.
+--     So the barrel's own forward has to be within ~35 degrees of the line to the aim point.
+--
+-- Otherwise the chest point stands in, as it did before there was a gun. GetWorldPosition is
+-- last frame's, so at a 6 m/s run the round starts ~0.1 m behind the barrel: inside the flash,
+-- and not worth a per-frame velocity correction.
+function Player:BarrelPoint(p, fx, fz, aim)
+    if not self.muzzle then
+        return nil
+    end
+    local b = self.muzzle:GetWorldPosition()
+    local hx, hz = b.x - p.x, b.z - p.z
+    if hx * hx + hz * hz < 0.5 * 0.5 or hx * fx + hz * fz < 0.25 then
+        return nil
+    end
+    local toAim = (aim - b):Normalized()
+    if toAim:Dot(self.muzzle:GetWorldForward()) < 0.82 then
+        return nil
+    end
+    return b
+end
+
 function Player:Fire()
     local p = self.entity:GetTranslation()
     local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
@@ -824,10 +858,11 @@ function Player:Fire()
     local muzzle = Vec3(p.x + fx * 1.0, p.y + 0.5, p.z + fz * 1.0)
 
     -- Horizontal along yaw unless a human is aiming with the mouse. The gate modes never capture
-    -- the cursor, so they keep firing flat and their numbers do not move.
+    -- the cursor, so they keep firing flat from the chest and their numbers do not move.
     local dir = Vec3(fx, 0.0, fz)
     local aim = self:AimPoint()
     if aim then
+        muzzle = self:BarrelPoint(p, fx, fz, aim) or muzzle
         local toAim = aim - muzzle
         -- A point behind the muzzle, or almost on it (a wall right in front of the camera), has
         -- no useful direction from here. Flat forward is the least surprising fallback.
