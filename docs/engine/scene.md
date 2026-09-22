@@ -285,7 +285,11 @@ itself socketed is treated as deeper still): resolve the target (zero = parent),
 The frame function is the one owner of
 `jointGlobal = skinnedSubmesh.LocalTransform * Palette[i] * inverse(InverseBind[i])` plus
 **dividing the bind pose's basis scale out of it**.
-A missing target, a mesh with no
+`palette` is `ResolvePosePalette(mesh, animatorPalette)` (Mesh.h): the animator's palette when it
+is sized to the rig, otherwise the rest palette — the same choice `RenderSystem` draws with, so a
+socket on a rig with no `AnimatorComponent` sits on the visible rest-pose hand instead of failing.
+The skeleton overlay and the editor's joint picking and labels read the same function.
+A missing target, a skeleton with no usable
 palette, a singular inverse bind, or a joint name the skeleton does not have warns once per
 distinct failure and leaves the entity at its **parent** transform (parent cache × local), never
 at the origin. An empty joint is quiet — authoring a socket before picking a name.

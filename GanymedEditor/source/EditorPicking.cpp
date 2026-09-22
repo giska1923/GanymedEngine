@@ -6,6 +6,7 @@
 #include "GanymedE/Renderer/Mesh.h"
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Scene.h"
+#include "GanymedE/Scene/Systems/RenderSystem.h"
 
 #include <glm/glm.hpp>
 
@@ -350,45 +351,6 @@ namespace GanymedE {
 			return false;
 		}
 
-		bool SkeletonInSelection(Scene& scene, Entity skinned, const std::unordered_set<UUID>& selected)
-		{
-			std::unordered_set<entt::entity> seen;
-			Entity walk = skinned;
-			while (walk)
-			{
-				if (!seen.insert((entt::entity)walk).second)
-					break;
-				if (selected.count(walk.GetUUID()) != 0)
-					return true;
-				UUID parentID = walk.GetComponent<RelationshipComponent>().Parent;
-				if (parentID == UUID{ 0 })
-					break;
-				walk = scene.FindEntityByUUID(parentID);
-			}
-
-			const UUID skinnedID = skinned.GetUUID();
-			for (UUID id : selected)
-			{
-				Entity entity = scene.FindEntityByUUID(id);
-				if (!entity)
-					continue;
-				seen.clear();
-				Entity start = entity;
-				while (start)
-				{
-					if (!seen.insert((entt::entity)start).second)
-						break;
-					if (start.GetUUID() == skinnedID)
-						return true;
-					UUID parentID = start.GetComponent<RelationshipComponent>().Parent;
-					if (parentID == UUID{ 0 })
-						break;
-					start = scene.FindEntityByUUID(parentID);
-				}
-			}
-			return false;
-		}
-
 		bool ProjectWorld(const glm::mat4& viewProjection, const glm::vec2& vpMin,
 			const glm::vec2& vpSize, const glm::vec3& world, glm::vec2& outScreen)
 		{
@@ -452,17 +414,24 @@ namespace GanymedE {
 
 	}
 
+	const std::vector<glm::mat4>& EntityPosePalette(Entity entity)
+	{
+		static const std::vector<glm::mat4> none;
+		if (!entity || !entity.HasComponent<StaticMeshComponent>())
+			return none;
+		const Ref<Mesh>& mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
+		if (!mesh || !mesh->HasSkeleton())
+			return none;
+		const std::vector<glm::mat4>* animatorPalette = entity.HasComponent<AnimatorComponent>()
+			? &entity.GetComponent<AnimatorComponent>().Palette : nullptr;
+		return ResolvePosePalette(*mesh, animatorPalette);
+	}
+
 	bool EntityHasSkinnedPose(Entity entity)
 	{
-		if (!entity || !entity.HasComponent<StaticMeshComponent>()
-			|| !entity.HasComponent<AnimatorComponent>())
-		{
-			return false;
-		}
-		const Ref<Mesh>& mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
-		const auto& animator = entity.GetComponent<AnimatorComponent>();
-		return mesh && mesh->HasSkeleton() && !animator.Palette.empty()
-			&& animator.Palette.size() == mesh->GetSkeleton().JointCount();
+		// ResolvePosePalette only returns a palette sized to the rig (the rest palette is built
+		// that way), so non-empty is the whole test.
+		return !EntityPosePalette(entity).empty();
 	}
 
 	Entity FindSkinnedMeshInHierarchy(Scene& scene, Entity start)
@@ -530,7 +499,7 @@ namespace GanymedE {
 			}
 		};
 
-		auto view = scene.Reg().view<WorldTransformComponent, StaticMeshComponent, AnimatorComponent>();
+		auto view = scene.Reg().view<WorldTransformComponent, StaticMeshComponent>();
 		for (auto entityID : view)
 		{
 			Entity handle{ entityID, &scene };
@@ -538,11 +507,11 @@ namespace GanymedE {
 				continue;
 			if (!EntityHasSkinnedPose(handle))
 				continue;
-			if (!query.AllSkeletons && !SkeletonInSelection(scene, handle, *query.Selected))
+			if (!query.AllSkeletons && !RenderSystem::SkeletonInSelection(scene, handle, *query.Selected))
 				continue;
 
 			const Ref<Mesh>& mesh = handle.GetComponent<StaticMeshComponent>().Mesh.Get();
-			const auto& animator = handle.GetComponent<AnimatorComponent>();
+			const std::vector<glm::mat4>& palette = EntityPosePalette(handle);
 			const Skeleton& skeleton = mesh->GetSkeleton();
 			const uint32_t jointCount = skeleton.JointCount();
 			const glm::mat4& entityWorld = handle.GetComponent<WorldTransformComponent>().World;
@@ -554,7 +523,7 @@ namespace GanymedE {
 			for (uint32_t i = 0; i < jointCount; i++)
 			{
 				glm::mat4 local{ 1.0f };
-				if (!TryGetJointFrame(*mesh, animator.Palette, (int32_t)i, local))
+				if (!TryGetJointFrame(*mesh, palette, (int32_t)i, local))
 					continue;
 				origins[i] = JointOrigin(entityWorld * local);
 				if (!ProjectWorld(query.ViewProjection, query.ViewportMin, query.ViewportSize,

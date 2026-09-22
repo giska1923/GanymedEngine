@@ -244,7 +244,10 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 - **Header, right:** magnet (opens `MapSnapSettings`; accent-filled while snapping is enabled) ·
   Visualizers popup (`Collider gizmos`, default on — authored box/sphere/capsule wireframes in
   Edit and Play; **Skeletons**, default on — posed joint overlay on the selection, with All and
-  X-ray; plus the Jolt debug-draw toggles, still Play-only because they read live body
+  X-ray. A rig with no animator shows its rest skeleton: the overlay, picking, labels, the Joints
+  panel and the socket gizmo all read `ResolvePosePalette`, the pose `RenderSystem` draws. Which
+  rigs count as "the selection" is `RenderSystem::SkeletonInSelection`, shared with picking so a
+  bone is only clickable where one is drawn; plus the Jolt debug-draw toggles, still Play-only because they read live body
   state) · Icons (`ICON_LC_MAP_PIN`, default on — `MarkerComponent` wire-spheres) · Local / World
   combo wired to `ImGuizmo::Manipulate`'s mode.
   Previously LOCAL was hard-coded. The magnet is the same snap struct placement reads.
@@ -256,7 +259,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   `originBottomLeft` (a render target's orientation follows the backend — hard-coding either way
   is wrong on half of them). Joint-name labels for the highlighted socket joint (and its parent
   and children) are ImGui text on that same window after the image, projected through the camera
-  the viewport is looking through. The highlight is the editor joint selection (viewport pick or
+  the viewport is looking through, from the rig's cached `WorldTransformComponent` like the
+  overlay (a parent-chain walk would drift for a rig whose world is written directly). The highlight is the editor joint selection (viewport pick or
   Joints panel), falling back to the selected `BoneAttachmentComponent`'s `Resolved` index.
   While Skeletons is on, a click whose screen-space distance to a bone or joint marker is within
   12 px selects that joint and does **not** change the entity selection; otherwise entity picking
@@ -688,7 +692,9 @@ OnUpdateEditor` via the `EditorViewFilter` singleton (play/runtime still draw th
 [`JointTreePanel`](../../GanymedEditor/source/Panels/JointTreePanel.h) — `BeginPanel("Joints")`,
 tabbed with Scene Hierarchy in the default tree (dock-layout version 5). Hierarchy from
 `Skeleton::ParentIndices`. `EditorUI::SearchField` filters by a case-insensitive name substring;
-ancestors of a match stay visible and are forced open.
+ancestors of a match stay visible and are forced open. A viewport pick asks the tree to scroll to
+the joint once: the selected row consumes the request, and it is dropped at the end of the draw
+either way, so a pick the filter hides cannot keep forcing its ancestors open.
 
 **Joint selection is subordinate to entity selection.** It is `{ UUID skinnedEntity, int32_t joint }`
 on `EditorLayer`, not a scene singleton and not an entity. Clicking a row selects that joint and

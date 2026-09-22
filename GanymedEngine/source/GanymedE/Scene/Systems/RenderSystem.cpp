@@ -108,18 +108,15 @@ namespace GanymedE {
 			// LocalTransform with no palette; on a Meshy rig that is 0.01 and the
 			// character draws at ~2 cm. The rest palette (Global * InverseBind at rest)
 			// is what cancels that scale. An animator palette, when present and sized
-			// to the rig, replaces it.
+			// to the rig, replaces it - ResolvePosePalette owns that choice, so sockets
+			// and the skeleton overlay read the same pose this draws.
 			if (mesh->HasSkeleton())
 			{
-				const glm::mat4* palette = nullptr;
-				uint32_t jointCount = 0;
-				if (animator && animator->Palette.size() == mesh->GetSkeleton().JointCount())
-				{
-					palette = animator->Palette.data();
-					jointCount = (uint32_t)animator->Palette.size();
-				}
+				const std::vector<glm::mat4>& palette =
+					ResolvePosePalette(*mesh, animator ? &animator->Palette : nullptr);
 				Renderer3D::SubmitSkinnedMesh(mesh, worldTransform.World,
-					palette, jointCount, (int)entity, overrides, overrideCount);
+					palette.empty() ? nullptr : palette.data(), (uint32_t)palette.size(),
+					(int)entity, overrides, overrideCount);
 			}
 			else
 			{
@@ -311,36 +308,6 @@ namespace GanymedE {
 			return false;
 		}
 
-		bool SkeletonInSelection(Scene& scene, Entity skinned,
-			const std::unordered_set<UUID>& selected)
-		{
-			std::unordered_set<entt::entity> seen;
-			Entity walk = skinned;
-			while (walk)
-			{
-				if (!seen.insert((entt::entity)walk).second)
-					break;
-				if (selected.count(walk.GetUUID()) != 0)
-					return true;
-				UUID parentID = walk.GetComponent<RelationshipComponent>().Parent;
-				if (parentID == UUID{ 0 })
-					break;
-				walk = scene.FindEntityByUUID(parentID);
-			}
-
-			const UUID skinnedID = skinned.GetUUID();
-			for (UUID id : selected)
-			{
-				Entity entity = scene.FindEntityByUUID(id);
-				if (!entity)
-					continue;
-				seen.clear();
-				if (WalkHits(scene, entity, skinnedID, seen))
-					return true;
-			}
-			return false;
-		}
-
 		glm::vec3 JointOrigin(const glm::mat4& world)
 		{
 			return glm::vec3(world[3]);
@@ -355,6 +322,36 @@ namespace GanymedE {
 			return glm::vec3(column == 0 ? 1.0f : 0.0f, column == 1 ? 1.0f : 0.0f, column == 2 ? 1.0f : 0.0f);
 		}
 
+	}
+
+	bool RenderSystem::SkeletonInSelection(Scene& scene, Entity skinned,
+		const std::unordered_set<UUID>& selected)
+	{
+		std::unordered_set<entt::entity> seen;
+		Entity walk = skinned;
+		while (walk)
+		{
+			if (!seen.insert((entt::entity)walk).second)
+				break;
+			if (selected.count(walk.GetUUID()) != 0)
+				return true;
+			UUID parentID = walk.GetComponent<RelationshipComponent>().Parent;
+			if (parentID == UUID{ 0 })
+				break;
+			walk = scene.FindEntityByUUID(parentID);
+		}
+
+		const UUID skinnedID = skinned.GetUUID();
+		for (UUID id : selected)
+		{
+			Entity entity = scene.FindEntityByUUID(id);
+			if (!entity)
+				continue;
+			seen.clear();
+			if (WalkHits(scene, entity, skinnedID, seen))
+				return true;
+		}
+		return false;
 	}
 
 	void RenderSystem::DrawSkeletonGizmos()
@@ -391,8 +388,6 @@ namespace GanymedE {
 		{
 			if (IsEditorHidden(entity))
 				continue;
-			if (!animator || animator->Palette.empty())
-				continue;
 
 			const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
 			if (!mesh || !mesh->HasSkeleton())
@@ -402,9 +397,12 @@ namespace GanymedE {
 			if (!settings.ShowAllSkeletons && !SkeletonInSelection(m_Scene, handle, *selected))
 				continue;
 
+			// The pose this entity is drawn in - an unanimated rig shows its rest skeleton.
+			const std::vector<glm::mat4>& palette =
+				ResolvePosePalette(*mesh, animator ? &animator->Palette : nullptr);
 			const Skeleton& skeleton = mesh->GetSkeleton();
 			const uint32_t jointCount = skeleton.JointCount();
-			if (jointCount == 0 || animator->Palette.size() != jointCount)
+			if (jointCount == 0 || palette.size() != jointCount)
 				continue;
 
 			m_JointWorld.resize(jointCount);
@@ -416,7 +414,7 @@ namespace GanymedE {
 			for (uint32_t i = 0; i < jointCount; i++)
 			{
 				glm::mat4 local{ 1.0f };
-				if (!TryGetJointFrame(*mesh, animator->Palette, (int32_t)i, local))
+				if (!TryGetJointFrame(*mesh, palette, (int32_t)i, local))
 					continue;
 				m_JointWorld[i] = entityWorld * local;
 				m_JointOk[i] = 1;

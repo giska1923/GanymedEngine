@@ -164,4 +164,12 @@ namespace GanymedE {
 	bool TryGetJointFrame(const Mesh& mesh, const std::vector<glm::mat4>& palette,
 		int32_t joint, glm::mat4& outFrame);
 
+	// The palette a rigged entity is actually drawn with: `animatorPalette` when it is sized to
+	// this skeleton, otherwise the mesh's rest palette. RenderSystem draws with this choice, so a
+	// socket, the skeleton overlay and joint picking read it too - otherwise a rig with no
+	// animator renders posed while its bones and sockets report "no palette". Pass null when the
+	// entity has no AnimatorComponent. Empty when the mesh has no usable skeleton.
+	const std::vector<glm::mat4>& ResolvePosePalette(const Mesh& mesh,
+		const std::vector<glm::mat4>* animatorPalette);
+
 }

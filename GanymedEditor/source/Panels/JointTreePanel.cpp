@@ -148,6 +148,11 @@ namespace GanymedE {
 					for (int32_t root : m_Roots)
 						DrawJoint(root);
 					ImGui::EndChild();
+
+					// A scroll request is for this frame's tree. The selected row consumes it when
+					// it draws; if it did not draw - the search filter hides it - drop the request,
+					// or its ancestors stay force-opened every frame and cannot be collapsed.
+					tool.ScrollToJoint = false;
 				}
 			}
 

@@ -10,7 +10,9 @@
 
 namespace GanymedE {
 
+	class Entity;
 	class Material;
+	class Scene;
 
 	// Everything that used to be inlined in Scene::OnUpdateRuntime / OnUpdateEditor: the primary
 	// camera search, lights and sky, meshes, sprites, and collider gizmos.
@@ -60,6 +62,13 @@ namespace GanymedE {
 		void OnUpdate(Timestep ts) override;
 		void OnUpdateEditor(Timestep ts) override;
 		const char* Name() const override { return "RenderSystem"; }
+
+		// Whether the skeleton overlay draws `skinned` for this selection: the rig or any
+		// ancestor is selected (select the capsule, see the body's bones), or the rig is an
+		// ancestor of something selected (select the rifle, see the hand). The overlay owns this
+		// rule; editor joint picking calls it so a bone can only be clicked where one is drawn.
+		static bool SkeletonInSelection(Scene& scene, Entity skinned,
+			const std::unordered_set<UUID>& selected);
 
 	private:
 		void SubmitLightsAndSky();

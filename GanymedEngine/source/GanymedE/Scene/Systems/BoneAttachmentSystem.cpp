@@ -215,13 +215,17 @@ namespace GanymedE {
 			const Mesh& mesh = *meshComponent->Mesh.Get();
 			const Skeleton& skeleton = mesh.GetSkeleton();
 
-			if (!animator || animator->Palette.size() != skeleton.JointCount()
+			// The animator's palette, or the rest palette when there is no animator - the pose
+			// RenderSystem draws, so a socket on an unanimated rig sits on the visible hand.
+			const std::vector<glm::mat4>& palette =
+				ResolvePosePalette(mesh, animator ? &animator->Palette : nullptr);
+			if (palette.size() != skeleton.JointCount()
 				|| skeleton.InverseBind.size() != skeleton.JointCount())
 			{
 				attachment.Resolved = -1;
 				WarnOnce(item.second,
 					"BoneAttachment on '" + entity.GetName() + "' targets '" + target.GetName() +
-					"', which has no joint palette - leaving the entity at its parent transform");
+					"', whose skeleton has no usable palette - leaving the entity at its parent transform");
 				Restore();
 				continue;
 			}
@@ -254,7 +258,7 @@ namespace GanymedE {
 			}
 
 			glm::mat4 jointGlobal{ 1.0f };
-			if (!TryGetJointFrame(mesh, animator->Palette, attachment.Resolved, jointGlobal))
+			if (!TryGetJointFrame(mesh, palette, attachment.Resolved, jointGlobal))
 			{
 				attachment.Resolved = -1;
 				WarnOnce(item.second,
