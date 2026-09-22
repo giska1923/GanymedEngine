@@ -412,25 +412,8 @@ picking — goes through the same path as a static draw. Only three things diffe
 programs. D3D/Vulkan/Metal are the primary backends and this is documented rather than engineered
 around. Import warns and clamps above 128 joints — drawing wrong, loudly.
 
-**Bounds live in a different space from the vertices, and this is the part that bites.** A skinned
-submesh keeps its `LocalTransform` (the glTF mesh node's world matrix) while `Skeleton::RootTransform`
-carries that matrix's inverse, so the palette cancels it and a rest-pose vertex lands at
-`transform * v` — *without* the node matrix. The culling box therefore must not ride
-`cmd.Transform`, which includes it: doing so applies the node matrix a second time with nothing to
-undo it. `PushDrawCommand` takes `paletteApplied` and transforms the box by `transform` alone when
-it is set, falling back to `cmd.Transform` for the bind-pose degrade path, where `LocalTransform`
-genuinely is applied to the vertices.
-
-This was invisible for as long as every rigged fixture in the tree had an identity node matrix. The
-Meshy characters do not — their skinned node carries a uniform **0.01** scale, with the positions
-authored at metre scale — so the box came out 100x too small: a 1.8 cm cube at the feet of a 1.8 m
-character. The character then disappeared the moment the camera pitched far enough to take that cube
-off screen, while its shadow stayed, because the shadow partition skips camera culling. Two lessons
-worth keeping: a bounds bug presents as a *rendering* bug, and the shadow surviving is the tell that
-says culling rather than skinning.
-
-Past that, bounds are one deliberate approximation. A skinned submesh's vertices are the bind pose,
-so the measured AABB is not the box that gets drawn; `Mesh::ComputeBounds` pads it by
+Bounds are the one deliberate approximation. A skinned submesh's vertices are the bind pose, so the
+measured AABB is not the box that gets drawn; `Mesh::ComputeBounds` pads it by
 `SkinnedBoundsPadding` (25%) of the box's **largest** extent — not per axis, because a limb can
 swing about as far as the rig is long, so a narrow axis needs the same absolute slack as a wide one
 (CesiumMan stands arms-down with an X extent of 0.31 against a height of 1.51, and its walk cycle

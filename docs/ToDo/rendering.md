@@ -325,35 +325,27 @@ Until that exists, every new HDR costs a convolution on every load, on every mac
 here rather than in assets.md because the missing compiler is a renderer pass writing textures, not
 an importer.
 
+## The static fallback for a skinned mesh draws a Meshy character 100x too small
 
-## The skinned bind-pose fallback draws a Meshy character 100x too small
+`Renderer3D::SubmitSkinnedMesh` uses the animator's palette, then `Mesh::GetRestPalette()`, and
+only then degrades to `SubmitMesh` — which now happens only when the skeleton arrays disagree (no
+rest palette) or the skinned program failed to compile. On that path there is no palette to cancel
+`LocalTransform`, so the node matrix really is applied to bind-space positions. On both Meshy
+characters it is a uniform 0.01 scale: the "bind pose" is a 1.8 cm speck. The culling box rides
+the same `cmd.Transform`, so the two at least agree.
 
-`Renderer3D::SubmitSkinnedMesh` degrades to `SubmitMesh` when the palette is missing — a rig whose
-animator has not built one yet, or whose skinned program failed to compile — so the entity draws in
-its bind pose instead of vanishing. That is the right call, and the comment says so.
-
-It does not do what it says on a file whose skinned mesh node carries a non-identity transform.
-Without the palette there is no `Skeleton::RootTransform` to cancel `LocalTransform`, so the node
-matrix is applied to bind-space positions for real. On both Meshy characters that matrix is a
-uniform 0.01 scale, which makes the "bind pose" a 1.8 cm speck rather than a 1.8 m character. The
-culling box agrees with it (`PushDrawCommand` takes the non-palette branch), so it is at least
-consistent — just consistently wrong.
-
-Found while fixing the same space confusion on the culling side
-([rendering.md](../engine/rendering.md#skinned-meshes)); left alone because the fallback is a path
-nobody has knowingly hit, and the two plausible fixes want a decision rather than a patch:
+Rare enough to leave, but the fix wants a decision rather than a patch:
 
 - **Bake the cancellation into the fallback** — submit with `transform * LocalTransform *
   RootTransform`, which is what the palette would have produced at bind pose. Correct, and it means
   the static path takes a matrix that only makes sense for skinned meshes.
 - **Drop the node transform at import instead**, pre-transforming bind-space positions by
   `meshNodeWorld` so `LocalTransform` can be identity on skinned submeshes like it already is on
-  static ones. Cleaner everywhere downstream — no cancellation to explain, and the bounds bug above
-  becomes unrepresentable — but it changes the compiled mesh format's meaning and wants a version
-  bump plus a re-check of the Y-up-corrected fixtures (`CesiumMan`) that motivated keeping it.
+  static ones. Cleaner everywhere downstream — no cancellation to explain in bounds, sockets or the
+  rest palette — but it changes the compiled mesh format's meaning and wants a version bump plus a
+  re-check of the Y-up-corrected fixtures (`CesiumMan`) that motivated keeping it.
 
-The second is the better shape. Neither is urgent: the visible symptom requires a rig to draw before
-its animator runs, for one frame.
+The second is the better shape.
 
 ## Optional, and explicitly not scheduled
 
