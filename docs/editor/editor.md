@@ -312,6 +312,24 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   One drag is one undo entry (`Gizmo Socket`), snapshot on the rising edge of
   `ImGuizmo::IsUsing()`.
 
+  **Aim** (`ICON_LC_CROSSHAIR`, beside W/E/R, no hotkey) replaces that gizmo while it is armed,
+  Edit mode is on, and the selected entity has an `AimOffsetComponent`. The handle is a translate
+  gizmo on a world point. Dragging it writes clamped `Pitch` / `Yaw`; the point itself is not
+  clamped, so it keeps moving past the cone. Past the cone the handle is labelled `clamped`, and
+  the readout says the angle is clamped (including when the stored value sits on the limit, which
+  is what the handle writes). With both angles near
+  zero the point starts 3 m ahead of the chain root, at the root's height, along the entity's
+  horizontal world forward (`ModelForward` through the world rotation). A non-zero preview places
+  it 3 m along that aim instead, and selecting the entity does not write the angles — init must
+  not clobber the preview. A later slider edit moves the point onto the new direction. The point
+  is editor state: not serialized, not an undo entry (`m_GizmoUsing` stays false), cleared on
+  New, Open and Play. Q/W/E/R clear the toggle. During Play the handle is hidden even if the
+  toggle stays armed, and nothing is written. An empty or unresolved chain draws no handle, with
+  "Aim chain is unresolved" on the viewport. A descendant tagged `Muzzle` gets a screen-space line
+  to the point (skipped when either end is behind the camera). That line is the closed-loop
+  residual this milestone does not correct: the barrel is a socket, and the socket runs after
+  the aim pass.
+
 - **Transform readout** (bottom-left of the image, `ImDrawList`, no layout): `X`/`Y`/`Z` of the
   primary selection in `AxisX/Y/Z`, values in `TextPrimary`. Local translation, or world
   translation when the gizmo is in World space, so the numbers match the handles. A resolved
@@ -932,7 +950,8 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   (`Trait::Radians` on the limits, so the row is degrees). **Preview Pitch / Preview Yaw** are
   edit-mode only — the undo stack is null in Play, so `Recording()` is false and the script owns
   the angles — and they do not report an edit, so the scrub is not an undo entry. The readout names a joint the mesh does
-  not have, says when the live angle is past the limit, and prints the tip joint's rotation off
+  not have, says when the live angle is past the limit or sitting on it (the viewport handle writes
+  the clamped value, so "past" alone would stay silent), and prints the tip joint's rotation off
   the clip (a fresh `SampleClipGlobals` against the palette). Undo of an authored field keeps the
   live preview: `ComponentEditCommand` stores the whole struct and copies `Pitch`, `Yaw` and
   `Resolved` back off the component it is about to overwrite.

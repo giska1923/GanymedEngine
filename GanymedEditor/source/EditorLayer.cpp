@@ -184,6 +184,145 @@ namespace GanymedE {
 			scene.MarkChanged<TransformComponent>(entity);
 		}
 
+		// Three metres puts the handle in front of the chain root without sitting on the joint.
+		// Re-init from a non-zero preview uses the same distance along the aimed direction.
+		constexpr float kAimHandleDistance = 3.0f;
+
+		float AimLimit(float limit)
+		{
+			return std::isfinite(limit) ? std::abs(limit) : 0.0f;
+		}
+
+		float AimClamp(float angle, float limit)
+		{
+			const float mag = AimLimit(limit);
+			if (!std::isfinite(angle))
+				angle = 0.0f;
+			return std::clamp(angle, -mag, mag);
+		}
+
+		glm::vec3 AimModelForward(AimOffsetComponent::Axis forward)
+		{
+			switch (forward)
+			{
+			case AimOffsetComponent::Axis::NegZ: return { 0.0f, 0.0f, -1.0f };
+			case AimOffsetComponent::Axis::PosX: return { 1.0f, 0.0f, 0.0f };
+			case AimOffsetComponent::Axis::NegX: return { -1.0f, 0.0f, 0.0f };
+			default: return { 0.0f, 0.0f, 1.0f };
+			}
+		}
+
+		// ModelForward through the entity world matrix, flattened onto the horizontal. The pose
+		// pass builds the same axis in mesh space from the skin transform; a uniform skin scale
+		// (the Meshy rigs) leaves the direction unchanged, so this matches that pass.
+		bool AimHorizontalForward(const glm::mat4& world, AimOffsetComponent::Axis axis, glm::vec3& out)
+		{
+			glm::vec3 forward = glm::mat3(world) * AimModelForward(axis);
+			forward.y = 0.0f;
+			const float length = glm::length(forward);
+			if (length < 1e-4f)
+				return false;
+			out = forward / length;
+			return true;
+		}
+
+		// First named joint, in the same world frame the skeleton overlay uses.
+		bool AimChainRoot(Entity entity, const AimOffsetComponent& aim, glm::vec3& out)
+		{
+			if (!entity.HasComponent<StaticMeshComponent>() || !entity.HasComponent<WorldTransformComponent>())
+				return false;
+			const Ref<Mesh> mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
+			if (!mesh || !mesh->HasSkeleton())
+				return false;
+
+			const Skeleton& skeleton = mesh->GetSkeleton();
+			int32_t joint = -1;
+			for (int i = 0; i < AimOffsetComponent::MaxJoints; i++)
+			{
+				const std::string& name = aim.Joints[(size_t)i];
+				if (name.empty())
+					break;
+				for (int32_t j = 0; j < (int32_t)skeleton.JointNames.size(); j++)
+				{
+					if (skeleton.JointNames[(size_t)j] == name)
+					{
+						joint = j;
+						break;
+					}
+				}
+				break;
+			}
+			if (joint < 0)
+				return false;
+
+			glm::mat4 local{ 1.0f };
+			if (!TryGetJointFrame(*mesh, EntityPosePalette(entity), joint, local))
+				return false;
+			out = glm::vec3((entity.GetComponent<WorldTransformComponent>().World * local)[3]);
+			return true;
+		}
+
+		// Positive pitch looks up. Positive yaw is a right-hand rotation about world up, which
+		// is the character's left — the same sign ApplyAimOffset uses.
+		void AimAnglesFromTarget(const glm::vec3& root, const glm::vec3& target,
+			const glm::vec3& forward, float& pitch, float& yaw)
+		{
+			const glm::vec3 to = target - root;
+			const float horiz = std::sqrt(to.x * to.x + to.z * to.z);
+			pitch = std::atan2(to.y, horiz);
+
+			glm::vec3 flat(to.x, 0.0f, to.z);
+			if (glm::length(flat) < 1e-4f)
+			{
+				yaw = 0.0f;
+				return;
+			}
+			flat = glm::normalize(flat);
+			const float sine = glm::dot(glm::cross(forward, flat), glm::vec3(0.0f, 1.0f, 0.0f));
+			const float cosine = glm::dot(forward, flat);
+			yaw = std::atan2(sine, cosine);
+		}
+
+		glm::vec3 AimTargetFromAngles(const glm::vec3& root, const glm::vec3& forward, float pitch, float yaw)
+		{
+			const glm::vec3 up(0.0f, 1.0f, 0.0f);
+			const glm::vec3 aimed = glm::angleAxis(yaw, up) * forward;
+			const glm::vec3 right = glm::cross(aimed, up);
+			const glm::vec3 direction = glm::angleAxis(pitch, right) * aimed;
+			return root + direction * kAimHandleDistance;
+		}
+
+		Entity FindDescendantByTag(Scene& scene, Entity root, const char* tag)
+		{
+			if (!root || !root.HasComponent<RelationshipComponent>())
+				return {};
+			for (UUID id : root.GetComponent<RelationshipComponent>().Children)
+			{
+				Entity child = scene.FindEntityByUUID(id);
+				if (!child)
+					continue;
+				if (child.HasComponent<TagComponent>() && child.GetComponent<TagComponent>().Tag == tag)
+					return child;
+				if (Entity nested = FindDescendantByTag(scene, child, tag))
+					return nested;
+			}
+			return {};
+		}
+
+		bool ProjectViewportPoint(const glm::mat4& view, const glm::mat4& projection,
+			const glm::vec2 bounds[2], const glm::vec3& world, ImVec2& out)
+		{
+			const glm::vec4 clip = projection * view * glm::vec4(world, 1.0f);
+			if (clip.w <= 1.0e-4f)
+				return false;
+			const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+			const float width = bounds[1].x - bounds[0].x;
+			const float height = bounds[1].y - bounds[0].y;
+			out.x = bounds[0].x + (ndc.x * 0.5f + 0.5f) * width;
+			out.y = bounds[0].y + (1.0f - (ndc.y * 0.5f + 0.5f)) * height;
+			return true;
+		}
+
 		// Joint world = targetWorld * TryGetJointFrame. The socket gizmo inverts this, not the
 		// parent chain: GetWorldSpaceTransform walks local TR, which BoneAttachmentSystem ignores
 		// while the socket resolves, so that walk would put the handle at the parent.
@@ -1119,6 +1258,119 @@ namespace GanymedE {
 			m_SceneHierarchyPanel.DeleteSelectedEntity();
 	}
 
+	void EditorLayer::ClearAimTarget()
+	{
+		m_AimTargetValid = false;
+		m_AimEntity = UUID{ 0 };
+	}
+
+	void EditorLayer::DrawAimGizmo(Entity entity, const glm::mat4& view, const glm::mat4& projection)
+	{
+		if (!m_ActiveScene || !entity || !entity.HasComponent<AimOffsetComponent>()
+			|| !entity.HasComponent<WorldTransformComponent>())
+			return;
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImVec2 notePos(m_ViewportBounds[0].x + 10.0f, m_ViewportBounds[0].y + 28.0f);
+		auto& aim = entity.GetComponent<AimOffsetComponent>();
+
+		glm::vec3 root{ 0.0f };
+		if (!AimChainRoot(entity, aim, root))
+		{
+			draw->AddText(notePos, IM_COL32(255, 196, 64, 255), "Aim chain is unresolved");
+			m_AimTargetValid = false;
+			return;
+		}
+
+		glm::vec3 forward{ 0.0f };
+		if (!AimHorizontalForward(entity.GetComponent<WorldTransformComponent>().World, aim.ModelForward, forward))
+		{
+			draw->AddText(notePos, IM_COL32(255, 196, 64, 255), "Aim forward is vertical");
+			return;
+		}
+
+		// Init places the point. It does not write Pitch/Yaw, or selecting the entity would
+		// clobber a preview the sliders (or the last drag) already stored.
+		if (!m_AimTargetValid || m_AimEntity != entity.GetUUID())
+		{
+			m_AimEntity = entity.GetUUID();
+			m_AimTargetValid = true;
+			m_AimPitch = aim.Pitch;
+			m_AimYaw = aim.Yaw;
+			m_AimTarget = AimTargetFromAngles(root, forward, aim.Pitch, aim.Yaw);
+		}
+
+		glm::mat4 transform = glm::translate(glm::mat4(1.0f), m_AimTarget);
+		const bool snap = SnapActive();
+		const float step = m_SnapSettings.Translate;
+		float snapValues[3] = { step, step, step };
+
+		ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection),
+			ImGuizmo::OPERATION::TRANSLATE, ImGuizmo::WORLD,
+			glm::value_ptr(transform),
+			nullptr, snap ? snapValues : nullptr);
+
+		float rawPitch = 0.0f;
+		float rawYaw = 0.0f;
+		if (ImGuizmo::IsUsing())
+		{
+			// The point stays where the drag put it, past the cone. The component gets the
+			// clamped angle, so Preview Pitch/Yaw stop at the limit. Not an undo entry:
+			// m_GizmoUsing stays false, so the gizmo falling edge does not record this drag.
+			m_AimTarget = glm::vec3(transform[3]);
+			AimAnglesFromTarget(root, m_AimTarget, forward, rawPitch, rawYaw);
+			aim.Pitch = AimClamp(rawPitch, aim.PitchLimit);
+			aim.Yaw = AimClamp(rawYaw, aim.YawLimit);
+			m_AimPitch = aim.Pitch;
+			m_AimYaw = aim.Yaw;
+		}
+		else if (std::abs(aim.Pitch - m_AimPitch) > 1e-4f || std::abs(aim.Yaw - m_AimYaw) > 1e-4f)
+		{
+			// A slider (or anything else) wrote the angles. Move the point onto that direction.
+			m_AimTarget = AimTargetFromAngles(root, forward, aim.Pitch, aim.Yaw);
+			m_AimPitch = aim.Pitch;
+			m_AimYaw = aim.Yaw;
+			AimAnglesFromTarget(root, m_AimTarget, forward, rawPitch, rawYaw);
+		}
+		else
+		{
+			// Chain root moved under a stationary point (a time scrub). Keep the pose aimed at it.
+			AimAnglesFromTarget(root, m_AimTarget, forward, rawPitch, rawYaw);
+			const float pitch = AimClamp(rawPitch, aim.PitchLimit);
+			const float yaw = AimClamp(rawYaw, aim.YawLimit);
+			if (std::abs(pitch - aim.Pitch) > 1e-4f || std::abs(yaw - aim.Yaw) > 1e-4f)
+			{
+				aim.Pitch = pitch;
+				aim.Yaw = yaw;
+				m_AimPitch = pitch;
+				m_AimYaw = yaw;
+			}
+		}
+
+		if (Entity muzzle = FindDescendantByTag(*m_ActiveScene, entity, "Muzzle"))
+		{
+			if (muzzle.HasComponent<WorldTransformComponent>())
+			{
+				const glm::vec3 muzzlePos = glm::vec3(muzzle.GetComponent<WorldTransformComponent>().World[3]);
+				ImVec2 a, b;
+				if (ProjectViewportPoint(view, projection, m_ViewportBounds, muzzlePos, a)
+					&& ProjectViewportPoint(view, projection, m_ViewportBounds, m_AimTarget, b))
+				{
+					draw->AddLine(a, b, IM_COL32(255, 176, 32, 220), 2.0f);
+				}
+			}
+		}
+
+		const bool clamped = std::abs(rawPitch) > AimLimit(aim.PitchLimit) + 1e-3f
+			|| std::abs(rawYaw) > AimLimit(aim.YawLimit) + 1e-3f;
+		if (clamped)
+		{
+			ImVec2 at;
+			if (ProjectViewportPoint(view, projection, m_ViewportBounds, m_AimTarget, at))
+				draw->AddText(ImVec2(at.x + 14.0f, at.y), IM_COL32(255, 196, 64, 255), "clamped");
+		}
+	}
+
 	void EditorLayer::UI_Toolbar()
 	{
 		using EditorUI::Color;
@@ -1143,20 +1395,26 @@ namespace GanymedE {
 		auto setGizmo = [&](int op)
 		{
 			if (canSwitch)
+			{
 				m_GizmoType = op;
+				m_AimHandle = false;
+			}
 		};
 
-		if (IconButton(ICON_LC_MOUSE_POINTER, "Select (Q)", m_GizmoType == -1))
+		if (IconButton(ICON_LC_MOUSE_POINTER, "Select (Q)", !m_AimHandle && m_GizmoType == -1))
 			setGizmo(-1);
 		ImGui::SameLine();
-		if (IconButton(ICON_LC_MOVE, "Translate (W)", m_GizmoType == ImGuizmo::OPERATION::TRANSLATE))
+		if (IconButton(ICON_LC_MOVE, "Translate (W)", !m_AimHandle && m_GizmoType == ImGuizmo::OPERATION::TRANSLATE))
 			setGizmo(ImGuizmo::OPERATION::TRANSLATE);
 		ImGui::SameLine();
-		if (IconButton(ICON_LC_ROTATE_3D, "Rotate (E)", m_GizmoType == ImGuizmo::OPERATION::ROTATE))
+		if (IconButton(ICON_LC_ROTATE_3D, "Rotate (E)", !m_AimHandle && m_GizmoType == ImGuizmo::OPERATION::ROTATE))
 			setGizmo(ImGuizmo::OPERATION::ROTATE);
 		ImGui::SameLine();
-		if (IconButton(ICON_LC_SCALING, "Scale (R)", m_GizmoType == ImGuizmo::OPERATION::SCALE))
+		if (IconButton(ICON_LC_SCALING, "Scale (R)", !m_AimHandle && m_GizmoType == ImGuizmo::OPERATION::SCALE))
 			setGizmo(ImGuizmo::OPERATION::SCALE);
+		ImGui::SameLine();
+		if (IconButton(ICON_LC_CROSSHAIR, "Aim", m_AimHandle) && canSwitch)
+			m_AimHandle = !m_AimHandle;
 
 		const bool playing = m_SceneState == SceneState::Play;
 		const char* playLabel = playing ? ICON_LC_SQUARE_STOP "  Stop" : ICON_LC_PLAY "  Play";
@@ -1322,6 +1580,13 @@ namespace GanymedE {
 			m_JointTool.AnchorEntity = primary;
 			if (m_JointTool.PickForSocket && m_JointTool.SocketEntity != primary)
 				m_JointTool.CancelPick();
+		}
+		if (primary != m_AimEntity)
+		{
+			// Remember the new selection. Zeroing the id here would make the next frame
+			// look like another change and snap a dragged point back to 3 m every frame.
+			m_AimTargetValid = false;
+			m_AimEntity = primary;
 		}
 	}
 
@@ -1831,7 +2096,10 @@ namespace GanymedE {
 		const bool gizmoGates = gizmoEntity && m_GizmoType != -1 && editing
 			&& !IsPlacing() && !IsScattering() && !m_JointTool.PickForSocket;
 		const bool showGizmo = gizmoGates && (!socketGizmo.IsSocket || socketGizmo.Ready);
-		if (showGizmo)
+		const bool aimGizmo = m_AimHandle && gizmoEntity && editing
+			&& gizmoEntity.HasComponent<AimOffsetComponent>()
+			&& !IsPlacing() && !IsScattering() && !m_JointTool.PickForSocket;
+		if (aimGizmo || showGizmo)
 		{
 			glm::mat4 cameraProjection = m_EditorCamera.GetProjection();
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
@@ -1853,7 +2121,11 @@ namespace GanymedE {
 			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
 				m_ViewportBounds[1].x - m_ViewportBounds[0].x, m_ViewportBounds[1].y - m_ViewportBounds[0].y);
 
-			if (socketGizmo.Ready)
+			if (aimGizmo)
+			{
+				DrawAimGizmo(gizmoEntity, cameraView, cameraProjection);
+			}
+			else if (socketGizmo.Ready)
 			{
 				auto& tc = gizmoEntity.GetComponent<TransformComponent>();
 				auto& attachment = gizmoEntity.GetComponent<BoneAttachmentComponent>();
@@ -2147,25 +2419,37 @@ namespace GanymedE {
 		case Key::Q:
 		{
 			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
+			{
 				m_GizmoType = -1;
+				m_AimHandle = false;
+			}
 			break;
 		}
 		case Key::W:
 		{
 			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
+			{
 				m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
+				m_AimHandle = false;
+			}
 			break;
 		}
 		case Key::E:
 		{
 			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
+			{
 				m_GizmoType = ImGuizmo::OPERATION::ROTATE;
+				m_AimHandle = false;
+			}
 			break;
 		}
 		case Key::R:
 		{
 			if (!ImGuizmo::IsUsing() && !Input::IsMouseButtonPressed(Mouse::ButtonRight))
+			{
 				m_GizmoType = ImGuizmo::OPERATION::SCALE;
+				m_AimHandle = false;
+			}
 			break;
 		}
 		}
@@ -2259,6 +2543,7 @@ namespace GanymedE {
 		m_JointTool.ClearJoint();
 		m_JointTool.CancelPick();
 		m_JointTool.AnchorEntity = UUID{ 0 };
+		ClearAimTarget();
 		RetargetPanels();
 		m_SceneHierarchyPanel.ClearEditorViewState();
 		m_ViewportCamera = UUID{ 0 };
@@ -2324,6 +2609,7 @@ namespace GanymedE {
 		m_JointTool.ClearJoint();
 		m_JointTool.CancelPick();
 		m_JointTool.AnchorEntity = UUID{ 0 };
+		ClearAimTarget();
 		RetargetPanels();
 		m_SceneHierarchyPanel.ClearEditorViewState();
 		m_ViewportCamera = UUID{ 0 };
@@ -2375,6 +2661,7 @@ namespace GanymedE {
 		m_JointTool.CancelPick();
 		m_JointTool.ClearJoint();
 		m_JointTool.AnchorEntity = UUID{ 0 };
+		ClearAimTarget();
 		m_SceneHierarchyPanel.SetSelectedEntity({});
 
 		// Hard-coded for now. Making this a scene property is the obvious next

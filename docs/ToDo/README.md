@@ -27,15 +27,14 @@ documented.** A file here is a promise, not a description.
 
 ## Open items
 
-| Document                               | Covers                                                                                                                                                                                                                                                                                           | Items                         |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
-| [PROVING_GROUND.md](PROVING_GROUND.md) | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                                                                                     | Phase 0 + P1-P7               |
-| [MAP_EDITOR.md](MAP_EDITOR.md)         | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                                                                                 | M0–M6 done                    |
-| [AIM_OFFSET.md](AIM_OFFSET.md)         | **Milestone plan** — procedural aim offset: `AimOffsetComponent`, a pitch/yaw pass over a named spine chain after sampling, inspector preview, Proving Ground wiring, viewport aim handle                                                                                                        | A1–A3 done; A4–A5 planned     |
-| [rendering.md](rendering.md)           | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the frustum's near-plane depth convention                                                                                                                                                     | 4                             |
-| [reflection.md](reflection.md)         | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                                                                                  | 1                             |
-| [assets.md](assets.md)                 | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                                                                             | 3                             |
-| [cross-cutting.md](cross-cutting.md)   | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, and two skeletal leftovers (A3 grip picture, `Visible` bit) | 18                            |
+| Document                                           | Covers                                                                                                                                                                                                                                  | Items                             |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7                   |
+| [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done                        |
+| [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the frustum's near-plane depth convention                                                            | 4                                 |
+| [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                                 |
+| [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                                 |
+| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, two skeletal leftovers (A3 grip picture, `Visible` bit), and the aim-offset probes that were not watched | 22                                |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
@@ -75,6 +74,12 @@ collision default does not zero the parity audit on those buildings; M6 already 
 [`SKELETAL_TOOLING.md`](../history/SKELETAL_TOOLING.md) (S1–S6). Two leftovers — the A3 grip
 picture on `first-game`, and a general `Visible` bit — are in
 [cross-cutting.md](cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
+
+**Aim offset is done.** The pass, the inspector preview and the viewport handle are on `master`;
+the Proving Ground wiring is on `first-game`. The record is
+[`AIM_OFFSET.md`](../history/AIM_OFFSET.md). The probes that were not watched, the untuned spine
+weights, and the aim-idle the milestone does not supply are in
+[cross-cutting.md](cross-cutting.md#aim-offset-leftovers).
 
 **Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
 managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three
@@ -136,3 +141,8 @@ describe problems that were fixed later. Verified stale, recorded here so nobody
   from `vendor/premake/premake5.lua`'s postbuild step" — the source was vcpkg's user-wide MSBuild
   integration (its app-local DLL step runs `pwsh.exe`), not premake. Fixed by opting the workspace
   out ([build-and-tooling.md](../engine/build-and-tooling.md#workspace)).
+- `AIM_OFFSET.md` A5 note "a `Muzzle` parented to `Yaw` is invisible" — written from `master`'s
+  cross-cutting, which still had that parenting. On `first-game`, `Muzzle` is a child of `Rifle`,
+  which is a child of `Body`, so the handle's descendant walk does find it. The history file is
+  not rewritten; the open note is
+  [cross-cutting.md](cross-cutting.md#aim-offset-leftovers).

@@ -1,14 +1,20 @@
 # Milestone — Aim offset
 
-**Status: A1 and A2 implemented on `master`. A3 implemented on `first-game`. A4–A5 not started.**
+**Status: complete.** A1, A2 and A4 landed on `master`. A3 landed on `first-game`
+(`e7085d4`). Live behaviour is in [scene.md](../engine/scene.md),
+[scripting.md](../engine/scripting.md) and [editor.md](../editor/editor.md). What was not watched,
+and the aim-idle this milestone does not supply, are in
+[cross-cutting.md](../ToDo/cross-cutting.md#aim-offset-leftovers).
 
 A1 execution notes are at the bottom of [Phase A1](#phase-a1--the-component-and-the-pose-pass).
 A2's are at the bottom of [Phase A2](#phase-a2--inspector-section-with-a-preview-scrub).
 A3's are at the bottom of [Phase A3](#phase-a3--proving-ground-wiring-first-game).
+A4's are at the bottom of [Phase A4](#phase-a4--viewport-aim-handle).
+A5's are at the bottom of [Phase A5](#phase-a5--docs-and-close).
 
 > **Engine and editor milestone.** A1, A2 and A4 touch `GanymedEngine/source/` or
-> `GanymedEditor/source/`, which the [branch policy](PROVING_GROUND.md#branch-policy) puts on
-> `master`. A3 is game content and lands on `first-game` after `master` is merged into it — never
+> `GanymedEditor/source/`, which the [branch policy](../ToDo/PROVING_GROUND.md#branch-policy) puts on
+> `master`. A3 is game content and landed on `first-game` after `master` was merged into it — never
 > the other way.
 
 Tilt and twist a character's upper body toward where the player is aiming, on top of whatever clip
@@ -377,7 +383,8 @@ Not aiming writes zeros. `BarrelPoint`'s 0.82 dot (about 35°) is unchanged.
 Not run: a frozen-clip muzzle elevation check, a watched strafe, a watched backpedal, the gate
 modes, and the barrel-versus-chest count. Gate shots stay on yaw while the cursor is uncaptured
 (`AimPoint` is nil), and the capsule does not read `meshYaw`, which is why those numbers should
-not move. That was not re-measured.
+not move. That was not re-measured. These notes were written on `first-game` and copied here at
+the close; the merge direction does not bring them back on its own.
 
 ---
 
@@ -417,13 +424,68 @@ step 4, which shows how far the clip-plus-pitch pose is from actually pointing a
 | Press Play | Handle gone; preview reset (A1's sweep) |
 | Muzzle line | Visible, from the barrel, updates with the drag |
 
+### Execution notes (A4)
+
+The handle lives in `EditorLayer`, next to the transform gizmo. No new source file, so no premake
+regeneration. The toolbar crosshair is a peer of W/E/R: arming it hides the entity and socket
+gizmos for an entity that has `AimOffsetComponent`; Q/W/E/R clear it. There is no new hotkey.
+
+The drag writes the **clamped** angle. The plan's step text says clamp-then-write, and "Preview
+clamps" means Preview Pitch/Yaw stop at the limit. The point is the unconstrained target, so it
+keeps moving. The A2 readout only said "clamped" when the stored angle was *past* the limit; a
+value sitting on the limit would have stayed silent. The readout now also says "Pitch clamped at
+N deg" when the stored angle is within 1e-3 rad of a positive limit. A slider parked on that same
+stop shows the same line.
+
+Init does not write. Pitch and yaw near zero place the point 3 m ahead of the chain root along
+the entity's horizontal world forward, at the root's height. A surviving preview (Stop does not
+zero the editor scene; `Scene::Copy` zeros the play copy) places it 3 m along that aim. The chain
+root is the first named joint: `WorldTransformComponent::World * TryGetJointFrame`, the same frame
+the skeleton overlay uses. An empty or unresolved chain draws no handle.
+
+Forward is `ModelForward` through the entity world matrix, Y flattened. The pose pass builds its
+axis from the skin transform in mesh space. A uniform skin scale does not change that direction,
+which is the Meshy rigs. A skin *rotation* would make the handle and the pass disagree; nothing
+in tree has one.
+
+The muzzle line walks `RelationshipComponent::Children` for the tag `Muzzle` and draws with
+`ImDrawList::AddLine` through the same view/projection as `ImGuizmo::Manipulate`. A point with
+`clip.w <= 0` is skipped. The line is one frame behind the pose: the drag writes `Pitch`/`Yaw`
+after `AnimationSystem` has already evaluated.
+
+Play hides the handle (`editing` is false) and clears the point. The preview reset is A1's copy
+sweep, not a second zero of the editor scene. After Stop, selecting the entity again inits from
+whatever preview survived.
+
+Not dragged in the editor. The Proving Ground scene with a `Muzzle` child is on `first-game`, not
+on this branch, so the four verification rows above are unrun. Debug editor
+(`GanymedEditor.vcxproj`, x64) built after the change.
+
 ---
 
 ## Phase A5 — docs and close
 
-Live docs updated in each phase's own change, per [AGENTS.md](../../AGENTS.md). A5 audits them,
-moves this file to `docs/history/AIM_OFFSET.md` with execution notes and measured evidence, links it
-from [docs/README.md](../README.md), and removes its row from [ToDo/README.md](README.md).
+**Done.** 2026-09-23, on `master`.
+
+A1, A2 and A4 already updated the live docs in those changes. This phase checked them against the
+code and did not append a changelog. `ecs.md`'s "Adding a component type" list is generic;
+`AimOffsetComponent` did not change it, so that file was left alone.
+[PROVING_GROUND.md](../ToDo/PROVING_GROUND.md)'s facing paragraphs are on `first-game`, not in this
+branch's copy.
+
+| Doc | Audit |
+|---|---|
+| [scene.md](../engine/scene.md) | Component bullet, the pass (mesh-space axes, zero early-out, unresolved skip), the fifth `Scene::Copy` sweep, reflection (no `sizeof` sentinel). Present. |
+| [scripting.md](../engine/scripting.md) | `HasAimOffset` / `SetAimOffset` / `GetAimOffset`. The binding does not clamp. Present. |
+| [architecture.md](../engine/architecture.md) | `AnimationSystem` line names the aim-offset pass. Present. |
+| [editor.md](../editor/editor.md) | Inspector section, preview and undo, the at-limit readout, the Aim handle. Present. |
+
+The file moved to `docs/history/AIM_OFFSET.md`, linked from [docs/README.md](../README.md), and its
+row left [ToDo/README.md](../ToDo/README.md). Probes that were never watched, the untuned weights,
+and the aim-idle this milestone does not supply are in
+[cross-cutting.md](../ToDo/cross-cutting.md#aim-offset-leftovers). The muzzle line only walks
+descendants of the selected entity; a `Muzzle` parented to `Yaw` is invisible to it, which is the
+content half of the skeletal leftover, not a second task.
 
 ## Docs this milestone must update
 
