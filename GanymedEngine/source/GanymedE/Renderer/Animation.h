@@ -104,6 +104,42 @@ namespace GanymedE {
 		std::vector<JointPose>& localsScratch, std::vector<glm::mat4>& globalsScratch,
 		std::vector<glm::mat4>& outPalette);
 
+	// Evaluated form of AimOffsetComponent. Animation.h does not include the component;
+	// the system copies the fields across. Subtree pointers are caller-owned and must
+	// stay valid for the duration of ApplyAimOffset. Each subtree includes its joint.
+	struct AimOffsetChain
+	{
+		static constexpr int MaxJoints = 4;
+
+		int Count = 0;
+		int32_t Joints[MaxJoints]{};
+		float Weights[MaxJoints]{};
+		float PitchLimit = 1.0f;
+		float YawLimit = 1.5707963267948966f;
+
+		const uint32_t* Subtrees[MaxJoints]{};
+		uint32_t SubtreeCounts[MaxJoints]{};
+	};
+
+	// Rotates each chain joint — and everything below it — about that joint's current
+	// origin, in the space SampleClipGlobals writes, by its normalised share of yaw then
+	// pitch. Operates on globals, after sampling and before InverseBind. SampleClipGlobals
+	// itself stays pure: the clip inspector measures the clip, not the clip plus whatever
+	// aim the entity last had.
+	//
+	// `upSkin` and `rightSkin` are character axes already in that space. Positive pitch
+	// looks up (right-hand about `rightSkin`). Positive yaw turns the chest toward the
+	// character's left (right-hand about `upSkin`). The pitch axis is `rightSkin` turned
+	// by the full clamped yaw, so pitching while twisted tilts along the aim rather than
+	// along the hips. Angles are clamped to the chain's limits here, so Lua and the
+	// editor preview share one rule.
+	//
+	// Pitch and yaw of zero leave `globals` untouched, bit for bit — the early-out is the
+	// guarantee, not glm::rotate(0).
+	void ApplyAimOffset(const Skeleton& skeleton, const AimOffsetChain& chain,
+		const glm::vec3& upSkin, const glm::vec3& rightSkin, float pitch, float yaw,
+		std::vector<glm::mat4>& globals);
+
 	// Skin weights ride a second vertex stream rather than widening MeshVertex:
 	// widening taxes every static mesh 32 bytes a vertex, forces a cache migration
 	// for all existing content, and touches the one struct the cache memcpy's whole.

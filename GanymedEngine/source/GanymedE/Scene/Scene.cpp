@@ -263,6 +263,20 @@ namespace GanymedE {
 				view.get<ParticleEmitterComponent>(e).ResetRuntime();
 		}
 
+		// Pitch and Yaw are the editor preview and the last Lua write. Play starts from the
+		// clip, not from whatever the inspector was scrubbed to; the script sets them again
+		// on the first frame. Resolved is a joint index into the mesh currently loaded.
+		{
+			auto view = dstRegistry.view<AimOffsetComponent>();
+			for (auto e : view)
+			{
+				auto& aim = view.get<AimOffsetComponent>(e);
+				aim.Pitch = 0.0f;
+				aim.Yaw = 0.0f;
+				aim.Resolved.fill(-1);
+			}
+		}
+
 		return newScene;
 	}
 

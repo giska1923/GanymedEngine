@@ -137,7 +137,7 @@ Copying nine floats beats both problems at script call rates.
 
 Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, `Cross`), `Entity`
 (`GetName`, `GetUUID`, `GetChildByName`, `Get/SetTranslation`, `Get/SetRotation` (Euler radians),
-`Get/SetScale`, `GetWorldPosition` / `GetWorldForward` (read-only, last frame), `HasRigidBody`, `GetMarkerKind`, the physics, animation, audio and particle calls below), `Input`,
+`Get/SetScale`, `GetWorldPosition` / `GetWorldForward` (read-only, last frame), `HasRigidBody`, `GetMarkerKind`, the physics, animation, aim-offset, audio and particle calls below), `Input`,
 `Key`, `Mouse`, `Log`
 (routed to the **client** logger — script output is game output),
 `Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.FindMarkers` / `Scene.Spawn`, `Entity:Destroy`,
@@ -259,6 +259,17 @@ reason is not proof the mesh has a clip by that name.
 There is no `Get/SetAnimationTime`. Clip progress is what an "is this animation finished" query
 would need, and that belongs with animation events — cut from v1 along with blend trees. The
 inspector's Time slider covers the edit-mode scrubbing case.
+
+### Aim offset
+
+`HasAimOffset`, `SetAimOffset(pitch, yaw)`, `GetAimOffset()`. Angles are radians. Positive pitch
+looks up; positive yaw turns the chest toward the character's left. The pass clamps to the
+component's limits — the binding does not, so the editor preview and Lua share one rule.
+
+`AimOffsetComponent` is untracked, and `AnimationSystem` runs after both script systems, so a write
+lands on this frame's pose. **No-op without the component.** `GetAimOffset` still returns a table
+`{ pitch = 0, yaw = 0 }` in that case, rather than nil. The chain, weights and limits are authored
+data; scripts only write the live angles.
 
 ### Bone attachments
 

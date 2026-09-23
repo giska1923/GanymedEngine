@@ -121,6 +121,15 @@ namespace GanymedE::Reflection {
 			GE_REFLECT_TYPE(ParticleBlend)
 				.data<ParticleBlend::Alpha>("Alpha")
 				.data<ParticleBlend::Additive>("Additive");
+
+			// By name, so a reordering of the enum does not retarget every saved character.
+			// The names are the axes, not the enumerator tokens: a scene file should say +Z.
+			GE_REFLECT_TYPE(AimOffsetComponent::Axis)
+				.traits(Trait::SerializeByName)
+				.data<AimOffsetComponent::Axis::PosZ>("+Z")
+				.data<AimOffsetComponent::Axis::NegZ>("-Z")
+				.data<AimOffsetComponent::Axis::PosX>("+X")
+				.data<AimOffsetComponent::Axis::NegX>("-X");
 		}
 
 		// ---- Identity ---------------------------------------------------------------------
@@ -217,6 +226,35 @@ namespace GanymedE::Reflection {
 					.traits(Trait::NotSerialized | Trait::CustomDrawer)
 					.custom<Attr>(Attr{}.Speed(0.01f))
 				.data<&AnimatorComponent::Palette>("Palette")
+					.traits(Trait::Runtime);
+
+			// Joints and Weights are sequences the generic drawer cannot draw (a combo per
+			// slot, a slider per weight). CustomDrawer, not Custom: on disk they are ordinary
+			// omitted-when-default arrays. Pitch, Yaw and Resolved are runtime — a preview
+			// must not round-trip through the file, and a stale joint index must not either.
+			GE_REFLECT_COMPONENT(AimOffsetComponent)
+				.custom<Attr>(Attr{}.Label("Aim Offset")
+					.Tip("Bends a joint chain on top of the clip. Pitch and Yaw are live inputs."))
+				.data<&AimOffsetComponent::Joints>("Joints")
+					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
+				.data<&AimOffsetComponent::Weights>("Weights")
+					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
+				.data<&AimOffsetComponent::PitchLimit>("PitchLimit")
+					.traits(Trait::Radians | Trait::OmitIfDefault)
+					.custom<Attr>(Attr{}.Label("Pitch Limit").Range(0.0f, 180.0f).Speed(0.5f))
+				.data<&AimOffsetComponent::YawLimit>("YawLimit")
+					.traits(Trait::Radians | Trait::OmitIfDefault)
+					.custom<Attr>(Attr{}.Label("Yaw Limit").Range(0.0f, 180.0f).Speed(0.5f))
+				.data<&AimOffsetComponent::ModelForward>("ModelForward")
+					.traits(Trait::OmitIfDefault)
+					.custom<Attr>(Attr{}.Label("Model Forward"))
+				.data<&AimOffsetComponent::Enabled>("Enabled")
+					.traits(Trait::OmitIfDefault)
+				.data<&AimOffsetComponent::Pitch>("Pitch")
+					.traits(Trait::Runtime)
+				.data<&AimOffsetComponent::Yaw>("Yaw")
+					.traits(Trait::Runtime)
+				.data<&AimOffsetComponent::Resolved>("Resolved")
 					.traits(Trait::Runtime);
 
 			GE_REFLECT_COMPONENT(BoneAttachmentComponent)
@@ -618,11 +656,12 @@ namespace GanymedE::Reflection {
 		//
 		// Two honest limits. Padding: a bool dropped into existing padding does not move sizeof -
 		// AudioSourceComponent has three spare bytes right now, so a fifth flag there would slip
-		// through. And these cover 16 of the 22 ComponentList entries - every one with NO
+		// through. And these cover 18 of the 26 ComponentList entries - every one with NO
 		// standard-library container member. sizeof(std::string) is 40 with MSVC's STL and 32 with
 		// libstdc++, and sizeof(std::vector) and sizeof(std::unordered_map) differ likewise, so a
 		// sentinel on TagComponent, RelationshipComponent, StaticMeshComponent, AnimatorComponent,
-		// BoneAttachmentComponent, ScriptComponent or ParticleEmitterComponent would have to be a
+		// BoneAttachmentComponent, ScriptComponent, MarkerComponent, AimOffsetComponent or
+		// ParticleEmitterComponent would have to be a
 		// table of per-platform numbers - which costs more than it catches, on a codebase that
 		// builds for Windows, Linux and macOS. The rule is mechanical rather than a judgement
 		// call per component: library container member => no sentinel.

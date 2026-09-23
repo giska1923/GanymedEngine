@@ -86,6 +86,7 @@ declare interface Entity {
 
 	HasRigidBody(): boolean;
 	HasAnimator(): boolean;
+	HasAimOffset(): boolean;
 	HasAudioSource(): boolean;
 	HasParticleEmitter(): boolean;
 
@@ -125,6 +126,23 @@ declare interface Entity {
 	 * selected, or — note — the name does not resolve against the mesh.
 	 */
 	GetCurrentAnimation(): string;
+
+	/**
+	 * Writes the live aim angles, in radians. The pose pass clamps them to the
+	 * component's limits; this does not. Positive pitch looks up, positive yaw turns
+	 * the chest toward the character's left.
+	 *
+	 * Lands on this frame's pose: scripts run before the animation system.
+	 * No-op on an entity without an aim offset.
+	 */
+	SetAimOffset(pitch: number, yaw: number): void;
+
+	/**
+	 * The live aim angles, in radians. `{ pitch: 0, yaw: 0 }` when this entity has
+	 * no aim offset — the same zeroes a missing animator reports for its clip name
+	 * being empty, rather than an error.
+	 */
+	GetAimOffset(): { pitch: number; yaw: number };
 
 	HasBoneAttachment(): boolean;
 

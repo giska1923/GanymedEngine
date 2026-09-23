@@ -715,7 +715,7 @@ controls are indented 8 px; the header rows are not.
 Tag edit (full-width `InputText`, one undo command per typing session). One section per
 component type every selected entity has. **Add Component** is a full-width accent-outlined
 button at the **bottom** of the stack (every type not already present — camera, sprite, lights,
-sky light, animator, script, audio source, audio listener, particle emitter, rigid body,
+sky light, animator, aim offset, bone attachment, script, audio source, audio listener, particle emitter, marker, rigid body,
 colliders; one `DrawAddComponentEntry<T>` line each). Adding a `BoxColliderComponent` seeds
 `HalfExtents` / `Offset` from a resident `StaticMeshComponent` AABB (mesh local space, no
 division by entity scale — the world matrix already scales at draw and at body creation). No
@@ -825,6 +825,7 @@ vocabulary deliberately cannot say:
 | Static Mesh | The material-override list is sized by the **mesh asset**, not by component members |
 | Animator    | Clip names come from the mesh asset                                                 |
 | Bone Attachment | Joint names come from the **target** entity's skeleton, not this entity's        |
+| Aim Offset  | Joint names come from **this** entity's skeleton; preview pitch/yaw are live, not fields |
 | Script      | The field schema comes from Lua, not from C++                                       |
 
 **Camera and Sky Light converted via a field filter.** Their blocker was field _visibility_
@@ -925,6 +926,16 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   overwrite the scrubbed value on the next update and the slider would look broken. Falls back to
   "No rigged mesh on this entity" when the mesh has no skeleton. Scripts drive the same component
   through `PlayAnimation` and friends — see [scripting.md](../engine/scripting.md).
+- Aim offset: four joint combos over **this** entity's skeleton, root-most first, and a weight
+  slider per slot. An empty slot ends the chain; later slots stay visible but disabled, and the
+  readout says they are ignored. Pitch limit, yaw limit, model forward and enabled are reflected
+  (`Trait::Radians` on the limits, so the row is degrees). **Preview Pitch / Preview Yaw** are
+  edit-mode only — the undo stack is null in Play, so `Recording()` is false and the script owns
+  the angles — and they do not report an edit, so the scrub is not an undo entry. The readout names a joint the mesh does
+  not have, says when the live angle is past the limit, and prints the tip joint's rotation off
+  the clip (a fresh `SampleClipGlobals` against the palette). Undo of an authored field keeps the
+  live preview: `ComponentEditCommand` stores the whole struct and copies `Pitch`, `Yaw` and
+  `Resolved` back off the component it is about to overwrite.
 - Bone attachment: **Target** is a drop from the outliner (zero / Parent button = hierarchy parent),
   and **Joint** is a combo over the *target's* `skeleton.JointNames`, not this entity's — the
   inspector has not previously read another entity's mesh for any component. A crosshair next to
