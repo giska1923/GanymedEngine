@@ -89,6 +89,8 @@ namespace GanymedE {
 
 		void PushEditorVisualizers();
 		void DrawSkeletonLabels();
+		void DrawAimGizmo(Entity entity, const glm::mat4& view, const glm::mat4& projection);
+		void ClearAimTarget();
 		void SyncJointToolToEntitySelection();
 		void ResolveJointHighlight(UUID& entity, int32_t& joint);
 		glm::mat4 GetViewportViewProjection();
@@ -130,6 +132,15 @@ namespace GanymedE {
 
 		int m_GizmoType; // ImGuizmo::OPERATION; -1 = hidden, W/E/R switch, Q hides
 		bool m_GizmoWorldSpace = false; // ImGuizmo::WORLD when true; LOCAL is the previous default
+
+		// Aim handle: a world point the torso aims at. Editor state, not a scene field and
+		// not an undo entry. Q/W/E/R clear the toggle. The point is dropped on New, Open and Play.
+		bool m_AimHandle = false;
+		UUID m_AimEntity{ 0 };
+		bool m_AimTargetValid = false;
+		glm::vec3 m_AimTarget{ 0.0f };
+		float m_AimPitch = 0.0f;
+		float m_AimYaw = 0.0f;
 
 		// Viewport camera dropdown. UUID{0} = EditorCamera. Any other value is a scene
 		// CameraComponent looked through in edit mode (RenderContext::PreviewCamera).

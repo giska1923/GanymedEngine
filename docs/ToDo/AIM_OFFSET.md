@@ -1,9 +1,10 @@
 # Milestone — Aim offset
 
-**Status: A1 and A2 implemented on `master`. A3–A5 not started.**
+**Status: A1, A2 and A4 implemented on `master`. A3 implemented on `first-game`. A5 not started.**
 
 A1 execution notes are at the bottom of [Phase A1](#phase-a1--the-component-and-the-pose-pass).
 A2's are at the bottom of [Phase A2](#phase-a2--inspector-section-with-a-preview-scrub).
+A4's are at the bottom of [Phase A4](#phase-a4--viewport-aim-handle).
 
 > **Engine and editor milestone.** A1, A2 and A4 touch `GanymedEngine/source/` or
 > `GanymedEditor/source/`, which the [branch policy](PROVING_GROUND.md#branch-policy) puts on
@@ -392,6 +393,43 @@ step 4, which shows how far the clip-plus-pitch pose is from actually pointing a
 | Drag past the limit | Preview clamps; the handle keeps moving; the readout says clamped |
 | Press Play | Handle gone; preview reset (A1's sweep) |
 | Muzzle line | Visible, from the barrel, updates with the drag |
+
+### Execution notes (A4)
+
+The handle lives in `EditorLayer`, next to the transform gizmo. No new source file, so no premake
+regeneration. The toolbar crosshair is a peer of W/E/R: arming it hides the entity and socket
+gizmos for an entity that has `AimOffsetComponent`; Q/W/E/R clear it. There is no new hotkey.
+
+The drag writes the **clamped** angle. The plan's step text says clamp-then-write, and "Preview
+clamps" means Preview Pitch/Yaw stop at the limit. The point is the unconstrained target, so it
+keeps moving. The A2 readout only said "clamped" when the stored angle was *past* the limit; a
+value sitting on the limit would have stayed silent. The readout now also says "Pitch clamped at
+N deg" when the stored angle is within 1e-3 rad of a positive limit. A slider parked on that same
+stop shows the same line.
+
+Init does not write. Pitch and yaw near zero place the point 3 m ahead of the chain root along
+the entity's horizontal world forward, at the root's height. A surviving preview (Stop does not
+zero the editor scene; `Scene::Copy` zeros the play copy) places it 3 m along that aim. The chain
+root is the first named joint: `WorldTransformComponent::World * TryGetJointFrame`, the same frame
+the skeleton overlay uses. An empty or unresolved chain draws no handle.
+
+Forward is `ModelForward` through the entity world matrix, Y flattened. The pose pass builds its
+axis from the skin transform in mesh space. A uniform skin scale does not change that direction,
+which is the Meshy rigs. A skin *rotation* would make the handle and the pass disagree; nothing
+in tree has one.
+
+The muzzle line walks `RelationshipComponent::Children` for the tag `Muzzle` and draws with
+`ImDrawList::AddLine` through the same view/projection as `ImGuizmo::Manipulate`. A point with
+`clip.w <= 0` is skipped. The line is one frame behind the pose: the drag writes `Pitch`/`Yaw`
+after `AnimationSystem` has already evaluated.
+
+Play hides the handle (`editing` is false) and clears the point. The preview reset is A1's copy
+sweep, not a second zero of the editor scene. After Stop, selecting the entity again inits from
+whatever preview survived.
+
+Not dragged in the editor. The Proving Ground scene with a `Muzzle` child is on `first-game`, not
+on this branch, so the four verification rows above are unrun. Debug editor
+(`GanymedEditor.vcxproj`, x64) built after the change.
 
 ---
 

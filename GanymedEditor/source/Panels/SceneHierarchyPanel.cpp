@@ -1074,10 +1074,20 @@ namespace GanymedE {
 				ImGui::TextDisabled("Pitch %.1f deg clamped to %.1f deg",
 					glm::degrees(aim.Pitch), glm::degrees(pitchLimit));
 			}
+			else if (pitchLimit > 1e-3f && std::abs(std::abs(aim.Pitch) - pitchLimit) <= 1e-3f)
+			{
+				// The aim handle writes the clamped angle, so the stored value sits on the
+				// limit rather than past it. A slider parked on the same stop says this too.
+				ImGui::TextDisabled("Pitch clamped at %.1f deg", glm::degrees(pitchLimit));
+			}
 			if (std::abs(aim.Yaw) > yawLimit + 1e-4f)
 			{
 				ImGui::TextDisabled("Yaw %.1f deg clamped to %.1f deg",
 					glm::degrees(aim.Yaw), glm::degrees(yawLimit));
+			}
+			else if (yawLimit > 1e-3f && std::abs(std::abs(aim.Yaw) - yawLimit) <= 1e-3f)
+			{
+				ImGui::TextDisabled("Yaw clamped at %.1f deg", glm::degrees(yawLimit));
 			}
 
 			if (unresolved)
