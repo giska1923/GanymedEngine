@@ -111,7 +111,9 @@ local Player = {
     -- P8. The mesh child, which carries the skin and the AnimatorComponent.
     body = nil,
     clip = nil,
-    -- World yaw the mesh is turned to. The camera's yaw while aiming, otherwise the velocity.
+    -- World yaw the legs are turned to. Velocity while moving, including a strafe
+    -- inside the aim-offset yaw limit. The camera's yaw when standing and aiming,
+    -- and when a backpedal is past that limit.
     meshYaw = nil,
     -- Seconds left in which the body keeps facing the aim after a shot (see Player:Animate).
     aimHold = 0.0,
@@ -634,16 +636,24 @@ end
 -- than from the input. Easing toward a probe point runs at 1.2 m/s (Player:Route), and driving
 -- this off "is a key held" would snap between idle and a sprint through the whole approach.
 --
--- Facing has two modes. Moving without shooting, the body turns to its velocity, so holding S
--- runs the character forwards the other way instead of playing the stride in reverse. Aiming -
--- standing with the cursor captured, or within AIM_HOLD of a shot - it faces the camera's yaw,
--- because a rifle socketed to the hand points wherever the body points, and a body facing its
--- velocity shoots sideways the moment you strafe or turn the mouse.
+-- The legs and the torso are not the same facing. The clips are all forward strides, so the
+-- body (meshYaw) turns toward the velocity and the forward clip stays the right one. The rifle
+-- is socketed to the hand, so AimOffsetComponent twists the spine on top of that: yaw is
+-- wrap(camera yaw - meshYaw), pitch is the elevation from the chest to AimPoint. The pass
+-- clamps both. Inside the yaw limit a strafe keeps the legs on the velocity and the chest on
+-- the crosshair. Past it — moving more than 90 degrees off the aim — the body turns to the
+-- camera yaw and the forward clip plays in reverse. That moon-walk is only the backpedal.
+-- There is still no backpedal clip; the strafe no longer needs one.
 --
--- Aiming while moving is where that costs something. There are no strafe or backpedal clips, so
--- a backwards move plays the forward clip in reverse (negative speed wraps, AnimationSystem.cpp)
--- and a sideways one slides. Strafe clips are content, not code.
+-- YAW_LIMIT is AimOffsetComponent's default on Body (the scene omits the field). The pass
+-- clamps to whatever the component stores; this constant is only the mode switch.
 local AIM_HOLD = 0.8
+local YAW_LIMIT = math.pi / 2
+local CHEST_HEIGHT = 0.5
+
+local function WrapAngle(a)
+    return (a + math.pi) % (2 * math.pi) - math.pi
+end
 
 function Player:Animate(ts)
     if not self.body then
@@ -664,26 +674,35 @@ function Player:Animate(ts)
         and (self.aimHold > 0.0 or (self.looking and speed < 0.5))
 
     -- Same convention as Enemy:Chase: -Z is forward at yaw 0.
+    local moving = speed > 0.5
+    local velYaw = math.atan(-v.x, -v.z)
+    -- The mode follows the velocity heading, not the eased mesh yaw, or a turn in progress
+    -- would flip between "strafe" and "turn the whole body" every frame.
+    local twist = WrapAngle(self.yaw - velYaw)
+
     local target, rate = nil, 14.0
-    if aiming then
-        -- Faster than the velocity turn: the mouse is already smooth, and lag here reads as
-        -- the gun trailing the crosshair.
+    if aiming and moving and math.abs(twist) <= YAW_LIMIT then
+        -- Legs run forward. The offset carries the aim, so this can stay on the slow turn;
+        -- speeding it up was only so the gun would not trail the mouse.
+        target = velYaw
+    elseif aiming then
         target, rate = self.yaw, 20.0
-    elseif speed > 0.5 then
-        target = math.atan(-v.x, -v.z)
+    elseif moving then
+        target = velYaw
     end
 
     if target then
         self.meshYaw = self.meshYaw or self.yaw
         -- Shortest way round, then eased, so tapping S turns through 180 degrees over a couple
         -- of frames instead of popping.
-        local diff = (target - self.meshYaw + math.pi) % (2 * math.pi) - math.pi
+        local diff = WrapAngle(target - self.meshYaw)
         self.meshYaw = self.meshYaw + diff * math.min(1.0, ts * rate)
     end
 
-    -- Moving against the way the body faces: only possible while aiming.
+    -- Moving against the way the body faces. Inside the yaw limit the body faces the
+    -- velocity, so this is only the backpedal branch above.
     local backwards = false
-    if speed > 0.5 and self.meshYaw then
+    if moving and self.meshYaw then
         local facing = -math.sin(self.meshYaw) * v.x - math.cos(self.meshYaw) * v.z
         backwards = facing < -0.3 * speed
     end
@@ -718,6 +737,17 @@ function Player:Animate(ts)
     -- rig's own +Z facing, the same correction Enemy.lua carries.
     local localYaw = (self.meshYaw or self.yaw) - self.yaw + math.pi
     self.body:SetRotation(Vec3(0, localYaw, 0))
+
+    -- After the ease, so the torso tracks the camera while the legs are still catching
+    -- the velocity. Zero when not aiming: running with the cursor captured but not
+    -- shooting already faces the velocity, and a pitch on that heading would bend the
+    -- spine toward a point the chest is not turned to.
+    local pitch, aimYaw = 0.0, 0.0
+    if aiming and self.meshYaw then
+        aimYaw = WrapAngle(self.yaw - self.meshYaw)
+        pitch = self:ChestAimPitch()
+    end
+    self.body:SetAimOffset(pitch, aimYaw)
 
     self.clip = clip
 end
@@ -817,11 +847,32 @@ function Player:AimPoint()
     return origin + dir * 200.0
 end
 
+-- Elevation from the chest to the aim point, or 0 when there is nothing to aim at.
+--
+-- Not the camera pitch. The lens is 1.6 m above the capsule and 5 m behind it, so at short
+-- range its pitch and the gun's pitch disagree by the parallax AimPoint already exists to
+-- remove. The chest is the same point Fire uses for the fallback spawn (CHEST_HEIGHT above
+-- the capsule origin), not the muzzle: the muzzle moves with this pitch, and feeding it
+-- back would be the closed loop the offset deliberately is not.
+function Player:ChestAimPitch()
+    local aim = self:AimPoint()
+    if not aim then
+        return 0.0
+    end
+
+    local p = self.entity:GetTranslation()
+    local to = aim - Vec3(p.x, p.y + CHEST_HEIGHT, p.z)
+    local horiz = math.sqrt(to.x * to.x + to.z * to.z)
+    return math.atan(to.y, horiz)
+end
+
 -- Where the round leaves the gun, or nil when the gun is not in a position to have fired it.
 --
 -- The barrel moves with the clip, and the clips were not authored for this gun: the idle lowers
--- it to the floor, and in the first frames of a shot the body is still turning from its velocity
--- to the aim (Player:Animate). Two ways that goes wrong, both caught by a probe run:
+-- it to the floor. A strafe inside the yaw limit twists the spine toward the aim on the same
+-- frame (Player:Animate), which is what lets those shots leave the barrel. The idle still does
+-- not — no spine pitch turns a lowered rifle into an aim pose — and the ~35 degree check stays
+-- for that. Two ways a shot from the gun goes wrong, both caught by a probe run:
 --
 --   - A barrel behind or beside the player: the round flies through the player's own capsule,
 --     and Projectile:OnCollisionEnter counts that as a hit and despawns it. So the barrel has to
@@ -855,7 +906,7 @@ function Player:Fire()
 
     -- A metre ahead and at chest height. Spawning inside the capsule would have the round collide
     -- with the player on its first step, and the shot would die where it was born.
-    local muzzle = Vec3(p.x + fx * 1.0, p.y + 0.5, p.z + fz * 1.0)
+    local muzzle = Vec3(p.x + fx * 1.0, p.y + CHEST_HEIGHT, p.z + fz * 1.0)
 
     -- Horizontal along yaw unless a human is aiming with the mouse. The gate modes never capture
     -- the cursor, so they keep firing flat from the chest and their numbers do not move.

@@ -139,6 +139,8 @@ Entities:
       Speed: 1
       Playing: true
       Loop: true
+    AimOffsetComponent:
+      Joints: [Spine02, Spine01, Spine, ""]
   - Entity: 3000000000000000017
     TagComponent:
       Tag: Rifle

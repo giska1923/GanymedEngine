@@ -1,9 +1,10 @@
 # Milestone — Aim offset
 
-**Status: A1 and A2 implemented on `master`. A3–A5 not started.**
+**Status: A1 and A2 implemented on `master`. A3 implemented on `first-game`. A4–A5 not started.**
 
 A1 execution notes are at the bottom of [Phase A1](#phase-a1--the-component-and-the-pose-pass).
 A2's are at the bottom of [Phase A2](#phase-a2--inspector-section-with-a-preview-scrub).
+A3's are at the bottom of [Phase A3](#phase-a3--proving-ground-wiring-first-game).
 
 > **Engine and editor milestone.** A1, A2 and A4 touch `GanymedEngine/source/` or
 > `GanymedEditor/source/`, which the [branch policy](PROVING_GROUND.md#branch-policy) puts on
@@ -354,6 +355,29 @@ upper body instead of sliding.
 | Backpedal while aiming | Past the yaw limit: body turns, reversed clip plays (unchanged fallback) |
 | Gate modes (`autofire`, `p5gate`) | Fire counts, hits and every P1–P7 gate number unchanged — they never capture the cursor |
 | Share of shots from the barrel vs the chest | Logged over a scripted strafe-and-shoot run, before and after — the number this milestone exists to move |
+
+### Execution (2026-09-23, on `first-game`)
+
+`master` was merged in (`7812e2e`) before this. The component is on the player's `Body` in
+`ProvingGround.ganymede`: `Joints: [Spine02, Spine01, Spine, ""]`. That order is root-most first.
+In `ArmoredHumanoid.glb`, `Hips` parents `Spine02`, which parents `Spine01`, which parents
+`Spine`. Weights are omitted, so they stay the defaults 0.10 / 0.20 / 0.30 on those three (the
+fourth default is past the empty slot and unused). Normalised, that is a sixth on the waist, a
+third, and a half on `Spine`. The reason is the A1 one: an even share at `Spine02` swings the
+arms and the rifle from the hips. They were not tuned by looking at the overlay.
+
+`Player:Animate` writes the offset. Pitch is `atan` of chest → `AimPoint`, with the chest at
+`CHEST_HEIGHT` (0.5 m) above the capsule origin — the fallback spawn in `Fire`, not the camera
+and not the muzzle. Yaw is `wrap(camera yaw − meshYaw)` after the leg ease. While aiming and
+moving, and that angle against the *velocity* heading is within `π/2`, `meshYaw` follows the
+velocity. Past it, `meshYaw` follows the camera yaw and the reversed clip stays. The constant
+matches the component's default `YawLimit`; the pass clamps to the stored limit either way.
+Not aiming writes zeros. `BarrelPoint`'s 0.82 dot (about 35°) is unchanged.
+
+Not run: a frozen-clip muzzle elevation check, a watched strafe, a watched backpedal, the gate
+modes, and the barrel-versus-chest count. Gate shots stay on yaw while the cursor is uncaptured
+(`AimPoint` is nil), and the capsule does not read `meshYaw`, which is why those numbers should
+not move. That was not re-measured.
 
 ---
 
