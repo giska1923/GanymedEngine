@@ -715,8 +715,10 @@ controls are indented 8 px; the header rows are not.
 Tag edit (full-width `InputText`, one undo command per typing session). One section per
 component type every selected entity has. **Add Component** is a full-width accent-outlined
 button at the **bottom** of the stack (every type not already present — camera, sprite, lights,
-sky light, animator, script, audio source, audio listener, particle emitter, rigid body,
-colliders; one `DrawAddComponentEntry<T>` line each). Adding a `BoxColliderComponent` seeds
+sky light, animator, aim offset, bone attachment, script, audio source, audio listener, particle emitter, marker, rigid body,
+colliders; one `DrawAddComponentEntry<T>` line each). The aim-offset **section** (joint combos,
+weight sliders, the pitch/yaw preview) is not drawn yet. The menu entry still adds the component,
+and with no header there is no Remove — the way back is the scene YAML until that section exists. Adding a `BoxColliderComponent` seeds
 `HalfExtents` / `Offset` from a resident `StaticMeshComponent` AABB (mesh local space, no
 division by entity scale — the world matrix already scales at draw and at body creation). No
 mesh, or a handle that is not loaded yet, leaves the unit default. Sphere and capsule are not

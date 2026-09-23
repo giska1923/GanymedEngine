@@ -368,6 +368,38 @@ namespace GanymedE {
 						: std::string{};
 				},
 
+				// --- Aim offset ---
+				// Untracked, same as the animator: AnimationSystem reads it every frame, and
+				// it runs after both script systems, so a write lands on this frame's pose.
+				// Clamping is the pass's job, not this one's — the editor preview goes through
+				// the same fields and has to share the rule. No-op / zeroes without the component.
+				"HasAimOffset", [](Entity& e) { return e.HasComponent<AimOffsetComponent>(); },
+				"SetAimOffset", [](Entity& e, float pitch, float yaw)
+				{
+					if (!e.HasComponent<AimOffsetComponent>())
+						return;
+
+					auto& aim = e.GetComponent<AimOffsetComponent>();
+					aim.Pitch = pitch;
+					aim.Yaw = yaw;
+				},
+				"GetAimOffset", [&lua](Entity& e)
+				{
+					sol::table out = lua.create_table();
+					if (e.HasComponent<AimOffsetComponent>())
+					{
+						const auto& aim = e.GetComponent<AimOffsetComponent>();
+						out["pitch"] = aim.Pitch;
+						out["yaw"] = aim.Yaw;
+					}
+					else
+					{
+						out["pitch"] = 0.0f;
+						out["yaw"] = 0.0f;
+					}
+					return out;
+				},
+
 				// --- Bone sockets ---
 				// BoneAttachmentComponent is untracked, so these need no MarkChanged. The system
 				// runs after both script systems, so a same-frame write to an *existing*

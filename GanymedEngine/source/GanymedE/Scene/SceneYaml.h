@@ -14,6 +14,8 @@
 
 #include <entt/entt.hpp>
 
+#include <array>
+#include <string>
 #include <unordered_map>
 
 #include <glm/glm.hpp>
@@ -187,6 +189,57 @@ namespace YAML {
 		}
 	};
 
+	// AimOffsetComponent::Joints / Weights. A short sequence leaves the tail at the
+	// constructed default so a hand-edited list of three names still loads; a non-sequence
+	// fails the way a bad vec3 does.
+	template<>
+	struct convert<std::array<float, 4>>
+	{
+		static Node encode(const std::array<float, 4>& rhs)
+		{
+			Node node;
+			for (float value : rhs)
+				node.push_back(value);
+			return node;
+		}
+
+		static bool decode(const Node& node, std::array<float, 4>& rhs)
+		{
+			rhs = {};
+			if (!node.IsSequence())
+				return false;
+
+			const size_t count = node.size() < rhs.size() ? node.size() : rhs.size();
+			for (size_t i = 0; i < count; i++)
+				rhs[i] = node[i].as<float>();
+			return true;
+		}
+	};
+
+	template<>
+	struct convert<std::array<std::string, 4>>
+	{
+		static Node encode(const std::array<std::string, 4>& rhs)
+		{
+			Node node;
+			for (const std::string& value : rhs)
+				node.push_back(value);
+			return node;
+		}
+
+		static bool decode(const Node& node, std::array<std::string, 4>& rhs)
+		{
+			rhs = {};
+			if (!node.IsSequence())
+				return false;
+
+			const size_t count = node.size() < rhs.size() ? node.size() : rhs.size();
+			for (size_t i = 0; i < count; i++)
+				rhs[i] = node[i].as<std::string>();
+			return true;
+		}
+	};
+
 }
 namespace GanymedE {
 
@@ -233,6 +286,21 @@ namespace GanymedE {
 				<< YAML::EndSeq;
 		}
 		out << YAML::EndSeq;
+		return out;
+	}
+
+	// Above RegisterReflectedCodec, for the same lookup reason as the vec3 overload.
+	inline YAML::Emitter& operator<<(YAML::Emitter& out, const std::array<float, 4>& v)
+	{
+		out << YAML::Flow;
+		out << YAML::BeginSeq << v[0] << v[1] << v[2] << v[3] << YAML::EndSeq;
+		return out;
+	}
+
+	inline YAML::Emitter& operator<<(YAML::Emitter& out, const std::array<std::string, 4>& v)
+	{
+		out << YAML::Flow;
+		out << YAML::BeginSeq << v[0] << v[1] << v[2] << v[3] << YAML::EndSeq;
 		return out;
 	}
 

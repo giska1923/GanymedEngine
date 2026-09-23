@@ -144,6 +144,12 @@ namespace GanymedE {
 		if (entity.HasComponent<AnimatorComponent>())
 			WriteReflectedComponent(out, "AnimatorComponent", entity.GetComponent<AnimatorComponent>());
 
+		// Every authored field is OmitIfDefault, so a default chain writes an empty map and
+		// a scene that never added the component writes nothing. Pitch, Yaw and Resolved are
+		// Runtime and never reach the file.
+		if (entity.HasComponent<AimOffsetComponent>())
+			WriteReflectedComponent(out, "AimOffsetComponent", entity.GetComponent<AimOffsetComponent>());
+
 		if (entity.HasComponent<BoneAttachmentComponent>())
 			WriteReflectedComponent(out, "BoneAttachmentComponent",
 				entity.GetComponent<BoneAttachmentComponent>());
@@ -582,6 +588,13 @@ namespace GanymedE {
 			animator.Speed = animatorComponent["Speed"].as<float>();
 			animator.Playing = animatorComponent["Playing"].as<bool>();
 			animator.Loop = animatorComponent["Loop"].as<bool>();
+		}
+
+		auto aimOffsetComponent = entityNode["AimOffsetComponent"];
+		if (aimOffsetComponent)
+		{
+			ReadReflectedComponent(aimOffsetComponent,
+				deserializedEntity.AddComponent<AimOffsetComponent>());
 		}
 
 		auto boneAttachmentComponent = entityNode["BoneAttachmentComponent"];

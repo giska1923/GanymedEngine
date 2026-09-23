@@ -72,7 +72,7 @@ Application::Run loop
 │   │   │   ├─ PhysicsSystem               fixed-step Jolt, collision events, transform writeback
 │   │   │   ├─ NativeScriptSystem          script lifecycle + OnUpdate
 │   │   │   ├─ LuaScriptSystem             the same lifecycle for Lua ScriptComponents
-│   │   │   ├─ AnimationSystem             sample clips → joint palette on AnimatorComponent
+│   │   │   ├─ AnimationSystem             sample clips, aim-offset the chain, write the joint palette
 │   │   │   ├─ TransformSystem             recompute dirty world transforms (ChangeView)
 │   │   │   ├─ BoneAttachmentSystem        pin entities to joints; rewrite world + subtree
 │   │   │   ├─ CameraSystem                resolve primary camera → RenderContext singleton

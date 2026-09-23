@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "GanymedE/ECS/System.h"
@@ -24,7 +26,8 @@ namespace GanymedE {
 	{
 	public:
 		using AnimView = ECS::IterView<ECS::EntityId,
-			ECS::RW<AnimatorComponent>, ECS::RO<StaticMeshComponent>>;
+			ECS::RW<AnimatorComponent>, ECS::RO<StaticMeshComponent>,
+			ECS::OptRW<AimOffsetComponent>>;
 
 		using Views = TypeList<AnimView>;
 
@@ -42,8 +45,10 @@ namespace GanymedE {
 		// distinct bad name, so a typo is loud but not once per frame.
 		const AnimationClip* ResolveClip(entt::entity entity, const Mesh& mesh, const std::string& name);
 
-		void BuildPalette(const Skeleton& skeleton, const AnimationClip* clip, float time,
-			std::vector<glm::mat4>& outPalette);
+		// Resolves the chain and, when it should bend, runs ApplyAimOffset on m_Globals
+		// before the palette multiply. Disabled, unresolved, or zero angles leave the
+		// sampled globals alone.
+		void ApplyAim(entt::entity entity, AimOffsetComponent& aim, const Mesh& mesh);
 
 		// Scratch reused across entities and frames - a rig is sampled every frame, and
 		// reallocating two per-joint arrays per animator per frame is pure waste.
@@ -51,5 +56,23 @@ namespace GanymedE {
 		std::vector<glm::mat4> m_Globals;
 
 		std::unordered_map<entt::entity, std::string> m_WarnedClips;
+
+		// One warning per entity per distinct missing joint name. A separate set for the
+		// singular-skin case, which is not a joint name and must not share the key space.
+		std::unordered_map<entt::entity, std::unordered_set<std::string>> m_WarnedAimJoints;
+		std::unordered_set<entt::entity> m_WarnedAimAxes;
+
+		// Descendant lists are a fact of the skeleton topology and the resolved indices,
+		// not of the pose. Rebuilt when either changes. Lives here rather than on the
+		// component: a subtree is variable length, and the component stays a fixed chain.
+		struct AimSubtreeCache
+		{
+			const int32_t* Parents = nullptr;
+			uint32_t JointCount = 0;
+			int Count = 0;
+			std::array<int32_t, AimOffsetChain::MaxJoints> Joints{};
+			std::array<std::vector<uint32_t>, AimOffsetChain::MaxJoints> Subtrees;
+		};
+		std::unordered_map<entt::entity, AimSubtreeCache> m_AimSubtrees;
 	};
 }

@@ -176,6 +176,10 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_BONE;
 			}
+			else if constexpr (std::is_same_v<T, AimOffsetComponent>)
+			{
+				icon = ICON_LC_CROSSHAIR;
+			}
 			else if constexpr (std::is_same_v<T, BoneAttachmentComponent>)
 			{
 				icon = ICON_LC_ANCHOR;
@@ -1353,6 +1357,7 @@ namespace GanymedE {
 			DrawAddComponentEntry<SpotLightComponent>("Spot Light");
 			DrawAddComponentEntry<SkyLightComponent>("Sky Light");
 			DrawAddComponentEntry<AnimatorComponent>("Animator");
+			DrawAddComponentEntry<AimOffsetComponent>("Aim Offset");
 			DrawAddComponentEntry<BoneAttachmentComponent>("Bone Attachment");
 			DrawAddComponentEntry<ScriptComponent>("Script");
 			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");

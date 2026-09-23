@@ -101,6 +101,17 @@ copyable, no behavior beyond small helpers.
   detaches the reference silently, which `AnimationSystem` compensates for by warning once and
   holding the bind pose. `Time` and `Palette` are not serialized — a scene loads at the head of
   its clip, and the palette is rebuilt per frame.
+- **`AimOffsetComponent`** — bends a named joint chain on top of the clip the animator just
+  sampled. `Joints` is up to four names, root-most first; an empty slot ends the chain. `Weights`
+  are each joint's share of the total angle (normalised at evaluation; the default is 0.10, 0.20,
+  0.30, 0.40 so the root-most joint, usually the waist, takes the least). `PitchLimit` / `YawLimit`
+  are ±radians (defaults 1.0 and π/2). `ModelForward` is which mesh-space axis the rig faces
+  (`+Z`, `-Z`, `+X`, `-X`; up is +Y). `Enabled` false is the clip exactly as authored. `Pitch`,
+  `Yaw` and `Resolved` are not serialized: the first two are the live inputs Lua and the editor
+  preview write, and `Scene::Copy` clears all three so a preview does not survive into play.
+  The bend needs an `AnimatorComponent` — that is where the per-entity palette lives. A rig with
+  no animator draws `GetRestPalette()`, which is shared by the asset and must not be rewritten.
+  Joint names are `std::string`, so the struct has no `sizeof` sentinel.
 - **`BoneAttachmentComponent`** — pins this entity to a named joint of another entity's skinned
   mesh. `Target` is an entity UUID (zero = hierarchy parent); `Joint` is a name, for the same
   reason clips are; `Offset` / `Rotation` are the rest pose in joint space (Euler radians, X·Y·Z).
@@ -245,9 +256,17 @@ channel's key pair and interpolate — lerp for translation/scale, **slerp** for
 holding the left key — over a copy of the skeleton's rest pose, so joints and paths the clip does
 not drive keep their authored transform. Globals are composed in a single forward pass (the importer
 sorts joints parents-before-children so no recursion is needed), seeded from
-`Skeleton::RootTransform` rather than identity. The palette is then `Palette[i] = Global[i] *
-InverseBind[i]`. The clip inspector samples the same globals (head / hips / root at a given time)
-so a visualizer cannot re-derive the sampler and drift.
+`Skeleton::RootTransform` rather than identity. If the entity also has an `AimOffsetComponent`,
+`ApplyAimOffset` then rotates each resolved chain joint — and every descendant — about that
+joint's current origin, in the same space, by its share of yaw then pitch. Axes come from
+`ModelForward` in mesh space, taken into joint space by the rotation part of
+`inverse(Mesh::GetSkinTransform())`, not from the joint's local axes. Positive pitch looks up;
+positive yaw turns the chest toward the character's left. The pitch axis is the character's
+right turned by the full clamped yaw. Zero angles leave the globals untouched, bit for bit, and
+an unresolved name warns once per entity per name and skips the bend. The palette is then
+`Palette[i] = Global[i] * InverseBind[i]`. `SampleClipGlobals` itself is not told about the aim,
+so the clip inspector still measures the clip. The socket, the skeleton overlay and joint picking
+read the palette and follow the bend with no code of their own.
 
 An unresolvable clip name warns once per distinct name and holds the bind pose; a missing skeleton
 clears the palette. `RenderSystem` then uses `Mesh::GetRestPalette()` if the mesh still has a
@@ -566,20 +585,20 @@ anyway.
 
 ### What is registered
 
-34 types, 129 members → wait I need the current text
+40 types, 147 members (the boot log prints both — a count far below that is the cheapest signal that a
+registration block was dropped by the linker). Measured at editor boot after `AimOffsetComponent`:
 
-35 types, 131 members (the boot log prints both — a count far below that is the cheapest signal that a
-registration block was dropped by the linker):
-
-- The **26 components** — all 24 `ComponentList` entries plus `IDComponent` and `TagComponent`, which
-  `ComponentList` excludes as entity identity but which prefab diffing has to know exist in order to
-  skip.
-- **4 supporting types** — `PhysicsMaterial`; `SceneCamera`, whose seven private fields are registered
-  through entt's setter/getter `.data` overload; and `FloatCurve` / `ColorGradient` with **zero
-  members**. A reflected type with no members is the deliberate signal "opaque — a bespoke drawer and
-  writer own this": both curve types keep a sorted-by-time invariant and never expose their key vector
-  mutably, so a generic setter could not preserve the invariant even if one existed.
-- **5 enums** with their value names.
+- The **29 components** — all 26 `ComponentList` entries, plus `IDComponent` and `TagComponent`
+  (entity identity, excluded from the list, registered so prefab diffing can skip them), plus
+  `CharacterControllerComponent`, which is reflected and serialized but still missing from
+  `ComponentList` ([ToDo](../ToDo/cross-cutting.md)).
+- **5 supporting types** — `RangeF`; `PhysicsMaterial`; `SceneCamera`, whose seven private fields are
+  registered through entt's setter/getter `.data` overload; and `FloatCurve` / `ColorGradient` with
+  **zero members**. A reflected type with no members is the deliberate signal "opaque — a bespoke
+  drawer and writer own this": both curve types keep a sorted-by-time invariant and never expose
+  their key vector mutably, so a generic setter could not preserve the invariant even if one existed.
+- **6 enums** with their value names. `AimOffsetComponent::Axis` is persisted by name (`+Z`, `-Z`,
+  `+X`, `-X`), the same escape hatch as `AudioGroup`.
 
 glm's vector types are **not** registered. Reflecting `vec3::x/y/z` would invite a generic serializer
 to emit a map where yaml-cpp's converter currently writes a flow sequence, silently changing the file
@@ -608,11 +627,11 @@ What no test can check is whether a type's member list is **complete** — the t
 exactly the thing that is not reflected. The `static_assert(sizeof(T) == N)` sentinels at the bottom of
 `ComponentReflection.cpp` are the only forcing function, and they have two honest limits. Padding: a
 `bool` dropped into existing padding does not move `sizeof` (`AudioSourceComponent` has three spare
-bytes right now). And they cover 17 of the 24 `ComponentList` entries — every one with no
+bytes right now). And they cover 18 of the 26 `ComponentList` entries — every one with no
 standard-library container member. `sizeof(std::string)` is 40 with MSVC's STL and 32 with libstdc++,
 and vector and unordered_map differ likewise, so a sentinel on `TagComponent`,
-`RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `BoneAttachmentComponent`,
-`ScriptComponent` or
+`RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `AimOffsetComponent`,
+`BoneAttachmentComponent`, `ScriptComponent`, `MarkerComponent` or
 `ParticleEmitterComponent` would have to be a table of per-platform numbers — more cost than it
 catches, on a codebase that builds for Windows, Linux and macOS. The rule is mechanical rather than a
 judgement call per component: library container member ⇒ no sentinel.
@@ -938,14 +957,16 @@ The runtime scene is a disposable deep copy keyed by UUID — physics can knock 
 Stop simply discards the copy. This is why stable UUIDs and the generic `ComponentList` copy exist.
 
 The generic copy is a shallow value copy of every component, so anything that is runtime-only needs
-an explicit fixup sweep after it. There are four: `NativeScriptComponent::Instance` is nulled so
+an explicit fixup sweep after it. There are five: `NativeScriptComponent::Instance` is nulled so
 instances are recreated on play; `AnimatorComponent::Palette` is cleared because carrying a
 per-joint matrix array per entity into the new scene buys one frame of stale data;
 `BoneAttachmentComponent::Resolved` is reset to −1 so a stale joint index cannot attach to
-whatever now occupies that slot; and
+whatever now occupies that slot;
 `ParticleEmitterComponent::ResetRuntime()` clears pool, accumulator, timer, Playing, burst queue, bounds, and
 RNG together — a copied-then-reset pool with a *not*-reset RNG would double-play the editor's
-stream. Play-mode emitters therefore warm up from empty. Adding a component with runtime-only
+stream; and `AimOffsetComponent`'s `Pitch`, `Yaw` and `Resolved` are cleared so an editor preview
+does not survive into play (the script writes the live angles again on the first frame).
+Play-mode emitters therefore warm up from empty. Adding a component with runtime-only
 state means adding another sweep — nothing enforces this.
 
 The audio components are the worked example of *not* needing one. Putting the live `VoiceId` on

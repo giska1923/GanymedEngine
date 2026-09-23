@@ -33,6 +33,8 @@ namespace GanymedE {
 			RegisterReflectedCodec<std::string>();
 			RegisterReflectedCodec<glm::vec3>();
 			RegisterReflectedCodec<glm::vec4>();
+			RegisterReflectedCodec<std::array<float, 4>>();
+			RegisterReflectedCodec<std::array<std::string, 4>>();
 			RegisterReflectedCodec<FloatCurve>();
 			RegisterReflectedCodec<ColorGradient>();
 
@@ -56,6 +58,7 @@ namespace GanymedE {
 			RegisterReflectedEnumCodec<ParticleEmitterComponent::Mode>();
 			RegisterReflectedEnumCodec<ParticleBlend>();
 			RegisterReflectedEnumCodec<AudioGroup>();   // SerializeByName: written as "Music"
+			RegisterReflectedEnumCodec<AimOffsetComponent::Axis>(); // SerializeByName: written as "+Z"
 		}
 
 		const ReflectedCodec* FindCodec(const entt::meta_type& type)

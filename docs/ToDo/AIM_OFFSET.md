@@ -1,6 +1,8 @@
 # Milestone — Aim offset
 
-**Status: planned. Nothing built.** Phases A1–A5 below.
+**Status: A1 implemented on `master`. A2–A5 not started.**
+
+A1 execution notes are at the bottom of [Phase A1](#phase-a1--the-component-and-the-pose-pass).
 
 > **Engine and editor milestone.** A1, A2 and A4 touch `GanymedEngine/source/` or
 > `GanymedEditor/source/`, which the [branch policy](PROVING_GROUND.md#branch-policy) puts on
@@ -122,12 +124,15 @@ the skeleton overlay, joint picking — follows it with no change of its own.
    | `Pitch` / `Yaw` | **no** | Radians, the live inputs Lua writes each frame (and the editor preview) |
    | `Resolved` | **no** | Cached joint indices, −1 unresolved — the same pattern as `BoneAttachmentComponent::Resolved` |
 
-   Fixed-size arrays rather than `std::vector`, so the struct is trivially copyable and gets a
-   `sizeof` sentinel in `ComponentReflection.cpp`. Four is enough for a spine; a rig that wants more
-   is out of scope.
+   Fixed-size `std::array` of 4, not `std::vector`. Four is enough for a spine; a rig that wants more
+   is out of scope. The names are `std::string`, so the struct is not trivially copyable and gets
+   **no** `sizeof` sentinel — the mechanical rule in `ComponentReflection.cpp` (a library container
+   means no sentinel), the same as `BoneAttachmentComponent`. `YawLimit`'s default is the full
+   `π/2` (`1.5707963267948966f`); a truncated `1.57` would fail omit-if-default and leak into every
+   scene.
 
 2. **The component checklist** ([ecs.md](../engine/ecs.md), "Adding a component type"):
-   `ComponentList`, `GE_REFLECT_COMPONENT` + sentinel, `SceneSerializer` both halves (omit-when-default
+   `ComponentList`, `GE_REFLECT_COMPONENT` (no `sizeof` sentinel, above), `SceneSerializer` both halves (omit-when-default
    like the particle emitter, so scenes without it stay byte-identical), and a **`Scene::Copy`
    fixup sweep** that resets `Pitch`, `Yaw` and `Resolved` — a fifth sweep beside the four
    [scene.md](../engine/scene.md) lists. Add Component entry in the hierarchy panel's list (the full
@@ -212,6 +217,42 @@ the crosshair convergence already hides — the round goes to the crosshair eith
 | Unresolvable joint name | One warning per entity per distinct name; pose unchanged |
 | Cost | Profile scope on the pass; one character, Release. Expectation: single-digit microseconds, measured rather than claimed |
 
+### Execution (2026-09-23, on `master`)
+
+The component, the pass, the Lua bindings, the fifth `Scene::Copy` sweep, and the Add Component
+menu entry are in. There is still no inspector section — that is A2, and until it lands a component
+added from the menu has no header and no Remove.
+
+Boot probes in `AnimationSystem.cpp`, Debug only, on a 4-joint rest pose (`Hips` / `SpineA` /
+`SpineB` / `Neck`). All of these asserted clean on the Debug editor:
+
+- Pitch = yaw = 0 leaves every global bit-identical (early-out; a `glm::rotate(0)` multiply is not
+  the test).
+- Pitch 0.3, weights 0.25 / 0.75: hips unchanged, neck rotation delta 0.3 ± 1e-4, neck +Z rises.
+- Pitch 2.0 with limit 1.0: neck delta 1.0.
+- Yaw 0.5 on one joint: neck +Z gains +X (the character's left when forward is +Z and right is −X).
+- Yaw 1.0 and pitch 0.3 on joint 2 matches `angleAxis(0.3, yawedRight) * angleAxis(1, up)` within
+  1e-4, and differs from pitching about the unturned right.
+- Identity skin and a uniform 0.01 skin both yield up = +Y, right = −X.
+
+Cost, same function, 2000 calls, a 32-joint line, chain joints 4/5/6 (those subtrees are longer
+than a real spine of ~15, so a character should be cheaper, not dearer):
+
+| Config | µs / call |
+|---|---|
+| Debug (MSVC, unoptimized) | 164.0546 |
+| Release | 3.92345 |
+
+The Release figure is the one the cost row asked for, and it is single-digit. It is not a
+measurement of `ArmoredHumanoid`. The 2000-iteration loop is compiled out of Release; leaving it
+in would hitch the first animated frame of every session.
+
+Not run, and not claimed: a scene load/save byte compare, `Scene::Copy` into Play, a socket
+same-frame read, the clip inspector's Head Y / Hips Y on `ArmoredHumanoid`, and a warn-once against
+a real misspelled joint. The socket row follows from system order (scripts, then
+`AnimationSystem`, then `TransformSystem`, then `BoneAttachmentSystem`) and was not executed. `SampleClipGlobals` is
+unchanged, which is what keeps the clip inspector off the aim pass.
+
 ---
 
 ## Phase A2 — inspector section with a preview scrub
@@ -240,6 +281,10 @@ without pressing Play.
 **Preview values live on the component, not in the editor.** An editor-side preview map would need
 its own way into `AnimationSystem`. The component already is that way, the `Scene::Copy` sweep from
 A1 keeps a preview out of Play, and the serializer never writes it.
+
+**Undo snapshots the whole struct.** `ComponentEditCommand<AimOffsetComponent>` restores every
+field, including `Pitch`, `Yaw` and `Resolved`. A weight undo must copy the live values of those
+three back onto the restored component, or Ctrl+Z silently rewinds the preview.
 
 ### Verification
 

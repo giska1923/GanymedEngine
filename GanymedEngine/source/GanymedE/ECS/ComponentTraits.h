@@ -86,6 +86,7 @@ namespace GanymedE {
 		SpriteRendererComponent,
 		StaticMeshComponent,
 		AnimatorComponent,
+		AimOffsetComponent,
 		BoneAttachmentComponent,
 		CameraComponent,
 		DirectionalLightComponent,

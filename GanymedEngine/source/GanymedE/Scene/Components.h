@@ -14,6 +14,7 @@
 #include "GanymedE/Math/BoundingVolumes.h"
 #include "GanymedE/Math/Curve.h"
 
+#include <array>
 #include <cstdint>
 #include <unordered_map>
 #include <variant>
@@ -219,6 +220,58 @@ namespace GanymedE {
 
 		AnimatorComponent() = default;
 		AnimatorComponent(const AnimatorComponent&) = default;
+	};
+
+	// Bends a named joint chain on top of whatever clip the animator sampled. The rifle
+	// follows for free: it is socketed to a joint, and the socket reads the palette this
+	// pass already rewrote.
+	//
+	// Joints are names, root-most first, for the same reason clips are — a DCC reorder
+	// must fail loudly rather than twist whatever joint 7 now is. An empty slot ends the
+	// chain. Weights are each joint's share of the total angle; evaluation normalises
+	// them, so they need not sum to 1. The default puts the least on the root-most slot
+	// (a waist that takes an even split swings the whole upper body) and more on each
+	// joint above it. A shorter chain never sees the later weights.
+	//
+	// Pitch and Yaw are live inputs, not authored state: Lua writes them every frame and
+	// the editor preview writes them without Play. They are not serialized, and Scene::Copy
+	// clears them so a preview cannot survive into play. Resolved is the same kind of
+	// cache as BoneAttachmentComponent::Resolved.
+	//
+	// The names are std::string, so this struct is not trivially copyable and gets no
+	// sizeof sentinel — the same mechanical rule as BoneAttachmentComponent. Fixed-size
+	// arrays rather than vectors keep the chain at four, which is a spine, not a rig.
+	struct AimOffsetComponent
+	{
+		static constexpr int MaxJoints = 4;
+
+		// Which mesh-space axis the rig faces. Up is +Y. Brought into the space the
+		// joint globals live in with the rotation part of inverse(Mesh::GetSkinTransform);
+		// joint-local axes are not used, because Hips on a Meshy rig is nowhere near
+		// world-aligned and the next rig will not be either.
+		enum class Axis : uint8_t
+		{
+			PosZ = 0, // Meshy, and the default
+			NegZ,
+			PosX,
+			NegX
+		};
+
+		std::array<std::string, MaxJoints> Joints{};
+		std::array<float, MaxJoints> Weights{ 0.10f, 0.20f, 0.30f, 0.40f };
+
+		float PitchLimit = 1.0f;                  // ±radians, ~57°
+		float YawLimit = 1.5707963267948966f;     // ±π/2, 90°
+		Axis ModelForward = Axis::PosZ;
+		bool Enabled = true;
+
+		// Not serialized.
+		float Pitch = 0.0f;
+		float Yaw = 0.0f;
+		std::array<int32_t, MaxJoints> Resolved{ -1, -1, -1, -1 };
+
+		AimOffsetComponent() = default;
+		AimOffsetComponent(const AimOffsetComponent&) = default;
 	};
 
 	// Pins this entity to a joint of a skinned mesh. The joint transform is recovered from
