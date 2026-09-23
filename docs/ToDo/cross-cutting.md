@@ -460,3 +460,31 @@ visible — needs `ProvingGround.ganymede` on `first-game`. The other half of th
 exists — `Entity:GetWorldPosition` / `GetWorldForward` read a socketed entity's drawn world (see
 [scripting.md](../engine/scripting.md#world-transform)) — so what is left is content on
 `first-game`: a `Muzzle` under the Rifle, and `Player:Fire` spawning from it.
+
+## Aim-offset leftovers
+
+[AIM_OFFSET.md](../history/AIM_OFFSET.md) is in history. A1, A2 and A4 are on `master`; A3 is on
+`first-game` (`e7085d4`). These were named in that close and are still open.
+
+**Nothing in the milestone was watched on the character.** A2's preview drag, save/reload and
+Ctrl+Z were not done in the window. A4's four rows — drag up, drag past the limit, Play, the
+muzzle line — were not done either; the Debug editor was built. A3's frozen-clip elevation,
+strafe, backpedal, gate re-run and barrel-versus-chest count were not done. The scene is
+`ProvingGround.ganymede` on `first-game`.
+
+**The spine weights are the A1 defaults.** `Spine02` / `Spine01` / `Spine` at 0.10 / 0.20 / 0.30,
+omitted from the scene so the defaults apply. They were not tuned against the overlay. An even
+share at the waist is the thing those numbers exist to avoid; whether a sixth / a third / a half
+looks right is still a look, not a measurement.
+
+**The lowered idle is still the wrong pose for standing still.** `Lower_Weapon_Look_Raise` points
+the barrel as far as −78°. Spine pitch does not turn that into an aim, and the milestone did not
+download a clip that would. `BarrelPoint`'s ~35° check is what keeps those shots on the chest
+fallback until that clip exists.
+
+**The viewport line does not search upwards.** It walks `RelationshipComponent` children of the
+selected entity for the tag `Muzzle`. The skeletal leftover above still has `Muzzle` parented
+to `Yaw`, so selecting `Body` draws no line until `Muzzle` moves under the rifle. That move is
+the same content change, not a new one. The line is also one frame behind the pose, because the
+drag writes `Pitch` / `Yaw` after `AnimationSystem` has evaluated. Closing it so the barrel meets
+the point is the IK problem the milestone left alone: the socket runs after the aim pass.

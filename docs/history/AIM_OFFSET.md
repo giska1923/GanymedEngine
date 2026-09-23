@@ -1,14 +1,20 @@
 # Milestone — Aim offset
 
-**Status: A1, A2 and A4 implemented on `master`. A3 implemented on `first-game`. A5 not started.**
+**Status: complete.** A1, A2 and A4 landed on `master`. A3 landed on `first-game`
+(`e7085d4`). Live behaviour is in [scene.md](../engine/scene.md),
+[scripting.md](../engine/scripting.md) and [editor.md](../editor/editor.md). What was not watched,
+and the aim-idle this milestone does not supply, are in
+[cross-cutting.md](../ToDo/cross-cutting.md#aim-offset-leftovers).
 
 A1 execution notes are at the bottom of [Phase A1](#phase-a1--the-component-and-the-pose-pass).
 A2's are at the bottom of [Phase A2](#phase-a2--inspector-section-with-a-preview-scrub).
+A3's are at the bottom of [Phase A3](#phase-a3--proving-ground-wiring-first-game).
 A4's are at the bottom of [Phase A4](#phase-a4--viewport-aim-handle).
+A5's are at the bottom of [Phase A5](#phase-a5--docs-and-close).
 
 > **Engine and editor milestone.** A1, A2 and A4 touch `GanymedEngine/source/` or
-> `GanymedEditor/source/`, which the [branch policy](PROVING_GROUND.md#branch-policy) puts on
-> `master`. A3 is game content and lands on `first-game` after `master` is merged into it — never
+> `GanymedEditor/source/`, which the [branch policy](../ToDo/PROVING_GROUND.md#branch-policy) puts on
+> `master`. A3 is game content and landed on `first-game` after `master` was merged into it — never
 > the other way.
 
 Tilt and twist a character's upper body toward where the player is aiming, on top of whatever clip
@@ -356,6 +362,30 @@ upper body instead of sliding.
 | Gate modes (`autofire`, `p5gate`) | Fire counts, hits and every P1–P7 gate number unchanged — they never capture the cursor |
 | Share of shots from the barrel vs the chest | Logged over a scripted strafe-and-shoot run, before and after — the number this milestone exists to move |
 
+### Execution (2026-09-23, on `first-game`)
+
+`master` was merged in (`7812e2e`) before this. The component is on the player's `Body` in
+`ProvingGround.ganymede`: `Joints: [Spine02, Spine01, Spine, ""]`. That order is root-most first.
+In `ArmoredHumanoid.glb`, `Hips` parents `Spine02`, which parents `Spine01`, which parents
+`Spine`. Weights are omitted, so they stay the defaults 0.10 / 0.20 / 0.30 on those three (the
+fourth default is past the empty slot and unused). Normalised, that is a sixth on the waist, a
+third, and a half on `Spine`. The reason is the A1 one: an even share at `Spine02` swings the
+arms and the rifle from the hips. They were not tuned by looking at the overlay.
+
+`Player:Animate` writes the offset. Pitch is `atan` of chest → `AimPoint`, with the chest at
+`CHEST_HEIGHT` (0.5 m) above the capsule origin — the fallback spawn in `Fire`, not the camera
+and not the muzzle. Yaw is `wrap(camera yaw − meshYaw)` after the leg ease. While aiming and
+moving, and that angle against the *velocity* heading is within `π/2`, `meshYaw` follows the
+velocity. Past it, `meshYaw` follows the camera yaw and the reversed clip stays. The constant
+matches the component's default `YawLimit`; the pass clamps to the stored limit either way.
+Not aiming writes zeros. `BarrelPoint`'s 0.82 dot (about 35°) is unchanged.
+
+Not run: a frozen-clip muzzle elevation check, a watched strafe, a watched backpedal, the gate
+modes, and the barrel-versus-chest count. Gate shots stay on yaw while the cursor is uncaptured
+(`AimPoint` is nil), and the capsule does not read `meshYaw`, which is why those numbers should
+not move. That was not re-measured. These notes were written on `first-game` and copied here at
+the close; the merge direction does not bring them back on its own.
+
 ---
 
 ## Phase A4 — viewport aim handle
@@ -435,9 +465,27 @@ on this branch, so the four verification rows above are unrun. Debug editor
 
 ## Phase A5 — docs and close
 
-Live docs updated in each phase's own change, per [AGENTS.md](../../AGENTS.md). A5 audits them,
-moves this file to `docs/history/AIM_OFFSET.md` with execution notes and measured evidence, links it
-from [docs/README.md](../README.md), and removes its row from [ToDo/README.md](README.md).
+**Done.** 2026-09-23, on `master`.
+
+A1, A2 and A4 already updated the live docs in those changes. This phase checked them against the
+code and did not append a changelog. `ecs.md`'s "Adding a component type" list is generic;
+`AimOffsetComponent` did not change it, so that file was left alone.
+[PROVING_GROUND.md](../ToDo/PROVING_GROUND.md)'s facing paragraphs are on `first-game`, not in this
+branch's copy.
+
+| Doc | Audit |
+|---|---|
+| [scene.md](../engine/scene.md) | Component bullet, the pass (mesh-space axes, zero early-out, unresolved skip), the fifth `Scene::Copy` sweep, reflection (no `sizeof` sentinel). Present. |
+| [scripting.md](../engine/scripting.md) | `HasAimOffset` / `SetAimOffset` / `GetAimOffset`. The binding does not clamp. Present. |
+| [architecture.md](../engine/architecture.md) | `AnimationSystem` line names the aim-offset pass. Present. |
+| [editor.md](../editor/editor.md) | Inspector section, preview and undo, the at-limit readout, the Aim handle. Present. |
+
+The file moved to `docs/history/AIM_OFFSET.md`, linked from [docs/README.md](../README.md), and its
+row left [ToDo/README.md](../ToDo/README.md). Probes that were never watched, the untuned weights,
+and the aim-idle this milestone does not supply are in
+[cross-cutting.md](../ToDo/cross-cutting.md#aim-offset-leftovers). The muzzle line only walks
+descendants of the selected entity; a `Muzzle` parented to `Yaw` is invisible to it, which is the
+content half of the skeletal leftover, not a second task.
 
 ## Docs this milestone must update
 
