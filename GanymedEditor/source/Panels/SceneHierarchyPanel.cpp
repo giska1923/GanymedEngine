@@ -10,6 +10,7 @@
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 // PRIu64. uint64_t is `unsigned long` on LP64 (Linux, macOS) and `unsigned long long` on
@@ -31,6 +32,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
+#include <cmath>
 #include <type_traits>
 #include <unordered_set>
 
@@ -949,6 +951,157 @@ namespace GanymedE {
 			}
 
 			return EditorUI::DrawReflectedComponent(component, hook, multi, filter);
+		}
+
+		int32_t FindJointByName(const std::vector<std::string>& names, const std::string& joint)
+		{
+			for (int32_t i = 0; i < (int32_t)names.size(); i++)
+			{
+				if (names[(size_t)i] == joint)
+					return i;
+			}
+			return -1;
+		}
+
+		// Palette is post-aim. The baseline is a fresh sample of the same clip at the same
+		// time, which is what the pass itself started from. One character, and only while
+		// this section is open.
+		bool MeasureAimedJointDelta(Entity entity, int32_t joint, float& radians)
+		{
+			if (joint < 0 || !entity.HasComponent<AnimatorComponent>()
+				|| !entity.HasComponent<StaticMeshComponent>())
+				return false;
+
+			const Ref<Mesh> mesh = entity.GetComponent<StaticMeshComponent>().Mesh.Get();
+			if (!mesh || !mesh->HasSkeleton())
+				return false;
+
+			const Skeleton& skeleton = mesh->GetSkeleton();
+			const AnimatorComponent& animator = entity.GetComponent<AnimatorComponent>();
+			const uint32_t count = skeleton.JointCount();
+			if ((uint32_t)joint >= count
+				|| animator.Palette.size() != count
+				|| skeleton.InverseBind.size() != count)
+				return false;
+
+			const glm::mat4& inverseBind = skeleton.InverseBind[(uint32_t)joint];
+			const float det = glm::determinant(inverseBind);
+			if (!std::isfinite(det) || std::abs(det) < 1e-20f)
+				return false;
+
+			std::vector<JointPose> locals;
+			std::vector<glm::mat4> clipGlobals;
+			if (!SampleClipGlobals(skeleton, mesh->FindClip(animator.Clip), animator.Time,
+				locals, clipGlobals) || clipGlobals.size() != count)
+				return false;
+
+			const glm::mat4 aimed = animator.Palette[(uint32_t)joint] * glm::inverse(inverseBind);
+			const glm::quat delta = glm::normalize(
+				glm::inverse(glm::quat_cast(clipGlobals[(uint32_t)joint])) * glm::quat_cast(aimed));
+			radians = glm::angle(delta);
+			return std::isfinite(radians);
+		}
+
+		void DrawAimOffsetReadout(Entity entity, const AimOffsetComponent& aim)
+		{
+			Ref<Mesh> mesh = entity.HasComponent<StaticMeshComponent>()
+				? entity.GetComponent<StaticMeshComponent>().Mesh.Get()
+				: nullptr;
+			const bool rigged = mesh && mesh->HasSkeleton();
+			if (!rigged)
+				return;
+
+			if (!entity.HasComponent<AnimatorComponent>())
+			{
+				ImGui::TextDisabled("Needs an Animator. Without one the mesh draws the shared rest palette, which is not bent.");
+				return;
+			}
+
+			const std::vector<std::string>& names = mesh->GetSkeleton().JointNames;
+			int chainEnd = 0;
+			for (; chainEnd < AimOffsetComponent::MaxJoints; chainEnd++)
+			{
+				if (aim.Joints[(size_t)chainEnd].empty())
+					break;
+			}
+
+			bool ignored = false;
+			for (int i = chainEnd + 1; i < AimOffsetComponent::MaxJoints; i++)
+			{
+				if (!aim.Joints[(size_t)i].empty())
+					ignored = true;
+			}
+			if (ignored)
+				ImGui::TextDisabled("Slots after the first empty one are ignored.");
+
+			if (chainEnd == 0)
+			{
+				ImGui::TextDisabled("Chain is empty.");
+				return;
+			}
+
+			bool unresolved = false;
+			float weightSum = 0.0f;
+			int32_t tip = -1;
+			std::string tipName;
+			for (int i = 0; i < chainEnd; i++)
+			{
+				const std::string& joint = aim.Joints[(size_t)i];
+				const int32_t index = FindJointByName(names, joint);
+				if (index < 0)
+				{
+					unresolved = true;
+					ImGui::TextDisabled("Joint %d '%s' is not on this mesh — pose unchanged",
+						i + 1, joint.c_str());
+				}
+				else
+				{
+					tip = index;
+					tipName = joint;
+					if (aim.Weights[(size_t)i] > 0.0f)
+						weightSum += aim.Weights[(size_t)i];
+				}
+			}
+
+			const auto Limit = [](float limit)
+			{
+				return std::isfinite(limit) ? std::abs(limit) : 0.0f;
+			};
+			const float pitchLimit = Limit(aim.PitchLimit);
+			const float yawLimit = Limit(aim.YawLimit);
+			if (std::abs(aim.Pitch) > pitchLimit + 1e-4f)
+			{
+				ImGui::TextDisabled("Pitch %.1f deg clamped to %.1f deg",
+					glm::degrees(aim.Pitch), glm::degrees(pitchLimit));
+			}
+			if (std::abs(aim.Yaw) > yawLimit + 1e-4f)
+			{
+				ImGui::TextDisabled("Yaw %.1f deg clamped to %.1f deg",
+					glm::degrees(aim.Yaw), glm::degrees(yawLimit));
+			}
+
+			if (unresolved)
+				return;
+
+			if (!aim.Enabled)
+			{
+				ImGui::TextDisabled("Disabled — clip is unbent.");
+				return;
+			}
+			if (weightSum <= 1e-8f)
+			{
+				ImGui::TextDisabled("Weights sum to nothing — pose unchanged.");
+				return;
+			}
+
+			float radians = 0.0f;
+			if (!MeasureAimedJointDelta(entity, tip, radians))
+			{
+				ImGui::TextDisabled("Pose not evaluated yet.");
+				return;
+			}
+
+			ImGui::Text("%s  %.1f deg from the clip", tipName.c_str(), glm::degrees(radians));
 		}
 
 	}
@@ -2026,6 +2179,147 @@ namespace GanymedE {
 			if (rigged)
 				ImGui::Text("Joints: %u", mesh->GetSkeleton().JointCount());
 
+			return edited;
+		});
+
+		DrawComponent<AimOffsetComponent>("Aim Offset", entity, [&](auto& component)
+		{
+			bool edited = false;
+
+			Ref<Mesh> mesh = entity.HasComponent<StaticMeshComponent>()
+				? entity.GetComponent<StaticMeshComponent>().Mesh.Get()
+				: nullptr;
+			const bool rigged = mesh && mesh->HasSkeleton();
+			const std::vector<std::string>* names = rigged
+				? &mesh->GetSkeleton().JointNames
+				: nullptr;
+
+			auto propagate = [&](auto&& copy)
+			{
+				if (m_Selection.size() <= 1)
+					return;
+				for (Entity other : m_Selection)
+				{
+					if (other == entity || !other.HasComponent<AimOffsetComponent>())
+						continue;
+					copy(other.GetComponent<AimOffsetComponent>());
+				}
+			};
+
+			if (!rigged)
+			{
+				ImGui::TextDisabled("No rigged mesh on this entity");
+			}
+			else
+			{
+				ImGui::TextDisabled("Root-most first. An empty slot ends the chain.");
+
+				bool ended = false;
+				for (int i = 0; i < AimOffsetComponent::MaxJoints; i++)
+				{
+					ImGui::PushID(i);
+					ImGui::BeginDisabled(ended);
+
+					const std::string& joint = component.Joints[(size_t)i];
+					const std::string label = "Joint " + std::to_string(i + 1);
+					if (ImGui::BeginCombo(label.c_str(), joint.empty() ? "(none)" : joint.c_str()))
+					{
+						if (ImGui::Selectable("(none)", joint.empty()) && !joint.empty())
+						{
+							component.Joints[(size_t)i].clear();
+							component.Resolved[(size_t)i] = -1;
+							edited = true;
+						}
+
+						for (const std::string& name : *names)
+						{
+							const bool selected = joint == name;
+							if (ImGui::Selectable(name.c_str(), selected) && !selected)
+							{
+								component.Joints[(size_t)i] = name;
+								component.Resolved[(size_t)i] = -1;
+								edited = true;
+							}
+							if (selected)
+								ImGui::SetItemDefaultFocus();
+						}
+
+						ImGui::EndCombo();
+					}
+
+					ImGui::EndDisabled();
+					ImGui::PopID();
+
+					if (component.Joints[(size_t)i].empty())
+						ended = true;
+				}
+
+				if (names->empty())
+					ImGui::TextDisabled("Mesh is rigged but lists no joint names");
+			}
+
+			if (edited)
+			{
+				propagate([&](AimOffsetComponent& other)
+				{
+					other.Joints = component.Joints;
+					other.Resolved.fill(-1);
+				});
+			}
+
+			bool weightsEdited = false;
+			for (int i = 0; i < AimOffsetComponent::MaxJoints; i++)
+			{
+				ImGui::PushID(i + 16);
+				const std::string label = "Weight " + std::to_string(i + 1);
+				weightsEdited |= ImGui::DragFloat(label.c_str(), &component.Weights[(size_t)i],
+					0.01f, 0.0f, 1.0f, "%.2f");
+				ImGui::PopID();
+			}
+			if (weightsEdited)
+			{
+				edited = true;
+				propagate([&](AimOffsetComponent& other)
+				{
+					other.Weights = component.Weights;
+				});
+			}
+
+			edited |= DrawReflected(entity, m_Context.get(), m_Selection, component);
+
+			// Edit mode only. Play writes these from script, and a slider here would fight
+			// that every frame. Not an undo entry: returning false keeps the commit boundary
+			// from recording the gesture. Ctrl+Z of a weight must not rewind them either —
+			// ComponentEditCommand keeps the live values when it restores the snapshot.
+			if (Recording())
+			{
+				const auto Limit = [](float limit)
+				{
+					return std::isfinite(limit) ? std::abs(limit) : 0.0f;
+				};
+
+				float pitch = glm::degrees(component.Pitch);
+				const float pitchMax = glm::degrees(Limit(component.PitchLimit));
+				if (ImGui::DragFloat("Preview Pitch", &pitch, 0.5f, -pitchMax, pitchMax, "%.1f deg"))
+				{
+					component.Pitch = glm::radians(std::clamp(pitch, -pitchMax, pitchMax));
+					propagate([&](AimOffsetComponent& other) { other.Pitch = component.Pitch; });
+				}
+
+				float yaw = glm::degrees(component.Yaw);
+				const float yawMax = glm::degrees(Limit(component.YawLimit));
+				if (ImGui::DragFloat("Preview Yaw", &yaw, 0.5f, -yawMax, yawMax, "%.1f deg"))
+				{
+					component.Yaw = glm::radians(std::clamp(yaw, -yawMax, yawMax));
+					propagate([&](AimOffsetComponent& other) { other.Yaw = component.Yaw; });
+				}
+			}
+			else
+			{
+				ImGui::TextDisabled("Preview is edit-mode only. Play is driven by script.");
+			}
+
+			DrawAimOffsetReadout(entity, component);
 			return edited;
 		});
 

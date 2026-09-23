@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 
 namespace GanymedE {
@@ -154,7 +155,19 @@ namespace GanymedE {
 			if (!entity || !entity.HasComponent<T>())
 				return;
 
-			entity.GetComponent<T>() = value;
+			// The command stores the whole struct. Aim offset's Pitch, Yaw and Resolved
+			// are live inputs, and a preview drag deliberately does not push a command.
+			// Writing the snapshot back would rewind a preview the author moved after
+			// the authored edit. Keep whatever is live and restore only the rest.
+			T restored = value;
+			if constexpr (std::is_same_v<T, AimOffsetComponent>)
+			{
+				const AimOffsetComponent& live = entity.GetComponent<AimOffsetComponent>();
+				restored.Pitch = live.Pitch;
+				restored.Yaw = live.Yaw;
+				restored.Resolved = live.Resolved;
+			}
+			entity.GetComponent<T>() = restored;
 
 			// Restoring a tracked component behind the change-tracker's back is the silent
 			// staleness trap: the value moves, nothing recomputes, and the world transform

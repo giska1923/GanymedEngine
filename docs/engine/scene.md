@@ -109,6 +109,8 @@ copyable, no behavior beyond small helpers.
   (`+Z`, `-Z`, `+X`, `-X`; up is +Y). `Enabled` false is the clip exactly as authored. `Pitch`,
   `Yaw` and `Resolved` are not serialized: the first two are the live inputs Lua and the editor
   preview write, and `Scene::Copy` clears all three so a preview does not survive into play.
+  The Properties section authors the chain and, in edit mode, scrubs the preview. That scrub is
+  not an undo entry; undoing a weight or a joint keeps whatever preview is live.
   The bend needs an `AnimatorComponent` — that is where the per-entity palette lives. A rig with
   no animator draws `GetRestPalette()`, which is shared by the asset and must not be rewritten.
   Joint names are `std::string`, so the struct has no `sizeof` sentinel.
@@ -638,17 +640,18 @@ judgement call per component: library container member ⇒ no sentinel.
 
 ### Current state
 
-**Two consumers: the inspector and the serializer.** Sixteen of the editor's twenty component
+**Two consumers: the inspector and the serializer.** Sixteen of the editor's twenty-one component
 sections are drawn from this registration rather than from a hand-written lambda
 ([editor.md](../editor/editor.md#the-generic-reflected-inspector)), and **every** component is
 written and read generically by `SceneSerializer` (below). The Lua bindings still hand-list every
 field and are deliberately out of scope.
 
 The two consumers convert **independently**, which is worth seeing once: Static Mesh, Animator,
-Bone Attachment and Script are serialized generically while their inspector sections stay
-hand-written (Bone Attachment's Offset/Rotation rows are reflected; Target and Joint are not).
+Aim Offset, Bone Attachment and Script are serialized generically while their inspector sections
+stay hand-written (Aim Offset's limits, facing axis and enabled flag are reflected, and so are
+Bone Attachment's Offset/Rotation rows; the joint combos are not).
 What blocks them from the panel is that their UI is driven by asset or Lua data — a mesh's
-material slots, its clip names, a **different entity's** joint names, a Lua class's declared
+material slots, its clip names, a skeleton's joint names, a Lua class's declared
 fields — which has nothing to do with how the component is stored.
 "Reflected" is per-consumer, not a property of the component.
 

@@ -1,8 +1,9 @@
 # Milestone — Aim offset
 
-**Status: A1 implemented on `master`. A2–A5 not started.**
+**Status: A1 and A2 implemented on `master`. A3–A5 not started.**
 
 A1 execution notes are at the bottom of [Phase A1](#phase-a1--the-component-and-the-pose-pass).
+A2's are at the bottom of [Phase A2](#phase-a2--inspector-section-with-a-preview-scrub).
 
 > **Engine and editor milestone.** A1, A2 and A4 touch `GanymedEngine/source/` or
 > `GanymedEditor/source/`, which the [branch policy](PROVING_GROUND.md#branch-policy) puts on
@@ -294,6 +295,30 @@ three back onto the restored component, or Ctrl+Z silently rewinds the preview.
 | Save, reload | Chain/weights/limits persist; preview reads 0 |
 | Ctrl+Z after a weight edit | Restores the weight; preview untouched |
 | Unresolvable joint in a slot | Readout names it; pose unchanged |
+
+### Execution (2026-09-23, on `master`)
+
+The section is in `SceneHierarchyPanel`, between Animator and Bone Attachment. Joint combos and
+weight sliders are hand-drawn off this entity's skeleton. Pitch limit, yaw limit, model forward
+and enabled go through `DrawReflected`, so the limits stay degrees in the row and radians in the
+component, and a multi-selection propagates those fields the same way every other reflected row
+does. Joint and weight edits propagate by hand.
+
+Preview Pitch / Preview Yaw are drawn only when `Recording()` is true (edit mode; Play passes a
+null undo stack). They write `Pitch` / `Yaw` and return false, so the commit boundary never
+pushes a command for the scrub. `ComponentEditCommand::Apply` copies the live `Pitch`, `Yaw` and
+`Resolved` onto the snapshot it is about to write, which is what keeps Ctrl+Z of a weight from
+rewinding a preview moved afterwards.
+
+The readout resolves names itself, rather than trusting `Resolved`, so a combo click is not one
+frame of "missing" while the system cache catches up. A name the mesh does not have is printed,
+and the bend is described as unchanged. Past-limit live angles are printed as clamped. The tip
+joint's number is the angle between a fresh `SampleClipGlobals` at the animator's time and the
+global reconstructed from `Palette * inverse(InverseBind)`.
+
+Not run in the editor: dragging the preview against a skeleton overlay, a save/reload, and Ctrl+Z.
+The commit-boundary and the `Apply` copy are what those rows depend on, and they were not exercised
+through the window. Debug and Release were built after the section landed.
 
 ---
 
