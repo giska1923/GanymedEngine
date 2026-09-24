@@ -4,6 +4,7 @@
 #include "GanymedE/Core/Log.h"
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/ECS/ComponentTraits.h"
+#include "GanymedE/Reflection/Reflection.h"
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
@@ -11,7 +12,6 @@
 #include <optional>
 #include <string>
 #include <tuple>
-#include <type_traits>
 #include <vector>
 
 namespace GanymedE {
@@ -126,6 +126,29 @@ namespace GanymedE {
 		entt::id_type m_ComponentType;
 	};
 
+	// Copies every field reflected as Trait::Runtime (Hidden | NotSerialized, both bits) from
+	// `live` into `restored`. Reflection rather than a per-type list, so a new component's
+	// runtime state is kept the moment it is registered that way. Through entt::meta, which
+	// systems may not use per frame; an undo is one component, once, on a key press.
+	// AnimatorComponent::Time is NotSerialized but not Hidden - a scrub the author edits, with
+	// undo - so it is restored like any other authored field.
+	template<typename T>
+	void KeepRuntimeFields(const T& live, T& restored)
+	{
+		const entt::meta_type type = entt::resolve<T>();
+		if (!Reflection::IsReflected(type))
+			return;
+
+		for (auto&& [id, field] : type.data())
+		{
+			(void)id;
+			const Reflection::Trait traits = field.traits<Reflection::Trait>();
+			if ((traits & Reflection::Trait::Runtime) != Reflection::Trait::Runtime)
+				continue;
+			field.set(entt::forward_as_meta(restored), field.get(entt::forward_as_meta(live)));
+		}
+	}
+
 	template<typename T>
 	class ComponentEditCommand : public ComponentEditCommandBase
 	{
@@ -155,18 +178,13 @@ namespace GanymedE {
 			if (!entity || !entity.HasComponent<T>())
 				return;
 
-			// The command stores the whole struct. Aim offset's Pitch, Yaw and Resolved
-			// are live inputs, and a preview drag deliberately does not push a command.
-			// Writing the snapshot back would rewind a preview the author moved after
-			// the authored edit. Keep whatever is live and restore only the rest.
+			// The command stores the whole struct, runtime fields included. Those belong to a
+			// system or a live input - aim offset's preview Pitch/Yaw, a socket's or chain's
+			// Resolved, an emitter's pool and RNG, the animator's Palette - not to the edit, and
+			// writing the snapshot back would rewind them to whatever they were when the edit
+			// was recorded. Keep what is live; restore only the authored rest.
 			T restored = value;
-			if constexpr (std::is_same_v<T, AimOffsetComponent>)
-			{
-				const AimOffsetComponent& live = entity.GetComponent<AimOffsetComponent>();
-				restored.Pitch = live.Pitch;
-				restored.Yaw = live.Yaw;
-				restored.Resolved = live.Resolved;
-			}
+			KeepRuntimeFields(entity.GetComponent<T>(), restored);
 			entity.GetComponent<T>() = restored;
 
 			// Restoring a tracked component behind the change-tracker's back is the silent

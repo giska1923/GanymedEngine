@@ -138,3 +138,9 @@ describe problems that were fixed later. Verified stale, recorded here so nobody
   from `vendor/premake/premake5.lua`'s postbuild step" — the source was vcpkg's user-wide MSBuild
   integration (its app-local DLL step runs `pwsh.exe`), not premake. Fixed by opting the workspace
   out ([build-and-tooling.md](../engine/build-and-tooling.md#workspace)).
+- `AIM_OFFSET.md` A1 "by its normalised share of yaw then pitch" and the Debug boot timing loop — the
+  pass now splits one whole-chain axis-angle by weight (the per-joint split missed the target by up
+  to 26° across three joints), and the 2000-iteration timing loop is gone from the boot self-test
+  (it cost ~0.2 s on every Debug start). `ComponentEditCommand`'s aim-offset special case is now the
+  generic `Trait::Runtime` rule. See [scene.md](../engine/scene.md) and
+  [editor.md](../editor/editor.md).

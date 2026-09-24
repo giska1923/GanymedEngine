@@ -260,7 +260,15 @@ not drive keep their authored transform. Globals are composed in a single forwar
 sorts joints parents-before-children so no recursion is needed), seeded from
 `Skeleton::RootTransform` rather than identity. If the entity also has an `AimOffsetComponent`,
 `ApplyAimOffset` then rotates each resolved chain joint — and every descendant — about that
-joint's current origin, in the same space, by its share of yaw then pitch. Axes come from
+joint's current origin, in the same space. The whole chain's target is built once (yaw about up,
+then pitch about the right turned by that yaw) and split as **one axis-angle**: each joint turns by
+its normalised weight × that angle about that axis. Rotations about a shared axis commute, so the
+shares compose to exactly the target. The first version gave each joint its own "yaw share, then
+pitch share", which interleave across joints — with three joints at 1/6, 1/3, 1/2 the chest missed
+by 7.8° at a 90° twist and 0.3 pitch, 26° at both limits; measured after the change on
+`ArmoredHumanoid`, the muzzle turns by the target to 0.000°. A Debug boot self-test on a four-joint
+probe skeleton asserts the zero early-out, sign, clamp, and the yaw + pitch target on one joint and
+across two. Axes come from
 `ModelForward` in mesh space, taken into joint space by the rotation part of
 `inverse(Mesh::GetSkinTransform())`, not from the joint's local axes. Positive pitch looks up;
 positive yaw turns the chest toward the character's left. The pitch axis is the character's
