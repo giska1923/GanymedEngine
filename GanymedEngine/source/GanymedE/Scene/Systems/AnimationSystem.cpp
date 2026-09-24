@@ -229,9 +229,11 @@ namespace GanymedE {
 		// what lets Scene::Copy and undo carry them without a sweep of their own.
 		void ClearHandIKResults(TwoHandIKComponent& ik)
 		{
-			ik.Valid.fill(false);
+			ik.Status.fill(TwoHandIKComponent::HandStatus::NotEvaluated);
 			ik.Reached.fill(false);
 			ik.Stretch.fill(0.0f);
+			ik.Weapon = UUID{ 0 };
+			ik.Markers.fill(UUID{ 0 });
 		}
 
 #ifdef GE_DEBUG
@@ -1254,10 +1256,16 @@ namespace GanymedE {
 	{
 		GE_PROFILE_SCOPE("AnimationSystem::ApplyTwoHandIK");
 
+		using HandStatus = TwoHandIKComponent::HandStatus;
+		const auto Both = [&ik](HandStatus status) { ik.Status.fill(status); };
+
 		// Weight 0 still resolves and measures - the solver reports reach without touching the
 		// pose - so a readout works with the hands off. Enabled is the off switch.
 		if (!ik.Enabled)
+		{
+			Both(HandStatus::Disabled);
 			return;
+		}
 		const float weights[2] = { ik.RightWeight, ik.LeftWeight };
 
 		const Skeleton& skeleton = mesh.GetSkeleton();
@@ -1290,6 +1298,7 @@ namespace GanymedE {
 		}
 		if (!weapon || !socket)
 		{
+			Both(HandStatus::NoWeapon);
 			WarnHandIK(entity, Where() + " finds no weapon: no child has a BoneAttachmentComponent "
 				"on this rig - leaving the arms on the clip");
 			return;
@@ -1298,8 +1307,10 @@ namespace GanymedE {
 		int32_t& anchor = ik.Resolved[6];
 		anchor = ResolveJointIndex(names, socket->Joint, anchor);
 		glm::mat4 anchorFrame{ 1.0f };
+		ik.Weapon = weapon.GetUUID();
 		if (anchor < 0 || !TryGetJointFrame(mesh, palette, anchor, anchorFrame))
 		{
+			Both(HandStatus::NoWeaponFrame);
 			WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' is socketed to joint '"
 				+ socket->Joint + "', which mesh '" + mesh.GetPath() + "' does not resolve - "
 				"leaving the arms on the clip");
@@ -1310,7 +1321,10 @@ namespace GanymedE {
 		// the anchor's frame from this palette, times the socket's offset at the weapon's scale.
 		auto weaponTransform = access.FindOne<TransformComponent>(weapon);
 		if (!weaponTransform)
+		{
+			Both(HandStatus::NoWeaponFrame);
 			return;
+		}
 		const glm::mat4 weaponFrame = anchorFrame * socket->OffsetMatrix(weaponTransform->Scale);
 
 		// Markers are authored in mesh space (the joint frames TryGetJointFrame reports: unit
@@ -1321,6 +1335,7 @@ namespace GanymedE {
 		const float skinDet = glm::determinant(skin);
 		if (!std::isfinite(skinDet) || std::abs(skinDet) < 1e-20f)
 		{
+			Both(HandStatus::NoWeaponFrame);
 			WarnHandIK(entity, Where() + " cannot invert mesh '" + mesh.GetPath() + "' skin transform - "
 				"leaving the arms on the clip");
 			return;
@@ -1345,6 +1360,7 @@ namespace GanymedE {
 				if (index < 0)
 				{
 					chainResolved[hand] = false;
+					ik.Status[(size_t)hand] = HandStatus::NoJoint;
 					WarnHandIK(entity, Where() + " references joint '" + *chainNames[hand][slot]
 						+ "', which mesh '" + mesh.GetPath() + "' does not have - leaving the "
 						+ handNames[hand] + " hand on the clip");
@@ -1380,6 +1396,7 @@ namespace GanymedE {
 			if (SubtreeContains(armSubtree.data(), (uint32_t)armSubtree.size(), anchor))
 			{
 				clean = false;
+				ik.Status[(size_t)hand] = HandStatus::WeaponInArm;
 				WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' is socketed to '"
 					+ socket->Joint + "', inside the " + handNames[hand] + " arm - that hand carries "
 					"the weapon and is not solved");
@@ -1402,13 +1419,18 @@ namespace GanymedE {
 			if (!marker)
 			{
 				clean = false;
+				ik.Status[(size_t)hand] = HandStatus::NoMarker;
 				WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' has no child named '"
 					+ *markerNames[hand] + "' - leaving the " + handNames[hand] + " hand on the clip");
 				continue;
 			}
+			ik.Markers[(size_t)hand] = marker.GetUUID();
 			auto markerTransform = access.FindOne<TransformComponent>(marker);
 			if (!markerTransform)
+			{
+				ik.Status[(size_t)hand] = HandStatus::NoMarker;
 				continue;
+			}
 
 			const glm::mat4 markerFrame = weaponFrame * markerTransform->GetLocalTransform();
 			const glm::vec3 target = glm::vec3(meshToSkin * glm::vec4(glm::vec3(markerFrame[3]), 1.0f));
@@ -1440,7 +1462,7 @@ namespace GanymedE {
 
 			const TwoBoneResult result = SolveTwoBone(skeleton, chain, target, targetRotation, pole,
 				weights[hand], m_Globals);
-			ik.Valid[(size_t)hand] = result.Valid;
+			ik.Status[(size_t)hand] = result.Valid ? HandStatus::Solved : HandStatus::Unsolvable;
 			ik.Reached[(size_t)hand] = result.Reached;
 			ik.Stretch[(size_t)hand] = result.Stretch;
 			if (!result.Valid)

@@ -247,7 +247,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   X-ray. A rig with no animator shows its rest skeleton: the overlay, picking, labels, the Joints
   panel and the socket gizmo all read `ResolvePosePalette`, the pose `RenderSystem` draws. Which
   rigs count as "the selection" is `RenderSystem::SkeletonInSelection`, shared with picking so a
-  bone is only clickable where one is drawn; plus the Jolt debug-draw toggles, still Play-only because they read live body
+  bone is only clickable where one is drawn. A two-hand IK rig also shows its markers and, for a
+  hand out of reach, a wrist→marker line; plus the Jolt debug-draw toggles, still Play-only because they read live body
   state) · Icons (`ICON_LC_MAP_PIN`, default on — `MarkerComponent` wire-spheres) · Local / World
   combo wired to `ImGuizmo::Manipulate`'s mode.
   Previously LOCAL was hard-coded. The magnet is the same snap struct placement reads.
@@ -845,6 +846,7 @@ vocabulary deliberately cannot say:
 | Animator    | Clip names come from the mesh asset                                                 |
 | Bone Attachment | Joint names come from the **target** entity's skeleton, not this entity's        |
 | Aim Offset  | Joint names come from **this** entity's skeleton; preview pitch/yaw are live, not fields |
+| Two-Hand IK | Joint names come from this entity's skeleton, marker names from the **weapon's** children; the weapon and the readout are runtime |
 | Script      | The field schema comes from Lua, not from C++                                       |
 
 **Camera and Sky Light converted via a field filter.** Their blocker was field _visibility_
@@ -956,6 +958,22 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   the clip (a fresh `SampleClipGlobals` against the palette). Undo of an authored field keeps the
   live preview: `Pitch`, `Yaw` and `Resolved` are `Trait::Runtime`, which `ComponentEditCommand`
   keeps at their live values for every component (see the undo table).
+- Two-hand IK: **Weapon** is a read-only line naming what the pass found (the first child with
+  a socket on this rig) and its socket joint; there is nothing to pick, because the component has
+  no weapon field. Per hand, under a **Right hand** / **Left hand** separator: **Upper / Lower /
+  End** combos over this entity's `skeleton.JointNames`, and **Marker**, a combo over the
+  weapon's direct children (disabled when there is no weapon). Each combo edits one member, and a
+  multi-selection copies only that member. Right / Left Weight and Enabled are reflected. The
+  **readout** under each hand words the pass's `Status`: "Reach N% of the arm" when solved; in
+  the accent colour "Clamped: marker at N% of the arm" (or "too close to the shoulder") when not
+  reached; the reason when the hand is skipped (no weapon, socket joint does not resolve, joint
+  not on the mesh, no child named the marker, weapon socketed inside this arm, not one limb); and
+  a note when the weight is 0 (measured, arm on the clip). Reach is the number a weapon pose is
+  tuned against. Readout lines wrap. The section says when there is no rigged mesh or no
+  Animator, since the pass runs only where the per-entity palette lives. The weapon pose itself
+  is edited with the socket gizmo on the weapon, and the markers with the ordinary gizmo; there
+  is no IK-specific gizmo. Icon `ICON_LC_HAND_GRAB`; **Add
+  Component → Two-Hand IK**.
 - Bone attachment: **Target** is a drop from the outliner (zero / Parent button = hierarchy parent),
   and **Joint** is a combo over the *target's* `skeleton.JointNames`, not this entity's — the
   inspector has not previously read another entity's mesh for any component. A crosshair next to

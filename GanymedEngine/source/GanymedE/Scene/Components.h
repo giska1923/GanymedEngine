@@ -365,14 +365,33 @@ namespace GanymedE {
 		float LeftWeight = 1.0f;
 		bool Enabled = true;
 
+		// What the pass made of a hand this frame. The pass is the one place that decides why a
+		// hand is not solved; the inspector and the overlay read this rather than re-deriving
+		// the rules. Solved means measured: Reached and Stretch hold, and the arm moved unless
+		// its weight is 0.
+		enum class HandStatus : uint8_t
+		{
+			NotEvaluated = 0, // no pass ran: no animator, mesh not loaded, pose not sampled
+			Disabled,
+			NoWeapon,         // no child has a BoneAttachmentComponent on this rig
+			NoWeaponFrame,    // the socket joint does not resolve, or the skin cannot be inverted
+			NoJoint,          // a chain joint is not on this mesh
+			NoMarker,         // the weapon has no child with the marker's name
+			WeaponInArm,      // the weapon is socketed inside this arm, which carries it
+			Unsolvable,       // not one limb, or a zero-length bone
+			Solved
+		};
+
 		// Runtime. Not serialized. Resolved holds joint hints (right upper/lower/end, left
 		// upper/lower/end, then the weapon's socket joint), checked by name every frame, so a
-		// stale one costs a search, never a wrong joint. The per-hand results are rewritten on
-		// every evaluation and cleared first, so a copy never shows the source scene's reach.
+		// stale one costs a search, never a wrong joint. Everything below it is cleared and
+		// rewritten on every evaluation, so a copy never shows the source scene's reach.
 		std::array<int32_t, 7> Resolved{ -1, -1, -1, -1, -1, -1, -1 };
-		std::array<bool, 2> Valid{ false, false };     // chain, marker and solve all usable
+		std::array<HandStatus, 2> Status{ HandStatus::NotEvaluated, HandStatus::NotEvaluated };
 		std::array<bool, 2> Reached{ false, false };   // see TwoBoneResult
 		std::array<float, 2> Stretch{ 0.0f, 0.0f };    // marker distance / arm length
+		UUID Weapon{ 0 };                               // the weapon the pass found
+		std::array<UUID, 2> Markers{ UUID{ 0 }, UUID{ 0 } };
 
 		TwoHandIKComponent() = default;
 		TwoHandIKComponent(const TwoHandIKComponent&) = default;

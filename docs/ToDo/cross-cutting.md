@@ -380,6 +380,25 @@ Two ways to do it, and the choice is the whole of the work:
 Either way `UI.SetHealth`/`UI.SetScore` should stay as they are - a HUD that every game has wants
 the short call, and the general path is for the rest.
 
+## Editor text outside Latin-1 renders as "?"
+
+`EditorFonts::AddFace` loads Inter with ImGui's default glyph range, Basic Latin plus Latin-1
+Supplement (U+0020–U+00FF), and merges only Lucide's icon range on top. Any other character in
+UI text is drawn as "?". The encoding is not the problem: `/utf-8` is set, and the bytes reach
+ImGui intact.
+
+The em dash is the common case: eleven UI strings across `AssetPreview`, `AssetInspectorPanel`,
+`MapPanel` and the aim-offset readout in `SceneHierarchyPanel`. Three of them are a bare "—"
+placeholder in the clip tables, so those cells show a lone "?". The problem was found in the
+two-hand IK inspector (H3 of [TWO_HAND_IK.md](TWO_HAND_IK.md)), whose own strings were switched to
+ASCII rather than fixed here.
+
+**The fix** is a glyph-range array for the two Inter faces: the default range plus General
+Punctuation (U+2010–U+205E), which covers dashes, curly quotes, the ellipsis and the bullet.
+Build the array with `ImFontGlyphRangesBuilder`, or as a static, and keep it alive past the
+atlas build, as the Lucide range already is. Glyphs Inter lacks would still fall back to "?".
+The cost is a slightly larger atlas.
+
 ## A shipped Dist build is not self-contained
 
 `staticruntime "off"` in both `GanymedEngine/premake5.lua` and `GanymedRuntime/premake5.lua`, in

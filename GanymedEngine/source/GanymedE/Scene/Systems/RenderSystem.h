@@ -42,6 +42,9 @@ namespace GanymedE {
 		// ride SubmitMesh. The declaration itself was Phase 2 (ordering lock).
 		using ParticleView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<ParticleEmitterComponent>>;
 		using MarkerView   = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<MarkerComponent>>;
+		// The skeleton overlay draws two-hand IK's markers and its out-of-reach lines from what
+		// AnimationSystem's pass recorded. Declared so ValidateOrdering holds the reader after it.
+		using HandIKAccess = ECS::AccessView<ECS::RO<TwoHandIKComponent>>;
 
 		using Views = TypeList<
 			MeshView,
@@ -54,7 +57,8 @@ namespace GanymedE {
 			SphereColliderView,
 			CapsuleColliderView,
 			ParticleView,
-			MarkerView
+			MarkerView,
+			HandIKAccess
 		>;
 
 		using ECS::System<RenderSystem>::System;

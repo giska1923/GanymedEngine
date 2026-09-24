@@ -147,9 +147,15 @@ copyable, no behavior beyond small helpers.
   - `RightWeight` / `LeftWeight` (0–1, default 1) and `Enabled`. Every authored field is
     omitted when it holds its default, so the Meshy defaults serialize as `{}`.
   - Runtime and never serialized: the joint hints (`Resolved`, seven: both chains, then the
-    weapon's socket joint), and per hand `Valid`, `Reached` and `Stretch`. The hints are checked by
-    name. The results are cleared and rewritten on every evaluation, so `Scene::Copy` and undo
-    carry them without a sweep.
+    weapon's socket joint); per hand `Status`, `Reached` and `Stretch`; and the `Weapon` and
+    `Markers` UUIDs the pass found. The hints are checked by name. Everything else is cleared and
+    rewritten on every evaluation, so `Scene::Copy` and undo carry it without a sweep.
+  - `Status` (`HandStatus`) is the pass's verdict per hand: `NotEvaluated` (no pass ran: no
+    animator, or the mesh is not loaded), `Disabled`, `NoWeapon`, `NoWeaponFrame` (the socket joint
+    or the skin transform is unusable), `NoJoint`, `NoMarker`, `WeaponInArm`, `Unsolvable`, or
+    `Solved`. `Solved` means measured: `Reached` / `Stretch` hold, and the arm moved unless its
+    weight is 0. The inspector readout and the skeleton overlay read these fields; neither
+    re-derives the pass's rules.
 
   **Markers:** a marker is a **direct child of the weapon** found by name. Its local transform is
   a **wrist frame** in the weapon's space: the hand joint's origin and axes as `TryGetJointFrame`
@@ -362,7 +368,8 @@ the frame, so the two cannot disagree. For each hand the pass then:
 The right hand is solved first, then the left. The chains are independent, and the weapon frame is
 final before either moves.
 
-A hand is skipped whole, with one warning per entity per distinct message, in any of these cases:
+A hand is skipped whole, with one warning per entity per distinct message and its reason in
+`Status`, in any of these cases:
 
 - a joint name does not resolve;
 - the weapon has no child with the marker's name;
@@ -553,7 +560,14 @@ These policies live in this system:
   default false; editor Visualizers, default on). Joint frames come from `TryGetJointFrame`, so
   the overlay cannot drift from a socket. Per posed entity: a line to each parent, a 3-line cross
   at the joint (sized from bone length, not a wire sphere), a short +Y stub on leaves, and an
-  axis triad only on the highlighted joint. `ShowAllSkeletons` draws every rig; otherwise only
+  axis triad only on the highlighted joint. A rig with a `TwoHandIKComponent` also gets a cross
+  at each marker the pass recorded, drawn along the marker's own X/Y/Z in the axis colours (the
+  axes are the wrist frame it asks for, to line up against the hand joint's), and a wrist→marker
+  line in the accent colour while that hand is `Solved` but not `Reached`. It reads the pass's
+  fields through a declared `RO<TwoHandIKComponent>` access, which also orders it after
+  `AnimationSystem`. The lines are one pixel and come out pale after tone mapping; they are
+  drawn with the same depth rule as the bones, so a marker behind the weapon is hidden unless
+  X-ray is on. `ShowAllSkeletons` draws every rig; otherwise only
   the current selection and its hierarchy (select the capsule, see the body's bones).
   `SkeletonXRay` (default true) submits those lines with depth testing off. Joint-name labels
   are editor-side ImGui, and only for the highlighted joint plus its parent and children.
@@ -709,7 +723,7 @@ anyway.
 
 ### What is registered
 
-41 types, 161 members (the boot log prints both — a count far below that is the cheapest signal that a
+41 types, 163 members (the boot log prints both — a count far below that is the cheapest signal that a
 registration block was dropped by the linker). Measured at editor boot after `TwoHandIKComponent`:
 
 - The **30 components** — all 27 `ComponentList` entries, plus `IDComponent` and `TagComponent`

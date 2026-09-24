@@ -1,7 +1,8 @@
 # Milestone — Two-hand weapon IK
 
-**Status: H1–H2 done on `master` (the solver; the component, the pass, serialization and Lua).
-H3–H6 planned.** The component has no editor UI until H3.
+**Status: H1–H3 done on `master` (the solver; the component, the pass, serialization and Lua;
+the inspector section and the overlay). H4–H6 planned.** H3's three interactive checks (drag the
+rifle, drag a marker, scrub) have not been done by hand yet; see H3's notes.
 
 > **Engine and editor milestone.** H1–H4 touch `GanymedEngine/source/` or `GanymedEditor/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`. H5 is game content
@@ -92,7 +93,7 @@ a *Two Bone IK Constraint* per arm, targets parented to the weapon, and a *Multi
 |---|---|---|---|
 | **H1** | Analytic two-bone IK over globals, with boot self-tests — **done** | `master` | ~0.75 day |
 | **H2** | `TwoHandIKComponent`, weapon frame resolution, the pass, serialization, Lua — **done** | `master` | ~1 day |
-| **H3** | Inspector section, reach readouts, overlay | `master` | ~0.75 day |
+| **H3** | Inspector section, reach readouts, overlay — **done** (interactive checks pending) | `master` | ~0.75 day |
 | **H4** | Aim lock: the barrel onto the aim direction | `master` | ~0.5 day |
 | **H5** | Proving Ground: rifle onto `Spine`, `Grip`/`Support` markers, measured | `first-game` | ~0.75 day |
 | **H6** | Docs, close | both | ~0.25 day |
@@ -418,6 +419,64 @@ clear of the H1 near-full-reach risk.
 | Drag the rifle with the socket gizmo | Hands follow live; reach readout updates |
 | Drag a marker past reach | Readout says clamped; overlay line appears |
 | Scrub the animator | Hands stay on the markers through the clip |
+
+### Execution notes (2026-09-24)
+
+Landed on `master`. The current behaviour is in [editor.md](../editor/editor.md) (the section) and
+[scene.md](../engine/scene.md) (`HandStatus`, the overlay). These notes cover where the build
+departed from the steps above, and what was and was not verified.
+
+**1. The pass states its verdict; the editor only words it.** Step 1 asked for the readout to say
+which thing failed. Re-deriving that in the editor would have duplicated the pass's rules, and
+could drift from them: the weapon search, name resolution, the marker lookup, the
+socket-inside-the-arm test. So the pass records it:
+
+- `TwoHandIKComponent::HandStatus` per hand, set at each point where the pass gives up on a hand;
+- the `Weapon` and `Markers` UUIDs it found.
+
+`Status == Solved` replaces H2's `Valid` array, which it made redundant. All of these are
+runtime, cleared every evaluation. The overlay reads the same fields. Reflection went from 161 to
+163 members.
+
+**2. The marker cross is a coloured X/Y/Z cross, not a plain one.** A marker is a wrist *frame*,
+and lining its axes up against the hand joint's is half the authoring job. A single-colour cross
+would show where the marker is but not how it is turned.
+
+**3. The overlay lives in `RenderSystem::DrawSkeletonGizmos`, not the editor.** That is where the
+skeleton overlay already is, so the markers draw in Play too and follow the same selection and
+X-ray rules. `RenderSystem` declares `AccessView<RO<TwoHandIKComponent>>`, so `ValidateOrdering`
+keeps it after `AnimationSystem`.
+
+**4. Found, not fixed: the editor font has no em dash.** The inspector font is Inter, loaded with
+ImGui's default glyph range (Latin-1), so U+2014 renders as "?". This affects eleven existing
+UI strings across four panels, including the aim-offset readout. The new strings use ASCII. See
+[cross-cutting.md](cross-cutting.md#editor-text-outside-latin-1-renders-as-).
+
+**Verification.** The rig was `ArmoredHumanoid` from `first-game`, through the H2 scratch
+worktree and scenes. A temporary startup hook selected `Body`, framed the camera and scrolled
+the inspector; the hook has been removed. Evidence is screen captures of the running Debug editor
+(PowerShell `CopyFromScreen`), read back as images:
+
+| Probe | Result |
+|---|---|
+| Section and readout, both markers in reach | Weapon line "Rifle (socket on Spine)", the six combos and both markers correct. "Reach 61% of the arm" (right) and "Reach 87%" (left), matching H2's measured stretch of 0.608 |
+| Marker past reach (`Support` 1.0 m further along the barrel) | Left readout, in the accent colour: "Clamped: marker at 276% of the arm". The viewport shows the left arm straight toward the muzzle and a wrist→marker line off-frame. Sampled colour (183, 175, 186) against (131, 130, 125) background: the accent, washed pale |
+| Marker cross at the wrist | Pale red and green strokes crossing at the left wrist's joint star. `Grip` is occluded by the rifle when viewed from the left, as expected with depth test on |
+| Missing marker (`SupportX`) | "The weapon has no child named 'Support': hand on the clip.", wrapped. The Marker combo lists the weapon's children, so the fix is one click |
+| Boot | No ordering violation, no warnings. Debug and Release editor and Debug runtime build with no warnings |
+
+**Not verified: the three interactive rows of the table above.** Dragging the rifle with the socket
+gizmo, dragging a marker past reach, and scrubbing the animator all need hands on the editor. The
+harness here can launch it and capture it, but cannot drive it. Also not exercised:
+
+- undo of a combo edit;
+- multi-select propagation;
+- the `Disabled`, `NoWeapon`, `NoWeaponFrame`, `NoJoint`, `WeaponInArm` and `Unsolvable` wordings,
+  whose statuses come from code paths H2 already measured, and which have not been seen on screen.
+
+The live-follow behaviour is structural: the pass reads the socket and marker transforms every
+frame in edit mode, and H2's clip sweep measured the hands on the markers through all five clips.
+But nobody has watched it. **Before H5, check the three rows by hand.**
 
 ---
 
