@@ -12,12 +12,14 @@
 #include "GanymedE/Assets/AssetWatcher.h"
 #include "GanymedE/Assets/CompiledCache.h"
 #include "GanymedE/Core/Log.h"
+#include "GanymedE/Utils/PlatformUtils.h"
 
 #include <imgui/imgui.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -139,6 +141,28 @@ namespace GanymedE {
 		{
 			return std::filesystem::absolute(path).lexically_normal();
 		}
+
+		// git's binary test: a NUL in the first 8000 bytes. Content, not extension, so a new
+		// text format needs no list edit. UTF-16 text reads as binary under it - git makes the
+		// same trade, and nothing under assets/ is UTF-16.
+		bool LooksLikeText(const std::filesystem::path& path)
+		{
+			std::ifstream file(path, std::ios::binary);
+			if (!file)
+				return false;
+
+			char head[8000];
+			file.read(head, sizeof(head));
+			return std::memchr(head, '\0', static_cast<size_t>(file.gcount())) == nullptr;
+		}
+
+#if defined(GE_PLATFORM_WINDOWS)
+		constexpr const char* kRevealLabel = "Show in Explorer";
+#elif defined(GE_PLATFORM_MACOS)
+		constexpr const char* kRevealLabel = "Reveal in Finder";
+#else
+		constexpr const char* kRevealLabel = "Open Containing Folder";
+#endif
 
 	}
 
@@ -389,22 +413,46 @@ namespace GanymedE {
 
 	void ContentBrowserPanel::DrawItemContextMenu(const ListingItem& item)
 	{
-		if (item.IsDirectory || !ImGui::BeginPopupContextItem())
+		if (!ImGui::BeginPopupContextItem())
 			return;
 
+		// Sniffed once as the menu opens, not on every frame it stays up.
+		if (ImGui::IsWindowAppearing())
+			m_ContextItemIsText = !item.IsDirectory && LooksLikeText(item.Path);
+
+		if (m_ContextItemIsText && ImGui::MenuItem("Open in VS Code"))
+		{
+			if (!DesktopShell::OpenInVSCode(item.Path))
+				GE_CORE_WARN("Could not start VS Code for '{0}' - is it installed, with its bin folder on PATH?", item.Name);
+		}
+
+		if (ImGui::MenuItem(kRevealLabel))
+		{
+			if (!DesktopShell::RevealInFileBrowser(item.Path))
+				GE_CORE_WARN("Could not reveal '{0}' in the file browser", item.Name);
+		}
+
+		if (item.IsDirectory)
+		{
+			ImGui::EndPopup();
+			return;
+		}
+
 		const std::filesystem::path relativePath = MakeAssetRelative(item.Path);
+		const AssetHandle handle = AssetManager::GetHandle(relativePath);
+		if (IsImportableAsset(item.Type) || IsAssetHandleValid(handle))
+			ImGui::Separator();
 
 		if (IsImportableAsset(item.Type))
 		{
 			if (ImGui::MenuItem("Import"))
 			{
-				AssetHandle handle = AssetManager::ImportAsset(relativePath);
-				if (IsAssetHandleValid(handle))
+				AssetHandle imported = AssetManager::ImportAsset(relativePath);
+				if (IsAssetHandleValid(imported))
 					GE_CORE_INFO("Imported '{0}'", relativePath.string());
 			}
 		}
 
-		AssetHandle handle = AssetManager::GetHandle(relativePath);
 		if (IsAssetHandleValid(handle))
 		{
 			if (ImGui::MenuItem("Reload"))

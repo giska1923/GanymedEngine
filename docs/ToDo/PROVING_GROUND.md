@@ -9,7 +9,7 @@ A small third-person shooter, built to find out what is wrong with the engine. T
 instrument, not the goal: every phase below is chosen for the engine surface it puts under load,
 and a phase that would be fun but tests nothing already built is cut.
 
-The premise is that this engine has never had a *consumer* that runs for more than a minute. Every
+The premise is that this engine has never had a _consumer_ that runs for more than a minute. Every
 subsystem was verified by a probe written for that change and deleted afterwards, so what is
 untested is not any one function but the **interaction** of the pieces over time: spawning while
 audio plays while assets stream while physics runs.
@@ -43,10 +43,10 @@ Sound. It runs in `GanymedRuntime`, not only in the editor.
 
 The game lives on a branch; engine work does not.
 
-| Where | What | Rule |
-|---|---|---|
-| `master` | Everything under `GanymedEngine/source/`, `GanymedEditor/source/`, `GanymedRuntime/source/`, premake, scripts | Engine features the game needs are built, verified and merged **here first** |
-| `game/proving-ground` | The game's assets, scenes, prefabs and Lua | **No change under `GanymedEngine/source/`**, ever |
+| Where                 | What                                                                                                          | Rule                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `master`              | Everything under `GanymedEngine/source/`, `GanymedEditor/source/`, `GanymedRuntime/source/`, premake, scripts | Engine features the game needs are built, verified and merged **here first** |
+| `game/proving-ground` | The game's assets, scenes, prefabs and Lua                                                                    | **No change under `GanymedEngine/source/`**, ever                            |
 
 Checkable, which is the point:
 
@@ -76,7 +76,7 @@ to watch, since the runtime's registry is tracked on purpose (a shipped game nee
 
 ## Phase 0 — engine prerequisites, on `master`, before the branch exists
 
-These are known *now*. Doing them first collapses most of the branch-juggling that would otherwise
+These are known _now_. Doing them first collapses most of the branch-juggling that would otherwise
 happen three separate times mid-game.
 
 ### P0.1 — Give the engine a concept of a project — **DONE**
@@ -96,7 +96,7 @@ both boot unchanged, zero errors and zero warnings.
   browser's home. All three **already derived from a single accessor** — `AssetPaths.h` had
   centralised the root before this milestone was written. The change was small.
 - **The blocker.** The paragraph below argued the cheap escape fails because `EditorLayer` loads
-  its checkerboard and HUD from disk. That is only true of moving the *working directory*, which
+  its checkerboard and HUD from disk. That is only true of moving the _working directory_, which
   the actual fix does not do. It moves the project root and leaves engine- and editor-owned assets
   resolving against CWD, so the chrome was never at risk.
 
@@ -105,7 +105,7 @@ What it did turn up was a real latent bug: `ContentBrowserPanel.cpp` defined
 static-initialisation-time snapshot taken before `main`. It would have frozen the default root
 forever. Removed, and the reason recorded in `AssetPaths.cpp` so it is not reintroduced.
 
-*Original text follows.*
+_Original text follows._
 
 `AssetManager::Init(bool writableAssets)` takes no asset root. The root is hard-coded `assets/`
 relative to each app's working directory, so the editor can only ever open `GanymedEditor/assets/`
@@ -120,7 +120,7 @@ Changing the working directory almost works, and then does not: `EditorLayer` lo
 breaks when pointed at a tree that has no editor assets.
 
 **What gets built:** an asset-root parameter on `AssetManager::Init`, plus the editor's own few
-disk-loaded assets resolved against the *editor's* install location rather than the project's.
+disk-loaded assets resolved against the _editor's_ install location rather than the project's.
 Every other engine has this concept — Unity's project folder, UE's `.uproject` — and this one
 skipped it because it only ever had one project.
 
@@ -136,7 +136,7 @@ Two consequences worth stating, because they change the branch policy above:
   game would be overwriting tracked demo content that master still owns.
 - **The copy-to-runtime step does not disappear — it moves.** A shipped game's working directory
   is its install folder, so P7 still copies `Game/assets/` next to the runtime executable. What
-  P0.1 buys is that the copy stops being a *per-iteration* step and becomes a *packaging* step.
+  P0.1 buys is that the copy stops being a _per-iteration_ step and becomes a _packaging_ step.
   That is the actual win; it is not "no more copying".
 
 **This is the largest Phase 0 item and the one most likely to be underestimated.** See Decision 4.
@@ -158,12 +158,12 @@ wall-sticking are still absent, and P1's gate is what decides whether they are n
 **The probe found an engine issue that has nothing to do with physics:** the first frame's timestep
 is **1.38 seconds** (boot: asset scan, shader loads, first mesh applies), and frame 2 is still
 0.047. The first version of this test gated its push on `if t < 0.5`, which was already false the
-first time it ran, so nothing was pushed and the test *passed cleanly for the wrong reason*. Any
+first time it ran, so nothing was pushed and the test _passed cleanly for the wrong reason_. Any
 gameplay timer will misfire the same way. Recorded in
 [cross-cutting.md](cross-cutting.md#the-first-frames-timestep-is-over-a-second); it will be met
 again in P1.
 
-*Original text follows.*
+_Original text follows._
 
 `RigidBodyComponent` is `{Type, Mass, LinearDamping, AngularDamping, UseGravity}`. **There is no
 rotation lock.** A dynamic capsule driven by `SetLinearVelocity` tips over the first time it
@@ -198,7 +198,7 @@ upward cast and for a 2 m ray at a 5 m floor, an unnormalised direction `(0,-37.
 identical result to the normalised one, the capsule hit at 1.650 without `ignore` and the wall at
 11.500 with it, and a zero-length direction missing without crashing.
 
-*Original text follows.*
+_Original text follows._
 
 There is not one raycast call in the engine. Jolt has `NarrowPhaseQuery::CastRay`; it needs
 wrapping and binding to Lua. Needed **twice**: enemy line-of-sight acquisition, and any weapon that
@@ -283,8 +283,8 @@ when `TANGENT` is absent and the material has a normal map.
 `RigidBodyComponent::IsSensor` maps to Jolt's `mIsSensor`: a body that reports contacts and causes
 none. Landed on `master` with the character inner body, because P5 could not be built without it.
 
-**This entry was wrong, and worth keeping wrong here.** It said pickups and heal spots *work
-without this* and would merely feel bad — true when it was written, and false by the time P5
+**This entry was wrong, and worth keeping wrong here.** It said pickups and heal spots _work
+without this_ and would merely feel bad — true when it was written, and false by the time P5
 arrived. Giving the player presence made it a **Kinematic** inner body, and Jolt refuses to pair two
 non-dynamic bodies; the single exemption in `Body::sFindCollidingPairsCanCollide` is a sensor. So a
 plain static box is not solid-when-it-should-be-walkthrough, it is **undetectable**. See
@@ -334,11 +334,11 @@ real failure behind clean-looking numbers.
 
 **Gate run - 130 s of autopilot across a flat plane with three obstacles:**
 
-| Failure mode | Result |
-|---|---|
-| tipping | **PASS** - `maxTilt = 0.0000` for the whole run; the rotation lock never slipped |
-| sinking | **PASS** - y range 0.940-1.380 against a settled 0.950. The low is 12 mm of solver penetration, the high is the capsule climbing the step. No downward drift |
-| sticking | **FAIL** - jams on Block B's corner at `(-8.0, 7.0)` on **every lap**, ten times in 130 s, always the same spot |
+| Failure mode | Result                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| tipping      | **PASS** - `maxTilt = 0.0000` for the whole run; the rotation lock never slipped                                                                             |
+| sinking      | **PASS** - y range 0.940-1.380 against a settled 0.950. The low is 12 mm of solver penetration, the high is the capsule climbing the step. No downward drift |
+| sticking     | **FAIL** - jams on Block B's corner at `(-8.0, 7.0)` on **every lap**, ten times in 130 s, always the same spot                                              |
 
 Two useful answers fell out of it:
 
@@ -353,8 +353,8 @@ The route's stuck-escape (skip to the next waypoint after 1.5 s pinned) keeps th
 is a **workaround in the game**, not a fix in the engine, and it is the only reason `worstStuck`
 reads 1.51 s instead of 124 s.
 
-**This fires Decision 1's own trigger.** The plan said: *if P1's gate needs more than one attempt,
-stop and do `CharacterVirtual`.* It took three. Two of those were route bugs of mine - an arc that
+**This fires Decision 1's own trigger.** The plan said: _if P1's gate needs more than one attempt,
+stop and do `CharacterVirtual`._ It took three. Two of those were route bugs of mine - an arc that
 drifted off the map, then waypoints authored inside solid blocks - but the third failure belongs to
 the engine, and it is precisely the one Decision 1 named as most likely to bite.
 
@@ -390,21 +390,21 @@ Git does not track empty directories, so these appear in a clone only once they 
 
 #### What a model has to satisfy
 
-| Requirement | Why |
-|---|---|
-| **GLB (glTF 2.0)** | `cgltf` is the only importer |
-| **Albedo + Normal + *combined* MetallicRoughness** | The only three map handles `Material` has. A separate AO or emissive map is imported and then ignored |
-| **1 unit = 1 metre** | The player capsule is 1.9 m tall: radius 0.35, half-height 0.6 |
-| **Y-up, -Z forward** | What `Player.lua` assumes when it derives forward from yaw |
-| **Box-composable silhouette** | **There are no mesh colliders.** Every collider is a box, sphere or capsule placed by hand, so a curved wall looks right and collides wrong |
-| **Low poly** | Not for framerate. A cold mesh apply is 5.50 ms and two thirds of that is `GenerateSidecars` writing files on the main thread ([assets.md](assets.md)) |
+| Requirement                                        | Why                                                                                                                                                    |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **GLB (glTF 2.0)**                                 | `cgltf` is the only importer                                                                                                                           |
+| **Albedo + Normal + _combined_ MetallicRoughness** | The only three map handles `Material` has. A separate AO or emissive map is imported and then ignored                                                  |
+| **1 unit = 1 metre**                               | The player capsule is 1.9 m tall: radius 0.35, half-height 0.6                                                                                         |
+| **Y-up, -Z forward**                               | What `Player.lua` assumes when it derives forward from yaw                                                                                             |
+| **Box-composable silhouette**                      | **There are no mesh colliders.** Every collider is a box, sphere or capsule placed by hand, so a curved wall looks right and collides wrong            |
+| **Low poly**                                       | Not for framerate. A cold mesh apply is 5.50 ms and two thirds of that is `GenerateSidecars` writing files on the main thread ([assets.md](assets.md)) |
 
 #### Importing one
 
 1. Drop the `.glb` into the right folder. The content browser's tree refreshes every 0.25 s, so it
    appears on its own - but appearing is not importing.
 2. **Content Browser → Rescan assets/.** This is the step that mints the handle and writes the
-   `.meta`. The asset watcher does *not* do it: it tracks known assets for modification and has no
+   `.meta`. The asset watcher does _not_ do it: it tracks known assets for modification and has no
    notion of a file that was not there before.
 3. Check the log. `Asset scan: N files, ... M handles minted, M sidecars written` should name your
    model. Nothing `quarantined`, no `handle collisions`.
@@ -437,8 +437,8 @@ The chain is four billed calls per character — `text-to-3d` preview (20 credit
   centred on the origin; `height_meters: 1.8` produced exactly 1.800 m with `y[0, 1.8]`, feet at
   the origin, which is the convention the prefabs already assume. No scale factor, no offset.
 - **The rig step strips the normal and metallicRoughness maps.** `enable_pbr: true` works — the
-  *refine* output carries all three — but the rigged output has base colour only. They can be
-  grafted back: the UV *sets* of the refined and rigged meshes overlap 100% (rigging reorders
+  _refine_ output carries all three — but the rigged output has base colour only. They can be
+  grafted back: the UV _sets_ of the refined and rigged meshes overlap 100% (rigging reorders
   vertices for skinning but does not re-unwrap), so the refine task's maps still apply. That is
   what `<Name>_textures/` holds, and why those `.gmat` files are hand-authored rather than
   generated — `GenerateSidecars` only writes when the `.gmat` does not already exist, so
@@ -476,13 +476,13 @@ engine's forward is -Z (a pi rotation on the `Body` child), and `doubleSided` is
 
 #### Every `.gmat` in this tree was decorative until now
 
-`StaticMeshComponent::MaterialOverrides` is empty by default, and empty means *use the material
-that came with the mesh*. **No scene in this repository had ever filled a slot**, so every `.gmat`
+`StaticMeshComponent::MaterialOverrides` is empty by default, and empty means _use the material
+that came with the mesh_. **No scene in this repository had ever filled a slot**, so every `.gmat`
 — the three buildings' included, which predate all of this — was written, committed, and never
 read by anything.
 
 It is invisible because the generated sidecar is a faithful copy of the imported material: same
-albedo, same maps, same flags. It only starts to matter the moment you *edit* one, and then it
+albedo, same maps, same flags. It only starts to matter the moment you _edit_ one, and then it
 fails silently — the change is simply ignored, with no warning, because nothing is wrong.
 
 That is exactly what happened here. The grafted normal and metallicRoughness maps and
@@ -519,7 +519,7 @@ test costs one screenshot from inside.
 `BoxTextured.glb` was doing four unrelated jobs. All four references are out of the scene:
 
 - **Block A and Block B** were P1-era cover, superseded by P2's buildings. `ROUTE`'s waypoints
-  were authored against them (*"along Block A's east face"*), so the labels are now marked as
+  were authored against them (_"along Block A's east face"_), so the labels are now marked as
   history — the path is what the gate measures, not what it passes.
 - **Step** (8 x 0.2 x 1) is deleted on request. It was the thing in the scene deliberately
   exercising `CharacterControllerComponent::StepHeight` (0.4), and nothing was authored to
@@ -575,11 +575,11 @@ The player's clip set was regenerated as a **weapon-carry set**, which is step A
 `SKELETAL_ATTACHMENTS.md` on `master`. No engine change is involved and no weapon exists yet: the
 character mimes holding one, which is deliberately the cheap disproof before the socket is wired.
 
-| Role | Library action | Clip name in the glb |
-|---|---|---|
-| idle | `334` Lower Weapon, Look, Raise | `Lower_Weapon_Look_Raise` |
+| Role | Library action                    | Clip name in the glb          |
+| ---- | --------------------------------- | ----------------------------- |
+| idle | `334` Lower Weapon, Look, Raise   | `Lower_Weapon_Look_Raise`     |
 | walk | `234` Walk Forward While Shooting | `Walk_Forward_While_Shooting` |
-| run | `98` Run and Shoot | `Run_and_Shoot` |
+| run  | `98` Run and Shoot                | `Run_and_Shoot`               |
 
 **The selection criterion was grip consistency, not individual quality.** A socket offset is fixed
 relative to the hand joint, so one offset has to work across all three clips. `511` Rifle Charge
@@ -588,15 +588,15 @@ chest height — a rifle placed correctly for those two would be wrong in that o
 
 Measured on the installed file:
 
-| clip | duration | head y | hips y | head z | right hand y |
-|---|---|---|---|---|---|
-| `Lower_Weapon_Look_Raise` | 5.20 s | 1.501 | 0.965 | +0.070 | 1.149 |
-| `Walk_Forward_While_Shooting` | 3.27 s | 1.526 | 0.970 | -0.023 | 1.432 |
-| `Run_and_Shoot` | 0.67 s | 1.469 | 0.989 | +0.225 | 1.312 |
+| clip                          | duration | head y | hips y | head z | right hand y |
+| ----------------------------- | -------- | ------ | ------ | ------ | ------------ |
+| `Lower_Weapon_Look_Raise`     | 5.20 s   | 1.501  | 0.965  | +0.070 | 1.149        |
+| `Walk_Forward_While_Shooting` | 3.27 s   | 1.526  | 0.970  | -0.023 | 1.432        |
+| `Run_and_Shoot`               | 0.67 s   | 1.469  | 0.989  | +0.225 | 1.312        |
 
 **Gate: two of three criteria met, and the third was the wrong criterion.** Head height spread is
 5.6 cm and hip height spread 2.4 cm, both at or inside the 5 cm the plan asked for. Forward offset
-spread is 24.7 cm, which the plan would call a failure — but that number is the *head's* lean,
+spread is 24.7 cm, which the plan would call a failure — but that number is the _head's_ lean,
 and a run leaning 22 cm further forward than a walk is what running looks like. What the criterion
 was actually protecting against is the root sitting off-centre, and the root is centred: the
 detrended clip's mean hips XZ is (-1.0, -2.9) cm against a rest pose of (-1.0, -2.9) cm, with
@@ -640,22 +640,22 @@ the trigger gap, then the pistol grip at x +0.21..+0.55. Up is +Y.
 The first attempt took the barrel axis to be `LeftHand - RightHand`, on the reasoning that the
 support hand sits on the handguard. **Measured, that is false for this animation library** — at
 idle the hands are 0.937 m apart. The rifle came out 40 deg across the chest, which is exactly
-what rendered. The lesson is not about matrices: a premise about what a pose *means* is as much a
+what rendered. The lesson is not about matrices: a premise about what a pose _means_ is as much a
 thing to measure as the maths is.
 
 What is true is that the two shooting clips hold the right hand at a stable orientation relative
 to the character (14 deg and 22 deg of spread, and 16 deg between the clips). So the barrel is
 anchored to **mesh-space +Z** — the direction the rig faces — averaged over those two clips only,
 with `Lower_Weapon_Look_Raise` deliberately excluded: that clip swings the hand up to 108 deg,
-because lowering and raising the weapon is what it is *for*, and a socketed gun should follow it.
+because lowering and raising the weapon is what it is _for_, and a socketed gun should follow it.
 
 Verified by sweeping every clip rather than one frame:
 
-| Clip | barrel elevation | yaw off forward |
-|---|---|---|
-| `Run_and_Shoot` | -0.8 to -2.7 deg | 6.9-8.5 deg |
-| `Walk_Forward_While_Shooting` | +0.5 to +1.7 deg | 7.6-8.2 deg |
-| `Lower_Weapon_Look_Raise` | +16 to -78 deg | swings — the weapon is being lowered |
+| Clip                          | barrel elevation | yaw off forward                      |
+| ----------------------------- | ---------------- | ------------------------------------ |
+| `Run_and_Shoot`               | -0.8 to -2.7 deg | 6.9-8.5 deg                          |
+| `Walk_Forward_While_Shooting` | +0.5 to +1.7 deg | 7.6-8.2 deg                          |
+| `Lower_Weapon_Look_Raise`     | +16 to -78 deg   | swings — the weapon is being lowered |
 
 And in the engine, from a temporary probe: joint basis `(1.0000, 1.0000, 1.0000)`, joint
 translation `(0.015, 1.043, -0.422)` **metres**, socket basis `(0.45, 0.45, 0.45)`.
@@ -666,10 +666,10 @@ pass guessed them off a slice profile (grip at `[0.34, -0.19, 0]`) and a rule of
 compounded into a rifle floating a hand's width clear of the grip, correctly aimed the whole time,
 which is what makes that kind of error easy to accept. What they should be:
 
-| | measured | how |
-|---|---|---|
-| hand centre | `(-0.0553, +0.0777, +0.0206)` joint space, 9.8 cm from the wrist | weighted centroid of the vertices bound to `RightHand` — only meaningful once the mis-bound hip vertices were gone |
-| grip centroid | `(+0.3664, -0.2754, -0.0037)` rifle local | centroid of the geometry below the receiver, between the trigger gap and the butt plate |
+|               | measured                                                         | how                                                                                                                |
+| ------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| hand centre   | `(-0.0553, +0.0777, +0.0206)` joint space, 9.8 cm from the wrist | weighted centroid of the vertices bound to `RightHand` — only meaningful once the mis-bound hip vertices were gone |
+| grip centroid | `(+0.3664, -0.2754, -0.0037)` rifle local                        | centroid of the geometry below the receiver, between the trigger gap and the butt plate                            |
 
 `Offset = handCentre - R * (Scale * grip)`, asserted to land the grip on the hand centre
 (err 2e-17). That moved the rifle 8.2 cm to `[-0.2487, 0.1440, -0.0064]`. The muzzle then sits
@@ -701,7 +701,7 @@ upper-thigh vertices to `RightHand`. They are dragged to the hand whenever the a
 rig has been like this since it was generated; nothing about sockets was involved.
 
 **Why the obvious checks missed it.** Weights sum to exactly 1.0, every joint index is in range,
-there is one influence set and no vertex exceeds four influences — the data is *well-formed*, just
+there is one influence set and no vertex exceeds four influences — the data is _well-formed_, just
 wrong. Nor does distance from the bound joint catch it: in the bind pose the hand really is 27 cm
 from the hip, and some offenders sit only 12 cm from the wrist along the forearm axis, inside any
 envelope a real hand also has to fit in.
@@ -711,22 +711,22 @@ means walking up the arm, across the shoulder and down the torso. With the mesh 
 (UV seams duplicate vertices and would cut the graph) and a BFS out from each forearm, the two
 sides separate cleanly — and the **left hand, which this same rig got right, is the control**:
 
-| | welded verts | hops from forearm (median / 99th / max) |
-|---|---|---|
-| `LeftHand` | 209 | 5 / 8 / **8** |
-| `RightHand` | 272 | 5 / 28 / **28** |
+|             | welded verts | hops from forearm (median / 99th / max) |
+| ----------- | ------------ | --------------------------------------- |
+| `LeftHand`  | 209          | 5 / 8 / **8**                           |
+| `RightHand` | 272          | 5 / 28 / **28**                         |
 
 A hop limit of 12 — generous against the left hand's own maximum of 8 — re-weighted 847 vertices.
 Weight goes back to each vertex's other influences, which are already `RightUpLeg` and `Hips`;
-the 10 with no other influence were assigned by nearest bone *segment*, not nearest joint origin,
+the 10 with no other influence were assigned by nearest bone _segment_, not nearest joint origin,
 which on a limb picks the wrong end.
 
 **Measured result**, by skinning the mesh in Python and comparing triangle areas against bind:
 
-| | triangles >100 cm² | worst blow-up | total skinned area (bind 2.825 m²) |
-|---|---|---|---|
-| before | 7 | 144 cm², **47x** bind | 3.26 m² (+15%) |
-| after | **0** | — | 2.885 m² (+2%, normal deformation) |
+|        | triangles >100 cm² | worst blow-up         | total skinned area (bind 2.825 m²) |
+| ------ | ------------------ | --------------------- | ---------------------------------- |
+| before | 7                  | 144 cm², **47x** bind | 3.26 m² (+15%)                     |
+| after  | **0**              | —                     | 2.885 m² (+2%, normal deformation) |
 
 `ArmoredHumanoid.glb` is edited in place, handle unchanged, original kept at
 `archive_unrigged/ArmoredHumanoid.glb.preweights`. The left hand has a milder version of the same
@@ -743,7 +743,7 @@ paragraph); the strafe clip is asset content only. Original kept at
 **What was asked for and what exists.** The goal was a two-handed rifle set — aim idle, walk, run,
 strafe both ways, backpedal — to fix the lowered idle, the strafe slide past `TORSO_TWIST`, the
 reversed-clip backpedal and the left hand that never reaches the rifle (see
-[TWO_HAND_IK.md](TWO_HAND_IK.md)). Mixamo is Adobe's and has no API, so it cannot come through Meshy. Meshy's
+[TWO_HAND_IK.md](../history/TWO_HAND_IK.md)). Mixamo is Adobe's and has no API, so it cannot come through Meshy. Meshy's
 library (678 actions, listed free at `GET /openapi/v1/animations/library`) has **no rifle set, no
 rifle aim idle and no right strafe**; the rifle-adjacent clips are `233` / `529` / `541` backpedals,
 `528` / `527` left strafes, and turn-in-place clips.
@@ -778,11 +778,11 @@ playing them puts the rifle where the offline numbers said.
 
 **What each clip is worth, measured with the rifle placed as the socket places it:**
 
-| Clip | Hands apart | Right→left hand line | Barrel vs forward (current socket) | Verdict |
-|---|---|---|---|---|
-| `Walk_Backward_While_Shooting` | 42 cm | 27–31° across the body | +4..+7° yaw, +3..+6° up | **Same grip family as the forward walk** — the socket fits. The backpedal clip |
-| `Walk_Left_with_Gun` | 38–39 cm | **3–5° off forward** | **−26° yaw** | **A real forward two-handed hold**, hands exactly the rifle's grip-to-handguard length apart — but crouched (head 1.20 m vs ~1.5) and a different grip, so the current socket skews it 26° |
-| Text-to-Motion aim idle | 31–32 cm | 35–38° across | +90° yaw, +39° up | **Rejected**: hands crossed at the chest, not a forward aim; not imported |
+| Clip                           | Hands apart | Right→left hand line   | Barrel vs forward (current socket) | Verdict                                                                                                                                                                                    |
+| ------------------------------ | ----------- | ---------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Walk_Backward_While_Shooting` | 42 cm       | 27–31° across the body | +4..+7° yaw, +3..+6° up            | **Same grip family as the forward walk** — the socket fits. The backpedal clip                                                                                                             |
+| `Walk_Left_with_Gun`           | 38–39 cm    | **3–5° off forward**   | **−26° yaw**                       | **A real forward two-handed hold**, hands exactly the rifle's grip-to-handguard length apart — but crouched (head 1.20 m vs ~1.5) and a different grip, so the current socket skews it 26° |
+| Text-to-Motion aim idle        | 31–32 cm    | 35–38° across          | +90° yaw, +39° up                  | **Rejected**: hands crossed at the chest, not a forward aim; not imported                                                                                                                  |
 
 The aim idle came from Text-to-Motion (`prime`, 4 s): the first prompt timed out server-side
 (0 credits), the shorter retry succeeded (10 + 3 to apply) but produced the same across-the-chest
@@ -803,10 +803,10 @@ and downloads in `work\2026-09-24\`; `install` reproduces the installed asset by
 - **`528`'s hands sit on a forward rifle line**, so a clip-specific rifle placement along it
   would put the left hand on the handguard with no IK. IK was chosen instead, so the grip stops
   depending on how each clip and each future model happens to be authored — see
-  [TWO_HAND_IK.md](TWO_HAND_IK.md).
+  [TWO_HAND_IK.md](../history/TWO_HAND_IK.md).
 - **Still no aim idle.**
 
-#### Two-hand IK — the rifle on the chest, both hands on it (H5 of [TWO_HAND_IK.md](TWO_HAND_IK.md), 2026-09-24)
+#### Two-hand IK — the rifle on the chest, both hands on it (H5 of [TWO_HAND_IK.md](../history/TWO_HAND_IK.md), 2026-09-24)
 
 **What changed in the scene.**
 
@@ -856,13 +856,13 @@ and 0.521 m (left), and the rifle is 0.856 m.
 **Measured in the engine, over every clip at 1/30 s through the real pass, aim at 0.** These
 reproduce the offline model to three decimals:
 
-| Clip | Right reach | Left reach | Clamped (L) | Wrist → marker, reached frames | Barrel vs aim | Lock turns the rifle |
-|---|---|---|---|---|---|---|
-| `Walk_Forward_While_Shooting` | 53–54% | 74–79% | 0 / 99 | ≤ 3.9e-7 m, 3.8e-7 rad | 7.5e-5° | 0–6.8° |
-| `Run_and_Shoot` | 50–51% | 62–66% | 0 / 21 | ≤ 2.8e-7 m | 6.5e-5° | up to 44.7° |
-| `Walk_Backward_While_Shooting` | 60–61% | 78–87% | 0 / 39 | ≤ 3.0e-7 m | 3.0e-5° | 8.9–11.9° |
-| `Walk_Left_with_Gun` | 57% | 52–55% | 0 / 38 | ≤ 3.6e-7 m | 3.3e-5° | up to 54.8° |
-| `Lower_Weapon_Look_Raise` (idle) | 52–61% | 34–112% | **43 / 157** | ≤ 5.1e-7 m | 7.9e-5° | up to 74.7° |
+| Clip                             | Right reach | Left reach | Clamped (L)  | Wrist → marker, reached frames | Barrel vs aim | Lock turns the rifle |
+| -------------------------------- | ----------- | ---------- | ------------ | ------------------------------ | ------------- | -------------------- |
+| `Walk_Forward_While_Shooting`    | 53–54%      | 74–79%     | 0 / 99       | ≤ 3.9e-7 m, 3.8e-7 rad         | 7.5e-5°       | 0–6.8°               |
+| `Run_and_Shoot`                  | 50–51%      | 62–66%     | 0 / 21       | ≤ 2.8e-7 m                     | 6.5e-5°       | up to 44.7°          |
+| `Walk_Backward_While_Shooting`   | 60–61%      | 78–87%     | 0 / 39       | ≤ 3.0e-7 m                     | 3.0e-5°       | 8.9–11.9°            |
+| `Walk_Left_with_Gun`             | 57%         | 52–55%     | 0 / 38       | ≤ 3.6e-7 m                     | 3.3e-5°       | up to 54.8°          |
+| `Lower_Weapon_Look_Raise` (idle) | 52–61%      | 34–112%    | **43 / 157** | ≤ 5.1e-7 m                     | 7.9e-5°       | up to 74.7°          |
 
 - **No clamped frame in any shooting clip.** That is the plan's gate.
 - **The idle is held up at the chest, as the plan wanted.** The lock also keeps it on the aim,
@@ -898,7 +898,7 @@ Every check the P5 gate defines matched in all three runs:
 - route complete, and 0 errors.
 
 The counters after the route (damage taken, times downed, final position) differ. They differ just
-as much *between the two identical "after" runs*: health after probe 1 read 64 in one and 82 in
+as much _between the two identical "after" runs_: health after probe 1 read 64 in one and 82 in
 the other. So that difference is run-to-run variance, not the IK.
 
 The rest of P1–P7 was not re-run, on this argument: IK changes only the skinning palette and where
@@ -918,15 +918,15 @@ fire from the chest rather than the barrel.
 
 - **Three facing/animation defects, three unrelated causes** — all fixed, all worth remembering
   because none of them was visible in the asset and each failed differently:
-  - *The player did not turn with the camera.* `Body` hung off the capsule, which is
+  - _The player did not turn with the camera._ `Body` hung off the capsule, which is
     `LockRotation`, so it inherited no yaw. Reparented under `Yaw`. The caution recorded here
     earlier — that this would disturb what the gates measured — was wrong: the gates measure the
     capsule's position and its raycasts, and reparenting a **mesh** changes neither.
-  - *The orks ran backwards.* `Enemy.lua` writes `SetRotation(0, facing, 0)` onto the Body every
+  - _The orks ran backwards._ `Enemy.lua` writes `SetRotation(0, facing, 0)` onto the Body every
     frame, which **overwrote** the pi baked into the scene rather than composing with it, so the
     correction was erased on the first update. The pi belongs in the script. `self.facing` itself
     must not change, because `Sense()` raycasts along it.
-  - *The player looked smaller when running.* It was the opposite: the **Idle** clip drove a
+  - _The player looked smaller when running._ It was the opposite: the **Idle** clip drove a
     constant scale of **1.1765 on `Hips`**, the root joint, and nothing else — so the player was
     17.6%% too large while standing still. A Meshy retarget artifact (1.1765 = 1/0.85). Removing
     the 24 scale channels from that clip is enough, because `AnimationSystem::BuildPalette`
@@ -946,13 +946,12 @@ fire from the chest rather than the barrel.
 
   Two things the new download needed before it could be used, neither of which the first
   generation had:
-
   - **Real root motion.** `run_fast_4` travelled **3.759 m in 0.67 s**. Nothing extracts root
     motion, so it would have slid forward and snapped back every loop. Fixed by subtracting the
     straight line from first key to last on the Hips' X and Z — which removes the travel while
     keeping the sway and bob that make a run read as a run, and leaves the last key equal to the
     first, which is what a looping clip wants. Y is untouched.
-  - **A 1.53 m authoring offset.** Detrending alone was not enough: the clip *starts* 153 cm
+  - **A 1.53 m authoring offset.** Detrending alone was not enough: the clip _starts_ 153 cm
     forward of the origin, so the mesh rendered a metre and a half in front of its own entity.
     The keys are re-centred on the rest pose afterwards. Idle and Casual_Walk sit within 3 cm of
     it, which is how the offset was spotted.
@@ -973,7 +972,6 @@ fire from the chest rather than the barrel.
   points, so a body facing its velocity shot sideways on every strafe, and standing still it did
   not follow the mouse at all. Facing then grew a third mode, and the aim offset is what splits
   the legs from the torso:
-
   - **Aiming and moving, outside the backpedal** — `meshYaw` follows the velocity, turned toward
     the aim only as far as keeps the torso within `TORSO_TWIST` (60°): the legs target
     `camera yaw − clamp(twist, ±60°)`. `AimOffsetComponent` on `Body` takes
@@ -1031,6 +1029,7 @@ fire from the chest rather than the barrel.
   The share of shots that leave the barrel rather than the chest, over a scripted strafe-and-shoot
   run, was not re-logged after the aim offset. The strafe case is what that number should move;
   it has not been measured.
+
 - **`Fox.glb` is now unreferenced** and still in the tree. It is the only asset with clips that
   were not generated by Meshy, which makes it the one independent check that the animator is not
   merely agreeing with one exporter. Keep it until there is a second source.
@@ -1071,31 +1070,31 @@ one** - `doubleSided` is what lets you see its interior, not a way in.
 
 The box sets said something else entirely:
 
-| Building | Wall | Mesh | Collider set |
-|---|---|---|---|
-| Warehouse | `X-` | solid | 0.90 m gap at `z [-2.35, -1.45]` |
-| Blockhouse | `X+` | solid | 1.40 m gap at `z [-0.71, 0.69]` |
-| Blockhouse | `Z-` | solid | 1.80 m gap at `x [1.68, 3.48]` |
+| Building   | Wall | Mesh                   | Collider set                                                        |
+| ---------- | ---- | ---------------------- | ------------------------------------------------------------------- |
+| Warehouse  | `X-` | solid                  | 0.90 m gap at `z [-2.35, -1.45]`                                    |
+| Blockhouse | `X+` | solid                  | 1.40 m gap at `z [-0.71, 0.69]`                                     |
+| Blockhouse | `Z-` | solid                  | 1.80 m gap at `x [1.68, 3.48]`                                      |
 | Blockhouse | `Z+` | **the 1.87 m doorway** | 1.00 m gap at `x [-3.67, -2.67]`, and the doorway itself walled off |
 
 The Blockhouse had three holes, not one of them where its door is, and its one real door was solid
 wall. The Warehouse had a 0.90 m hole against a 0.70 m capsule - wide enough, and only just, which
-is why it reads as an intermittent bug rather than an open gate. Every gap is the right *sort* of
+is why it reads as an intermittent bug rather than an open gate. Every gap is the right _sort_ of
 gap, roughly door-sized and centred on a wall face, so this looks less like a series of slips than
 like one door plan applied to the wrong faces.
 
 The corrected sets, local to each building's parent, are scene data only - no engine change is
 implied and none was made:
 
-| Entity | Translation | Half extents |
-|---|---|---|
-| `Blockhouse Wall X-` | `[-3.85, 0, 0]` | `[0.15, 2.28, 3.58]` (unchanged) |
-| `Blockhouse Wall X+` | `[3.85, 0, 0]` | `[0.15, 2.28, 3.58]` |
-| `Blockhouse Wall Z-` | `[0, 0, -3.43]` | `[4, 2.28, 0.15]` |
-| `Blockhouse Wall Z+ Left` | `[-2.235, 0, 3.43]` | `[1.765, 2.28, 0.15]` |
-| `Blockhouse Wall Z+ Right` | `[2.7, 0, 3.43]` | `[1.3, 2.28, 0.15]` |
-| `Blockhouse Door Lintel` | `[0.465, 1.555, 3.43]` | `[0.935, 0.725, 0.15]` |
-| `Warehouse Wall X-` | `[-9.85, 0, 0]` | `[0.15, 4.23, 5.775]` |
+| Entity                     | Translation            | Half extents                     |
+| -------------------------- | ---------------------- | -------------------------------- |
+| `Blockhouse Wall X-`       | `[-3.85, 0, 0]`        | `[0.15, 2.28, 3.58]` (unchanged) |
+| `Blockhouse Wall X+`       | `[3.85, 0, 0]`         | `[0.15, 2.28, 3.58]`             |
+| `Blockhouse Wall Z-`       | `[0, 0, -3.43]`        | `[4, 2.28, 0.15]`                |
+| `Blockhouse Wall Z+ Left`  | `[-2.235, 0, 3.43]`    | `[1.765, 2.28, 0.15]`            |
+| `Blockhouse Wall Z+ Right` | `[2.7, 0, 3.43]`       | `[1.3, 2.28, 0.15]`              |
+| `Blockhouse Door Lintel`   | `[0.465, 1.555, 3.43]` | `[0.935, 0.725, 0.15]`           |
+| `Warehouse Wall X-`        | `[-9.85, 0, 0]`        | `[0.15, 4.23, 5.775]`            |
 
 Two entities went away with the merges, so the Blockhouse carries eight children and the
 Warehouse six. The jamb pieces are named `Left`/`Right` rather than duplicating one tag, because the tag is what
@@ -1107,20 +1106,21 @@ the mesh draws as solid. It costs one box and it keeps the shell's silhouette tr
 raycasts, which is the only thing that can tell the difference.
 
 **The 0.12 m threshold in the doorway is deliberately not collided.** The player would walk over it
+
 - `CharacterControllerComponent::StepHeight` is 0.4 - but P4 measured the other half of that: the
-enemies are flat-bottomed boxes, and a box stops dead at a kerb a capsule rides over. Collide the
-threshold and the door becomes passable for the player and impassable for everything chasing them,
-which is worse than a capsule clipping 12 cm of doorstep. A 0.12 m threshold would not have added
-much anyway - the `GroundTile` pad's 0.19 m lip already covers step-up at that scale, and what is
-missing is a ledge near the 0.4 m limit, which is a [ToDo](README.md) item rather than a doorstep.
+  enemies are flat-bottomed boxes, and a box stops dead at a kerb a capsule rides over. Collide the
+  threshold and the door becomes passable for the player and impassable for everything chasing them,
+  which is worse than a capsule clipping 12 cm of doorstep. A 0.12 m threshold would not have added
+  much anyway - the `GroundTile` pad's 0.19 m lip already covers step-up at that scale, and what is
+  missing is a ledge near the 0.4 m limit, which is a [ToDo](README.md) item rather than a doorstep.
 
 **What this costs P4.** Its occlusion probe was authored against the Blockhouse's `-Z` hole, in the
 belief that it was the doorway, and it is now solid; the Sentry at `(18.4, -6)` is still inside,
 but the only way to it is the `+Z` door at world `x [15.53, 17.40]`, `z = -2.57`. The gate's
 numbers were never wrong - acquisition at `px = 17.2` against a predicted 17.11 is exactly what a
 collider edge at `x = 17.66` produces - and its conclusion that buildings occlude where their
-colliders are still holds. The sentence after it does not: *"which also says the colliders
-hand-placed in P2 line up with the mesh they were measured from."* They did not, and that gate
+colliders are still holds. The sentence after it does not: _"which also says the colliders
+hand-placed in P2 line up with the mesh they were measured from."_ They did not, and that gate
 could not have found out, because **a raycast gate against colliders can only ever prove the
 collider set self-consistent.** Nothing that queries physics can see a box that disagrees with the
 mesh drawn over it; that needs the mesh, which is what the audit above reads. Re-running the probe
@@ -1199,8 +1199,8 @@ simultaneous instances" is not tested by six copies of the same clip.
 
 #### The premise this phase overturned
 
-`Enemy.lua`'s P3 header said: *P4 makes them move, and that is when they become character
-controllers.* **Wrong, and wrong in a way that would have deleted P3's result.**
+`Enemy.lua`'s P3 header said: _P4 makes them move, and that is when they become character
+controllers._ **Wrong, and wrong in a way that would have deleted P3's result.**
 
 A `CharacterVirtual` is not a body. It has no `BodyID`, it is not in the broadphase, and
 `NarrowPhaseQuery` cannot find it. Making an enemy a character stops projectiles hitting it, stops
@@ -1289,7 +1289,7 @@ Enemy E3: stuck at ( 3.7, -8.8) in state 'hunt' - sidestepping (escape #1)
 P1 measured that a rotation-locked rigid **capsule** climbs that same 0.2 m step — "the hemisphere
 at the capsule's base rides it". These enemies have a **box** collider, and a flat-bottomed box has
 no hemisphere: it stops dead at a kerb a capsule walks over. So the thing that climbs a low step
-without a character controller is the *shape*, not the body type, and P1's finding should be read
+without a character controller is the _shape_, not the body type, and P1's finding should be read
 as being about capsules specifically.
 
 **The player was pinned for 40 s, and it is not an engine bug.** From `t=40s` to `t=80s` the
@@ -1297,8 +1297,8 @@ capsule sat at `x = -12.7` with `z` sliding between `-8.9` and `-10.8` - **insid
 which it had entered through the `X-` hole P2 describes above, and which is sealed now. The `X+` wall
 is at world `x = -12.15` with a 0.15 m half-extent and the capsule's radius is 0.35, which puts a
 body pressed against its inner face at exactly `-12.65`. The controller was working — it slid along
-the wall the whole time. What failed is the autopilot's stuck escape: it advances to the *next
-waypoint*, with no notion of whether that waypoint is reachable, so once it was inside a building
+the wall the whole time. What failed is the autopilot's stuck escape: it advances to the _next
+waypoint_, with no notion of whether that waypoint is reachable, so once it was inside a building
 with every remaining target outside it, it simply leaned on the nearest wall until a later waypoint
 happened to line up with the door. **Decision 5's cost, arriving where Decision 5 said it would.**
 The building it was trapped in has no door, so "a later waypoint lined up" was the autopilot leaving
@@ -1346,7 +1346,7 @@ two have been driven at once, and nothing broke.
   recompiles it at every boot (26 ms) and says so. Running the editor once over `Game/assets` fixes
   it locally; P7 is where it stops being cosmetic.
 - No cover AI, no pathfinding. Decision 5 stands; the 40 s pin above is the first real evidence
-  about what it costs, and it cost the *autopilot*, not the enemies.
+  about what it costs, and it cost the _autopilot_, not the enemies.
 
 ### P5 — Pickups, health, upgrades — **PASSED**
 
@@ -1367,7 +1367,7 @@ could notice it. Nothing in P5 is expressible without that. Landed on `master` a
 inner body ([physics.md](../engine/physics.md#presence-the-inner-body)), which was already named as
 the fix in the ToDo entry P4 wrote.
 
-**And a static box is still invisible to it.** The inner body is *Kinematic*, and Jolt refuses to
+**And a static box is still invisible to it.** The inner body is _Kinematic_, and Jolt refuses to
 pair two non-dynamic bodies — with exactly one exemption, which is sensors. So P0.4, filed as
 "optional, do it if P5 feels bad", turned out to be **required**: without `IsSensor` a pickup is not
 merely solid-when-it-should-be-walkthrough, it is undetectable. P0.4's own text said pickups "work
@@ -1378,11 +1378,11 @@ without this", and that was true when it was written and false by the time P5 ar
 `Pickup.lua`, one script for all three kinds, each a static **sensor** box with a cube child so
 there is something to see:
 
-| Tag | Kind | Behaviour |
-|---|---|---|
-| `Heal Spot` | heal | permanent; heals 14/s while you stand in it, using enter/exit to count |
-| `Weapon Crate` | weapon | consumed on touch, destroys itself, halves the fire interval |
-| `Upgrade Station` | upgrade | permanent; spends 2 score for +1 projectile damage, refuses if poor |
+| Tag               | Kind    | Behaviour                                                              |
+| ----------------- | ------- | ---------------------------------------------------------------------- |
+| `Heal Spot`       | heal    | permanent; heals 14/s while you stand in it, using enter/exit to count |
+| `Weapon Crate`    | weapon  | consumed on touch, destroys itself, halves the fire interval           |
+| `Upgrade Station` | upgrade | permanent; spends 2 score for +1 projectile damage, refuses if poor    |
 
 The effect is applied by the **player**, not the pickup: contacts dispatch to both participants, so
 the player's `OnCollisionEnter` reads the tag off whatever it touched. The pickup script only
@@ -1406,7 +1406,7 @@ final: hp=94/100 taken=21 healed=18 weapon=2 dmg=2 score=0 upgrades=1 triggers=3
 `ui-mismatch=0` is the whole of the second test: every `SetHealth` and `SetScore` is read straight
 back and compared, because a setter that silently dropped its value would look exactly like one
 that worked. `despawned == fired` says P3 still holds with sensors in the scene — projectiles fly
-*through* the pickups rather than dying on them.
+_through_ the pickups rather than dying on them.
 
 #### Three defects this phase found, all of them real
 
@@ -1419,7 +1419,7 @@ truncates, which is what `EmitBurst` and `SetParticleMaxParticles` already did. 
 existed and this binding had not followed it.**
 
 **2. An enemy shoved the player through the ground plane.** Giving the player presence made a
-charging enemy able to move it, and a `CharacterVirtual` resolves an overlap by moving *itself*,
+charging enemy able to move it, and a `CharacterVirtual` resolves an overlap by moving _itself_,
 with no mass and no resistance. The first full gate run:
 
 ```
@@ -1447,7 +1447,7 @@ instrument agreeing with itself.
 
 - **A character cannot be teleported from script.** Its `TransformComponent` is overwritten from
   the controller every frame and nothing exposes `CharacterVirtual::SetPosition`, so "respawn at
-  the spawn point" does not exist. Death recovers the player *where it fell* instead, which is not
+  the spawn point" does not exist. Death recovers the player _where it fell_ instead, which is not
   what anyone would ship.
 - **There is no `OnCollisionStay`.** "An enemy is on me" has to be reconstructed from enter/exit
   pairs, and that counter leaks the moment an enemy dies while touching. Contact damage is a
@@ -1462,7 +1462,7 @@ All three are in [cross-cutting.md](cross-cutting.md).
 RmlUi HUD, footsteps, weapon sound, a music bed, muzzle flash and impact particles.
 
 - **Tests:** the RmlUi document under live data binding, the audio pipeline and 3D listener driven
-  by a *moving* player for the first time, and `EmitBurst` under load.
+  by a _moving_ player for the first time, and `EmitBurst` under load.
 - **Gate (defined here):** one run of autopilot plus autofire, the whole circuit. Every shot that
   is actually fired flashes and bangs and nothing else does; every impact emitter is reaped;
   component-owned voices track what is alive; one-shots drain to zero; the HUD reads back what
@@ -1470,16 +1470,16 @@ RmlUi HUD, footsteps, weapon sound, a music bed, muzzle flash and impact particl
 
 #### What was built
 
-| Piece | What it exercises |
-|---|---|
-| `ui/hud.rml` + `hud.rcss` | the data model P5 drives, live, plus a crosshair |
-| Footsteps on the player | `AudioSourceComponent` and the `StopSound`-then-`PlaySound` retrigger |
-| Weapon report | unspatialised `Audio.PlayOneShot`, at the listener by definition |
-| Impact sound | **positional** one-shot — the only sound with real work for the 3D listener |
-| A hum on every enemy | seven spatialised *moving* looping sources, which the listener had never been driven by |
-| Music bed | streamed, looping, unspatialised, on the `Music` group |
-| Muzzle flash | `EmitBurst` on a local-space emitter parented to `Yaw`, so it points where you look |
-| `Impact.gprefab` | one emitter entity per hit, spawned at the contact point, self-destructing |
+| Piece                     | What it exercises                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| `ui/hud.rml` + `hud.rcss` | the data model P5 drives, live, plus a crosshair                                        |
+| Footsteps on the player   | `AudioSourceComponent` and the `StopSound`-then-`PlaySound` retrigger                   |
+| Weapon report             | unspatialised `Audio.PlayOneShot`, at the listener by definition                        |
+| Impact sound              | **positional** one-shot — the only sound with real work for the 3D listener             |
+| A hum on every enemy      | seven spatialised _moving_ looping sources, which the listener had never been driven by |
+| Music bed                 | streamed, looping, unspatialised, on the `Music` group                                  |
+| Muzzle flash              | `EmitBurst` on a local-space emitter parented to `Yaw`, so it points where you look     |
+| `Impact.gprefab`          | one emitter entity per hit, spawned at the contact point, self-destructing              |
 
 The audio is four files carried over from the runtime demo, and the map from files to roles is
 **three SFX for four jobs**: `impact.wav` is the shot, the impact and (pitched down and quieter)
@@ -1513,13 +1513,13 @@ precisely the one a plain iteration cannot see, because the component is gone by
 After the fix the same run reads `9 -> 8 -> 6 -> 5 -> 4`.
 
 This is one of the three places [How we will know it worked](#how-we-will-know-it-worked) predicted
-the defects would cluster: *memory or handle growth over a session longer than any probe has ever
-run*.
+the defects would cluster: _memory or handle growth over a session longer than any probe has ever
+run_.
 
 **2. The gun fired blanks under load.** `muzzle-bursts=2602` against `fired=1894` with
 `refused=708`, and `1894 + 708 = 2602` exactly. Every shot the per-frame spawn cap turned away
 still made a noise and a muzzle flash. Visible only because the two counters were kept separately —
-either one alone looks fine. Fixed by moving the sound and the burst *after* the spawn succeeds;
+either one alone looks fine. Fixed by moving the sound and the burst _after_ the spawn succeeds;
 the same run now reads `muzzle-bursts = fired = 1965` with `refused=448` beside it.
 
 **3. `Audio.PlayOneShot` could not be given a volume.** `AudioEngine::PlayOneShot` has always taken
@@ -1576,7 +1576,7 @@ ship/
 The two engine-owned directories are the part worth knowing. `UIEngine` loads its faces from
 `assets/fonts/...` and `Shader::Create` from `assets/shaders/compiled/<profile>/...`, both
 **relative to the working directory** rather than to the project root — by design, so the editor's
-chrome survives opening someone else's project. In a shipped layout the working directory *is* the
+chrome survives opening someone else's project. In a shipped layout the working directory _is_ the
 install, so engine chrome and game content share one tree. It works, and the asset scan ignores
 `.ttf` and `.bin` so nothing is minted or quarantined by it, but it is a surprise and it pins
 `AssetRoot` to `assets`.
@@ -1610,7 +1610,7 @@ The asset was `prefabs/Impact.gprefab`, created in P6 after the editor run that 
 its sidecar. It happened to still work, because `Scene.Spawn` resolves by path; anything naming it
 by handle would have been broken with no message anywhere.
 
-A mint on a *writable* install is ordinary. A mint on a **read-only** install is a shipping defect:
+A mint on a _writable_ install is ordinary. A mint on a **read-only** install is a shipping defect:
 the sidecar cannot be written, so the handle is different on every boot. `ScanAssets` now warns and
 names each path, the same shape as the orphaned-sidecar report beside it. Verified in both
 directions — with the sidecar restored the scan reads `31 adopted, 0 minted`; with it removed the
@@ -1693,11 +1693,11 @@ run.
 
 **Two of the three landed. One did not. And the largest group was not predicted at all.**
 
-| Predicted | Outcome |
-|---|---|
-| P7's read-only asset path | **Hit.** A shipped asset with no `.meta` mints a fresh handle on every boot and said nothing about it; the count sat in the middle of an INFO line that reads as normal |
-| The animator under many simultaneous instances | **Missed.** P4 drove six instances across three clips, switching independently in the same frames, and nothing broke. The animation milestone's work held |
-| Memory or handle growth over a long session | **Hit, and it was audible.** A destroyed entity's audio voice was never released — it kept playing, at its last position, for the rest of the session |
+| Predicted                                      | Outcome                                                                                                                                                                 |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P7's read-only asset path                      | **Hit.** A shipped asset with no `.meta` mints a fresh handle on every boot and said nothing about it; the count sat in the middle of an INFO line that reads as normal |
+| The animator under many simultaneous instances | **Missed.** P4 drove six instances across three clips, switching independently in the same frames, and nothing broke. The animation milestone's work held               |
+| Memory or handle growth over a long session    | **Hit, and it was audible.** A destroyed entity's audio voice was never released — it kept playing, at its last position, for the rest of the session                   |
 
 The group nobody predicted is **the script binding surface**, and it produced the same bug twice:
 `UI.SetScore` declared `int` and `Audio.PlayOneShot` hardcoded its volume, in a codebase where
@@ -1712,14 +1712,14 @@ and once it had presence nothing could refuse a push — followed from never hav
 
 ### The defects, by phase
 
-| Phase | Found | Fixed |
-|---|---|---|
-| P0/P1 | velocity-driven capsules cannot slide along a wall | `CharacterVirtual` |
-| P2 | importer invented tangents; albedo decoded as linear; textures loaded upside down; no mip chain | all four |
-| P4 | a raycast cannot see a character controller | documented, then fixed in P5 |
-| P5 | `UI.SetScore` refused a float; a character could be shoved out of the world; a static box is invisible to a character | binding fixed, sensors added, push recorded |
-| P6 | a destroyed entity's voice was never released; `PlayOneShot` had no volume; voice counters were unreachable | all three |
-| P7 | a read-only install mints silently; Dist wrote a 1.7 MB trace log; the executable is not self-contained | first two fixed, third recorded |
+| Phase | Found                                                                                                                 | Fixed                                       |
+| ----- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| P0/P1 | velocity-driven capsules cannot slide along a wall                                                                    | `CharacterVirtual`                          |
+| P2    | importer invented tangents; albedo decoded as linear; textures loaded upside down; no mip chain                       | all four                                    |
+| P4    | a raycast cannot see a character controller                                                                           | documented, then fixed in P5                |
+| P5    | `UI.SetScore` refused a float; a character could be shoved out of the world; a static box is invisible to a character | binding fixed, sensors added, push recorded |
+| P6    | a destroyed entity's voice was never released; `PlayOneShot` had no volume; voice counters were unreachable           | all three                                   |
+| P7    | a read-only install mints silently; Dist wrote a 1.7 MB trace log; the executable is not self-contained               | first two fixed, third recorded             |
 
 Eleven fixed, five recorded in [cross-cutting.md](cross-cutting.md) as decisions rather than
 oversights. **None of them were found by a probe**, and every one was found by the game doing

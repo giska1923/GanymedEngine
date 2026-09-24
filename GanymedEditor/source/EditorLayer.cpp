@@ -2387,7 +2387,10 @@ namespace GanymedE {
 
 	void EditorLayer::OnEvent(Event& e)
 	{
-		if (m_SceneState == SceneState::Edit && m_ViewportCamera == UUID{ 0 })
+		// The camera only consumes the wheel, and the wheel follows the pointer, not focus.
+		// BlockEvents passes events while the viewport is merely *focused*, so without the
+		// hover gate a scroll over the Content Browser also dollied the camera.
+		if (m_SceneState == SceneState::Edit && m_ViewportCamera == UUID{ 0 } && m_ViewportHovered)
 			m_EditorCamera.OnEvent(e);
 
 		// Game UI gets first refusal, but only while playing and only when the

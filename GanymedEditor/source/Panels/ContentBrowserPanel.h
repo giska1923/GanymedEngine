@@ -101,5 +101,9 @@ namespace GanymedE {
 
 		float m_LastScrollY = 0.0f;
 		std::chrono::steady_clock::time_point m_LastScrollChange{};
+
+		// Whether the file under the open item context menu sniffed as text. Only one popup is
+		// open at a time, so one flag serves every item.
+		bool m_ContextItemIsText = false;
 	};
 }

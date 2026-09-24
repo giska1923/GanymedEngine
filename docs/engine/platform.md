@@ -135,6 +135,23 @@ on reported `(0, 0)`.
   [`FileDialogs::OpenFile/SaveFile`](../../GanymedEngine/source/GanymedE/Utils/PlatformUtils.h)
   (Win32 common dialogs on Windows; zenity/osascript-style equivalents elsewhere). Filter strings
   use the Win32 double-NUL format: `"GanymedE Scene (*.ganymede)\0*.ganymede\0"`.
+- The same files implement `DesktopShell`, which hands a path to another program and returns
+  without waiting. It returns false only when the launch itself fails.
+  - **`RevealInFileBrowser`** uses `SHOpenFolderAndSelectItems` on Windows, not
+    `explorer /select,`. It reuses an Explorer window already showing the folder rather than
+    opening one per call, and takes an ID list, so there is nothing to quote. COM is initialized
+    around the call and released only if that call initialized it. macOS uses `open -R`, which
+    selects the item in Finder. Linux uses `xdg-open` on the parent folder: it cannot select, and
+    the FileManager1 D-Bus call that can is not universal.
+  - **`OpenInVSCode`** finds `code.cmd` on `PATH` with `SearchPathW` on Windows, then launches
+    `Code.exe` one folder above it with `CreateProcessW`. The `.cmd` is a batch file and would
+    flash a console. Starting `Code.exe` with the file is what Explorer's "Open with Code" verb
+    does. macOS uses `open -b com.microsoft.VSCode`, so the `code` shell command need not be
+    installed. Linux runs `code`, after a `command -v code` check: the launch is backgrounded
+    with `&`, so its exit status could not report a missing binary.
+
+  The POSIX halves build their `/bin/sh` commands with `ShellQuote`, which wraps the path in
+  single quotes and escapes `'` itself. Only the Windows half has been built.
 
 ## ImGui
 
