@@ -6,9 +6,6 @@
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
 
-#ifdef GE_DEBUG
-#include <chrono>
-#endif
 #include <cmath>
 
 namespace GanymedE {
@@ -224,7 +221,8 @@ namespace GanymedE {
 		}
 
 		// The A1 checks that do not need a scene: bit-identical zero, pitch sign and
-		// magnitude, the clamp, and that a twisted pitch rotates about the yawed right.
+		// magnitude, the clamp, and that a twisted pitch rotates about the yawed right -
+		// on one joint, and across two, where per-joint shares used to miss the target.
 		// Runs once, from the first Evaluate, so a wrong axis fails the editor at boot
 		// rather than in a screenshot.
 		void RunAimOffsetProbes()
@@ -363,45 +361,26 @@ namespace GanymedE {
 				}
 			}
 
+			// Yaw and pitch together across more than one joint - the case a one-joint chain
+			// cannot catch, because the per-joint shares only disagree when they interleave.
+			// The neck must end on the same target as the one-joint case above.
 			{
-				Skeleton line;
-				const int count = 32;
-				line.ParentIndices.resize(count);
-				line.InverseBind.assign(count, glm::mat4(1.0f));
-				line.LocalRestPose.resize(count);
-				for (int i = 0; i < count; i++)
-				{
-					line.ParentIndices[(size_t)i] = i == 0 ? -1 : i - 1;
-					line.LocalRestPose[(size_t)i].Translation = { 0.0f, 0.05f, 0.0f };
-				}
+				std::vector<glm::mat4> posed = rest;
+				AimOffsetChain chain = ProbeChain(skeleton, { 1, 2 }, { 0.25f, 0.75f }, storage);
+				ApplyAimOffset(skeleton, chain, up, right, 0.3f, 1.0f, posed);
 
-				std::vector<glm::mat4> globals;
-				if (!SampleClipGlobals(line, nullptr, 0.0f, locals, globals))
+				const glm::vec3 pitchAxis = glm::angleAxis(1.0f, up) * right;
+				const glm::quat expected = glm::normalize(
+					glm::angleAxis(0.3f, pitchAxis) * glm::angleAxis(1.0f, up));
+				const glm::quat actual = glm::normalize(
+					glm::inverse(glm::quat_cast(rest[(size_t)neck])) * glm::quat_cast(posed[(size_t)neck]));
+				const float d = glm::clamp(std::abs(glm::dot(expected, actual)), 0.0f, 1.0f);
+				const float error = 2.0f * std::acos(d);
+				if (error > 1e-4f)
 				{
-					FailProbe("timing skeleton did not sample");
+					FailProbe("two-joint yaw+pitch misses the target by " + std::to_string(error) + " rad");
 					return;
 				}
-
-				AimOffsetChain chain;
-				chain.Count = 3;
-				chain.Joints[0] = 4;
-				chain.Joints[1] = 5;
-				chain.Joints[2] = 6;
-				chain.Weights[0] = 0.2f;
-				chain.Weights[1] = 0.3f;
-				chain.Weights[2] = 0.5f;
-				chain.PitchLimit = 1.0f;
-				chain.YawLimit = 1.5707963267948966f;
-				BindSubtrees(line, chain, storage);
-
-				const auto start = std::chrono::steady_clock::now();
-				constexpr int iterations = 2000;
-				for (int i = 0; i < iterations; i++)
-					ApplyAimOffset(line, chain, up, right, 0.3f, 0.4f, globals);
-				const auto elapsed = std::chrono::steady_clock::now() - start;
-				const double microseconds = std::chrono::duration<double, std::micro>(elapsed).count() / iterations;
-				GE_CORE_INFO("Aim offset probe: {0} us/call over {1} iterations, 32-joint line, 3 chain joints (Debug)",
-					microseconds, iterations);
 			}
 		}
 #endif
@@ -651,8 +630,21 @@ namespace GanymedE {
 			return;
 		const glm::vec3 up = glm::normalize(upSkin);
 		const glm::vec3 right = glm::normalize(rightSkin);
-		// Full yaw, not this joint's share. Every joint pitches about the aimed right.
+		// Full yaw, not this joint's share. The chain pitches about the aimed right.
 		const glm::vec3 pitchAxis = glm::normalize(glm::angleAxis(yaw, up) * right);
+
+		// The whole chain's target, then split as one axis-angle. Rotations about a shared
+		// axis commute, so the weighted shares compose to exactly this target in any order.
+		// Giving each joint its own "yaw share, then pitch share" does not: across joints the
+		// two interleave, and with three joints at 1/6, 1/3, 1/2 the chest missed the aim by
+		// 7.8 degrees at a 90-degree twist and 0.3 pitch, and by 26 at both limits.
+		glm::quat target = glm::normalize(glm::angleAxis(pitch, pitchAxis) * glm::angleAxis(yaw, up));
+		if (target.w < 0.0f)
+			target = -target; // the short way round, so the angle below is in [0, pi]
+		const float angle = glm::angle(target);
+		if (!(angle > 1e-7f))
+			return;
+		const glm::vec3 axis = glm::axis(target);
 
 		const uint32_t jointCount = skeleton.JointCount();
 		for (int i = 0; i < count; i++)
@@ -663,10 +655,7 @@ namespace GanymedE {
 			if (!chain.Subtrees[i] || chain.SubtreeCounts[i] == 0)
 				continue;
 
-			const float yawJ = weights[i] * yaw;
-			const float pitchJ = weights[i] * pitch;
-			const glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), pitchJ, pitchAxis)
-				* glm::rotate(glm::mat4(1.0f), yawJ, up);
+			const glm::mat4 rotation = glm::mat4_cast(glm::angleAxis(weights[i] * angle, axis));
 
 			const glm::vec3 pivot = glm::vec3(globals[(uint32_t)joint][3]);
 			const glm::mat4 aboutPivot = glm::translate(glm::mat4(1.0f), pivot)
@@ -747,9 +736,11 @@ namespace GanymedE {
 		}
 		m_WarnedAimAxes.erase(entity);
 
+		// Compared by content, not by the vector's address: a hot-reloaded mesh can be
+		// allocated where the old one was, with a different topology, and an address check
+		// would keep bending the old subtrees. A spine's worth of ints a frame is nothing.
 		AimSubtreeCache& cache = m_AimSubtrees[entity];
-		bool dirty = cache.Parents != skeleton.ParentIndices.data()
-			|| cache.JointCount != skeleton.JointCount()
+		bool dirty = cache.Parents != skeleton.ParentIndices
 			|| cache.Count != chain.Count;
 		if (!dirty)
 		{
@@ -761,8 +752,7 @@ namespace GanymedE {
 		}
 		if (dirty)
 		{
-			cache.Parents = skeleton.ParentIndices.data();
-			cache.JointCount = skeleton.JointCount();
+			cache.Parents = skeleton.ParentIndices;
 			cache.Count = chain.Count;
 			for (int i = 0; i < AimOffsetChain::MaxJoints; i++)
 			{

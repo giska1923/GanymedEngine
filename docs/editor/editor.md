@@ -432,7 +432,7 @@ mirrors how `EditorCamera` lives engine-side while the _editing model_ does not.
 | Piece                                                  | Notes                                                                                                                                                                           |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `EditorUndoStack`                                      | Linear, capped at 100, `Push` clears the redo stack. `MarkSaved`/`IsDirtySinceSave` track dirtiness by stack _position_, so undoing back to the saved state correctly clears it |
-| `ComponentEditCommand<T>`                              | Before/after values. The after-value is filled in at the commit boundary, not at construction                                                                                   |
+| `ComponentEditCommand<T>`                              | Before/after values. The after-value is filled in at the commit boundary, not at construction. Undo/redo keeps every field reflected as `Trait::Runtime` (`Hidden` + `NotSerialized`) at its live value (`KeepRuntimeFields`, through `entt::meta`): aim preview, `Resolved` caches, emitter pool and RNG, the animator palette. `AnimatorComponent::Time` is not `Hidden`, so a scrub is restored like any authored field |
 | `AddComponentCommand<T>` / `RemoveComponentCommand<T>` | Remove stores the whole value, so undo is a re-add rather than a default-construct                                                                                              |
 | `AddEntitiesCommand` / `DeleteEntitiesCommand`         | One subtree-snapshot mechanism, differing only in which way `Undo` runs. Create, duplicate, prefab instantiate and map placement are all built on it |
 | `CompositeCommand`                                     | Several commands that undo as one. Gizmo group-drags, socket Offset+Scale, and duplicate-along-axis are this: N steps, one Ctrl+Z |
@@ -953,8 +953,8 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   not have, says when the live angle is past the limit or sitting on it (the viewport handle writes
   the clamped value, so "past" alone would stay silent), and prints the tip joint's rotation off
   the clip (a fresh `SampleClipGlobals` against the palette). Undo of an authored field keeps the
-  live preview: `ComponentEditCommand` stores the whole struct and copies `Pitch`, `Yaw` and
-  `Resolved` back off the component it is about to overwrite.
+  live preview: `Pitch`, `Yaw` and `Resolved` are `Trait::Runtime`, which `ComponentEditCommand`
+  keeps at their live values for every component (see the undo table).
 - Bone attachment: **Target** is a drop from the outliner (zero / Parent button = hierarchy parent),
   and **Joint** is a combo over the *target's* `skeleton.JointNames`, not this entity's — the
   inspector has not previously read another entity's mesh for any component. A crosshair next to

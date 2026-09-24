@@ -67,8 +67,7 @@ namespace GanymedE {
 		// component: a subtree is variable length, and the component stays a fixed chain.
 		struct AimSubtreeCache
 		{
-			const int32_t* Parents = nullptr;
-			uint32_t JointCount = 0;
+			std::vector<int32_t> Parents; // a copy of the topology it was built from
 			int Count = 0;
 			std::array<int32_t, AimOffsetChain::MaxJoints> Joints{};
 			std::array<std::vector<uint32_t>, AimOffsetChain::MaxJoints> Subtrees;
