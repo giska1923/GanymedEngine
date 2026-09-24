@@ -380,29 +380,6 @@ Two ways to do it, and the choice is the whole of the work:
 Either way `UI.SetHealth`/`UI.SetScore` should stay as they are - a HUD that every game has wants
 the short call, and the general path is for the rest.
 
-## Nothing can be attached to a joint, so a character cannot hold anything
-
-There is no bone-socket concept anywhere: nothing in `Scene/` or `Scripting/` can read a joint's
-transform, and `AnimatorComponent::Palette` is consumed only by `RenderSystem`. An entity can be
-parented to another entity, never to a *joint* of one.
-
-The consequence is concrete rather than theoretical. The player is unarmed on screen because a
-rifle cannot be put in its hand: parenting the weapon to the `Yaw` entity leaves it floating at a
-fixed offset, ignoring every arm animation, and modelling it into the character instead makes
-auto-rig weight it across both arms and the chest, so it stretches on any clip that swings the
-arms independently. Meshy produced exactly that on the first attempt, which is what the re-roll
-in [PROVING_GROUND.md](PROVING_GROUND.md) was for.
-
-The fix is small, and smaller than it looks because the hard part already exists. The palette is
-already composed every frame and already lives on the component, so a `BoneAttachmentComponent`
-holding a parent entity and a joint *name* needs only to resolve that name to an index once and
-write the child's world transform from the palette each frame, after `AnimationSystem` and before
-`TransformSystem` publishes world matrices. Ordering is the only real design question.
-
-Not scheduled, because nothing in the game needs a held weapon yet — the muzzle flash is a
-particle emitter on `Yaw` and reads correctly without one. Recorded because "the player has no
-gun" has a cause, and the cause is this.
-
 ## Animation clips cannot be separated from the mesh that ships them
 
 `AnimationSystem::ResolveClip` looks a clip up with `Mesh::FindClip`, so clips live inside the

@@ -1,0 +1,7 @@
+Material:
+  Name: Material_1
+  Albedo: [1, 1, 1, 1]
+  Metallic: 1
+  Roughness: 0.410084754
+  TwoSided: true
+  Transparent: false

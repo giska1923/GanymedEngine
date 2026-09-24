@@ -684,7 +684,8 @@ grip.
 player always carries a rifle, that pickup wants either retiring or converting to attach-on-collect
 — a gameplay decision, not part of wiring the socket.
 
-**Known rough edge:** during the deepest part of `Lower_Weapon_Look_Raise` the barrel points down
+**Known rough edge** (overtaken: the rifle left the hand in the two-hand IK section below, and the
+idle no longer lowers it): during the deepest part of `Lower_Weapon_Look_Raise` the barrel points down
 ~78 deg and the rifle can clip the thigh. No constant offset fixes that without breaking the
 shooting pose; it is a property of socketing a weapon onto generic library animation.
 
@@ -741,8 +742,8 @@ paragraph); the strafe clip is asset content only. Original kept at
 
 **What was asked for and what exists.** The goal was a two-handed rifle set — aim idle, walk, run,
 strafe both ways, backpedal — to fix the lowered idle, the strafe slide past `TORSO_TWIST`, the
-reversed-clip backpedal and the left hand that never reaches the rifle (see the IK item in
-`cross-cutting.md`). Mixamo is Adobe's and has no API, so it cannot come through Meshy. Meshy's
+reversed-clip backpedal and the left hand that never reaches the rifle (see
+[TWO_HAND_IK.md](TWO_HAND_IK.md)). Mixamo is Adobe's and has no API, so it cannot come through Meshy. Meshy's
 library (678 actions, listed free at `GET /openapi/v1/animations/library`) has **no rifle set, no
 rifle aim idle and no right strafe**; the rifle-adjacent clips are `233` / `529` / `541` backpedals,
 `528` / `527` left strafes, and turn-in-place clips.
@@ -802,8 +803,116 @@ and downloads in `work\2026-09-24\`; `install` reproduces the installed asset by
 - **`528`'s hands sit on a forward rifle line**, so a clip-specific rifle placement along it
   would put the left hand on the handguard with no IK. IK was chosen instead, so the grip stops
   depending on how each clip and each future model happens to be authored — see
-  `docs/ToDo/TWO_HAND_IK.md` on `master`.
+  [TWO_HAND_IK.md](TWO_HAND_IK.md).
 - **Still no aim idle.**
+
+#### Two-hand IK — the rifle on the chest, both hands on it (H5 of [TWO_HAND_IK.md](TWO_HAND_IK.md), 2026-09-24)
+
+**What changed in the scene.**
+
+- **The `Rifle` moved from `RightHand` to `Spine`:** `Offset [0.173818, 0.000528, 0.397881]`,
+  `Rotation [3.039984, 0.884929, -2.91941]`, `Scale` unchanged at 0.45.
+- **Two markers were added beside `Muzzle`:** `Grip` (`3000000000000000018`) and `Support`
+  (`…019`).
+- **`Body` gained `TwoHandIKComponent` with `AimLock: 1`**, taking the default chains and marker
+  names.
+- **`Player.lua` changed only in comments.** Two of them described the hand socket.
+
+Nothing else in the game changed.
+
+**How the numbers were derived, all measured.** The engine dumped the joint frames of all five
+clips every 1/30 s (`TryGetJointFrame`, the socket's own path), and the pose was solved offline
+over that dump.
+
+- **`Grip`** is the right wrist where A3's measured grip-to-hand fit put it. That is the inverse
+  of the old socket offset, so the grip A3 verified is kept exactly.
+- **`Support`** puts the left hand's centre on the rear of the handguard: local x −0.30, on the
+  `meshy_retarget.py` handguard line just under the bore, forward of the magazine.
+  - The centre is the weight-weighted centroid of the vertices bound to `LeftHand`:
+    (−0.0103, 0.1034, 0.0075) in the wrist frame. The same method on the right hand gives
+    (−0.0529, 0.0720, 0.0198), within 6 mm of A3's independent measurement.
+  - The support hand's orientation comes from `Walk_Left_with_Gun`, the one clip with a real
+    forward two-handed hold. It is the left wrist relative to that clip's right-to-left hand line,
+    taken at the medoid frame; the frames spread 1.5°.
+- **The weapon pose.** Under the aim lock the rifle's orientation is the aim's, so only where the
+  socket puts the `Grip` pivot matters, which is three numbers in the `Spine` frame. Reach does
+  not depend on the aim: the shoulders and the rifle both ride `Spine`, which carries the aim
+  offset's whole rotation. The H4 sweep had already shown clamped counts that did not change
+  across 49 aims.
+
+**The finding: a textbook shouldered hold does not fit this rig.** The arms are 0.534 m (right)
+and 0.521 m (left), and the rifle is 0.856 m.
+
+- **Butt pinned in the right shoulder pocket, support hand mid-handguard:** the left hand clamps
+  on 65–99 of the forward walk's frames and on all 39 of the backpedal's.
+- **Minimising reach alone** puts the rifle on the sternum at whatever forward limit it is given,
+  which is a hug, not a hold.
+- **The resolution came from the support hand, not the rifle.** With the palm at the rear of the
+  handguard, a shouldered pose reaches everything. The butt is 6 cm medial of the right shoulder
+  joint, 1 cm below it and 8 cm in front of it. Of 424 poses that kept every shooting frame at or
+  under 93% reach, this one was taken for a worst case of 87%. The socket's own rotation is the
+  lock's orientation relative to `Spine` at the shooting clips' medoid frame.
+
+**Measured in the engine, over every clip at 1/30 s through the real pass, aim at 0.** These
+reproduce the offline model to three decimals:
+
+| Clip | Right reach | Left reach | Clamped (L) | Wrist → marker, reached frames | Barrel vs aim | Lock turns the rifle |
+|---|---|---|---|---|---|---|
+| `Walk_Forward_While_Shooting` | 53–54% | 74–79% | 0 / 99 | ≤ 3.9e-7 m, 3.8e-7 rad | 7.5e-5° | 0–6.8° |
+| `Run_and_Shoot` | 50–51% | 62–66% | 0 / 21 | ≤ 2.8e-7 m | 6.5e-5° | up to 44.7° |
+| `Walk_Backward_While_Shooting` | 60–61% | 78–87% | 0 / 39 | ≤ 3.0e-7 m | 3.0e-5° | 8.9–11.9° |
+| `Walk_Left_with_Gun` | 57% | 52–55% | 0 / 38 | ≤ 3.6e-7 m | 3.3e-5° | up to 54.8° |
+| `Lower_Weapon_Look_Raise` (idle) | 52–61% | 34–112% | **43 / 157** | ≤ 5.1e-7 m | 7.9e-5° | up to 74.7° |
+
+- **No clamped frame in any shooting clip.** That is the plan's gate.
+- **The idle is held up at the chest, as the plan wanted.** The lock also keeps it on the aim,
+  and the clip's lowering is gone.
+- **The idle's left hand clamps for 1.4 s of its 5.2 s loop (3.07–4.47 s), up to 12% of an
+  arm (about 6 cm short).** That is when the idle's chest looks around (±70°) while the lock
+  holds the rifle on the aim. No weapon pose fixes it; **an aim idle does.** The "still no aim
+  idle" item above now has a second reason.
+- **Run and strafe need the lock.** Unlocked, a rifle riding their forward-pitched chest points
+  37–42° down. Locked, it is level.
+
+**Seen**, in four frames from the editor (walk, run, idle at 2.7 s, idle at its worst clamp): butt
+at the shoulder, right hand on the pistol grip, support hand forward of the magazine, barrel on the
+aim.
+
+- No candy-wrapper twist is visible at the wrists, despite the lock turning the rifle up to 75°.
+- The worst idle frame's miss is hidden behind the body from that angle.
+- The left hand's milder weight contamination (above) did not show in those four frames. They
+  were not a sweep.
+
+**P5 gate, as the representative of P1–P7.** There were three runs of 180 s each, in Debug
+`GanymedRuntime`, with `p5gate` flipped for the run and restored after:
+
+- **Before:** hand socket, no IK.
+- **After:** Spine socket, IK and lock. Run twice.
+
+Every check the P5 gate defines matched in all three runs:
+
+- the heal, weapon and upgrade triggers, within 0.2 s of each other;
+- the upgrade bought, and `ui-mismatch=0`;
+- `fired=142`, `despawned=142`, `live=0`;
+- `inWall=0`;
+- route complete, and 0 errors.
+
+The counters after the route (damage taken, times downed, final position) differ. They differ just
+as much *between the two identical "after" runs*: health after probe 1 read 64 in one and 82 in
+the other. So that difference is run-to-run variance, not the IK.
+
+The rest of P1–P7 was not re-run, on this argument: IK changes only the skinning palette and where
+the rifle is drawn. Physics reads neither, and the gate modes never capture the cursor, so they
+fire from the chest rather than the barrel.
+
+**Not measured:**
+
+- **The barrel-versus-chest shot count.** `BarrelPoint` only runs under mouse aim, which no gate
+  mode drives.
+- **`BarrelPoint`'s ~35° check was kept, as a guard.** With the lock at 1 the barrel is on the aim
+  offset's angles to 1e-4°. The check still catches the aim fade (`AIM_BLEND_TIME`) and parallax
+  at close range, because the lock aims along the chest's line to the aim point and the muzzle is
+  half a metre off the chest. The comment in `Player.lua` now says that.
 
 #### What the character import left open
 

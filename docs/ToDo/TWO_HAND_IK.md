@@ -1,8 +1,10 @@
 # Milestone — Two-hand weapon IK
 
 **Status: H1–H4 done on `master` (the solver; the component, the pass, serialization and Lua;
-the inspector section and the overlay; the aim lock). H5–H6 planned.** H3's three interactive
-checks (drag the rifle, drag a marker, scrub) have not been done by hand yet; see H3's notes.
+the inspector section and the overlay; the aim lock). H5 done on `first-game` (the Proving Ground
+content), and its notes exist only in this branch's copy of this file. H6 planned.** H3's three
+interactive checks (drag the rifle, drag a marker, scrub) have not been done by hand yet; see
+H3's notes.
 
 > **Engine and editor milestone.** H1–H4 touch `GanymedEngine/source/` or `GanymedEditor/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`. H5 is game content
@@ -95,7 +97,7 @@ a *Two Bone IK Constraint* per arm, targets parented to the weapon, and a *Multi
 | **H2** | `TwoHandIKComponent`, weapon frame resolution, the pass, serialization, Lua — **done** | `master` | ~1 day |
 | **H3** | Inspector section, reach readouts, overlay — **done** (interactive checks pending) | `master` | ~0.75 day |
 | **H4** | Aim lock: the barrel onto the aim direction — **done** | `master` | ~0.5 day |
-| **H5** | Proving Ground: rifle onto `Spine`, `Grip`/`Support` markers, measured | `first-game` | ~0.75 day |
+| **H5** | Proving Ground: rifle onto `Spine`, `Grip`/`Support` markers, measured — **done** | `first-game` | ~0.75 day |
 | **H6** | Docs, close | both | ~0.25 day |
 
 ~4 days. **H4 is the phase to cut** if the budget tightens: H1–H3 and H5 give a two-handed grip;
@@ -619,6 +621,47 @@ The three interactive H3 checks are still open.
 | Idle (`Lower_Weapon_Look_Raise`) | The rifle is held up at the chest pose; the clip's lowering is overridden |
 | Gate modes | P1–P7 numbers unchanged (they read the capsule) |
 | Barrel vs chest shot count | Logged before and after |
+
+
+### Execution notes (2026-09-24, `first-game`)
+
+The full record, with the derivation, the per-clip table, the P5 A/B and the frames seen, is
+[PROVING_GROUND.md](PROVING_GROUND.md), under "Two-hand IK — the rifle on the chest". This file has
+the outcome and where the plan was wrong.
+
+**Branch.** `master` was merged into `first-game` first (`8c4c0d1`), with two ToDo-doc conflicts
+resolved by keeping both sides. The engine source is identical on both branches; H5 changed only
+the scene, two comments in `Player.lua`, and docs.
+
+**Outcome against the table above:**
+
+| Probe | Pass condition | Result |
+|---|---|---|
+| All five clips, both hands | Wrist within 0.5 cm on every sampled key; no clamped frame in the shooting clips | **Met for the four shooting clips.** Max wrist error 5.1e-7 m on reached frames, 0 clamped. **The idle clamps the left hand on 43 of 157 frames** (1.4 s, up to 12% short) |
+| Idle | Rifle held up at the chest pose; lowering overridden | Met. It is on the aim, too |
+| Gate modes | P1–P7 numbers unchanged | P5 re-run before and after (twice after): every gate-defined check identical; the free-running counters vary as much between two identical runs. P1–P4, P6 and P7 were not re-run, by the construction argument |
+| Barrel vs chest shot count | Logged before and after | **Not measured.** `BarrelPoint` runs only under mouse aim, and no gate mode drives it |
+
+**Where the plan was wrong:**
+
+- **"Placed with the socket gizmo so both grips are inside reach in every clip."** It was solved
+  numerically instead, over an engine dump of every clip. The answer is not something a gizmo would
+  find: a shouldered hold only fits this rig's 0.52 m arms with the support hand at the rear of
+  the handguard. And "every clip" is not achievable with the lock on. The idle's chest looks
+  around ±70° while the rifle stays on the aim.
+- **The weapon pose is a function of the lock.** Under a full lock only the socket's position
+  matters, and reach is then independent of the aim, so the solve needed no aim sweep. The
+  socket's rotation was still set, to the lock's orientation at the shooting clips' medoid frame,
+  so that `AimLock 0` is a sane pose rather than an arbitrary one.
+- **`Player:BarrelPoint`'s ~35° check stays**, as a guard for the aim fade and for parallax at
+  close range. It is no longer the thing that keeps a lowered rifle from firing.
+
+**Open, for H6 or after:**
+
+- **An aim idle.** It is the one fix for the idle clamps, and it was already open.
+- **H3's three interactive checks.**
+- **H6 has to assemble this milestone from two branches.** H1–H4 are recorded on `master` and H5
+  here. The merge direction means these notes never reach `master` by themselves.
 
 ---
 

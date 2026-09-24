@@ -141,6 +141,8 @@ Entities:
       Loop: true
     AimOffsetComponent:
       Joints: [Spine02, Spine01, Spine, ""]
+    TwoHandIKComponent:
+      AimLock: 1
   - Entity: 3000000000000000017
     TagComponent:
       Tag: Rifle
@@ -152,14 +154,38 @@ Entities:
       Parent: 3000000000000000013
       Children:
         - 3000000000000000015
+        - 3000000000000000018
+        - 3000000000000000019
     StaticMeshComponent:
       Mesh: 5842540604746245028
       MaterialOverrides: [6163099190943935964]
     BoneAttachmentComponent:
       Target: 0
-      Joint: RightHand
-      Offset: [-0.248746991, 0.144001997, -0.00640099961]
-      Rotation: [-2.71431017, 0.254526004, 0.885160983]
+      Joint: Spine
+      Offset: [0.173818, 0.000528, 0.397881]
+      Rotation: [3.039984, 0.884929, -2.91941]
+  - Entity: 3000000000000000018
+    TagComponent:
+      Tag: Grip
+    TransformComponent:
+      Translation: [0.582782, -0.26177, -0.001685]
+      Rotation: [2.678525, -0.176578, 0.898934]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000017
+      Children:
+        []
+  - Entity: 3000000000000000019
+    TagComponent:
+      Tag: Support
+    TransformComponent:
+      Translation: [-0.248723, 0.017789, 0.210212]
+      Rotation: [-2.492756, 1.264296, 1.201661]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000017
+      Children:
+        []
   - Entity: 3000000000000000032
     TagComponent:
       Tag: GroundTile

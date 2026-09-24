@@ -643,9 +643,11 @@ end
 -- this off "is a key held" would snap between idle and a sprint through the whole approach.
 --
 -- The legs and the torso are not the same facing. The clips are all forward strides, so the
--- body (meshYaw) turns toward the velocity and the forward clip stays the right one. The rifle
--- is socketed to the hand, so AimOffsetComponent twists the spine on top of that: yaw is
--- wrap(camera yaw - meshYaw), pitch is the elevation from the chest to AimPoint.
+-- body (meshYaw) turns toward the velocity and the forward clip stays the right one.
+-- AimOffsetComponent twists the spine on top of that: yaw is wrap(camera yaw - meshYaw), pitch is
+-- the elevation from the chest to AimPoint. The rifle is socketed to the chest (Spine), and Body's
+-- TwoHandIKComponent turns it onto that same aim (AimLock 1) and solves both hands onto its Grip
+-- and Support markers, so the barrel follows these two angles whatever the clip's chest is doing.
 --
 -- The torso takes at most TORSO_TWIST of that. Past it, the legs turn off the velocity toward
 -- the aim just far enough that the torso needs no more, so a pure A/D strafe runs the legs 30
@@ -916,11 +918,12 @@ end
 
 -- Where the round leaves the gun, or nil when the gun is not in a position to have fired it.
 --
--- The barrel moves with the clip, and the clips were not authored for this gun: the idle lowers
--- it to the floor. A strafe inside the yaw limit twists the spine toward the aim on the same
--- frame (Player:Animate), which is what lets those shots leave the barrel. The idle still does
--- not — no spine pitch turns a lowered rifle into an aim pose — and the ~35 degree check stays
--- for that. Two ways a shot from the gun goes wrong, both caught by a probe run:
+-- The barrel no longer moves with the clip: the two-hand IK aim lock holds it on the aim offset's
+-- pitch and yaw (to 1e-4 degrees, measured), and the idle no longer lowers it. The ~35 degree
+-- check stays anyway, as a guard for what the lock does not cover: the aim offset fading in and
+-- out over AIM_BLEND_TIME (the barrel follows the faded angles, not the aim point), and parallax
+-- at close range (the lock aims along the chest's line to the aim point, and the muzzle is half
+-- a metre off the chest). Two ways a shot from the gun goes wrong, both caught by a probe run:
 --
 --   - A barrel behind or beside the player: the round flies through the player's own capsule,
 --     and Projectile:OnCollisionEnter counts that as a hit and despawns it. So the barrel has to
