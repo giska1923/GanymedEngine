@@ -561,5 +561,62 @@ fallback until that clip exists.
 selected entity for the tag `Muzzle`. On this branch that chain is `Body` → `Rifle` → `Muzzle`,
 so selecting `Body` does find it. The line was not watched. It is one frame behind the pose,
 because the drag writes `Pitch` / `Yaw` after `AnimationSystem` has evaluated. Closing it so the
-barrel meets the point is the IK problem the milestone left alone: the socket runs after the
-aim pass.
+barrel meets the point is closed-loop aiming, which the milestone left alone; left-hand IK is a
+separate item, deferred below behind a measured trigger.
+
+## Left-hand IK onto the rifle — deferred, with a trigger
+
+The player's left hand is not on the rifle. The obvious fix is two-bone IK pulling the left arm onto
+the handguard. **It is not worth building on the current clips**, and the reason is a measurement,
+not a scheduling call.
+
+**Measured (2026-09-24), `ArmoredHumanoid.glb` on `first-game`.** The clips were sampled offline and
+the rifle placed exactly as the socket places it: the `RightHand` joint frame (unit basis, metres,
+as `TryGetJointFrame` builds it) × the committed `Offset` / X-Y-Z `Rotation` / 0.45 scale. The
+handguard was taken as the rifle-local line `(-0.85, 0.10, 0)`–`(-0.30, 0.10, 0)`, just under the
+bore, and the left arm's reach as `|LeftArm→LeftForeArm| + |LeftForeArm→LeftHand|` = 52.1 cm. The
+aim offset turns both arms and the rifle together as part of the torso, so it does not change any
+of these numbers.
+
+| Clip | Left wrist to handguard | Shoulder to the nearest grip point | Hands apart | Right→left hand line vs forward |
+|---|---|---|---|---|
+| `Walk_Forward_While_Shooting` | 22–25 cm | 54–57 cm | 48 cm | 32–34° yaw, +4 to +7° elevation |
+| `Run_and_Shoot` | 35–36 cm | 61–64 cm | 39 cm | 36–38° yaw, −7 to −3° elevation |
+| `Lower_Weapon_Look_Raise` | 78–106 cm | 66–109 cm | 77–94 cm | — |
+
+**What that means.** The grip point is past the arm's full reach in every clip, so IK would lock the
+elbow straight and still stop short — a zombie reach — while walking and running, and has nothing
+to work with in the idle. The hands *are* about a rifle's grip-to-handguard length apart in the two
+shooting clips (39–48 cm against ~39 cm), but the line through them runs ~35° across the body:
+these library clips were authored around an imaginary rifle that points left of where the character
+faces. A rifle along that line would miss the aim by 35°; the rifle pointed forward, as the socket
+holds it, misses the left hand by 23–35 cm. IK cannot reconcile the two.
+
+**The prerequisite is content, and it is the same content three other gaps want.** A clip set
+authored with a rifle held in both hands — aim idle, walk, run, strafe left and right, backpedal —
+also fixes the lowered idle, the strafe foot slide past `TORSO_TWIST`, and the reversed-clip
+backpedal (see [PROVING_GROUND.md](PROVING_GROUND.md) on `first-game`). Mixamo's rifle pack is the
+obvious source; it re-rigs the character onto Mixamo's own skeleton, which the importer handles like
+any glTF skin. Whether Meshy's library has two-handed rifle clips was not checked.
+
+**The trigger.** After that clip set is in and the socket is re-placed with the gizmo, re-run the
+measurement above:
+
+- left wrist within ~10 cm of the handguard, with the elbow bent → **skip IK**; the clips hold the
+  rifle;
+- 10–25 cm, and the grip point inside the arm's reach → **IK is a small correction; plan it as a
+  milestone**;
+- still past the arm's reach → the clips or the socket are wrong, not missing IK.
+
+**When it is built, it does not need the socket mid-animation.** The earlier framing — that the left
+arm depends on the rifle, which depends on the right hand, so sockets would have to resolve inside
+the animation pass — is avoidable. Express the left-hand target relative to the `RightHand` joint
+(the grip point in right-hand space, i.e. the socket offset × the rifle-local grip) and solve inside
+`AnimationSystem` after the aim pass, before the palette. That is how production engines do
+two-handed weapons: Unreal's IK bones that follow the weapon hand, Unity Animation Rigging's
+Two-Bone IK constraint with its target parented to the weapon. Analytic two-bone IK (law of
+cosines, an elbow pole hint, hand rotation matched to the grip) on a component shaped like
+`AimOffsetComponent` is ~1–1.5 days with an inspector section. The cost is that the grip offset
+duplicates socket data and must follow it when the socket moves; deriving it from the socket at
+edit time, or from a `Grip` marker under the rifle, is part of that plan. The hand still will not
+close on the grip — the rig has no finger joints — which reads acceptably from a camera 5 m behind.
