@@ -380,6 +380,26 @@ Two ways to do it, and the choice is the whole of the work:
 Either way `UI.SetHealth`/`UI.SetScore` should stay as they are - a HUD that every game has wants
 the short call, and the general path is for the rest.
 
+## In Play, the game UI still takes the wheel while the viewport is only focused
+
+`EditorLayer::OnEvent` routes events to `UIEngine::OnEvent` in Play when the viewport is hovered
+**or** focused. That is the same shape as the bug that dollied the editor camera while the pointer
+was over the Content Browser. With the viewport focused, a wheel over another panel also reaches
+`ProcessMouseWheel`. It is **probably harmless**: mouse moves are forwarded the same way, so RmlUi
+should see the pointer outside its context and scroll nothing. That is found by reading, not by
+running a HUD with a scrollable element. The editor camera was fixed by gating it on
+`m_ViewportHovered`. The game-UI path was left alone because focus there is deliberate for keys
+and a locked cursor. If it proves real, gate **only** the pointer events on hover, not the whole
+call.
+
+## `DesktopShell` has only run on Windows
+
+The Content Browser's **Open in VS Code** and **Show in Explorer** go through `DesktopShell`
+(`PlatformUtils.h`). The Windows half is built and run. The Linux half (`xdg-open`, `code`) and
+the macOS half (`open -R`, `open -b com.microsoft.VSCode`) have not been compiled. They use nothing
+the file dialogs beside them do not already use. The first Linux build should include opening a
+file whose name contains a single quote, the one character `ShellQuote` escapes.
+
 ## Editor text outside Latin-1 renders as "?"
 
 `EditorFonts::AddFace` loads Inter with ImGui's default glyph range, Basic Latin plus Latin-1

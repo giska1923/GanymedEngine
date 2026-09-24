@@ -2,6 +2,7 @@
 #include "GanymedE/Utils/PlatformUtils.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <array>
@@ -87,6 +88,34 @@ namespace GanymedE {
 		
 		return result;
 	}
+
+	namespace {
+
+		// Single-quoted for /bin/sh: inside '...' nothing is special except ' itself.
+		std::string ShellQuote(const std::string& text)
+		{
+			std::string quoted = "'";
+			for (char c : text)
+				quoted += (c == '\'') ? std::string("'\\''") : std::string(1, c);
+			return quoted + "'";
+		}
+
+	}
+
+	bool DesktopShell::RevealInFileBrowser(const std::filesystem::path& path)
+	{
+		// `open -R` reveals in Finder with the item selected. It returns once Finder has the
+		// request, so it does not block the editor.
+		return std::system(("open -R " + ShellQuote(path.string())).c_str()) == 0;
+	}
+
+	bool DesktopShell::OpenInVSCode(const std::filesystem::path& path)
+	{
+		// By bundle id rather than the `code` launcher, which on macOS only exists once the user
+		// has run "Install 'code' command in PATH". Fails if VS Code is not installed.
+		return std::system(("open -b com.microsoft.VSCode " + ShellQuote(path.string())).c_str()) == 0;
+	}
+
 #endif
 
 }

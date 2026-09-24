@@ -22,7 +22,7 @@ GanymedE/
 ├── Math/        Transform decomposition, ScreenPointToRay, AABB + Frustum, FloatCurve + ColorGradient
 ├── ImGui/       ImGuiLayer (docking UI host)
 ├── Debug/       Instrumentor (chrome://tracing profiler)
-└── Utils/       PlatformUtils (file dialogs)
+└── Utils/       PlatformUtils (file dialogs, desktop shell hand-offs)
 
 Platform/
 ├── Bgfx/        BgfxContext (bgfx lifetime + swapchain), ImGuiRendererBgfx

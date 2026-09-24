@@ -269,7 +269,11 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   proceeds. The GPU pick buffer cannot see joints — they are not entities and carry no ID.
 - **`m_ViewportHovered` is the image**, not the window. A click on the camera combo must not
   also click-select whatever the pick buffer last saw. `BlockEvents` still uses
-  focused-or-hovered, so Q/W/E/R keep working while the viewport window is focused.
+  focused-or-hovered, so Q/W/E/R keep working while the viewport window is focused. That makes
+  focus alone enough to let a **wheel** event through, so `EditorLayer::OnEvent` feeds the editor
+  camera only while `m_ViewportHovered`. Pointer input follows hover and keys follow focus.
+  Without that gate, a scroll over the Content Browser with the viewport still focused scrolled
+  the browser *and* dollied the camera.
 - **Drag-drop from the Content Browser** via `EditorUI::AcceptAssetDrop` (see
   [below](#typed-drag-drop)): a `Scene` drop opens the scene; a `StaticMesh` drop (edit mode only)
   instantiates it via `MeshImporter::Instantiate` and selects it. A rigged mesh draws at rest
@@ -377,7 +381,7 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 
 | Input                                   | Action                                                                                                                                       |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera. In Top (Ortho): Alt+LMB yaws only, scroll changes `OrthoHeight`, RMB fly is off |
+| Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera. Scroll only while the pointer is over the viewport image. In Top (Ortho): Alt+LMB yaws only, scroll changes `OrthoHeight`, RMB fly is off |
 | Viewport combo → Top (Ortho)            | Pitch-locked orthographic plan view. Metres-per-pixel readout appears beside Free Aspect                             |
 | LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed). While Skeletons is on, a bone within 12 px wins and does not change the entity |
 | Esc while assigning a socket joint      | Cancel viewport joint pick                                                                                                                                               |
@@ -1114,6 +1118,15 @@ at walk time). Navigate does not re-walk. Keystrokes never hit the filesystem.
 
 - Every item is a drag source (`CONTENT_BROWSER_ITEM`, relative path payload) — the viewport and
   the properties panel accept the relevant types.
+- Right-click on **any item**, folders included → **Show in Explorer** (**Reveal in Finder** on
+  macOS, **Open Containing Folder** on Linux). This opens the OS file browser on the parent folder
+  with the item selected. On a **text** file there is also **Open in VS Code**. Both go through
+  `DesktopShell` in [platform.md](../engine/platform.md). "Text" is decided by content, not
+  extension, using git's test: no NUL in the first 8000 bytes. So `.lua`, `.ganymede`, `.gmat`,
+  `.gltf` and any future text format qualify with no list to maintain. The sniff runs once, as
+  the menu opens (`IsWindowAppearing`), into `m_ContextItemIsText`, not on every frame the menu
+  is up. A failed launch, such as VS Code not found, logs a warning. These two sit above a
+  separator; the asset verbs below it are files only.
 - Right-click on an importable file (mesh/environment/texture/material/script/audio/prefab) →
   **Import**, registering it with the `AssetManager` (idempotent). In practice the scan at `Init`
   has already done this for every file under `assets/`; the menu item is for a file that appeared
