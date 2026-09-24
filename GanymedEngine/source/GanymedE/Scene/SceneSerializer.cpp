@@ -154,6 +154,11 @@ namespace GanymedE {
 			WriteReflectedComponent(out, "BoneAttachmentComponent",
 				entity.GetComponent<BoneAttachmentComponent>());
 
+		// Omitted-when-default like the aim offset: the Meshy chain and marker names write an
+		// empty map. Resolved and the per-hand results are Runtime.
+		if (entity.HasComponent<TwoHandIKComponent>())
+			WriteReflectedComponent(out, "TwoHandIKComponent", entity.GetComponent<TwoHandIKComponent>());
+
 		if (entity.HasComponent<ScriptComponent>())
 		{
 			out << YAML::Key << "ScriptComponent";
@@ -604,6 +609,13 @@ namespace GanymedE {
 				deserializedEntity.AddComponent<BoneAttachmentComponent>());
 		}
 
+		auto twoHandIKComponent = entityNode["TwoHandIKComponent"];
+		if (twoHandIKComponent)
+		{
+			ReadReflectedComponent(twoHandIKComponent,
+				deserializedEntity.AddComponent<TwoHandIKComponent>());
+		}
+
 		auto scriptComponent = entityNode["ScriptComponent"];
 		if (scriptComponent)
 		{
@@ -833,8 +845,6 @@ namespace GanymedE {
 			auto it = fileToNew.find(static_cast<uint64_t>(attachment->Target));
 			if (it != fileToNew.end())
 				attachment->Target = it->second.front();
-
-			attachment->Resolved = -1;
 		}
 	}
 

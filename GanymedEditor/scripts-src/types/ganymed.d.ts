@@ -144,6 +144,20 @@ declare interface Entity {
 	 */
 	GetAimOffset(): { pitch: number; yaw: number };
 
+	/**
+	 * How far each hand is pulled onto its weapon marker, 0–1 (clamped by the pass).
+	 * 0 leaves that arm exactly as the clip poses it; fade it for a reload or a lowered
+	 * weapon. Lands on this frame's pose. No-op on an entity without two-hand IK.
+	 */
+	SetHandIKWeight(right: number, left: number): void;
+
+	/**
+	 * How far the weapon is turned so its barrel points along the aim offset's aim, 0–1
+	 * (clamped by the pass). Needs an aim offset on the same entity. Turn it off with the hand
+	 * weights for a lowered weapon. No-op on an entity without two-hand IK.
+	 */
+	SetAimLock(weight: number): void;
+
 	HasBoneAttachment(): boolean;
 
 	/**

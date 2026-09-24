@@ -186,6 +186,10 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_ANCHOR;
 			}
+			else if constexpr (std::is_same_v<T, TwoHandIKComponent>)
+			{
+				icon = ICON_LC_HAND_GRAB;
+			}
 			else if constexpr (std::is_same_v<T, ScriptComponent>)
 			{
 				icon = ICON_LC_FILE_CODE;
@@ -1114,6 +1118,97 @@ namespace GanymedE {
 			ImGui::Text("%s  %.1f deg from the clip", tipName.c_str(), glm::degrees(radians));
 		}
 
+		// One hand's line, from what AnimationSystem's pass recorded this frame. The pass owns the
+		// rules; this only words them. Reach is the marker's distance from the shoulder as a
+		// fraction of the arm, the number a weapon pose is tuned against: under ~95% is
+		// comfortable, and past 100% the arm locks straight and stops short.
+		void DrawTwoHandIKHandReadoutLines(const TwoHandIKComponent& ik, int hand)
+		{
+			using HandStatus = TwoHandIKComponent::HandStatus;
+			const std::string& marker = hand == TwoHandIKComponent::Right ? ik.RightMarker : ik.LeftMarker;
+			const float weight = hand == TwoHandIKComponent::Right ? ik.RightWeight : ik.LeftWeight;
+
+			switch (ik.Status[(size_t)hand])
+			{
+				case HandStatus::NotEvaluated:
+					ImGui::TextDisabled("Pose not evaluated yet.");
+					return;
+				case HandStatus::Disabled:
+					ImGui::TextDisabled("Disabled: arms on the clip.");
+					return;
+				case HandStatus::NoWeapon:
+					ImGui::TextDisabled("No weapon.");
+					return;
+				case HandStatus::NoWeaponFrame:
+					ImGui::TextDisabled("The weapon's socket does not resolve.");
+					return;
+				case HandStatus::NoJoint:
+					ImGui::TextDisabled("A chain joint is not on this mesh: hand on the clip.");
+					return;
+				case HandStatus::NoMarker:
+					ImGui::TextDisabled("The weapon has no child named '%s': hand on the clip.", marker.c_str());
+					return;
+				case HandStatus::WeaponInArm:
+					ImGui::TextDisabled("The weapon is socketed inside this arm: this hand carries it.");
+					return;
+				case HandStatus::Unsolvable:
+					ImGui::TextDisabled("Not one limb, or a zero-length bone: hand on the clip.");
+					return;
+				case HandStatus::Solved:
+					break;
+			}
+
+			const float stretch = ik.Stretch[(size_t)hand] * 100.0f;
+			if (ik.Reached[(size_t)hand])
+				ImGui::Text("Reach %.0f%% of the arm", stretch);
+			else if (stretch >= 100.0f)
+				ImGui::TextColored(EditorUI::Color(EditorUI::Theme().AccentText),
+					"Clamped: marker at %.0f%% of the arm", stretch);
+			else
+				ImGui::TextColored(EditorUI::Color(EditorUI::Theme().AccentText),
+					"Clamped: marker too close to the shoulder (%.0f%%)", stretch);
+
+			if (!(std::isfinite(weight) && weight > 0.0f))
+				ImGui::TextDisabled("Weight 0: measured, but the arm stays on the clip.");
+		}
+
+		// The lock's verdict from the pass. The angle is how far the full lock turns the weapon
+		// off where the chest pose put it: a big number means the clip's chest is far from the
+		// aim, and the wrists are twisting to follow.
+		void DrawTwoHandIKAimLockReadout(const TwoHandIKComponent& ik)
+		{
+			using AimLockStatus = TwoHandIKComponent::AimLockStatus;
+			ImGui::PushTextWrapPos(0.0f);
+			switch (ik.AimLockState)
+			{
+				case AimLockStatus::Off:
+					ImGui::TextDisabled(ik.AimLock > 0.0f ? "Not evaluated." : "Off: the weapon sits on its socket.");
+					break;
+				case AimLockStatus::NoAimOffset:
+					ImGui::TextDisabled("Needs an Aim Offset on this entity: the aim is its pitch and yaw.");
+					break;
+				case AimLockStatus::NoAimMarker:
+					ImGui::TextDisabled("The weapon has no child named '%s' to aim.", ik.AimMarker.c_str());
+					break;
+				case AimLockStatus::Locked:
+					if (ik.AimLock >= 1.0f)
+						ImGui::Text("Barrel on the aim, %.0f deg off the chest pose", glm::degrees(ik.AimLockAngle));
+					else
+						ImGui::Text("Turned %.0f%% of %.0f deg onto the aim", ik.AimLock * 100.0f,
+							glm::degrees(ik.AimLockAngle));
+					break;
+			}
+			ImGui::PopTextWrapPos();
+		}
+
+		// The reasons are sentences, and the inspector is narrow: wrap rather than clip.
+		void DrawTwoHandIKHandReadout(const TwoHandIKComponent& ik, int hand)
+		{
+			ImGui::PushTextWrapPos(0.0f);
+			DrawTwoHandIKHandReadoutLines(ik, hand);
+			ImGui::PopTextWrapPos();
+		}
+
 	}
 
 	// ---------------------------------------------------------------------------------------
@@ -1522,6 +1617,7 @@ namespace GanymedE {
 			DrawAddComponentEntry<AnimatorComponent>("Animator");
 			DrawAddComponentEntry<AimOffsetComponent>("Aim Offset");
 			DrawAddComponentEntry<BoneAttachmentComponent>("Bone Attachment");
+			DrawAddComponentEntry<TwoHandIKComponent>("Two-Hand IK");
 			DrawAddComponentEntry<ScriptComponent>("Script");
 			DrawAddComponentEntry<AudioSourceComponent>("Audio Source");
 			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
@@ -2367,7 +2463,6 @@ namespace GanymedE {
 					if (droppedID != entity.GetUUID())
 					{
 						component.Target = droppedID;
-						component.Resolved = -1;
 						edited = true;
 					}
 				}
@@ -2377,7 +2472,6 @@ namespace GanymedE {
 			if (ImGui::SmallButton("Parent"))
 			{
 				component.Target = UUID{ 0 };
-				component.Resolved = -1;
 				edited = true;
 			}
 			ImGui::SameLine();
@@ -2406,7 +2500,6 @@ namespace GanymedE {
 					if (ImGui::Selectable("(none)", component.Joint.empty()))
 					{
 						component.Joint.clear();
-						component.Resolved = -1;
 						edited = true;
 					}
 
@@ -2416,7 +2509,6 @@ namespace GanymedE {
 						if (ImGui::Selectable(name.c_str(), selected))
 						{
 							component.Joint = name;
-							component.Resolved = -1;
 							edited = true;
 						}
 						if (selected)
@@ -2451,6 +2543,147 @@ namespace GanymedE {
 					ImGui::TextDisabled("Mesh is rigged but lists no joint names");
 			}
 
+			// An aim-locked weapon is drawn from the IK pass's frame, not from this socket. Say so where
+			// the socket is authored: otherwise the Rotation rows and the socket gizmo appear dead.
+			if (target && target.HasComponent<TwoHandIKComponent>())
+			{
+				const auto& ik = target.GetComponent<TwoHandIKComponent>();
+				if (ik.Weapon == entity.GetUUID()
+					&& ik.AimLockState == TwoHandIKComponent::AimLockStatus::Locked)
+				{
+					ImGui::PushTextWrapPos(0.0f);
+					ImGui::TextDisabled("Aim lock on '%s' turns this weapon onto the aim. Only where this "
+						"socket puts the grip counts, not its rotation, and the gizmo shows the socket, not "
+						"the drawn weapon. Set Aim Lock to 0 to author the pose.", target.GetName().c_str());
+					ImGui::PopTextWrapPos();
+				}
+			}
+
+			edited |= DrawReflected(entity, m_Context.get(), m_Selection, component);
+			return edited;
+		});
+
+		DrawComponent<TwoHandIKComponent>("Two-Hand IK", entity, [&](auto& component)
+		{
+			bool edited = false;
+
+			Ref<Mesh> mesh = entity.HasComponent<StaticMeshComponent>()
+				? entity.GetComponent<StaticMeshComponent>().Mesh.Get()
+				: nullptr;
+			const bool rigged = mesh && mesh->HasSkeleton();
+
+			// The weapon is not a field: it is whatever the pass found this frame, the first child
+			// with a socket on this rig. Showing it rather than picking it is the whole UI.
+			Entity weapon = (m_Context && component.Weapon != UUID{ 0 })
+				? m_Context->FindEntityByUUID(component.Weapon) : Entity{};
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextDisabled("Weapon");
+			ImGui::SameLine();
+			if (weapon)
+			{
+				const std::string& joint = weapon.GetComponent<BoneAttachmentComponent>().Joint;
+				ImGui::Text("%s  (socket on %s)", weapon.GetName().c_str(), joint.empty() ? "no joint" : joint.c_str());
+			}
+			else
+			{
+				ImGui::TextDisabled("none: give this entity a child with a Bone Attachment on it");
+			}
+
+			if (!rigged)
+				ImGui::TextDisabled("No rigged mesh on this entity");
+			else if (!entity.HasComponent<AnimatorComponent>())
+				ImGui::TextDisabled("Needs an Animator. The pass runs where the per-entity palette lives.");
+			ImGui::PopTextWrapPos();
+
+			// Each combo edits one member, so a multi-selection copies only the field that changed.
+			auto propagate = [&](std::string TwoHandIKComponent::* member)
+			{
+				if (m_Selection.size() <= 1)
+					return;
+				for (Entity other : m_Selection)
+				{
+					if (other != entity && other.HasComponent<TwoHandIKComponent>())
+						other.GetComponent<TwoHandIKComponent>().*member = component.*member;
+				}
+			};
+
+			auto nameCombo = [&](const char* label, std::string TwoHandIKComponent::* member,
+				const std::vector<std::string>& options)
+			{
+				std::string& value = component.*member;
+				if (!ImGui::BeginCombo(label, value.empty() ? "(none)" : value.c_str()))
+					return;
+				for (const std::string& option : options)
+				{
+					const bool selected = value == option;
+					if (ImGui::Selectable(option.c_str(), selected) && !selected)
+					{
+						value = option;
+						propagate(member);
+						edited = true;
+					}
+					if (selected)
+						ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			};
+
+			// Marker candidates are the weapon's direct children - the only place the pass looks.
+			std::vector<std::string> markerOptions;
+			if (weapon)
+			{
+				for (UUID childID : weapon.GetComponent<RelationshipComponent>().Children)
+				{
+					if (Entity child = m_Context->FindEntityByUUID(childID))
+						markerOptions.push_back(child.GetName());
+				}
+			}
+			static const std::vector<std::string> s_NoOptions;
+			const std::vector<std::string>& jointOptions = rigged ? mesh->GetSkeleton().JointNames : s_NoOptions;
+
+			struct HandFields
+			{
+				const char* Title;
+				std::string TwoHandIKComponent::* Upper;
+				std::string TwoHandIKComponent::* Lower;
+				std::string TwoHandIKComponent::* End;
+				std::string TwoHandIKComponent::* Marker;
+			};
+			const HandFields hands[2] = {
+				{ "Right hand", &TwoHandIKComponent::RightUpper, &TwoHandIKComponent::RightLower,
+					&TwoHandIKComponent::RightEnd, &TwoHandIKComponent::RightMarker },
+				{ "Left hand", &TwoHandIKComponent::LeftUpper, &TwoHandIKComponent::LeftLower,
+					&TwoHandIKComponent::LeftEnd, &TwoHandIKComponent::LeftMarker } };
+
+			for (int hand = 0; hand < 2; hand++)
+			{
+				ImGui::PushID(hand);
+				ImGui::SeparatorText(hands[hand].Title);
+
+				ImGui::BeginDisabled(!rigged);
+				nameCombo("Upper", hands[hand].Upper, jointOptions);
+				nameCombo("Lower", hands[hand].Lower, jointOptions);
+				nameCombo("End", hands[hand].End, jointOptions);
+				ImGui::EndDisabled();
+
+				ImGui::BeginDisabled(!weapon);
+				nameCombo("Marker", hands[hand].Marker, markerOptions);
+				ImGui::EndDisabled();
+
+				if (rigged && entity.HasComponent<AnimatorComponent>())
+					DrawTwoHandIKHandReadout(component, hand);
+				ImGui::PopID();
+			}
+
+			ImGui::SeparatorText("Aim lock");
+			ImGui::BeginDisabled(!weapon);
+			nameCombo("Aim Marker", &TwoHandIKComponent::AimMarker, markerOptions);
+			ImGui::EndDisabled();
+			if (rigged && entity.HasComponent<AnimatorComponent>())
+				DrawTwoHandIKAimLockReadout(component);
+
+			ImGui::Separator();
 			edited |= DrawReflected(entity, m_Context.get(), m_Selection, component);
 			return edited;
 		});

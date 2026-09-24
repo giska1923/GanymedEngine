@@ -235,8 +235,8 @@ namespace GanymedE {
 	//
 	// Pitch and Yaw are live inputs, not authored state: Lua writes them every frame and
 	// the editor preview writes them without Play. They are not serialized, and Scene::Copy
-	// clears them so a preview cannot survive into play. Resolved is the same kind of
-	// cache as BoneAttachmentComponent::Resolved.
+	// clears them so a preview cannot survive into play. Resolved is a cache of joint
+	// indices, checked by name before use.
 	//
 	// The names are std::string, so this struct is not trivially copyable and gets no
 	// sizeof sentinel — the same mechanical rule as BoneAttachmentComponent. Fixed-size
@@ -307,11 +307,117 @@ namespace GanymedE {
 		glm::vec3 Offset{ 0.0f };
 		glm::vec3 Rotation{ 0.0f };   // Euler radians, X·Y·Z, matching TransformComponent
 
-		// Runtime. Not serialized; re-resolved when the target's mesh or this Joint name changes.
-		int32_t Resolved = -1;
+		// The joint-space transform this entity is drawn at: Offset and Rotation replace the
+		// local translation and rotation, which is why those two are ignored. Scale has no
+		// counterpart here, so the local one is passed in and kept: a socketed prop is sized in
+		// the inspector like any other entity, and - the point - it is sized the SAME way when
+		// the socket does not resolve. A compensation factor that only applied while the socket
+		// resolved is how a 1.9 m rifle became an 86 m one on every load.
+		//
+		// One owner: BoneAttachmentSystem draws the entity with it, and AnimationSystem's
+		// two-hand IK pass builds the weapon frame with it. If the two disagreed, the hands
+		// would land beside the rifle the player sees.
+		glm::mat4 OffsetMatrix(const glm::vec3& scale) const
+		{
+			glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), Rotation.x, { 1, 0, 0 })
+				* glm::rotate(glm::mat4(1.0f), Rotation.y, { 0, 1, 0 })
+				* glm::rotate(glm::mat4(1.0f), Rotation.z, { 0, 0, 1 });
+
+			return glm::translate(glm::mat4(1.0f), Offset) * rotation
+				* glm::scale(glm::mat4(1.0f), scale);
+		}
 
 		BoneAttachmentComponent() = default;
 		BoneAttachmentComponent(const BoneAttachmentComponent&) = default;
+	};
+
+	// Solves both arms onto the weapon this rig holds, after the aim offset and before the
+	// palette - the clip drives the body and legs, the arms follow the weapon.
+	//
+	// The weapon is the first child of this entity that has a BoneAttachmentComponent aimed at
+	// this rig. Its socket IS the weapon pose, placed with the socket gizmo, and on a chest
+	// joint both hands can reach it. Each hand's target is a direct child of the weapon found
+	// by name, whose local transform is a wrist frame in the weapon's space: "the hand joint goes
+	// here, rotated like this". A wrist, not a palm, so a new rig needs no measured hand offset.
+	//
+	// Joints are names for the same reason clips are. Per-hand runtime arrays are indexed
+	// Right (0) then Left (1).
+	//
+	// The names are std::string, so no sizeof sentinel - the same mechanical rule as
+	// BoneAttachmentComponent. Six named strings rather than two arrays of three: each chain
+	// slot is a distinct role, and a fixed three-name array would need a YAML codec of its own.
+	struct TwoHandIKComponent
+	{
+		static constexpr int Right = 0;
+		static constexpr int Left = 1;
+
+		std::string RightUpper = "RightArm";
+		std::string RightLower = "RightForeArm";
+		std::string RightEnd = "RightHand";
+		std::string LeftUpper = "LeftArm";
+		std::string LeftLower = "LeftForeArm";
+		std::string LeftEnd = "LeftHand";
+
+		std::string RightMarker = "Grip";
+		std::string LeftMarker = "Support";
+
+		float RightWeight = 1.0f;   // 0-1; Lua writes these for a reload or a lowered weapon
+		float LeftWeight = 1.0f;
+		bool Enabled = true;
+
+		// Aim lock: turns the weapon, about its right-hand marker, so the barrel points along the
+		// aim this entity's AimOffsetComponent describes - whatever the clip does to the chest.
+		// The barrel is AimMarker's forward (-Z, the engine's forward everywhere), so no weapon
+		// needs an axis convention. 0 is off, and leaves the weapon exactly where its socket puts
+		// it; the default, so a scene authored before the lock looks the same.
+		float AimLock = 0.0f;
+		std::string AimMarker = "Muzzle";
+
+		// What the pass made of a hand this frame. The pass is the one place that decides why a
+		// hand is not solved; the inspector and the overlay read this rather than re-deriving
+		// the rules. Solved means measured: Reached and Stretch hold, and the arm moved unless
+		// its weight is 0.
+		enum class HandStatus : uint8_t
+		{
+			NotEvaluated = 0, // no pass ran: no animator, mesh not loaded, pose not sampled
+			Disabled,
+			NoWeapon,         // no child has a BoneAttachmentComponent on this rig
+			NoWeaponFrame,    // the socket joint does not resolve, or the skin cannot be inverted
+			NoJoint,          // a chain joint is not on this mesh
+			NoMarker,         // the weapon has no child with the marker's name
+			WeaponInArm,      // the weapon is socketed inside this arm, which carries it
+			Unsolvable,       // not one limb, or a zero-length bone
+			Solved
+		};
+
+		// Runtime. Not serialized. Resolved holds joint hints (right upper/lower/end, left
+		// upper/lower/end, then the weapon's socket joint), checked by name every frame, so a
+		// stale one costs a search, never a wrong joint. Everything below it is cleared and
+		// rewritten on every evaluation, so a copy never shows the source scene's reach.
+		std::array<int32_t, 7> Resolved{ -1, -1, -1, -1, -1, -1, -1 };
+		std::array<HandStatus, 2> Status{ HandStatus::NotEvaluated, HandStatus::NotEvaluated };
+		std::array<bool, 2> Reached{ false, false };   // see TwoBoneResult
+		std::array<float, 2> Stretch{ 0.0f, 0.0f };    // marker distance / arm length
+		UUID Weapon{ 0 };                               // the weapon the pass found
+		std::array<UUID, 2> Markers{ UUID{ 0 }, UUID{ 0 } };
+
+		enum class AimLockStatus : uint8_t
+		{
+			Off = 0,       // AimLock 0, the pass disabled, or no pass ran
+			NoAimOffset,   // the aim comes from this entity's AimOffsetComponent, and it has none
+			NoAimMarker,   // the weapon has no child named AimMarker
+			Locked
+		};
+		AimLockStatus AimLockState = AimLockStatus::Off;
+		float AimLockAngle = 0.0f;   // radians the full lock turns the weapon; how far the chest is off the aim
+
+		// The weapon's mesh-space frame after the lock, valid while AimLockState is Locked.
+		// BoneAttachmentSystem draws the weapon from this instead of its socket, so the pass is
+		// the one owner of where an aimed weapon is and the hands cannot land beside it.
+		glm::mat4 LockedWeaponFrame{ 1.0f };
+
+		TwoHandIKComponent() = default;
+		TwoHandIKComponent(const TwoHandIKComponent&) = default;
 	};
 
 	struct CameraComponent

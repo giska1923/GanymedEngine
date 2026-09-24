@@ -10,6 +10,7 @@
 
 namespace GanymedE {
 
+
 	namespace {
 
 		struct KeyPair
@@ -96,6 +97,27 @@ namespace GanymedE {
 			}
 		}
 
+		// The one clamp rule for aim angles. ApplyAimOffset bends the spine with it and the aim
+		// lock points the barrel with it, so the spine and the weapon cannot disagree on a limit.
+		float ClampAimAngle(float angle, float limit)
+		{
+			const float bound = std::isfinite(limit) ? std::abs(limit) : 0.0f;
+			return std::isfinite(angle) ? std::clamp(angle, -bound, bound) : 0.0f;
+		}
+
+		// The direction the aim offset aims, in mesh space: ModelForward turned by yaw about up,
+		// then by pitch about the right turned by that yaw - the construction ApplyAimOffset
+		// splits across the spine. Up is +Y; right is forward x up.
+		glm::vec3 AimDirectionInMesh(const AimOffsetComponent& aim)
+		{
+			const float pitch = ClampAimAngle(aim.Pitch, aim.PitchLimit);
+			const float yaw = ClampAimAngle(aim.Yaw, aim.YawLimit);
+			const glm::vec3 up{ 0.0f, 1.0f, 0.0f };
+			const glm::vec3 forward = ModelForwardVector(aim.ModelForward);
+			const glm::vec3 pitchAxis = glm::angleAxis(yaw, up) * glm::cross(forward, up);
+			return glm::normalize(glm::angleAxis(pitch, pitchAxis) * (glm::angleAxis(yaw, up) * forward));
+		}
+
 		// Mesh-space character axes into the space SampleClipGlobals writes. right is
 		// forward × up, which is -X when the rig faces +Z — the same -X the Meshy spine
 		// already has, and the axis a positive pitch rotates about to look up.
@@ -162,6 +184,80 @@ namespace GanymedE {
 				chain.Subtrees[i] = storage[(size_t)i].data();
 				chain.SubtreeCounts[i] = (uint32_t)storage[(size_t)i].size();
 			}
+		}
+
+		glm::vec3 Origin(const glm::mat4& global)
+		{
+			return glm::vec3(global[3]);
+		}
+
+		// A joint's orientation with its scale stripped - a centimetre rig carries 100 in
+		// its globals' linear part, and the IK target is a unit orientation.
+		glm::quat JointRotation(const glm::mat4& global)
+		{
+			return glm::normalize(glm::quat_cast(OrthonormalRotation(glm::mat3(global))));
+		}
+
+		bool IsFinite(const glm::vec3& v)
+		{
+			return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+		}
+
+		glm::vec3 AnyPerpendicular(const glm::vec3& unit)
+		{
+			const glm::vec3 other = std::abs(unit.x) < 0.9f ? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+			return glm::normalize(glm::cross(unit, other));
+		}
+
+		// Shortest-arc rotation taking unit `from` onto unit `to`. Shortest arc is the point:
+		// it swings a bone without adding twist about the bone's own axis.
+		glm::quat RotationBetween(const glm::vec3& from, const glm::vec3& to)
+		{
+			const float cosine = glm::dot(from, to);
+			if (cosine < -1.0f + 1e-6f)
+				return glm::angleAxis(glm::pi<float>(), AnyPerpendicular(from));
+
+			// Half-angle form: (1 + cos, from × to) normalises to the rotation with no trig.
+			const glm::vec3 axis = glm::cross(from, to);
+			return glm::normalize(glm::quat(1.0f + cosine, axis.x, axis.y, axis.z));
+		}
+
+		bool SubtreeContains(const uint32_t* subtree, uint32_t count, int32_t joint)
+		{
+			for (uint32_t n = 0; n < count; n++)
+			{
+				if ((int32_t)subtree[n] == joint)
+					return true;
+			}
+			return false;
+		}
+
+		void RotateSubtree(std::vector<glm::mat4>& globals, const uint32_t* subtree, uint32_t count,
+			const glm::vec3& pivot, const glm::quat& rotation)
+		{
+			const glm::mat4 aboutPivot = glm::translate(glm::mat4(1.0f), pivot)
+				* glm::mat4_cast(rotation)
+				* glm::translate(glm::mat4(1.0f), -pivot);
+
+			for (uint32_t n = 0; n < count; n++)
+			{
+				const uint32_t k = subtree[n];
+				if (k < globals.size())
+					globals[k] = aboutPivot * globals[k];
+			}
+		}
+
+		// Rewritten on every evaluation, so they describe this frame's pose or nothing. That is
+		// what lets Scene::Copy and undo carry them without a sweep of their own.
+		void ClearHandIKResults(TwoHandIKComponent& ik)
+		{
+			ik.Status.fill(TwoHandIKComponent::HandStatus::NotEvaluated);
+			ik.Reached.fill(false);
+			ik.Stretch.fill(0.0f);
+			ik.Weapon = UUID{ 0 };
+			ik.Markers.fill(UUID{ 0 });
+			ik.AimLockState = TwoHandIKComponent::AimLockStatus::Off;
+			ik.AimLockAngle = 0.0f;
 		}
 
 #ifdef GE_DEBUG
@@ -383,6 +479,259 @@ namespace GanymedE {
 				}
 			}
 		}
+
+		void FailTwoBoneProbe(float unit, const std::string& message)
+		{
+			GE_CORE_ERROR("Two-bone IK probe failed (unit {0}): {1}", unit, message);
+			GE_CORE_ASSERT(false, "Two-bone IK probe failed");
+		}
+
+		// Angle of a⁻¹b from its vector part. The 2 acos(|dot|) form the aim probes use is
+		// quantised near zero - one float step below 1 is already 7e-4 rad - so it cannot
+		// resolve a 1e-4 tolerance.
+		float RotationError(const glm::quat& a, const glm::quat& b)
+		{
+			const glm::quat delta = glm::normalize(glm::inverse(a) * b);
+			return 2.0f * std::atan2(glm::length(glm::vec3(delta.x, delta.y, delta.z)), std::abs(delta.w));
+		}
+
+		// Chest, a bent arm hanging off it, a hand tip below the wrist that must follow the hand,
+		// and a head that must not move. `unit` scales RootTransform: 1 is a metre rig, 100 a
+		// centimetre rig whose globals carry the scale in their linear part, which the rotation
+		// read has to strip.
+		Skeleton MakeArmProbeSkeleton(float unit)
+		{
+			Skeleton skeleton;
+			skeleton.ParentIndices = { -1, 0, 1, 2, 3, 0 };
+			skeleton.JointNames = { "Chest", "Arm", "ForeArm", "Hand", "HandTip", "Head" };
+			skeleton.InverseBind.assign(skeleton.ParentIndices.size(), glm::mat4(1.0f));
+			skeleton.LocalRestPose.resize(skeleton.ParentIndices.size());
+			skeleton.LocalRestPose[0].Translation = { 0.0f, 1.4f, 0.0f };
+			skeleton.LocalRestPose[1].Translation = { 0.2f, 0.0f, 0.0f };
+			skeleton.LocalRestPose[2].Translation = { 0.3f, 0.0f, 0.0f };
+			skeleton.LocalRestPose[3].Translation = { 0.0f, -0.25f, 0.0f };
+			skeleton.LocalRestPose[3].Rotation = glm::angleAxis(0.4f, glm::normalize(glm::vec3(1.0f, 1.0f, 0.0f)));
+			skeleton.LocalRestPose[4].Translation = { 0.0f, -0.08f, 0.0f };
+			skeleton.LocalRestPose[5].Translation = { 0.0f, 0.3f, 0.0f };
+			skeleton.RootTransform = glm::scale(glm::mat4(1.0f), glm::vec3(unit));
+			return skeleton;
+		}
+
+		// H1's verification table: weight 0, a reachable target with its rotation, a target past
+		// reach, the pole's side, a degenerate pole, and a partial weight - run on a metre rig
+		// and a centimetre rig, every tolerance scaled by the unit.
+		void RunTwoBoneProbes()
+		{
+			for (const float unit : { 1.0f, 100.0f })
+			{
+				const Skeleton skeleton = MakeArmProbeSkeleton(unit);
+				std::vector<JointPose> locals;
+				std::vector<glm::mat4> rest;
+				if (!SampleClipGlobals(skeleton, nullptr, 0.0f, locals, rest))
+				{
+					FailTwoBoneProbe(unit, "probe skeleton did not sample");
+					return;
+				}
+
+				const int32_t chest = 0, arm = 1, foreArm = 2, hand = 3, handTip = 4, head = 5;
+				std::array<std::vector<uint32_t>, 3> subtrees;
+				BuildSubtree(skeleton, arm, subtrees[0]);
+				BuildSubtree(skeleton, foreArm, subtrees[1]);
+				BuildSubtree(skeleton, hand, subtrees[2]);
+
+				TwoBoneChain chain;
+				chain.Upper = arm;
+				chain.Lower = foreArm;
+				chain.End = hand;
+				chain.PoleHint = { 0.0f, -1.0f, 0.0f };
+				for (int i = 0; i < 3; i++)
+				{
+					chain.Subtrees[i] = subtrees[(size_t)i].data();
+					chain.SubtreeCounts[i] = (uint32_t)subtrees[(size_t)i].size();
+				}
+
+				const glm::vec3 shoulder = Origin(rest[arm]);
+				const float upperLength = 0.3f * unit;
+				const float lowerLength = 0.25f * unit;
+				const float tipLength = 0.08f * unit;
+				const glm::vec3 clipElbow = Origin(rest[foreArm]);
+				const glm::quat someRotation = glm::angleAxis(1.1f, glm::normalize(glm::vec3(0.3f, 1.0f, -0.5f)));
+
+				const auto P = [&](int32_t joint, const std::vector<glm::mat4>& globals) { return Origin(globals[(size_t)joint]); };
+				const auto AllFinite = [](const std::vector<glm::mat4>& globals)
+				{
+					for (const glm::mat4& m : globals)
+					{
+						for (int c = 0; c < 4; c++)
+						{
+							if (!IsFinite(glm::vec3(m[c])) || !std::isfinite(m[c][3]))
+								return false;
+						}
+					}
+					return true;
+				};
+				const auto LengthsKept = [&](const std::vector<glm::mat4>& globals)
+				{
+					return std::abs(glm::length(P(foreArm, globals) - P(arm, globals)) - upperLength) < 1e-5f * unit
+						&& std::abs(glm::length(P(hand, globals) - P(foreArm, globals)) - lowerLength) < 1e-5f * unit
+						&& std::abs(glm::length(P(handTip, globals) - P(hand, globals)) - tipLength) < 1e-5f * unit;
+				};
+				const auto BendAngle = [&](const std::vector<glm::mat4>& globals)
+				{
+					const glm::vec3 upper = glm::normalize(P(foreArm, globals) - P(arm, globals));
+					const glm::vec3 lower = glm::normalize(P(hand, globals) - P(foreArm, globals));
+					return std::atan2(glm::length(glm::cross(upper, lower)), glm::dot(upper, lower));
+				};
+
+				{
+					std::vector<glm::mat4> posed = rest;
+					const TwoBoneResult r = SolveTwoBone(skeleton, chain, shoulder + glm::vec3(0.15f, -0.35f, 0.2f) * unit,
+						someRotation, clipElbow, 0.0f, posed);
+					if (!r.Valid)
+					{
+						FailTwoBoneProbe(unit, "weight 0 on a valid chain reported invalid");
+						return;
+					}
+					for (size_t i = 0; i < rest.size(); i++)
+					{
+						if (!SameMatrix(rest[i], posed[i]))
+						{
+							FailTwoBoneProbe(unit, "weight 0 changed a global");
+							return;
+						}
+					}
+				}
+
+				{
+					std::vector<glm::mat4> posed = rest;
+					const glm::vec3 target = shoulder + glm::vec3(0.15f, -0.35f, 0.2f) * unit;
+					const TwoBoneResult r = SolveTwoBone(skeleton, chain, target, someRotation, clipElbow, 1.0f, posed);
+					const float miss = glm::length(P(hand, posed) - target);
+					if (!r.Valid || !r.Reached || miss > 1e-4f * unit)
+					{
+						FailTwoBoneProbe(unit, "reachable target missed by " + std::to_string(miss / unit) + " m");
+						return;
+					}
+					if (!LengthsKept(posed))
+					{
+						FailTwoBoneProbe(unit, "a reachable solve changed a bone length");
+						return;
+					}
+					if (!SameMatrix(rest[chest], posed[chest]) || !SameMatrix(rest[head], posed[head])
+						|| glm::length(P(arm, posed) - shoulder) > 1e-6f * unit)
+					{
+						FailTwoBoneProbe(unit, "the solve moved the shoulder or a joint outside the arm");
+						return;
+					}
+					const float rotationError = RotationError(someRotation, JointRotation(posed[hand]));
+					if (rotationError > 1e-4f)
+					{
+						FailTwoBoneProbe(unit, "wrist rotation misses the target by " + std::to_string(rotationError) + " rad");
+						return;
+					}
+				}
+
+				{
+					std::vector<glm::mat4> posed = rest;
+					const glm::vec3 direction = glm::normalize(glm::vec3(0.3f, -0.2f, 0.9f));
+					const TwoBoneResult r = SolveTwoBone(skeleton, chain, shoulder + direction * unit,
+						someRotation, clipElbow, 1.0f, posed);
+					const glm::vec3 fullLength = shoulder + direction * (upperLength + lowerLength);
+					const float offLine = glm::length(P(hand, posed) - fullLength);
+					const float bend = BendAngle(posed);
+					if (!r.Valid || r.Reached || std::abs(r.Stretch - 1.0f / 0.55f) > 1e-4f)
+					{
+						FailTwoBoneProbe(unit, "target past reach: Reached " + std::to_string(r.Reached)
+							+ ", Stretch " + std::to_string(r.Stretch) + ", expected " + std::to_string(1.0f / 0.55f));
+						return;
+					}
+					if (offLine > 1e-4f * unit || bend > glm::radians(1.0f))
+					{
+						FailTwoBoneProbe(unit, "past reach: wrist " + std::to_string(offLine / unit)
+							+ " m off the full-length point, elbow bent " + std::to_string(glm::degrees(bend)) + " deg");
+						return;
+					}
+				}
+
+				{
+					const glm::vec3 target = shoulder + glm::vec3(0.0f, -0.1f, 0.4f) * unit;
+					std::vector<glm::mat4> left = rest;
+					std::vector<glm::mat4> right = rest;
+					const TwoBoneResult rl = SolveTwoBone(skeleton, chain, target, someRotation,
+						shoulder + glm::vec3(0.3f, 0.0f, 0.2f) * unit, 1.0f, left);
+					const TwoBoneResult rr = SolveTwoBone(skeleton, chain, target, someRotation,
+						shoulder + glm::vec3(-0.3f, 0.0f, 0.2f) * unit, 1.0f, right);
+					const float leftSide = (P(foreArm, left) - shoulder).x;
+					const float rightSide = (P(foreArm, right) - shoulder).x;
+					if (!rl.Reached || !rr.Reached || !(leftSide > 0.0f) || !(rightSide < 0.0f))
+					{
+						FailTwoBoneProbe(unit, "elbow did not follow the pole: +X pole put it at x "
+							+ std::to_string(leftSide / unit) + ", -X pole at " + std::to_string(rightSide / unit));
+						return;
+					}
+					const float angleDifference = std::abs(BendAngle(left) - BendAngle(right));
+					if (angleDifference > 1e-4f)
+					{
+						FailTwoBoneProbe(unit, "the pole changed the elbow angle by " + std::to_string(angleDifference) + " rad");
+						return;
+					}
+				}
+
+				{
+					// On the reach line in front of the target, and on the shoulder itself.
+					const glm::vec3 target = shoulder + glm::vec3(0.0f, 0.0f, 0.4f) * unit;
+					for (const glm::vec3& pole : { shoulder + glm::vec3(0.0f, 0.0f, 1.0f) * unit, shoulder })
+					{
+						std::vector<glm::mat4> posed = rest;
+						const TwoBoneResult r = SolveTwoBone(skeleton, chain, target, someRotation, pole, 1.0f, posed);
+						if (!AllFinite(posed))
+						{
+							FailTwoBoneProbe(unit, "a pole on the reach line produced a non-finite global");
+							return;
+						}
+						const float miss = glm::length(P(hand, posed) - target);
+						const float drop = (P(foreArm, posed) - shoulder).y;
+						if (!r.Reached || miss > 1e-4f * unit || !(drop < 0.0f))
+						{
+							FailTwoBoneProbe(unit, "degenerate pole: wrist missed by " + std::to_string(miss / unit)
+								+ " m, elbow height " + std::to_string(drop / unit) + " (hint is down)");
+							return;
+						}
+					}
+				}
+
+				{
+					std::vector<glm::mat4> posed = rest;
+					const glm::vec3 target = shoulder + glm::vec3(0.15f, -0.35f, 0.2f) * unit;
+					SolveTwoBone(skeleton, chain, target, someRotation, clipElbow, 0.5f, posed);
+					const glm::vec3 halfway = glm::mix(P(hand, rest), target, 0.5f);
+					const float miss = glm::length(P(hand, posed) - halfway);
+					if (miss > 1e-4f * unit)
+					{
+						FailTwoBoneProbe(unit, "weight 0.5 missed the halfway goal by " + std::to_string(miss / unit) + " m");
+						return;
+					}
+				}
+
+				{
+					// ForeArm is not under Hand: not one limb, refused, untouched.
+					TwoBoneChain wrong = chain;
+					wrong.Upper = hand;
+					wrong.Subtrees[0] = subtrees[2].data();
+					wrong.SubtreeCounts[0] = (uint32_t)subtrees[2].size();
+					std::vector<glm::mat4> posed = rest;
+					const TwoBoneResult r = SolveTwoBone(skeleton, wrong, shoulder, someRotation, clipElbow, 1.0f, posed);
+					bool untouched = true;
+					for (size_t i = 0; i < rest.size(); i++)
+						untouched = untouched && SameMatrix(rest[i], posed[i]);
+					if (r.Valid || !untouched)
+					{
+						FailTwoBoneProbe(unit, "a chain that is not one limb was solved");
+						return;
+					}
+				}
+			}
+		}
 #endif
 
 	}
@@ -391,11 +740,12 @@ namespace GanymedE {
 	{
 		// Play starts at the head of the clip whatever the editor was scrubbed to. The runtime
 		// scene is a copy, so the editor scene keeps its scrub position for when play stops.
-		for (auto [entity, animator, meshComponent, aim] : View<AnimView>())
+		for (auto [entity, animator, meshComponent, aim, ik] : View<AnimView>())
 		{
 			(void)entity;
 			(void)meshComponent;
 			(void)aim;
+			(void)ik;
 			animator.Time = 0.0f;
 		}
 
@@ -403,6 +753,8 @@ namespace GanymedE {
 		m_WarnedAimJoints.clear();
 		m_WarnedAimAxes.clear();
 		m_AimSubtrees.clear();
+		m_WarnedHandIK.clear();
+		m_HandIKSubtrees.clear();
 	}
 
 	void AnimationSystem::OnUpdate(Timestep ts)
@@ -423,11 +775,15 @@ namespace GanymedE {
 		{
 			s_ProbesRun = true;
 			RunAimOffsetProbes();
+			RunTwoBoneProbes();
 		}
 #endif
 
-		for (auto [entity, animator, meshComponent, aim] : View<AnimView>())
+		for (auto [entity, animator, meshComponent, aim, ik] : View<AnimView>())
 		{
+			if (ik)
+				ClearHandIKResults(*ik);
+
 			const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
 			if (!mesh || !mesh->HasSkeleton())
 			{
@@ -475,6 +831,12 @@ namespace GanymedE {
 			animator.Palette.resize(jointCount);
 			for (uint32_t i = 0; i < jointCount; i++)
 				animator.Palette[i] = m_Globals[i] * skeleton.InverseBind[i];
+
+			// After the palette, not before: the weapon frame is read from it through
+			// TryGetJointFrame - the same function and the same entry BoneAttachmentSystem
+			// draws the weapon from later this frame. The pass then rewrites only the arms.
+			if (ik)
+				ApplyTwoHandIK(entity, *ik, aim ? &*aim : nullptr, *mesh, animator.Palette);
 		}
 	}
 
@@ -598,16 +960,8 @@ namespace GanymedE {
 		if (chain.Count <= 0 || globals.size() != skeleton.JointCount())
 			return;
 
-		const auto Limit = [](float limit)
-		{
-			return std::isfinite(limit) ? std::abs(limit) : 0.0f;
-		};
-		if (!std::isfinite(pitch))
-			pitch = 0.0f;
-		if (!std::isfinite(yaw))
-			yaw = 0.0f;
-		pitch = std::clamp(pitch, -Limit(chain.PitchLimit), Limit(chain.PitchLimit));
-		yaw = std::clamp(yaw, -Limit(chain.YawLimit), Limit(chain.YawLimit));
+		pitch = ClampAimAngle(pitch, chain.PitchLimit);
+		yaw = ClampAimAngle(yaw, chain.YawLimit);
 		if (pitch == 0.0f && yaw == 0.0f)
 			return;
 
@@ -669,6 +1023,140 @@ namespace GanymedE {
 					globals[k] = aboutPivot * globals[k];
 			}
 		}
+	}
+
+	TwoBoneResult SolveTwoBone(const Skeleton& skeleton, const TwoBoneChain& chain,
+		const glm::vec3& target, const glm::quat& targetRotation, const glm::vec3& pole,
+		float weight, std::vector<glm::mat4>& globals)
+	{
+		GE_PROFILE_SCOPE("AnimationSystem::SolveTwoBone");
+
+		TwoBoneResult result;
+
+		const uint32_t jointCount = skeleton.JointCount();
+		if (globals.size() != jointCount)
+			return result;
+
+		const auto InRange = [jointCount](int32_t joint)
+		{
+			return joint >= 0 && (uint32_t)joint < jointCount;
+		};
+		if (!InRange(chain.Upper) || !InRange(chain.Lower) || !InRange(chain.End))
+			return result;
+		for (int i = 0; i < 3; i++)
+		{
+			if (!chain.Subtrees[i] || chain.SubtreeCounts[i] == 0)
+				return result;
+		}
+
+		// Turning Upper's subtree has to carry the elbow and the wrist, and Lower's the wrist.
+		// A chain that is not one limb would move the wrist by rotations that do not reach it.
+		if (!SubtreeContains(chain.Subtrees[0], chain.SubtreeCounts[0], chain.Lower)
+			|| !SubtreeContains(chain.Subtrees[1], chain.SubtreeCounts[1], chain.End))
+		{
+			return result;
+		}
+
+		if (!IsFinite(target) || !IsFinite(pole)
+			|| !std::isfinite(targetRotation.w) || !IsFinite(glm::vec3(targetRotation.x, targetRotation.y, targetRotation.z))
+			|| glm::length(targetRotation) < 1e-6f)
+		{
+			return result;
+		}
+
+		const glm::vec3 shoulder = Origin(globals[(uint32_t)chain.Upper]);
+		const glm::vec3 elbow = Origin(globals[(uint32_t)chain.Lower]);
+		const glm::vec3 wrist = Origin(globals[(uint32_t)chain.End]);
+
+		// Tolerances are fractions of the chain, never absolute: the same arm is ~0.55 in a
+		// metre rig and ~55 in a centimetre one.
+		const float upperLength = glm::length(elbow - shoulder);
+		const float lowerLength = glm::length(wrist - elbow);
+		const float chainLength = upperLength + lowerLength;
+		if (!std::isfinite(chainLength) || !(chainLength > 0.0f)
+			|| upperLength < 1e-4f * chainLength || lowerLength < 1e-4f * chainLength)
+		{
+			return result;
+		}
+
+		// Clamped a hair inside the reach so the elbow keeps a side and the law of cosines
+		// stays off the ends of acos's domain. At 1e-5 of the chain a clamped arm is still
+		// straight to about half a degree.
+		const float epsilon = 1e-5f * chainLength;
+		const float minReach = std::abs(upperLength - lowerLength) + epsilon;
+		const float maxReach = chainLength - epsilon;
+
+		const float targetDistance = glm::length(target - shoulder);
+		result.Valid = true;
+		result.Reached = targetDistance >= minReach && targetDistance <= maxReach;
+		result.Stretch = targetDistance / chainLength;
+
+		if (!std::isfinite(weight))
+			weight = 0.0f;
+		weight = std::clamp(weight, 0.0f, 1.0f);
+		// The early-out is the bit-identical guarantee, not a solve that happens to land on
+		// the clip's own wrist.
+		if (weight <= 0.0f)
+			return result;
+
+		const glm::quat fullRotation = glm::normalize(targetRotation);
+		const glm::vec3 goal = weight >= 1.0f ? target : glm::mix(wrist, target, weight);
+		const glm::quat goalRotation = weight >= 1.0f ? fullRotation
+			: glm::normalize(glm::slerp(JointRotation(globals[(uint32_t)chain.End]), fullRotation, weight));
+
+		// The reach axis. A goal on the shoulder has none; keep the current wrist's, then the
+		// upper bone's, which the length check above guarantees exists.
+		glm::vec3 reach = goal - shoulder;
+		float distance = glm::length(reach);
+		if (distance > 1e-6f * chainLength)
+			reach /= distance;
+		else if (glm::length(wrist - shoulder) > 1e-6f * chainLength)
+			reach = glm::normalize(wrist - shoulder);
+		else
+			reach = (elbow - shoulder) / upperLength;
+		distance = std::clamp(distance, minReach, maxReach);
+
+		// The bend plane holds shoulder, goal and pole. When the pole is within ~3 degrees of
+		// the reach line (sin 3° = 0.0523), or behind it on the line, the plane is noise and
+		// the elbow would flip frame to frame; the chain's hint takes over.
+		const auto Perpendicular = [&reach](const glm::vec3& v)
+		{
+			return v - reach * glm::dot(v, reach);
+		};
+		glm::vec3 bend = Perpendicular(pole - shoulder);
+		if (!(glm::length(bend) > 0.0523f * glm::length(pole - shoulder)))
+		{
+			bend = Perpendicular(chain.PoleHint);
+			if (!IsFinite(bend) || !(glm::length(bend) > 1e-3f * glm::length(chain.PoleHint)))
+				bend = AnyPerpendicular(reach);
+		}
+		bend = glm::normalize(bend);
+
+		// Law of cosines for the angle at the shoulder between the reach line and the upper bone.
+		const float cosShoulder = std::clamp(
+			(upperLength * upperLength + distance * distance - lowerLength * lowerLength)
+				/ (2.0f * upperLength * distance),
+			-1.0f, 1.0f);
+		const float sinShoulder = std::sqrt(std::max(0.0f, 1.0f - cosShoulder * cosShoulder));
+		const glm::vec3 elbowGoal = shoulder + upperLength * (cosShoulder * reach + sinShoulder * bend);
+		const glm::vec3 wristGoal = shoulder + distance * reach;
+
+		// Swing the upper arm so the elbow lands, then the forearm about the elbow it now has so
+		// the wrist lands, then turn the hand in place. Positions are re-read between steps
+		// rather than trusted from the plan, so float error does not accumulate across them.
+		RotateSubtree(globals, chain.Subtrees[0], chain.SubtreeCounts[0], shoulder,
+			RotationBetween((elbow - shoulder) / upperLength, glm::normalize(elbowGoal - shoulder)));
+
+		const glm::vec3 elbowNow = Origin(globals[(uint32_t)chain.Lower]);
+		const glm::vec3 wristNow = Origin(globals[(uint32_t)chain.End]);
+		RotateSubtree(globals, chain.Subtrees[1], chain.SubtreeCounts[1], elbowNow,
+			RotationBetween(glm::normalize(wristNow - elbowNow), glm::normalize(wristGoal - elbowNow)));
+
+		const glm::quat handNow = JointRotation(globals[(uint32_t)chain.End]);
+		RotateSubtree(globals, chain.Subtrees[2], chain.SubtreeCounts[2],
+			Origin(globals[(uint32_t)chain.End]), glm::normalize(goalRotation * glm::inverse(handNow)));
+
+		return result;
 	}
 
 	void AnimationSystem::ApplyAim(entt::entity entity, AimOffsetComponent& aim, const Mesh& mesh)
@@ -771,5 +1259,313 @@ namespace GanymedE {
 		}
 
 		ApplyAimOffset(skeleton, chain, upSkin, rightSkin, aim.Pitch, aim.Yaw, m_Globals);
+	}
+
+	void AnimationSystem::WarnHandIK(entt::entity entity, const std::string& message)
+	{
+		if (m_WarnedHandIK[entity].insert(message).second)
+			GE_CORE_WARN("{0}", message);
+	}
+
+	void AnimationSystem::ApplyTwoHandIK(entt::entity entity, TwoHandIKComponent& ik,
+		const AimOffsetComponent* aim, const Mesh& mesh, std::vector<glm::mat4>& palette)
+	{
+		GE_PROFILE_SCOPE("AnimationSystem::ApplyTwoHandIK");
+
+		using HandStatus = TwoHandIKComponent::HandStatus;
+		const auto Both = [&ik](HandStatus status) { ik.Status.fill(status); };
+
+		// Weight 0 still resolves and measures - the solver reports reach without touching the
+		// pose - so a readout works with the hands off. Enabled is the off switch.
+		if (!ik.Enabled)
+		{
+			Both(HandStatus::Disabled);
+			return;
+		}
+		const float weights[2] = { ik.RightWeight, ik.LeftWeight };
+
+		const Skeleton& skeleton = mesh.GetSkeleton();
+		const std::vector<std::string>& names = skeleton.JointNames;
+		const Entity self{ entity, &m_Scene };
+		// Built only on a failure path; a solved frame allocates no strings.
+		const auto Where = [&self]() { return "Two-hand IK on '" + self.GetName() + "'"; };
+		auto access = View<WeaponAccess>();
+
+		// The weapon: the first child whose socket is aimed at this rig. Target zero means the
+		// socket's parent, which for a child is this entity.
+		Entity weapon;
+		const BoneAttachmentComponent* socket = nullptr;
+		if (auto relationship = access.FindOne<RelationshipComponent>(self))
+		{
+			for (UUID childID : relationship->Children)
+			{
+				Entity child = m_Scene.FindEntityByUUID(childID);
+				if (!child)
+					continue;
+
+				auto attachment = access.FindOne<BoneAttachmentComponent>(child);
+				if (!attachment || (attachment->Target != UUID{ 0 } && attachment->Target != self.GetUUID()))
+					continue;
+
+				weapon = child;
+				socket = attachment.Get();
+				break;
+			}
+		}
+		if (!weapon || !socket)
+		{
+			Both(HandStatus::NoWeapon);
+			WarnHandIK(entity, Where() + " finds no weapon: no child has a BoneAttachmentComponent "
+				"on this rig - leaving the arms on the clip");
+			return;
+		}
+
+		int32_t& anchor = ik.Resolved[6];
+		anchor = ResolveJointIndex(names, socket->Joint, anchor);
+		glm::mat4 anchorFrame{ 1.0f };
+		ik.Weapon = weapon.GetUUID();
+		if (anchor < 0 || !TryGetJointFrame(mesh, palette, anchor, anchorFrame))
+		{
+			Both(HandStatus::NoWeaponFrame);
+			WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' is socketed to joint '"
+				+ socket->Joint + "', which mesh '" + mesh.GetPath() + "' does not resolve - "
+				"leaving the arms on the clip");
+			return;
+		}
+
+		// Mesh space, exactly as BoneAttachmentSystem builds it minus the rig's world matrix:
+		// the anchor's frame from this palette, times the socket's offset at the weapon's scale.
+		auto weaponTransform = access.FindOne<TransformComponent>(weapon);
+		if (!weaponTransform)
+		{
+			Both(HandStatus::NoWeaponFrame);
+			return;
+		}
+		glm::mat4 weaponFrame = anchorFrame * socket->OffsetMatrix(weaponTransform->Scale);
+
+		// Markers are direct children of the weapon, found by name.
+		const auto ChildNamed = [&](const std::string& name)
+		{
+			if (auto weaponRelationship = access.FindOne<RelationshipComponent>(weapon))
+			{
+				for (UUID childID : weaponRelationship->Children)
+				{
+					Entity child = m_Scene.FindEntityByUUID(childID);
+					if (child && child.GetName() == name && access.FindOne<TransformComponent>(child))
+						return child;
+				}
+			}
+			return Entity{};
+		};
+		const Entity markers[2] = { ChildNamed(ik.RightMarker), ChildNamed(ik.LeftMarker) };
+
+		// Aim lock, before the hands: they are solved onto the weapon where it will be drawn.
+		// A look-at with up, not a shortest arc from the current barrel. The barrel goes onto the
+		// aim, and the weapon's up (AimMarker's +Y) stays as near the character's up as that
+		// allows, so a chest that rolls through a run does not cant the rifle. The cost is that
+		// under a full lock the socket's authored rotation no longer matters; only where it puts
+		// the pivot does. The pivot is the right-hand marker, so the lock turns the weapon in the
+		// grip rather than swinging the grip away from the hand.
+		const float lockWeight = std::isfinite(ik.AimLock) ? std::clamp(ik.AimLock, 0.0f, 1.0f) : 0.0f;
+		bool lockClean = true; // a failed lock must keep its warning armed like a failed hand
+		if (lockWeight > 0.0f)
+		{
+			const Entity aimMarker = ChildNamed(ik.AimMarker);
+			if (!aim)
+			{
+				ik.AimLockState = TwoHandIKComponent::AimLockStatus::NoAimOffset;
+				lockClean = false;
+				WarnHandIK(entity, Where() + " has an aim lock but no AimOffsetComponent to aim with - "
+					"leaving the weapon on its socket");
+			}
+			else if (!aimMarker)
+			{
+				ik.AimLockState = TwoHandIKComponent::AimLockStatus::NoAimMarker;
+				lockClean = false;
+				WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' has no child named '"
+					+ ik.AimMarker + "' to aim - leaving the weapon on its socket");
+			}
+			else
+			{
+				const glm::mat4 muzzleFrame = weaponFrame
+					* access.FindOne<TransformComponent>(aimMarker)->GetLocalTransform();
+				const glm::mat3 muzzleBasis = OrthonormalRotation(glm::mat3(muzzleFrame));
+				const glm::vec3 aimDirection = AimDirectionInMesh(*aim);
+
+				// The target basis: -Z on the aim, +Y as near mesh up as it can be, X completing a
+				// right-handed frame. Aiming straight up or down has no such up; there the shortest
+				// arc from the current barrel is the only rotation that means anything.
+				glm::quat delta;
+				const glm::vec3 z = -aimDirection;
+				const glm::vec3 x = glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), z);
+				if (glm::length(x) > 1e-4f)
+				{
+					const glm::vec3 xn = glm::normalize(x);
+					const glm::mat3 target(xn, glm::cross(z, xn), z);
+					delta = glm::normalize(glm::quat_cast(target * glm::transpose(muzzleBasis)));
+				}
+				else
+				{
+					delta = RotationBetween(-muzzleBasis[2], aimDirection);
+				}
+				if (delta.w < 0.0f)
+					delta = -delta; // the short way round, so the blend and the angle agree
+				ik.AimLockAngle = 2.0f * std::atan2(glm::length(glm::vec3(delta.x, delta.y, delta.z)), delta.w);
+
+				const glm::quat turn = lockWeight >= 1.0f ? delta
+					: glm::normalize(glm::slerp(glm::quat(1.0f, 0.0f, 0.0f, 0.0f), delta, lockWeight));
+				const glm::vec3 pivot = markers[0]
+					? glm::vec3((weaponFrame * access.FindOne<TransformComponent>(markers[0])->GetLocalTransform())[3])
+					: glm::vec3(weaponFrame[3]);
+				weaponFrame = glm::translate(glm::mat4(1.0f), pivot) * glm::mat4_cast(turn)
+					* glm::translate(glm::mat4(1.0f), -pivot) * weaponFrame;
+
+				ik.LockedWeaponFrame = weaponFrame;
+				ik.AimLockState = TwoHandIKComponent::AimLockStatus::Locked;
+			}
+		}
+
+		// Markers are authored in mesh space (the joint frames TryGetJointFrame reports: unit
+		// basis, metres); the solver works where the globals live. A position comes back through
+		// inverse(skin); an orientation through its rotation part only. TryGetJointFrame divides
+		// the bind scale back out, so a joint frame's basis is skin rotation × global rotation.
+		const glm::mat4 skin = mesh.GetSkinTransform();
+		const float skinDet = glm::determinant(skin);
+		if (!std::isfinite(skinDet) || std::abs(skinDet) < 1e-20f)
+		{
+			Both(HandStatus::NoWeaponFrame);
+			WarnHandIK(entity, Where() + " cannot invert mesh '" + mesh.GetPath() + "' skin transform - "
+				"leaving the arms on the clip");
+			return;
+		}
+		const glm::mat4 meshToSkin = glm::inverse(skin);
+		const glm::mat3 meshToSkinRotation = glm::transpose(OrthonormalRotation(glm::mat3(skin)));
+		const glm::vec3 upSkin = glm::normalize(meshToSkinRotation * glm::vec3(0.0f, 1.0f, 0.0f));
+
+		const std::string* chainNames[2][3] = {
+			{ &ik.RightUpper, &ik.RightLower, &ik.RightEnd },
+			{ &ik.LeftUpper, &ik.LeftLower, &ik.LeftEnd } };
+		const std::string* markerNames[2] = { &ik.RightMarker, &ik.LeftMarker };
+		const char* handNames[2] = { "right", "left" };
+
+		bool chainResolved[2] = { true, true };
+		for (int hand = 0; hand < 2; hand++)
+		{
+			for (int slot = 0; slot < 3; slot++)
+			{
+				int32_t& index = ik.Resolved[(size_t)(hand * 3 + slot)];
+				index = ResolveJointIndex(names, *chainNames[hand][slot], index);
+				if (index < 0)
+				{
+					chainResolved[hand] = false;
+					ik.Status[(size_t)hand] = HandStatus::NoJoint;
+					WarnHandIK(entity, Where() + " references joint '" + *chainNames[hand][slot]
+						+ "', which mesh '" + mesh.GetPath() + "' does not have - leaving the "
+						+ handNames[hand] + " hand on the clip");
+				}
+			}
+		}
+
+		// Content-compared, like the aim cache: a hot-reloaded mesh can land at the old address.
+		HandIKSubtreeCache& cache = m_HandIKSubtrees[entity];
+		bool dirty = cache.Parents != skeleton.ParentIndices;
+		for (size_t i = 0; i < cache.Joints.size(); i++)
+			dirty = dirty || cache.Joints[i] != ik.Resolved[i];
+		if (dirty)
+		{
+			cache.Parents = skeleton.ParentIndices;
+			for (size_t i = 0; i < cache.Joints.size(); i++)
+			{
+				cache.Joints[i] = ik.Resolved[i];
+				BuildSubtree(skeleton, cache.Joints[i], cache.Subtrees[i]);
+			}
+		}
+
+		bool clean = chainResolved[0] && chainResolved[1] && lockClean;
+		for (int hand = 0; hand < 2; hand++)
+		{
+			if (!chainResolved[hand])
+				continue;
+
+			const std::vector<uint32_t>& armSubtree = cache.Subtrees[(size_t)(hand * 3)];
+
+			// A weapon socketed inside this arm (the old RightHand setup) would move with the
+			// solve that is meant to reach it. That hand carries the weapon; the other still solves.
+			if (SubtreeContains(armSubtree.data(), (uint32_t)armSubtree.size(), anchor))
+			{
+				clean = false;
+				ik.Status[(size_t)hand] = HandStatus::WeaponInArm;
+				WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' is socketed to '"
+					+ socket->Joint + "', inside the " + handNames[hand] + " arm - that hand carries "
+					"the weapon and is not solved");
+				continue;
+			}
+
+			const Entity marker = markers[hand];
+			if (!marker)
+			{
+				clean = false;
+				ik.Status[(size_t)hand] = HandStatus::NoMarker;
+				WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' has no child named '"
+					+ *markerNames[hand] + "' - leaving the " + handNames[hand] + " hand on the clip");
+				continue;
+			}
+			ik.Markers[(size_t)hand] = marker.GetUUID();
+			auto markerTransform = access.FindOne<TransformComponent>(marker);
+
+			const glm::mat4 markerFrame = weaponFrame * markerTransform->GetLocalTransform();
+			const glm::vec3 target = glm::vec3(meshToSkin * glm::vec4(glm::vec3(markerFrame[3]), 1.0f));
+			const glm::quat targetRotation = glm::normalize(glm::quat_cast(
+				meshToSkinRotation * OrthonormalRotation(glm::mat3(markerFrame))));
+
+			TwoBoneChain chain;
+			chain.Upper = ik.Resolved[(size_t)(hand * 3 + 0)];
+			chain.Lower = ik.Resolved[(size_t)(hand * 3 + 1)];
+			chain.End = ik.Resolved[(size_t)(hand * 3 + 2)];
+			for (int slot = 0; slot < 3; slot++)
+			{
+				const std::vector<uint32_t>& subtree = cache.Subtrees[(size_t)(hand * 3 + slot)];
+				chain.Subtrees[slot] = subtree.data();
+				chain.SubtreeCounts[slot] = (uint32_t)subtree.size();
+			}
+
+			// Only used when the clip's elbow sits on the reach line. Down and out: away from
+			// the weapon's joint, which is on the spine, with the vertical taken out.
+			const glm::vec3 shoulder = Origin(m_Globals[(size_t)chain.Upper]);
+			glm::vec3 outward = shoulder - Origin(m_Globals[(size_t)anchor]);
+			const float outwardLength = glm::length(outward);
+			outward -= upSkin * glm::dot(outward, upSkin);
+			chain.PoleHint = glm::length(outward) > 1e-3f * outwardLength
+				? glm::normalize(glm::normalize(outward) - upSkin) : -upSkin;
+
+			// The clip's own elbow is the pole, so the arm keeps the clip's style.
+			const glm::vec3 pole = Origin(m_Globals[(size_t)chain.Lower]);
+
+			const TwoBoneResult result = SolveTwoBone(skeleton, chain, target, targetRotation, pole,
+				weights[hand], m_Globals);
+			ik.Status[(size_t)hand] = result.Valid ? HandStatus::Solved : HandStatus::Unsolvable;
+			ik.Reached[(size_t)hand] = result.Reached;
+			ik.Stretch[(size_t)hand] = result.Stretch;
+			if (!result.Valid)
+			{
+				clean = false;
+				WarnHandIK(entity, Where() + " cannot solve the " + std::string(handNames[hand]) + " arm '"
+					+ *chainNames[hand][0] + "/" + *chainNames[hand][1] + "/" + *chainNames[hand][2]
+					+ "': not one limb, or a zero-length bone - leaving it on the clip");
+				continue;
+			}
+
+			// The same expression as Evaluate's palette loop, so an entry is bit-identical to
+			// what a full rebuild after the solve would write. The anchor is outside this arm
+			// (checked above), so the entry the weapon frame came from is not touched. Weight 0
+			// moved nothing, and rewriting nothing keeps the palette bit-identical.
+			if (!(std::isfinite(weights[hand]) && weights[hand] > 0.0f))
+				continue;
+			for (uint32_t k : armSubtree)
+				palette[k] = m_Globals[k] * skeleton.InverseBind[k];
+		}
+
+		if (clean)
+			m_WarnedHandIK.erase(entity);
 	}
 }

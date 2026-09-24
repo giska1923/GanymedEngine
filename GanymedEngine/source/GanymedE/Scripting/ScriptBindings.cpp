@@ -137,7 +137,6 @@ namespace GanymedE {
 				attachment.Joint = joint;
 				attachment.Offset = offset;
 				attachment.Rotation = rotation;
-				attachment.Resolved = -1;
 				return;
 			}
 
@@ -400,6 +399,27 @@ namespace GanymedE {
 					return out;
 				},
 
+				// --- Two-hand IK ---
+				// Same timing as the aim offset: AnimationSystem runs after both script systems,
+				// so a write lands on this frame's pose. The pass clamps to [0, 1]; a reload or a
+				// lowered weapon fades a hand off the marker and back. No-op without the component.
+				"SetHandIKWeight", [](Entity& e, float right, float left)
+				{
+					if (!e.HasComponent<TwoHandIKComponent>())
+						return;
+
+					auto& ik = e.GetComponent<TwoHandIKComponent>();
+					ik.RightWeight = right;
+					ik.LeftWeight = left;
+				},
+				// How far the weapon is turned onto the aim, 0-1 (clamped by the pass). Off for a
+				// lowered weapon, so the rifle is not held level at the aim with the hands off it.
+				"SetAimLock", [](Entity& e, float weight)
+				{
+					if (e.HasComponent<TwoHandIKComponent>())
+						e.GetComponent<TwoHandIKComponent>().AimLock = weight;
+				},
+
 				// --- Bone sockets ---
 				// BoneAttachmentComponent is untracked, so these need no MarkChanged. The system
 				// runs after both script systems, so a same-frame write to an *existing*
@@ -429,7 +449,6 @@ namespace GanymedE {
 
 					auto& attachment = e.GetComponent<BoneAttachmentComponent>();
 					attachment.Joint.clear();
-					attachment.Resolved = -1;
 
 					Scene* scene = Context();
 					if (scene && scene->IsUpdating())

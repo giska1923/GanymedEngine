@@ -383,6 +383,7 @@ namespace GanymedE {
 
 		const UUID highlightEntity = filter ? filter->HighlightSkeletonEntity : UUID{ 0 };
 		const int32_t highlightJoint = filter ? filter->HighlightJoint : -1;
+		auto handIK = View<HandIKAccess>();
 
 		for (auto [entity, worldTransform, meshComponent, animator] : View<MeshView>())
 		{
@@ -489,6 +490,35 @@ namespace GanymedE {
 					line(origin, origin + JointAxis(m_JointWorld[i], 0) * triad, axisX);
 					line(origin, origin + JointAxis(m_JointWorld[i], 1) * triad, axisY);
 					line(origin, origin + JointAxis(m_JointWorld[i], 2) * triad, axisZ);
+				}
+			}
+
+			// Two-hand IK. Each marker the pass found is drawn as its own X/Y/Z cross - the axes
+			// are the wrist frame it asks for, which is what has to be lined up against the hand's
+			// axes above - and a marker out of reach gets a wrist-to-marker line in the accent
+			// colour. Only what the pass recorded is drawn; nothing here re-resolves a name.
+			if (auto ik = handIK.FindOne<TwoHandIKComponent>(handle))
+			{
+				const float cross = glm::clamp(meanBone * 0.3f, 0.02f, 0.08f);
+				for (size_t hand = 0; hand < 2; hand++)
+				{
+					if (ik->Markers[hand] == UUID{ 0 })
+						continue;
+					Entity markerEntity = m_Scene.FindEntityByUUID(ik->Markers[hand]);
+					if (!markerEntity || !markerEntity.HasComponent<WorldTransformComponent>())
+						continue;
+
+					const glm::mat4& markerWorld = markerEntity.GetComponent<WorldTransformComponent>().World;
+					const glm::vec3 origin = JointOrigin(markerWorld);
+					line(origin - JointAxis(markerWorld, 0) * cross, origin + JointAxis(markerWorld, 0) * cross, axisX);
+					line(origin - JointAxis(markerWorld, 1) * cross, origin + JointAxis(markerWorld, 1) * cross, axisY);
+					line(origin - JointAxis(markerWorld, 2) * cross, origin + JointAxis(markerWorld, 2) * cross, axisZ);
+
+					if (ik->Status[hand] != TwoHandIKComponent::HandStatus::Solved || ik->Reached[hand])
+						continue;
+					const int32_t wrist = ik->Resolved[hand * 3 + 2];
+					if (wrist >= 0 && (uint32_t)wrist < jointCount && m_JointOk[(uint32_t)wrist])
+						line(JointOrigin(m_JointWorld[(uint32_t)wrist]), origin, accent);
 				}
 			}
 		}

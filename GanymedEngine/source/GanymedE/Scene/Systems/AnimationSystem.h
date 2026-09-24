@@ -27,9 +27,19 @@ namespace GanymedE {
 	public:
 		using AnimView = ECS::IterView<ECS::EntityId,
 			ECS::RW<AnimatorComponent>, ECS::RO<StaticMeshComponent>,
-			ECS::OptRW<AimOffsetComponent>>;
+			ECS::OptRW<AimOffsetComponent>, ECS::OptRW<TwoHandIKComponent>>;
 
-		using Views = TypeList<AnimView>;
+		// Two-hand IK reads *other* entities: the weapon's socket and scale, and its marker
+		// children's local transforms. Declared so ValidateOrdering sees the coupling - the
+		// first time this system has read anything but its own entity. Never iterated;
+		// FindOne() is the access. The socket is optional so a marker, which has none, still
+		// matches the view.
+		using WeaponAccess = ECS::AccessView<
+			ECS::OptRO<BoneAttachmentComponent>,
+			ECS::RO<TransformComponent>,
+			ECS::RO<RelationshipComponent>>;
+
+		using Views = TypeList<AnimView, WeaponAccess>;
 
 		using ECS::System<AnimationSystem>::System;
 
@@ -49,6 +59,18 @@ namespace GanymedE {
 		// before the palette multiply. Disabled, unresolved, or zero angles leave the
 		// sampled globals alone.
 		void ApplyAim(entt::entity entity, AimOffsetComponent& aim, const Mesh& mesh);
+
+		// Builds the weapon frame from `palette` (already written from the post-aim globals),
+		// turns it onto `aim`'s direction when the component's AimLock asks, solves each usable
+		// hand on m_Globals, and rewrites the palette entries of the arms it moved. A hand whose
+		// joints, marker or weapon cannot be resolved is skipped whole, with one warning;
+		// disabled, or both weights zero, leaves the palette untouched.
+		void ApplyTwoHandIK(entt::entity entity, TwoHandIKComponent& ik, const AimOffsetComponent* aim,
+			const Mesh& mesh, std::vector<glm::mat4>& palette);
+
+		// One warning per entity per distinct message; a setup that is fixed and then broken
+		// again warns again, because a fully solved frame clears the entity's set.
+		void WarnHandIK(entt::entity entity, const std::string& message);
 
 		// Scratch reused across entities and frames - a rig is sampled every frame, and
 		// reallocating two per-joint arrays per animator per frame is pure waste.
@@ -73,5 +95,16 @@ namespace GanymedE {
 			std::array<std::vector<uint32_t>, AimOffsetChain::MaxJoints> Subtrees;
 		};
 		std::unordered_map<entt::entity, AimSubtreeCache> m_AimSubtrees;
+
+		// Same idea for the two arms: Upper, Lower and End subtrees per hand, rebuilt when the
+		// topology or a resolved index changes.
+		struct HandIKSubtreeCache
+		{
+			std::vector<int32_t> Parents;
+			std::array<int32_t, 6> Joints{ -1, -1, -1, -1, -1, -1 };
+			std::array<std::vector<uint32_t>, 6> Subtrees;
+		};
+		std::unordered_map<entt::entity, HandIKSubtreeCache> m_HandIKSubtrees;
+		std::unordered_map<entt::entity, std::unordered_set<std::string>> m_WarnedHandIK;
 	};
 }

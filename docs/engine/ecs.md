@@ -248,10 +248,16 @@ Owned by `Scene`; registration order **is** execution order. The built-in regist
 - **What it cannot check** is worth being clear about, because it is easy to assume a passing
   assert means the order is right. It only sees reader-vs-writer pairs on a *shared* component.
   Systems that share no component are unconstrained no matter how they are ordered:
-  `AnimationSystem`'s slot before `TransformSystem` is a documented intention, not a checked one,
-  since the two have no component in common. Its slot after the script systems is unenforceable
-  for the other reason — both write `AnimatorComponent`, and writer-vs-writer is out of scope by
-  design. The one part of that placement validation does catch is staying ahead of `RenderSystem`,
+  `AnimationSystem`'s slot before `TransformSystem` is a documented intention, not a checked one:
+  both only *read* `TransformComponent` and `RelationshipComponent`, and readers do not constrain
+  each other. Its slot after the script systems *is* now checked. Two-hand IK's `WeaponAccess`
+  declares `RO<TransformComponent>` (a weapon's scale, a marker's local), and `LuaScriptSystem` and
+  `PhysicsSystem` both write it, so registering `AnimationSystem` ahead of either fires the assert.
+  `AnimatorComponent` alone could not check it: the script systems and `AnimationSystem` both write
+  it, and writer-vs-writer is out of scope by design. The same view reads `BoneAttachmentComponent`,
+  which is why `BoneAttachmentSystem` keeps its resolved joints in system state and declares the
+  component `RO`: as a writer registered later, it would have made that read a violation. The
+  validation also catches `AnimationSystem` falling behind `RenderSystem`,
   which became real when `RenderSystem`'s mesh view picked up `OptRO<AnimatorComponent>` to read the
   palette: move `AnimationSystem` after it and the assert fires. Note what that took — the
   constraint existed from the moment the palette did, but nothing could check it until a reader
@@ -259,7 +265,8 @@ Owned by `Scene`; registration order **is** execution order. The built-in regist
 
   `BoneAttachmentSystem`'s slot after `TransformSystem` and before `CameraSystem` *is* checked:
   it writes `WorldTransformComponent` and `CameraSystem` only reads it. The palette read against
-  `AnimationSystem` is also checked. Two writers of world (this and `TransformSystem`) are not.
+  `AnimationSystem` is also checked, and so is its read of two-hand IK's locked weapon frame
+  (`OptRO<TwoHandIKComponent>`), which `AnimationSystem` writes. Two writers of world (this and `TransformSystem`) are not.
 
   `AudioSystem`'s slot is the same shape one step further out: its read of `WorldTransformComponent`
   after `TransformSystem` *is* checked, but its placement after `CameraSystem` is not — that

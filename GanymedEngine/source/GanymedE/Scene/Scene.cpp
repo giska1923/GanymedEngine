@@ -244,15 +244,6 @@ namespace GanymedE {
 				view.get<AnimatorComponent>(e).Palette.clear();
 		}
 
-		// Resolved is a joint index into the target's current skeleton. The copy must not
-		// inherit one: a mesh swap or a DCC rename between edit and play would attach to
-		// whatever joint now occupies that slot. BoneAttachmentSystem re-resolves by name.
-		{
-			auto view = dstRegistry.view<BoneAttachmentComponent>();
-			for (auto e : view)
-				view.get<BoneAttachmentComponent>(e).Resolved = -1;
-		}
-
 		// Particle pools persist across frames (unlike Palette), so a copied-then-not-reset
 		// emitter would double-play the editor's stream in play mode. Reset pool, accumulator,
 		// timer, Playing, bounds, and RNG together — a copied-then-reset pool with a live RNG
@@ -491,7 +482,6 @@ namespace GanymedE {
 					if (targetIt != remap.end())
 						attachment->Target = targetIt->second;
 				}
-				attachment->Resolved = -1;
 			}
 
 			// A native script instance is owned by the original; two components pointing at one

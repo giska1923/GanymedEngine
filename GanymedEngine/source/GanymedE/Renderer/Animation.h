@@ -140,6 +140,51 @@ namespace GanymedE {
 		const glm::vec3& upSkin, const glm::vec3& rightSkin, float pitch, float yaw,
 		std::vector<glm::mat4>& globals);
 
+	// One arm for SolveTwoBone: shoulder, elbow and wrist joints, e.g. RightArm, RightForeArm,
+	// RightHand. Lower must be in Upper's subtree and End in Lower's, or the solve is refused.
+	// Subtree pointers are caller-owned, [0] Upper, [1] Lower, [2] End, each including its
+	// joint, and must stay valid for the duration of SolveTwoBone.
+	struct TwoBoneChain
+	{
+		int32_t Upper = -1;
+		int32_t Lower = -1;
+		int32_t End = -1;
+
+		// Bend direction, in the space SampleClipGlobals writes, used when the pole is within a
+		// few degrees of the shoulder→target line and so no longer defines a plane.
+		glm::vec3 PoleHint{ 0.0f, -1.0f, 0.0f };
+
+		const uint32_t* Subtrees[3]{};
+		uint32_t SubtreeCounts[3]{};
+	};
+
+	struct TwoBoneResult
+	{
+		// False: the chain, a bone length or an input was unusable, and globals are untouched.
+		// Reached and Stretch mean nothing then.
+		bool Valid = false;
+		// Both describe the full-weight target, whatever the weight, so a readout shows where
+		// the marker is relative to the arm rather than where a faded solve happened to land.
+		// Reached is false exactly when the distance had to be clamped.
+		bool Reached = false;
+		float Stretch = 0.0f; // shoulder→target distance / (upper + lower length); > 1 is out of reach
+	};
+
+	// Analytic two-bone IK over globals, after sampling and the aim offset, before InverseBind.
+	// Moves End's origin onto `target` where the arm can reach it — otherwise as far along the
+	// shoulder→target line as it does — with the elbow in the plane of shoulder, target and
+	// `pole`, then turns End to `targetRotation`. Upper, Lower and End each turn with their whole
+	// subtree, about their own origin, so bone lengths and joint scale are kept and End's
+	// children follow. `target` and `pole` are positions, `targetRotation` a unit orientation,
+	// all in the space SampleClipGlobals writes.
+	//
+	// Bone lengths come from the current globals, not the rest pose. `weight` in [0, 1] blends
+	// the goal from the current wrist frame to the target (position lerp, rotation slerp) and
+	// then solves fully; weight 0 leaves `globals` untouched, bit for bit.
+	TwoBoneResult SolveTwoBone(const Skeleton& skeleton, const TwoBoneChain& chain,
+		const glm::vec3& target, const glm::quat& targetRotation, const glm::vec3& pole,
+		float weight, std::vector<glm::mat4>& globals);
+
 	// Skin weights ride a second vertex stream rather than widening MeshVertex:
 	// widening taxes every static mesh 32 bytes a vertex, forces a cache migration
 	// for all existing content, and touches the one struct the cache memcpy's whole.

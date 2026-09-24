@@ -27,8 +27,11 @@ namespace GanymedE {
 	class BoneAttachmentSystem : public ECS::System<BoneAttachmentSystem>
 	{
 	public:
+		// RO: the component is authored state. Whether it resolved, and to which joint, lives in
+		// m_Resolved - which is what lets AnimationSystem's two-hand IK read a weapon's socket
+		// earlier in the frame without ValidateOrdering calling it a stale read.
 		using AttachView = ECS::IterView<ECS::EntityId,
-			ECS::RW<BoneAttachmentComponent>,
+			ECS::RO<BoneAttachmentComponent>,
 			ECS::RO<TransformComponent>,
 			ECS::RO<RelationshipComponent>,
 			ECS::RW<WorldTransformComponent>>;
@@ -36,10 +39,15 @@ namespace GanymedE {
 		// The skinned mesh lives on a *different* entity than the socket. Declared so
 		// ValidateOrdering knows we read the palette AnimationSystem just wrote. Never
 		// iterated; Find() is the access.
+		//
+		// The target's TwoHandIKComponent is read for the aim lock: a weapon the pass has turned
+		// onto the aim is drawn from the frame the pass recorded, not re-derived here, so the
+		// hands and the weapon have one owner.
 		using TargetAccess = ECS::AccessView<
 			ECS::RO<WorldTransformComponent>,
 			ECS::OptRO<AnimatorComponent>,
-			ECS::OptRO<StaticMeshComponent>>;
+			ECS::OptRO<StaticMeshComponent>,
+			ECS::OptRO<TwoHandIKComponent>>;
 
 		using Views = TypeList<AttachView, TargetAccess>;
 
@@ -49,6 +57,11 @@ namespace GanymedE {
 		void OnUpdate(Timestep ts) override;
 		void OnUpdateEditor(Timestep ts) override;
 		const char* Name() const override { return "BoneAttachmentSystem"; }
+
+		// The joint this socket was placed on by the last evaluation, or -1 when it did not
+		// place it (no target, no rigged mesh, a bad joint name, no palette). The editor's socket
+		// gizmo and joint tool read this rather than re-deriving the rule.
+		int32_t ResolvedJoint(entt::entity entity) const;
 
 	private:
 		void Evaluate();
@@ -61,6 +74,9 @@ namespace GanymedE {
 
 		std::vector<std::pair<int, entt::entity>> m_Order;
 		std::unordered_map<entt::entity, std::string> m_Warned;
+
+		// Rebuilt every evaluation: only sockets placed this frame have an entry.
+		std::unordered_map<entt::entity, int32_t> m_Resolved;
 	};
 
 }

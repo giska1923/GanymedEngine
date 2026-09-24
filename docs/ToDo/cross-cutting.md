@@ -454,6 +454,25 @@ Worth weighing against just doing it by hand again: the script version took abou
 reads any glb. The editor version earns its keep once someone who is not the person who placed the
 boxes has to trust them.
 
+## Editor text outside Latin-1 renders as "?"
+
+`EditorFonts::AddFace` loads Inter with ImGui's default glyph range, Basic Latin plus Latin-1
+Supplement (U+0020–U+00FF), and merges only Lucide's icon range on top. Any other character in
+UI text is drawn as "?". The encoding is not the problem: `/utf-8` is set, and the bytes reach
+ImGui intact.
+
+The em dash is the common case: eleven UI strings across `AssetPreview`, `AssetInspectorPanel`,
+`MapPanel` and the aim-offset readout in `SceneHierarchyPanel`. Three of them are a bare "—"
+placeholder in the clip tables, so those cells show a lone "?". The problem was found in the
+two-hand IK inspector (H3 of [TWO_HAND_IK.md](TWO_HAND_IK.md)), whose own strings were switched to
+ASCII rather than fixed here.
+
+**The fix** is a glyph-range array for the two Inter faces: the default range plus General
+Punctuation (U+2010–U+205E), which covers dashes, curly quotes, the ellipsis and the bullet.
+Build the array with `ImFontGlyphRangesBuilder`, or as a static, and keep it alive past the
+atlas build, as the Lucide range already is. Glyphs Inter lacks would still fall back to "?".
+The cost is a slightly larger atlas.
+
 ## A shipped Dist build is not self-contained
 
 `staticruntime "off"` in both `GanymedEngine/premake5.lua` and `GanymedRuntime/premake5.lua`, in
@@ -515,7 +534,18 @@ Two things would make this repeatable, and they are separable:
 
 [SKELETAL_ATTACHMENTS.md](../history/SKELETAL_ATTACHMENTS.md) and
 [SKELETAL_TOOLING.md](../history/SKELETAL_TOOLING.md) are in history. Two items they named were
-deliberately not built, so they live here rather than vanishing with the plans.
+deliberately not built, so they live here rather than vanishing with the plans. A third was found
+later.
+
+**A socket warns "no rigged mesh" while the mesh is only loading.** Opening the unmodified
+`ProvingGround.ganymede` logs, once on the first frame: "BoneAttachment on 'Rifle' targets
+'Body', which has no rigged mesh". `Body`'s mesh is not `Ready()` yet, and
+`BoneAttachmentSystem` uses one branch for "no `StaticMeshComponent`", "not loaded" and "not
+rigged". The socket recovers on the next frame, and the warning is cleared once the socket
+resolves. It is wrong rather than harmful: it names a real failure that is not happening, on
+every load of every socketed scene. The fix is to split out `!Mesh.Ready()` and stay quiet (or
+say "still loading") while the handle is pending. Found in H2 of
+[TWO_HAND_IK.md](TWO_HAND_IK.md).
 
 **A general `Visible` / `Enabled` bit `RenderSystem` honours.** Decided in the attachments A2
 follow-up: hide an unresolved socket during the frames a skinned mesh is still streaming. Not a
@@ -563,3 +593,13 @@ so selecting `Body` does find it. The line was not watched. It is one frame behi
 because the drag writes `Pitch` / `Yaw` after `AnimationSystem` has evaluated. Closing it so the
 barrel meets the point is closed-loop aiming, which the milestone left alone; it is H4 of
 [TWO_HAND_IK.md](TWO_HAND_IK.md), along with the left hand on the rifle.
+
+**Two of the aim probes' rotation checks are quantised.** The twisted-pitch probe and the two-joint
+yaw+pitch probe in `RunAimOffsetProbes` measure rotation error as `2·acos(|dot|)` against a 1e-4 rad
+tolerance. `RotationDelta` does not have this problem: `glm::angle` switches to an asin form near
+zero. In float, the first `|dot|` below 1.0 is already about
+7e-4 rad, so the check passes only while the dot rounds to exactly 1. It fails spuriously the moment
+it does not, and it cannot see an error between 0 and 7e-4 rad. That is too strict and blind at the
+same time. The two-bone probes (H1 of [TWO_HAND_IK.md](TWO_HAND_IK.md)) use
+`2·atan2(|v|, |w|)` of the delta quaternion (`RotationError` in `AnimationSystem.cpp`). The fix is
+to switch those two checks to `RotationError`.

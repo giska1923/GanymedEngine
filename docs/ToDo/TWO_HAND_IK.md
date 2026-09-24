@@ -1,6 +1,8 @@
 # Milestone — Two-hand weapon IK
 
-**Status: planned. Nothing built.** Phases H1–H6 below.
+**Status: H1–H4 done on `master` (the solver; the component, the pass, serialization and Lua;
+the inspector section and the overlay; the aim lock). H5–H6 planned.** H3's three interactive
+checks (drag the rifle, drag a marker, scrub) have not been done by hand yet; see H3's notes.
 
 > **Engine and editor milestone.** H1–H4 touch `GanymedEngine/source/` or `GanymedEditor/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`. H5 is game content
@@ -89,10 +91,10 @@ a *Two Bone IK Constraint* per arm, targets parented to the weapon, and a *Multi
 
 | Phase | What | Branch | Size |
 |---|---|---|---|
-| **H1** | Analytic two-bone IK over globals, with boot self-tests | `master` | ~0.75 day |
-| **H2** | `TwoHandIKComponent`, weapon frame resolution, the pass, serialization, Lua | `master` | ~1 day |
-| **H3** | Inspector section, reach readouts, overlay | `master` | ~0.75 day |
-| **H4** | Aim lock: the barrel onto the aim direction | `master` | ~0.5 day |
+| **H1** | Analytic two-bone IK over globals, with boot self-tests — **done** | `master` | ~0.75 day |
+| **H2** | `TwoHandIKComponent`, weapon frame resolution, the pass, serialization, Lua — **done** | `master` | ~1 day |
+| **H3** | Inspector section, reach readouts, overlay — **done** (interactive checks pending) | `master` | ~0.75 day |
+| **H4** | Aim lock: the barrel onto the aim direction — **done** | `master` | ~0.5 day |
 | **H5** | Proving Ground: rifle onto `Spine`, `Grip`/`Support` markers, measured | `first-game` | ~0.75 day |
 | **H6** | Docs, close | both | ~0.25 day |
 
@@ -156,6 +158,83 @@ With the skeleton overlay on, placing a wrist marker is direct.
 
 Boot self-tests in Debug, like the aim offset's — no timing loop in them.
 
+### Execution notes (2026-09-24)
+
+Landed as `SolveTwoBone` in `Animation.h` / `AnimationSystem.cpp`, beside `ApplyAimOffset`. The
+current behaviour is described in [scene.md](../engine/scene.md#animationsystem--systemsanimationsystemh).
+These notes cover where the build departed from the steps above.
+
+**The signature settled like this.** The subtree lists live on `TwoBoneChain` (`Subtrees[3]`,
+`SubtreeCounts[3]`, caller-owned), as they do on `AimOffsetChain`, and the chain carries its own
+`PoleHint`. The plan left both as "subtree lists..." and "a per-chain hint".
+`TwoBoneResult` gained a third field, **`Valid`**. Without it, a chain the solver refuses (for
+example `Lower` not under `Upper`, or a zero-length bone) would read the same as "out of reach",
+and those are different failures for H3's readout.
+
+**Five decisions the plan did not make:**
+
+- **What the weight means.** The weight blends the *goal*: the position lerps and the rotation
+  slerps from the current wrist frame to the target, and then the solver solves fully. This is how
+  Unity Animation Rigging's two-bone constraint blends. The alternative was scaling each solved
+  delta rotation, but the forearm's delta is computed after the upper arm has already moved, so
+  that does not blend cleanly. With the clip's elbow as the pole, a partial weight is continuous
+  from the clip pose.
+- **What `Reached` and `Stretch` describe.** Both describe the *full-weight* target. H3's readout
+  should show how far the marker is from the arm, not how far a faded solve landed.
+- **ε is relative:** 1e-5 of the chain length, not a fixed distance. The same arm measures 0.55 on
+  a metre rig and 55 on a centimetre one, so a fixed ε would be wrong on one of them.
+- **The pole threshold is 3°.** Past it the solver falls back to the hint, then to any
+  perpendicular if the hint is also on the reach line. The switch is hard; see the risk below.
+- **Chain validity is checked every call.** The solver refuses the chain unless `Lower` is in
+  `Upper`'s subtree and `End` is in `Lower`'s. The check is a linear scan of an arm's subtree
+  (four or five joints on the Meshy rig).
+
+**Verification,** measured with the Debug editor's boot self-test. Each case ran on a metre rig and
+on a centimetre rig (`RootTransform` = scale 100). Errors are in metres. The measurements came from
+one temporary logging build, and the log lines were removed afterwards:
+
+| Probe | Pass condition | Metre rig | Centimetre rig |
+|---|---|---|---|
+| Weight 0 | Globals bit-identical | identical | identical |
+| Reachable target | Wrist within 1e-4 m | 1.5e-8 | 7.6e-8 |
+| | Bone lengths within 1e-5 m (upper / lower / hand tip) | 6.0e-8 / 3.0e-8 / 7.5e-8 | 3.8e-8 / 3.8e-8 / 1.9e-7 |
+| | Chest and head bit-identical, shoulder origin fixed | yes, 1.5e-8 | yes, 0 |
+| End rotation | Within 1e-4 rad | 4.6e-8 rad | 1.4e-7 rad |
+| Target past reach (Stretch 1/0.55) | `Reached == false`, wrist on the line at full length, arm straight within 1° | Stretch 1.81818, 5.6e-6 short, 0.513° | 1.81818, 5.5e-6, 0.513° |
+| Pole +X vs −X | Elbow on the pole's side, same elbow angle | x = ±0.178, Δangle 7.2e-7 rad | ±0.178, 4.8e-7 rad |
+| Pole on the reach line, and on the shoulder | Hint used (elbow below, the hint is down), no NaN | elbow y −0.187, wrist 1.6e-7 | −0.187, 1.7e-7 |
+| Weight 0.5 (added) | Wrist on the halfway goal | 3.7e-8 | 8.5e-8 |
+| Not one limb (added) | `Valid == false`, globals untouched | yes | yes |
+
+The 5.5 µm shortfall and the 0.51° bend at full reach are the ε clamp, and both match the
+prediction from ε = 1e-5. The rotation check is `2·atan2(|v|, |w|)` of the delta quaternion. The
+two aim probes' inline `2·acos(|dot|)` cannot express an error between 0 and about 7e-4 rad in float, so it
+cannot test a 1e-4 tolerance (see
+[cross-cutting.md](cross-cutting.md#aim-offset-leftovers)).
+
+Builds checked: Debug engine and editor, and Release engine, all with no warnings. No source files
+were added, so premake does not need to regenerate the projects.
+
+**What H2 inherits:**
+
+- The pass builds each chain's three subtrees in a topology-keyed cache like `AimSubtreeCache`.
+- It passes the clip's own elbow (`globals[Lower]` origin) as `pole`.
+- It sets `PoleHint` to "down and out" in the space `SampleClipGlobals` writes, turned from mesh
+  space the way `AimAxesInSkinSpace` turns the aim axes.
+
+**Risks that only the rig will show** (H2/H5 should check for them on `ArmoredHumanoid`):
+
+- **Candy-wrapper at the wrist.** The forearm swing is shortest-arc, and the hand takes its whole
+  target rotation, so a marker rotated far about the forearm's axis twists the wrist's skinning.
+  The Meshy rig has no twist joints. If H5 shows it, the usual fix is to give the forearm a share
+  of the hand's twist about the forearm axis, which is a few lines in `SolveTwoBone`.
+- **Elbow pop at the 3° switch.** This can happen if a clip's elbow crosses 3° of the reach line
+  mid-clip. It is unlikely with the rifle clips, whose elbows are well bent.
+- **Elbow speed near full reach.** Near full reach, `d(angle)/d(distance)` goes to infinity, so a
+  marker that sits just inside reach will make the elbow flutter. H5's rule of no clamped frame in
+  the shooting clips should keep the markers away from full reach. If it does not, the standard
+  remedy is soft IK, as in Unreal's two-bone node with stretch limits. That remedy is not in H1.
+
 ---
 
 ## Phase H2 — the component and the pass
@@ -217,13 +296,119 @@ frame, after the aim offset and before the palette, in edit mode and in Play.
 | Save / load | Round-trips; runtime fields never written |
 | Cost | Profile scope, Release, one character |
 
+### Execution notes (2026-09-24)
+
+Landed on `master`. The current behaviour is in [scene.md](../engine/scene.md) (the component, the
+pass and `BoneAttachmentSystem`), [ecs.md](../engine/ecs.md) (what `ValidateOrdering` now checks)
+and [scripting.md](../engine/scripting.md) (`SetHandIKWeight`). These notes cover where the build
+departed from the steps above.
+
+**1. `ValidateOrdering` would have rejected the planned access.** `BoneAttachmentSystem` declared
+`RW<BoneAttachmentComponent>` only because it wrote the component's runtime `Resolved` index.
+`AnimationSystem`, which is registered earlier, reading that component therefore counted as a stale
+read, and the `Scene` constructor asserts on any stale read. The validator works per component, not
+per field. The pass never reads `Resolved`, but the validator cannot know that.
+
+The options were:
+
+- declare `RW` in `AnimationSystem`, which would be false;
+- read through `Entity` without declaring, which hides the coupling the plan wanted visible;
+- give the status to the system that computes it. **This is what was done.**
+
+`Resolved` left the component. `BoneAttachmentSystem` rebuilds a per-frame entity→joint map and
+answers `ResolvedJoint(entity)`, and it now declares the component `RO`. The editor's three readers
+(the socket gizmo query, the joint highlight, and the Offset-versus-Translation gizmo switch) ask
+the system instead. Several resets are gone:
+
+- eleven `Resolved = -1` resets: `Scene::Copy`, `DuplicateEntity`, prefab save, scene load, two
+  Lua bindings, and five editor edits;
+- the reflected `Resolved` field itself.
+
+The joint-index cache is gone too: the lookup is a linear search by name every frame. A side effect is
+that `AnimationSystem`'s slot after the script systems is now enforced (see ecs.md).
+
+**2. No `Weapon` UUID field.** The weapon is always "the first child whose socket targets this
+rig". On the Proving Ground the rifle is a direct child of `Body` with `Target: 0`, which is the
+only case there is. An explicit UUID needs a remap in the same three places `Target` has
+(`DuplicateEntity`, prefab save, `ResolveHierarchy`) plus an entity picker in H3, all for a case
+nobody has. Adding it later is additive: omit-if-default, with no migration. H3's inspector shows
+which weapon was found instead of offering a picker.
+
+**3. Other departures from the steps:**
+
+- **`OffsetMatrix` is a member of `BoneAttachmentComponent`, not a new shared header.** It sits
+  beside the data it reads, as `TransformComponent::GetLocalTransform` does. No new source file, so
+  no premake regeneration.
+- **Six strings, not two arrays.** There is a YAML codec for `std::array<std::string, 4>` only.
+  Named fields also read better on disk.
+- **Weight 0 still measures.** The pass resolves and runs the solver, which reports reach without
+  moving anything, and rewrites no palette entry. H3's readout therefore works with the hands off.
+  `Enabled` is the off switch.
+- **The palette is built once, then patched.** The pass runs *after* the full palette loop. It
+  reads the weapon's frame through `TryGetJointFrame` on that palette, which is the literal call and
+  data `BoneAttachmentSystem` uses. It then rewrites only the solved arms' entries. The socket joint
+  is refused if it lies inside the arm being solved; on the old `RightHand` setup that hand carries
+  the weapon and the other still solves.
+- **The `PoleHint` is derived from the rig.** It points away from the weapon's joint with the
+  vertical removed, then down, in the globals' space. No authored field was needed.
+
+**4. Verification.** The rig is `ArmoredHumanoid.glb` from `first-game`, opened by this `master`
+build through `--project=` on a sparse scratch worktree. Nothing was merged or committed there. The
+scratch scenes were copies of `ProvingGround.ganymede` with the clip set to
+`Walk_Forward_While_Shooting`:
+
+- the rifle moved to `Spine` at the placement that reproduces its `RightHand` pose at t = 0
+  (Offset `[0.1286, 0.1461, 0.4825]`, Rotation `[3.0660, 0.7473, −2.9730]`);
+- `Grip` 3.2 cm off that frame's right wrist;
+- `Support` 12 cm nearer the barrel than the left wrist.
+
+The measurements came from temporary logging, since removed:
+
+| Probe | Pass condition | Result |
+|---|---|---|
+| Both markers reachable | Wrist within 0.5 cm | 1.5e-7 m / 8.4e-8 m, rotation 2.6e-7 / 1.7e-7 rad (stretch 0.61 / 0.94) |
+| Weapon frame agreement (as drawn) | — | Marker `WorldTransformComponent` vs `bodyWorld × TryGetJointFrame(final palette, wrist)`, same frame: 1.3e-7 m / 7.5e-8 m. Stronger than the planned frame-vs-frame check: it also covers marker composition and both space conversions |
+| Every clip, every 1/30 s, reached frames | — | Max 4.5e-7 m, 4.4e-7 rad across all five clips (352 frames) |
+| Weight 0 / disabled | Palette bit-identical | Both bit-identical (`memcmp`) to no component |
+| Right weight 0.75 | — | Wrist stops 0.80 cm from the marker: 25% of the 3.2 cm nudge |
+| A marker out of reach (`Support` ~1.3 m further out) | `Reached == false` | `Reached` false, `Stretch` 2.07. Arm straightness is H1's probe |
+| Missing marker (`SupportX`) | One warning, that hand untouched | One warning. Left `Valid` false, right solved |
+| Save / load | Round-trips, runtime fields never written | Default writes `TwoHandIKComponent: {}`. `RightWeight: 0.75` survives; a hand-written default `LeftUpper` is dropped. The reloaded scene reproduces every number above |
+| Cost | Release, one character | **2.8 µs** per call (mean of 352). Debug: 302 µs before the warning prefix stopped being built on every call |
+| Boot | — | `ValidateOrdering` passes, `Reflection initialised: 41 types, 161 members`, validation passed |
+
+Builds checked: Debug and Release editor, Debug runtime, all with no warnings. `tsc --noEmit` is
+clean over `scripts-src`.
+
+**5. What H5 inherits from the scratch placement.** This is information, not a failure; the
+placement was a test fixture. With the rifle posed from the walk's t = 0:
+
+- The left hand **clamps in 46 of 157 frames of `Lower_Weapon_Look_Raise`**, at stretch up to
+  1.03, and reaches 0.997 in the backpedal.
+- Every shooting clip reached on every frame. The right hand stays at 0.55–0.66.
+
+The weapon pose H5 authors needs the `Support` side pulled nearer the left shoulder, to keep
+clear of the H1 near-full-reach risk.
+
+**6. Not in H2, so the next phase has to:**
+
+- **No Add Component entry and no inspector section.** Both are explicit per component in
+  `SceneHierarchyPanel.cpp`, and both are H3. Until then the component comes only from a scene file.
+- **First-frame socket warning.** `BoneAttachmentSystem` warns "targets 'Body', which has no rigged
+  mesh" on the first frame of the *unmodified* Proving Ground, while the mesh is still loading. The
+  warning predates H2 and is misleading. See
+  [cross-cutting.md](cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
+
 ---
 
 ## Phase H3 — inspector, readouts, overlay
 
-1. Inspector section: weapon (drop or auto), chain joint combos off this entity's skeleton, marker
-   names, weights. **Readout per hand**: reach as a fraction of arm length at the current frame, and
-   "clamped" when the target is out of reach — the number that makes a weapon pose tunable.
+1. Inspector section, plus the Add Component entry (neither exists yet): the weapon that was found
+   (read-only; H2 has no weapon field), chain joint combos off this entity's skeleton, marker
+   names, weights. **Readout per hand** from the runtime `Valid` / `Reached` / `Stretch`: reach as
+   a fraction of arm length at the current frame, and "clamped" when the target is out of reach —
+   the number that makes a weapon pose tunable. `Valid` false should say which thing failed; the
+   warning text in `ApplyTwoHandIK` already names it.
 2. **Overlay** (Skeletons visualizer on): a small cross at each marker, a line wrist→marker in the
    accent colour when not reached.
 3. The rifle's weapon pose is placed with the existing **socket gizmo** on the rifle
@@ -235,6 +420,64 @@ frame, after the aim offset and before the palette, in edit mode and in Play.
 | Drag a marker past reach | Readout says clamped; overlay line appears |
 | Scrub the animator | Hands stay on the markers through the clip |
 
+### Execution notes (2026-09-24)
+
+Landed on `master`. The current behaviour is in [editor.md](../editor/editor.md) (the section) and
+[scene.md](../engine/scene.md) (`HandStatus`, the overlay). These notes cover where the build
+departed from the steps above, and what was and was not verified.
+
+**1. The pass states its verdict; the editor only words it.** Step 1 asked for the readout to say
+which thing failed. Re-deriving that in the editor would have duplicated the pass's rules, and
+could drift from them: the weapon search, name resolution, the marker lookup, the
+socket-inside-the-arm test. So the pass records it:
+
+- `TwoHandIKComponent::HandStatus` per hand, set at each point where the pass gives up on a hand;
+- the `Weapon` and `Markers` UUIDs it found.
+
+`Status == Solved` replaces H2's `Valid` array, which it made redundant. All of these are
+runtime, cleared every evaluation. The overlay reads the same fields. Reflection went from 161 to
+163 members.
+
+**2. The marker cross is a coloured X/Y/Z cross, not a plain one.** A marker is a wrist *frame*,
+and lining its axes up against the hand joint's is half the authoring job. A single-colour cross
+would show where the marker is but not how it is turned.
+
+**3. The overlay lives in `RenderSystem::DrawSkeletonGizmos`, not the editor.** That is where the
+skeleton overlay already is, so the markers draw in Play too and follow the same selection and
+X-ray rules. `RenderSystem` declares `AccessView<RO<TwoHandIKComponent>>`, so `ValidateOrdering`
+keeps it after `AnimationSystem`.
+
+**4. Found, not fixed: the editor font has no em dash.** The inspector font is Inter, loaded with
+ImGui's default glyph range (Latin-1), so U+2014 renders as "?". This affects eleven existing
+UI strings across four panels, including the aim-offset readout. The new strings use ASCII. See
+[cross-cutting.md](cross-cutting.md#editor-text-outside-latin-1-renders-as-).
+
+**Verification.** The rig was `ArmoredHumanoid` from `first-game`, through the H2 scratch
+worktree and scenes. A temporary startup hook selected `Body`, framed the camera and scrolled
+the inspector; the hook has been removed. Evidence is screen captures of the running Debug editor
+(PowerShell `CopyFromScreen`), read back as images:
+
+| Probe | Result |
+|---|---|
+| Section and readout, both markers in reach | Weapon line "Rifle (socket on Spine)", the six combos and both markers correct. "Reach 61% of the arm" (right) and "Reach 87%" (left), matching H2's measured stretch of 0.608 |
+| Marker past reach (`Support` 1.0 m further along the barrel) | Left readout, in the accent colour: "Clamped: marker at 276% of the arm". The viewport shows the left arm straight toward the muzzle and a wrist→marker line off-frame. Sampled colour (183, 175, 186) against (131, 130, 125) background: the accent, washed pale |
+| Marker cross at the wrist | Pale red and green strokes crossing at the left wrist's joint star. `Grip` is occluded by the rifle when viewed from the left, as expected with depth test on |
+| Missing marker (`SupportX`) | "The weapon has no child named 'Support': hand on the clip.", wrapped. The Marker combo lists the weapon's children, so the fix is one click |
+| Boot | No ordering violation, no warnings. Debug and Release editor and Debug runtime build with no warnings |
+
+**Not verified: the three interactive rows of the table above.** Dragging the rifle with the socket
+gizmo, dragging a marker past reach, and scrubbing the animator all need hands on the editor. The
+harness here can launch it and capture it, but cannot drive it. Also not exercised:
+
+- undo of a combo edit;
+- multi-select propagation;
+- the `Disabled`, `NoWeapon`, `NoWeaponFrame`, `NoJoint`, `WeaponInArm` and `Unsolvable` wordings,
+  whose statuses come from code paths H2 already measured, and which have not been seen on screen.
+
+The live-follow behaviour is structural: the pass reads the socket and marker transforms every
+frame in edit mode, and H2's clip sweep measured the hands on the markers through all five clips.
+But nobody has watched it. **Before H5, check the three rows by hand.**
+
 ---
 
 ## Phase H4 — aim lock
@@ -245,7 +488,10 @@ frame, after the aim offset and before the palette, in edit mode and in Play.
    then pitch about the yawed right — the same construction `ApplyAimOffset` uses).
 2. After the weapon frame is computed and before the hands are solved, rotate the weapon frame about
    its `Grip` marker so its forward axis (a per-weapon `Forward` marker or the weapon's −Z) matches
-   the aim direction, blended by an `AimLock` weight.
+   the aim direction, blended by an `AimLock` weight. **Measured in H2: the Proving Ground rifle's
+   barrel is its local −X, not −Z** (its `Muzzle` sits at local `[−0.97, 0.19, 0]`), so a fixed
+   axis convention is already wrong for the one weapon there is. Use a marker, such as the
+   existing `Muzzle`.
 3. **The weapon entity must be drawn where the hands are**: `BoneAttachmentSystem` gains the same
    correction for a weapon referenced by a `TwoHandIKComponent`, or the pass writes the corrected
    frame somewhere the socket system reads. Decide in H4; do not let the two diverge.
@@ -254,6 +500,104 @@ frame, after the aim offset and before the palette, in edit mode and in Play.
 |---|---|
 | Aim pitch/yaw sweep, idle clip frozen | Muzzle forward vs aim direction within 0.5° |
 | AimLock 0 | Identical to H3 |
+
+### Execution notes (2026-09-24)
+
+Landed on `master`. The current behaviour is in [scene.md](../engine/scene.md) (the lock in the
+pass, and the socket's locked branch), [editor.md](../editor/editor.md) and
+[scripting.md](../engine/scripting.md) (`SetAimLock`).
+
+**Step 3, decided: the pass owns the aimed frame.** It writes `LockedWeaponFrame` onto the
+component, and `BoneAttachmentSystem` draws the weapon from it while `AimLockState == Locked`. It
+reads the frame through a declared `OptRO<TwoHandIKComponent>`, so the ordering is checked.
+
+The rejected option was giving `BoneAttachmentSystem` the same correction. That would have made
+two computations of one fact, with the aim-offset inputs duplicated into a second system. Keeping
+the old socket multiply as the only unlocked path is also what makes "AimLock 0 identical to H3"
+true by construction rather than by float luck.
+
+**Step 2, as built:**
+
+- **Barrel = an `AimMarker` child's −Z**, default `Muzzle`. The plan's "the weapon's −Z" was
+  already wrong for the rifle, whose barrel is its local −X. The existing `Muzzle`'s rotation of
+  `(0, π/2, 0)` maps its −Z onto that barrel. So the forward is the engine's forward convention
+  (`GetWorldForward`, lights), read off a marker the weapon already has.
+- **A look-at with up, not a shortest arc.** Not a plan item. The barrel goes on the aim, and the
+  muzzle's +Y goes as near mesh up as the aim allows, so a rolling chest does not cant the rifle.
+  This is Unity Multi-Aim's world-up shape.
+
+  The consequence: under a full lock the socket's rotation no longer matters, only where it puts
+  the grip. The Bone Attachment section says so when a lock is active, because otherwise the
+  Rotation rows and the socket gizmo look dead. **Author the weapon pose with Aim Lock at 0.**
+- **The aim is the aim offset's `Pitch` / `Yaw`**, clamped by one shared function
+  (`ClampAimAngle`) that `ApplyAimOffset` now also uses. The lock needs an
+  `AimOffsetComponent`, and it ignores that component's `Enabled` flag, which only governs the
+  spine bend.
+
+**Also added:**
+
+- `AimLock` defaults to 0, so a scene written before H4 is unchanged.
+- The runtime `AimLockState` / `AimLockAngle` feed an inspector readout, and `SetAimLock(weight)`
+  was added in Lua for a lowered weapon.
+- Reflection went from 163 to 168 members.
+
+**A bug I made and fixed before it shipped.** A lock that failed (no aim offset, or no aim marker)
+while both hands solved let the pass count the frame as clean. That erased the warning set, so
+the lock warning would have fired every frame. The lock failure now keeps the set armed. A scene
+with `AimMarker: Barrel` logs exactly one warning over about 25 seconds.
+
+**Verification.** The rig was `ArmoredHumanoid` from `first-game`, through the scratch worktree.
+Temporary code, since removed:
+
+- drove the aim offset's `Pitch` over {−1.2, −0.6, −0.3, 0, 0.3, 0.6, 1.2} and its `Yaw` over
+  {−2, −1, −0.5, 0, 0.5, 1, 2}, so 49 cells including past both limits, each held 4 frames in edit
+  mode;
+- measured, at the end of `BoneAttachmentSystem`, the *drawn* `Muzzle` world −Z against an aim
+  direction rebuilt independently from the component's fields and the body's world rotation;
+- measured the drawn wrists against the markers' worlds.
+
+| Probe | Pass condition | Result |
+|---|---|---|
+| Sweep, idle clip frozen (`Lower_Weapon_Look_Raise` t = 0), `AimLock 1` | Barrel within 0.5° | **6.6e-5°** max over 49 cells, all `Locked`. Wrists on markers within 4.9e-7 m, none clamped |
+| Same sweep, walk clip frozen | Barrel within 0.5° | 6.4e-5° max. Right wrist 4.8e-7 m. **Left hand clamped on all 49**: see below |
+| Signs | — | Pitch +1.2 (clamped to 1.0) aims world +Y 0.84. Yaw ±2 (clamped to ±π/2) swings the aim ±90° |
+| `AimLock 0` | Identical to H3 | Weapon world **bit-identical** (`memcmp`) to `bodyWorld × jointFrame × OffsetMatrix`, state `Off`. Wrists 6e-7 m |
+| Failing lock (`AimMarker: Barrel`) | — | One warning, weapon on its socket |
+| Readout | — | "Barrel on the aim, 19 deg off the chest pose" in the inspector (screen capture) |
+
+Builds checked: Debug and Release editor and Debug runtime, all with no warnings. `tsc --noEmit` is
+clean. The aim-offset boot self-tests still pass on the shared clamp.
+
+**What the sweep showed that the plan did not expect.** Without the lock, the barrel error was
+18.54° **in every one of the 49 cells**. It did not grow with the aim. The rifle is socketed on
+`Spine`, the top joint of the aim-offset chain, and each chain joint turns its whole subtree, so
+`Spine` carries the whole aim rotation. The aim offset alone already makes the barrel follow every
+*change* in the aim. The lock removes the constant the clip leaves: the chest pose at that frame,
+plus its roll. That constant is 18.9° at the idle's t = 0 and 8.2° at the walk's, and it varies
+over a clip (the plan's 78° was the lowered idle on the old hand socket).
+
+So H4 is not what makes aiming work. It is what makes a clip's chest pose stop mattering to the
+barrel. That is still the milestone's claim of "new clips need nothing", just a smaller correction
+than the plan implied.
+
+**What H5 inherits:**
+
+- **Left-hand margin.** The lock turns the rifle about `Grip`, which moves `Support`. On the walk,
+  8.2° about a ~0.42 m lever is about 6 cm, which took the left hand from 94% reach to clamped on
+  every sample. The weapon pose H5 authors has to leave the left hand real margin once the lock
+  is on, measured *with* the lock.
+- **`Player:BarrelPoint`'s ~35° guard.** With the lock at 1 the barrel is on the aim to 1e-4°, so
+  the guard can only trip while the lock is being faded. Decide in H5 whether to keep it as that
+  guard.
+- **A lowered weapon needs `SetAimLock(0)` as well as `SetHandIKWeight(0, 0)`.** Otherwise the
+  rifle stays level on the aim while the hands drop away from it.
+
+**Not verified by hand:**
+
+- the Bone Attachment note under a live lock;
+- a lock weight between 0 and 1 on screen (the slerp is exercised only by construction).
+
+The three interactive H3 checks are still open.
 
 ---
 
