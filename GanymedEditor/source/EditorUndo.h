@@ -179,10 +179,10 @@ namespace GanymedE {
 				return;
 
 			// The command stores the whole struct, runtime fields included. Those belong to a
-			// system or a live input - aim offset's preview Pitch/Yaw, a socket's or chain's
-			// Resolved, an emitter's pool and RNG, the animator's Palette - not to the edit, and
-			// writing the snapshot back would rewind them to whatever they were when the edit
-			// was recorded. Keep what is live; restore only the authored rest.
+			// system or a live input - aim offset's preview Pitch/Yaw, a chain's Resolved,
+			// two-hand IK's reach, an emitter's pool and RNG, the animator's Palette - not to the
+			// edit, and writing the snapshot back would rewind them to whatever they were when
+			// the edit was recorded. Keep what is live; restore only the authored rest.
 			T restored = value;
 			KeepRuntimeFields(entity.GetComponent<T>(), restored);
 			entity.GetComponent<T>() = restored;

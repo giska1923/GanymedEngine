@@ -31,11 +31,11 @@ documented.** A file here is a promise, not a description.
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7                   |
 | [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done                        |
-| [TWO_HAND_IK.md](TWO_HAND_IK.md)                   | **Milestone plan** — two-hand weapon IK: the rifle posed from the chest and the aim, both arms solved onto `Grip`/`Support` markers on the weapon, aim lock | H1 done; H2–H6 planned            |
+| [TWO_HAND_IK.md](TWO_HAND_IK.md)                   | **Milestone plan** — two-hand weapon IK: the rifle posed from the chest and the aim, both arms solved onto `Grip`/`Support` markers on the weapon, aim lock | H1–H2 done; H3–H6 planned         |
 | [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the frustum's near-plane depth convention                                                            | 4                                 |
 | [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                                 |
 | [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                                 |
-| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, two skeletal leftovers (A3 grip picture, `Visible` bit), and the aim-offset probes that were not watched | 19                                |
+| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, three skeletal leftovers (A3 grip picture, `Visible` bit, a socket warning while the mesh loads), and the aim-offset probes that were not watched | 19                                |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
@@ -69,8 +69,9 @@ collision default does not zero the parity audit on those buildings; M6 already 
 
 **Skeletal attachments and joint tooling are done.** Mechanism in
 [`SKELETAL_ATTACHMENTS.md`](../history/SKELETAL_ATTACHMENTS.md), editor in
-[`SKELETAL_TOOLING.md`](../history/SKELETAL_TOOLING.md) (S1–S6). Two leftovers — the A3 grip
-picture on `first-game`, and a general `Visible` bit — are in
+[`SKELETAL_TOOLING.md`](../history/SKELETAL_TOOLING.md) (S1–S6). Three leftovers — the A3 grip
+picture on `first-game`, a general `Visible` bit, and a socket that warns "no rigged mesh" while
+the mesh is still loading — are in
 [cross-cutting.md](cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
 
 **Aim offset is done.** The pass, the inspector preview and the viewport handle are on `master`;

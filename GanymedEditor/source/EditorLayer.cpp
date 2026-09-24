@@ -39,6 +39,7 @@
 #include "GanymedE/UI/UIEngine.h"
 #include "GanymedE/Scene/SceneSingletons.h"
 #include "GanymedE/Scene/SceneCamera.h"
+#include "GanymedE/Scene/Systems/BoneAttachmentSystem.h"
 
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
@@ -334,6 +335,14 @@ namespace GanymedE {
 			glm::mat4 JointWorld{ 1.0f };
 		};
 
+		// -1 unless BoneAttachmentSystem placed this socket on its last evaluation. The system
+		// owns that status; the component is authored data only.
+		int32_t SocketJoint(Scene& scene, Entity socket)
+		{
+			const BoneAttachmentSystem* sockets = scene.Systems().Get<BoneAttachmentSystem>();
+			return sockets ? sockets->ResolvedJoint((entt::entity)socket) : -1;
+		}
+
 		SocketGizmoQuery QuerySocketGizmo(Scene& scene, Entity socket)
 		{
 			SocketGizmoQuery query;
@@ -386,7 +395,8 @@ namespace GanymedE {
 				query.Reason = "Set a joint to place this socket";
 				return query;
 			}
-			if (attachment.Resolved < 0)
+			const int32_t joint = SocketJoint(scene, socket);
+			if (joint < 0)
 			{
 				query.Reason = "Joint name does not resolve";
 				return query;
@@ -401,8 +411,7 @@ namespace GanymedE {
 			}
 
 			glm::mat4 jointLocal{ 1.0f };
-			if (!TryGetJointFrame(*mesh, EntityPosePalette(target),
-				attachment.Resolved, jointLocal))
+			if (!TryGetJointFrame(*mesh, EntityPosePalette(target), joint, jointLocal))
 			{
 				query.Reason = "Joint frame is invalid";
 				return query;
@@ -1610,7 +1619,7 @@ namespace GanymedE {
 		if (targetID == UUID{ 0 })
 			targetID = selected.GetComponent<RelationshipComponent>().Parent;
 		entity = targetID;
-		joint = attachment.Resolved;
+		joint = m_ActiveScene ? SocketJoint(*m_ActiveScene, selected) : -1;
 	}
 
 	glm::mat4 EditorLayer::GetViewportViewProjection()
@@ -1714,7 +1723,6 @@ namespace GanymedE {
 			{
 				const BoneAttachmentComponent before = attachment;
 				attachment.Joint = name;
-				attachment.Resolved = -1;
 				m_UndoStack.Push(CreateScope<ComponentEditCommand<BoneAttachmentComponent>>(
 					"Set Joint", socket.GetUUID(), before, attachment));
 			}
@@ -2349,7 +2357,7 @@ namespace GanymedE {
 		{
 			glm::vec3 t = selectedEntity.GetComponent<TransformComponent>().Translation;
 			if (selectedEntity.HasComponent<BoneAttachmentComponent>()
-				&& selectedEntity.GetComponent<BoneAttachmentComponent>().Resolved >= 0)
+				&& SocketJoint(*m_ActiveScene, selectedEntity) >= 0)
 			{
 				t = selectedEntity.GetComponent<BoneAttachmentComponent>().Offset;
 				if (m_GizmoWorldSpace && selectedEntity.HasComponent<WorldTransformComponent>())

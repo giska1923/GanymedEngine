@@ -273,8 +273,45 @@ namespace GanymedE::Reflection {
 					.custom<Attr>(Attr{}.Speed(0.01f))
 				.data<&BoneAttachmentComponent::Rotation>("Rotation")
 					.traits(Trait::Radians | Trait::OmitIfDefault)
-					.custom<Attr>(Attr{}.Speed(0.1f))
-				.data<&BoneAttachmentComponent::Resolved>("Resolved")
+					.custom<Attr>(Attr{}.Speed(0.1f));
+
+			// Every authored field is OmitIfDefault, so the Meshy defaults write an empty map.
+			// Resolved and the per-hand results are runtime: a joint hint must not round-trip
+			// through the file, and a reach readout is a fact of this frame's pose.
+			GE_REFLECT_COMPONENT(TwoHandIKComponent)
+				.custom<Attr>(Attr{}.Label("Two-Hand IK")
+					.Tip("Solves both arms onto the Grip and Support markers under this rig's weapon."))
+				.data<&TwoHandIKComponent::RightUpper>("RightUpper")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::RightLower>("RightLower")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::RightEnd>("RightEnd")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::LeftUpper>("LeftUpper")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::LeftLower>("LeftLower")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::LeftEnd>("LeftEnd")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::RightMarker>("RightMarker")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::LeftMarker>("LeftMarker")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::RightWeight>("RightWeight")
+					.traits(Trait::OmitIfDefault)
+					.custom<Attr>(Attr{}.Label("Right Weight").Range(0.0f, 1.0f).Speed(0.01f))
+				.data<&TwoHandIKComponent::LeftWeight>("LeftWeight")
+					.traits(Trait::OmitIfDefault)
+					.custom<Attr>(Attr{}.Label("Left Weight").Range(0.0f, 1.0f).Speed(0.01f))
+				.data<&TwoHandIKComponent::Enabled>("Enabled")
+					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::Resolved>("Resolved")
+					.traits(Trait::Runtime)
+				.data<&TwoHandIKComponent::Valid>("Valid")
+					.traits(Trait::Runtime)
+				.data<&TwoHandIKComponent::Reached>("Reached")
+					.traits(Trait::Runtime)
+				.data<&TwoHandIKComponent::Stretch>("Stretch")
 					.traits(Trait::Runtime);
 
 			// The projection type gates which six of the seven camera fields are meaningful, so
@@ -656,11 +693,11 @@ namespace GanymedE::Reflection {
 		//
 		// Two honest limits. Padding: a bool dropped into existing padding does not move sizeof -
 		// AudioSourceComponent has three spare bytes right now, so a fifth flag there would slip
-		// through. And these cover 18 of the 26 ComponentList entries - every one with NO
+		// through. And these cover 18 of the 27 ComponentList entries - every one with NO
 		// standard-library container member. sizeof(std::string) is 40 with MSVC's STL and 32 with
 		// libstdc++, and sizeof(std::vector) and sizeof(std::unordered_map) differ likewise, so a
 		// sentinel on TagComponent, RelationshipComponent, StaticMeshComponent, AnimatorComponent,
-		// BoneAttachmentComponent, ScriptComponent, MarkerComponent, AimOffsetComponent or
+		// BoneAttachmentComponent, ScriptComponent, MarkerComponent, AimOffsetComponent, TwoHandIKComponent or
 		// ParticleEmitterComponent would have to be a
 		// table of per-platform numbers - which costs more than it catches, on a codebase that
 		// builds for Windows, Linux and macOS. The rule is mechanical rather than a judgement

@@ -117,7 +117,11 @@ copyable, no behavior beyond small helpers.
 - **`BoneAttachmentComponent`** — pins this entity to a named joint of another entity's skinned
   mesh. `Target` is an entity UUID (zero = hierarchy parent); `Joint` is a name, for the same
   reason clips are; `Offset` / `Rotation` are the rest pose in joint space (Euler radians, X·Y·Z).
-  `Resolved` is a runtime index, not serialized, reset by `Scene::Copy`. The joint frame is
+  The component is authored data only. Whether a socket resolved, and to which joint, belongs to
+  the system: `BoneAttachmentSystem::ResolvedJoint(entity)`, which the editor's socket gizmo and
+  joint tool read. `OffsetMatrix(scale)` on the component is the joint-space transform
+  (`Offset`·`Rotation`·local `Scale`). It is shared with two-hand IK, so the weapon the hands are
+  solved onto is the weapon that is drawn. The joint frame is
   `TryGetJointFrame` ([`Mesh.h`](../../GanymedEngine/source/GanymedE/Renderer/Mesh.h)) — one
   function, so a visualizer cannot re-derive the formula and drift. Recovery rather than
   keeping AnimationSystem's scratch globals: attachments are counted in ones and twos, and a
@@ -131,6 +135,29 @@ copyable, no behavior beyond small helpers.
   way — whatever unit the *rig* uses; the system folds in the skinned submesh's `LocalTransform`
   and divides the bind pose's basis scale back out (below). What the clip does to the joint chain
   still carries, scale included.
+- **`TwoHandIKComponent`** — solves both arms onto the weapon this rig holds. The weapon is the
+  **first child with a `BoneAttachmentComponent` aimed at this rig** (`Target` zero, or this
+  entity's UUID). There is no weapon field: one weapon per character, as a child, is the only case
+  so far.
+
+  **Fields:**
+  - Six joint names: `RightUpper` / `RightLower` / `RightEnd` (defaults `RightArm` /
+    `RightForeArm` / `RightHand`) and the same three for the left.
+  - Two marker names: `RightMarker` / `LeftMarker` (defaults `Grip` / `Support`).
+  - `RightWeight` / `LeftWeight` (0–1, default 1) and `Enabled`. Every authored field is
+    omitted when it holds its default, so the Meshy defaults serialize as `{}`.
+  - Runtime and never serialized: the joint hints (`Resolved`, seven: both chains, then the
+    weapon's socket joint), and per hand `Valid`, `Reached` and `Stretch`. The hints are checked by
+    name. The results are cleared and rewritten on every evaluation, so `Scene::Copy` and undo
+    carry them without a sweep.
+
+  **Markers:** a marker is a **direct child of the weapon** found by name. Its local transform is
+  a **wrist frame** in the weapon's space: the hand joint's origin and axes as `TryGetJointFrame`
+  reports them. A wrist is used rather than a palm so that a new rig needs no measured
+  hand-to-palm offset.
+
+  **Why six strings:** each chain slot is a distinct role, and a fixed three-name array would need
+  a YAML codec of its own. The struct has no `sizeof` sentinel.
 - **`CameraComponent`** — a `SceneCamera` (perspective or orthographic) + `Primary` +
   `FixedAspectRatio`. The first primary camera wins (resolved once per update by `CameraSystem`).
 - **`DirectionalLightComponent`** — color/intensity/`CastShadows`; direction is the entity's
@@ -278,8 +305,7 @@ an unresolved name warns once per entity per name and skips the bend. The palett
 so the clip inspector still measures the clip. The socket, the skeleton overlay and joint picking
 read the palette and follow the bend with no code of their own.
 
-`Animation.h` also declares **`SolveTwoBone`**, analytic two-bone IK over the same globals. **No
-system calls it yet**; the pass that will is H2 of [TWO_HAND_IK.md](../ToDo/TWO_HAND_IK.md). A
+`Animation.h` also declares **`SolveTwoBone`**, analytic two-bone IK over the same globals. A
 `TwoBoneChain` names the shoulder, elbow and wrist joints (`Upper` / `Lower` / `End`) and carries
 caller-owned subtree lists, the way `AimOffsetChain` does. The solve does four things:
 
@@ -317,6 +343,44 @@ The forearm swing is shortest-arc, and the hand takes the whole of its target ro
 distributed into the forearm, so on a rig without twist joints a large wrist twist lands entirely
 on the wrist's skinning.
 
+**The two-hand IK pass** (`ApplyTwoHandIK`) runs when the entity has a `TwoHandIKComponent`. It
+comes **after** the palette is built from the post-aim globals, because it reads the weapon's frame
+*from the palette*. It calls `TryGetJointFrame` on the weapon's socket joint and multiplies by
+`BoneAttachmentComponent::OffsetMatrix` at the weapon's local scale. That is the same function,
+the same palette entry and the same matrix `BoneAttachmentSystem` draws the weapon with later in
+the frame, so the two cannot disagree. For each hand the pass then:
+
+1. Composes the marker's frame as weapon frame × marker local, in mesh space.
+2. Takes it into the globals' space: the position through `inverse(skinTransform)`, the
+   orientation through the skin's rotation alone. A joint frame's basis is skin rotation × global
+   rotation once `TryGetJointFrame` has divided out the bind scale.
+3. Solves with the clip's own elbow as the pole, so a walk still swings it. The `PoleHint` is
+   "down and out": away from the weapon's joint with the vertical removed, then down.
+4. Rewrites the palette entries of that arm's subtree with the same `Global * InverseBind`
+   expression the full loop uses.
+
+The right hand is solved first, then the left. The chains are independent, and the weapon frame is
+final before either moves.
+
+A hand is skipped whole, with one warning per entity per distinct message, in any of these cases:
+
+- a joint name does not resolve;
+- the weapon has no child with the marker's name;
+- the weapon is socketed *inside* that arm. On the old `RightHand` setup the weapon would move with
+  the solve meant to reach it, so that hand carries the weapon and the other hand still solves;
+- the solver refuses the chain.
+
+No weapon, an unresolved socket joint, or a singular skin transform skips both hands.
+
+`Enabled` false returns immediately. Weight 0 still resolves and measures, because the solver
+reports reach without moving anything, and it rewrites no palette entry. So a disabled component
+and a zero weight both leave the palette bit-identical to no component at all.
+
+The pass reads other entities (the weapon's socket and scale, and the markers' local transforms)
+through a declared `WeaponAccess` view: `OptRO<BoneAttachmentComponent>`, `RO<TransformComponent>`,
+`RO<RelationshipComponent>`. This is the first time this system has read anything beyond its own
+entity. Measured cost is 2.8 µs per call in Release (one character, both hands, mean of 352 calls).
+
 A Debug boot self-test runs H1's verification table on a six-joint arm probe, once on a metre rig
 and once on a centimetre rig whose `RootTransform` carries the scale. Its rotation check uses
 `2·atan2(|v|, |w|)` of the delta quaternion rather than `2·acos(|dot|)`: the acos form cannot
@@ -351,8 +415,8 @@ entity track the socket. The cache-stomp risk is accepted; that system is the on
 ### BoneAttachmentSystem — [`Systems/BoneAttachmentSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/BoneAttachmentSystem.h)
 Pins entities with `BoneAttachmentComponent` to a joint. Per socket, in hierarchy-depth order
 (so a nested attachment sees its target's already-rewritten world; an explicit `Target` that is
-itself socketed is treated as deeper still): resolve the target (zero = parent), re-resolve
-`Joint` by name against the target's skeleton when `Resolved` is stale, then
+itself socketed is treated as deeper still): resolve the target (zero = parent), look `Joint` up
+by name in the target's skeleton (a linear search every frame, no cached hint), then
 `TryGetJointFrame(mesh, palette, joint, jointGlobal)` and
 `OverrideWorld(entity, targetWorld * jointGlobal * offset * localScale)`.
 The frame function is the one owner of
@@ -366,6 +430,12 @@ A missing target, a skeleton with no usable
 palette, a singular inverse bind, or a joint name the skeleton does not have warns once per
 distinct failure and leaves the entity at its **parent** transform (parent cache × local), never
 at the origin. An empty joint is quiet — authoring a socket before picking a name.
+
+It declares `RO<BoneAttachmentComponent>`: the component is authored data, and the system writes
+nothing into it. Which sockets it placed this frame, and on which joint, is system state that is
+rebuilt every evaluation and read through `ResolvedJoint(entity)` (−1 when the socket was not
+placed). That split is what lets `AnimationSystem`, which runs earlier, read a weapon's socket
+without `ValidateOrdering` calling it a stale read.
 
 **Why `LocalTransform` is in there.** `Renderer3D` draws a skinned submesh as
 `entityWorld * LocalTransform * Palette * v` — the importer deliberately keeps the mesh node's
@@ -639,10 +709,10 @@ anyway.
 
 ### What is registered
 
-40 types, 147 members (the boot log prints both — a count far below that is the cheapest signal that a
-registration block was dropped by the linker). Measured at editor boot after `AimOffsetComponent`:
+41 types, 161 members (the boot log prints both — a count far below that is the cheapest signal that a
+registration block was dropped by the linker). Measured at editor boot after `TwoHandIKComponent`:
 
-- The **29 components** — all 26 `ComponentList` entries, plus `IDComponent` and `TagComponent`
+- The **30 components** — all 27 `ComponentList` entries, plus `IDComponent` and `TagComponent`
   (entity identity, excluded from the list, registered so prefab diffing can skip them), plus
   `CharacterControllerComponent`, which is reflected and serialized but still missing from
   `ComponentList` ([ToDo](../ToDo/cross-cutting.md)).
@@ -681,11 +751,11 @@ What no test can check is whether a type's member list is **complete** — the t
 exactly the thing that is not reflected. The `static_assert(sizeof(T) == N)` sentinels at the bottom of
 `ComponentReflection.cpp` are the only forcing function, and they have two honest limits. Padding: a
 `bool` dropped into existing padding does not move `sizeof` (`AudioSourceComponent` has three spare
-bytes right now). And they cover 18 of the 26 `ComponentList` entries — every one with no
+bytes right now). And they cover 18 of the 27 `ComponentList` entries — every one with no
 standard-library container member. `sizeof(std::string)` is 40 with MSVC's STL and 32 with libstdc++,
 and vector and unordered_map differ likewise, so a sentinel on `TagComponent`,
 `RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `AimOffsetComponent`,
-`BoneAttachmentComponent`, `ScriptComponent`, `MarkerComponent` or
+`BoneAttachmentComponent`, `TwoHandIKComponent`, `ScriptComponent`, `MarkerComponent` or
 `ParticleEmitterComponent` would have to be a table of per-platform numbers — more cost than it
 catches, on a codebase that builds for Windows, Linux and macOS. The rule is mechanical rather than a
 judgement call per component: library container member ⇒ no sentinel.
@@ -1012,17 +1082,17 @@ The runtime scene is a disposable deep copy keyed by UUID — physics can knock 
 Stop simply discards the copy. This is why stable UUIDs and the generic `ComponentList` copy exist.
 
 The generic copy is a shallow value copy of every component, so anything that is runtime-only needs
-an explicit fixup sweep after it. There are five: `NativeScriptComponent::Instance` is nulled so
+an explicit fixup sweep after it. There are four: `NativeScriptComponent::Instance` is nulled so
 instances are recreated on play; `AnimatorComponent::Palette` is cleared because carrying a
 per-joint matrix array per entity into the new scene buys one frame of stale data;
-`BoneAttachmentComponent::Resolved` is reset to −1 so a stale joint index cannot attach to
-whatever now occupies that slot;
 `ParticleEmitterComponent::ResetRuntime()` clears pool, accumulator, timer, Playing, burst queue, bounds, and
 RNG together — a copied-then-reset pool with a *not*-reset RNG would double-play the editor's
 stream; and `AimOffsetComponent`'s `Pitch`, `Yaw` and `Resolved` are cleared so an editor preview
 does not survive into play (the script writes the live angles again on the first frame).
-Play-mode emitters therefore warm up from empty. Adding a component with runtime-only
-state means adding another sweep — nothing enforces this.
+Play-mode emitters therefore warm up from empty. `TwoHandIKComponent` needs no sweep: its joint
+hints are checked by name before use, and its per-hand results are cleared and rewritten on every
+evaluation. Adding a component with runtime-only state means adding another sweep unless the same
+is true of it — nothing enforces this.
 
 The audio components are the worked example of *not* needing one. Putting the live `VoiceId` on
 `AudioSourceComponent` would have made a fourth sweep mandatory and would have let a copied scene

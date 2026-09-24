@@ -441,7 +441,18 @@ Two things would make this repeatable, and they are separable:
 
 [SKELETAL_ATTACHMENTS.md](../history/SKELETAL_ATTACHMENTS.md) and
 [SKELETAL_TOOLING.md](../history/SKELETAL_TOOLING.md) are in history. Two items they named were
-deliberately not built, so they live here rather than vanishing with the plans.
+deliberately not built, so they live here rather than vanishing with the plans. A third was found
+later.
+
+**A socket warns "no rigged mesh" while the mesh is only loading.** Opening the unmodified
+`ProvingGround.ganymede` logs, once on the first frame: "BoneAttachment on 'Rifle' targets
+'Body', which has no rigged mesh". `Body`'s mesh is not `Ready()` yet, and
+`BoneAttachmentSystem` uses one branch for "no `StaticMeshComponent`", "not loaded" and "not
+rigged". The socket recovers on the next frame, and the warning is cleared once the socket
+resolves. It is wrong rather than harmful: it names a real failure that is not happening, on
+every load of every socketed scene. The fix is to split out `!Mesh.Ready()` and stay quiet (or
+say "still loading") while the handle is pending. Found in H2 of
+[TWO_HAND_IK.md](TWO_HAND_IK.md).
 
 **A general `Visible` / `Enabled` bit `RenderSystem` honours.** Decided in the attachments A2
 follow-up: hide an unresolved socket during the frames a skinned mesh is still streaming. Not a

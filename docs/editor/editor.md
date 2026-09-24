@@ -261,7 +261,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
   and children) are ImGui text on that same window after the image, projected through the camera
   the viewport is looking through, from the rig's cached `WorldTransformComponent` like the
   overlay (a parent-chain walk would drift for a rig whose world is written directly). The highlight is the editor joint selection (viewport pick or
-  Joints panel), falling back to the selected `BoneAttachmentComponent`'s `Resolved` index.
+  Joints panel), falling back to the joint `BoneAttachmentSystem` placed the selected socket on
+  (`ResolvedJoint`, −1 when it did not place it). The socket gizmo reads the same status.
   While Skeletons is on, a click whose screen-space distance to a bone or joint marker is within
   12 px selects that joint and does **not** change the entity selection; otherwise entity picking
   proceeds. The GPU pick buffer cannot see joints — they are not entities and carry no ID.

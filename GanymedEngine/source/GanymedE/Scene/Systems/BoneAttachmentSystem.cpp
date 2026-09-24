@@ -13,29 +13,13 @@ namespace GanymedE {
 
 	namespace {
 
-		// Offset and Rotation replace the entity's local translation and rotation, which is why
-		// those two are ignored. Scale has no counterpart on the component, so the local one is
-		// kept: a socketed prop is sized in the inspector like any other entity, and - the point -
-		// it is sized the SAME way on the Restore() path. A compensation factor that only applies
-		// while the socket resolves is how a 1.9 m rifle became an 86 m one on every load.
-		glm::mat4 OffsetMatrix(const BoneAttachmentComponent& attachment, const glm::vec3& scale)
-		{
-			glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), attachment.Rotation.x, { 1, 0, 0 })
-				* glm::rotate(glm::mat4(1.0f), attachment.Rotation.y, { 0, 1, 0 })
-				* glm::rotate(glm::mat4(1.0f), attachment.Rotation.z, { 0, 0, 1 });
-
-			return glm::translate(glm::mat4(1.0f), attachment.Offset) * rotation
-				* glm::scale(glm::mat4(1.0f), scale);
-		}
-
-		int32_t ResolveJointIndex(const std::vector<std::string>& names, const std::string& joint,
-			int32_t resolved)
+		// A linear search by name every frame, no cached hint: a socket's joint name is compared
+		// against at most a rig's worth of names, and without a hint there is nothing to go stale
+		// across a mesh swap, a DCC rename, a scene copy or a duplicate.
+		int32_t ResolveJointIndex(const std::vector<std::string>& names, const std::string& joint)
 		{
 			if (joint.empty())
 				return -1;
-
-			if (resolved >= 0 && (size_t)resolved < names.size() && names[(size_t)resolved] == joint)
-				return resolved;
 
 			for (int32_t i = 0; i < (int32_t)names.size(); i++)
 			{
@@ -51,6 +35,12 @@ namespace GanymedE {
 	void BoneAttachmentSystem::OnRuntimeStart()
 	{
 		m_Warned.clear();
+	}
+
+	int32_t BoneAttachmentSystem::ResolvedJoint(entt::entity entity) const
+	{
+		auto it = m_Resolved.find(entity);
+		return it != m_Resolved.end() ? it->second : -1;
 	}
 
 	void BoneAttachmentSystem::OnUpdate(Timestep ts)
@@ -125,6 +115,7 @@ namespace GanymedE {
 	void BoneAttachmentSystem::Evaluate()
 	{
 		m_Order.clear();
+		m_Resolved.clear();
 
 		for (auto [entity, attachment, transform, relationship, world] : View<AttachView>())
 		{
@@ -154,7 +145,7 @@ namespace GanymedE {
 		for (const auto& item : m_Order)
 		{
 			Entity entity{ item.second, &m_Scene };
-			auto& attachment = entity.GetComponent<BoneAttachmentComponent>();
+			const auto& attachment = entity.GetComponent<BoneAttachmentComponent>();
 
 			const auto Restore = [&]()
 			{
@@ -180,7 +171,6 @@ namespace GanymedE {
 			Entity target = ResolveTarget(entity, attachment);
 			if (!target)
 			{
-				attachment.Resolved = -1;
 				WarnOnce(item.second,
 					"BoneAttachment on '" + entity.GetName() + "' has no target - "
 					"leaving the entity at its parent transform");
@@ -190,7 +180,6 @@ namespace GanymedE {
 
 			if (target == entity)
 			{
-				attachment.Resolved = -1;
 				WarnOnce(item.second,
 					"BoneAttachment on '" + entity.GetName() + "' names itself as the target - "
 					"leaving the entity at its parent transform");
@@ -204,7 +193,6 @@ namespace GanymedE {
 
 			if (!meshComponent || !meshComponent->Mesh.Ready() || !meshComponent->Mesh->HasSkeleton())
 			{
-				attachment.Resolved = -1;
 				WarnOnce(item.second,
 					"BoneAttachment on '" + entity.GetName() + "' targets '" + target.GetName() +
 					"', which has no rigged mesh - leaving the entity at its parent transform");
@@ -222,7 +210,6 @@ namespace GanymedE {
 			if (palette.size() != skeleton.JointCount()
 				|| skeleton.InverseBind.size() != skeleton.JointCount())
 			{
-				attachment.Resolved = -1;
 				WarnOnce(item.second,
 					"BoneAttachment on '" + entity.GetName() + "' targets '" + target.GetName() +
 					"', whose skeleton has no usable palette - leaving the entity at its parent transform");
@@ -230,10 +217,9 @@ namespace GanymedE {
 				continue;
 			}
 
-			attachment.Resolved = ResolveJointIndex(skeleton.JointNames, attachment.Joint,
-				attachment.Resolved);
+			const int32_t resolved = ResolveJointIndex(skeleton.JointNames, attachment.Joint);
 
-			if (attachment.Resolved < 0)
+			if (resolved < 0)
 			{
 				if (attachment.Joint.empty())
 				{
@@ -252,15 +238,13 @@ namespace GanymedE {
 
 			if (!targetWorld)
 			{
-				attachment.Resolved = -1;
 				Restore();
 				continue;
 			}
 
 			glm::mat4 jointGlobal{ 1.0f };
-			if (!TryGetJointFrame(mesh, palette, attachment.Resolved, jointGlobal))
+			if (!TryGetJointFrame(mesh, palette, resolved, jointGlobal))
 			{
-				attachment.Resolved = -1;
 				WarnOnce(item.second,
 					"BoneAttachment on '" + entity.GetName() + "' joint '" + attachment.Joint +
 					"' has a singular inverse bind - leaving the entity at its parent transform");
@@ -269,8 +253,9 @@ namespace GanymedE {
 			}
 
 			m_Warned.erase(item.second);
+			m_Resolved[item.second] = resolved;
 			transforms->OverrideWorld(entity, targetWorld->World * jointGlobal
-				* OffsetMatrix(attachment, entity.GetComponent<TransformComponent>().Scale));
+				* attachment.OffsetMatrix(entity.GetComponent<TransformComponent>().Scale));
 		}
 	}
 

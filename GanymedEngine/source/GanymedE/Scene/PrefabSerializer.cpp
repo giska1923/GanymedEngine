@@ -89,7 +89,6 @@ namespace GanymedE {
 						if (targetIt != remap.end())
 							attachment->Target = targetIt->second;
 					}
-					attachment->Resolved = -1;
 				}
 			}
 

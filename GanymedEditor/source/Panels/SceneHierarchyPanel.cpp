@@ -2367,7 +2367,6 @@ namespace GanymedE {
 					if (droppedID != entity.GetUUID())
 					{
 						component.Target = droppedID;
-						component.Resolved = -1;
 						edited = true;
 					}
 				}
@@ -2377,7 +2376,6 @@ namespace GanymedE {
 			if (ImGui::SmallButton("Parent"))
 			{
 				component.Target = UUID{ 0 };
-				component.Resolved = -1;
 				edited = true;
 			}
 			ImGui::SameLine();
@@ -2406,7 +2404,6 @@ namespace GanymedE {
 					if (ImGui::Selectable("(none)", component.Joint.empty()))
 					{
 						component.Joint.clear();
-						component.Resolved = -1;
 						edited = true;
 					}
 
@@ -2416,7 +2413,6 @@ namespace GanymedE {
 						if (ImGui::Selectable(name.c_str(), selected))
 						{
 							component.Joint = name;
-							component.Resolved = -1;
 							edited = true;
 						}
 						if (selected)

@@ -88,6 +88,7 @@ namespace GanymedE {
 		AnimatorComponent,
 		AimOffsetComponent,
 		BoneAttachmentComponent,
+		TwoHandIKComponent,
 		CameraComponent,
 		DirectionalLightComponent,
 		PointLightComponent,

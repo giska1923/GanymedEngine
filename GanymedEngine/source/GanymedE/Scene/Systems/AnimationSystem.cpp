@@ -225,6 +225,15 @@ namespace GanymedE {
 			}
 		}
 
+		// Rewritten on every evaluation, so they describe this frame's pose or nothing. That is
+		// what lets Scene::Copy and undo carry them without a sweep of their own.
+		void ClearHandIKResults(TwoHandIKComponent& ik)
+		{
+			ik.Valid.fill(false);
+			ik.Reached.fill(false);
+			ik.Stretch.fill(0.0f);
+		}
+
 #ifdef GE_DEBUG
 		bool SameMatrix(const glm::mat4& a, const glm::mat4& b)
 		{
@@ -705,11 +714,12 @@ namespace GanymedE {
 	{
 		// Play starts at the head of the clip whatever the editor was scrubbed to. The runtime
 		// scene is a copy, so the editor scene keeps its scrub position for when play stops.
-		for (auto [entity, animator, meshComponent, aim] : View<AnimView>())
+		for (auto [entity, animator, meshComponent, aim, ik] : View<AnimView>())
 		{
 			(void)entity;
 			(void)meshComponent;
 			(void)aim;
+			(void)ik;
 			animator.Time = 0.0f;
 		}
 
@@ -717,6 +727,8 @@ namespace GanymedE {
 		m_WarnedAimJoints.clear();
 		m_WarnedAimAxes.clear();
 		m_AimSubtrees.clear();
+		m_WarnedHandIK.clear();
+		m_HandIKSubtrees.clear();
 	}
 
 	void AnimationSystem::OnUpdate(Timestep ts)
@@ -741,8 +753,11 @@ namespace GanymedE {
 		}
 #endif
 
-		for (auto [entity, animator, meshComponent, aim] : View<AnimView>())
+		for (auto [entity, animator, meshComponent, aim, ik] : View<AnimView>())
 		{
+			if (ik)
+				ClearHandIKResults(*ik);
+
 			const Ref<Mesh>& mesh = meshComponent.Mesh.Get();
 			if (!mesh || !mesh->HasSkeleton())
 			{
@@ -790,6 +805,12 @@ namespace GanymedE {
 			animator.Palette.resize(jointCount);
 			for (uint32_t i = 0; i < jointCount; i++)
 				animator.Palette[i] = m_Globals[i] * skeleton.InverseBind[i];
+
+			// After the palette, not before: the weapon frame is read from it through
+			// TryGetJointFrame - the same function and the same entry BoneAttachmentSystem
+			// draws the weapon from later this frame. The pass then rewrites only the arms.
+			if (ik)
+				ApplyTwoHandIK(entity, *ik, *mesh, animator.Palette);
 		}
 	}
 
@@ -1220,5 +1241,228 @@ namespace GanymedE {
 		}
 
 		ApplyAimOffset(skeleton, chain, upSkin, rightSkin, aim.Pitch, aim.Yaw, m_Globals);
+	}
+
+	void AnimationSystem::WarnHandIK(entt::entity entity, const std::string& message)
+	{
+		if (m_WarnedHandIK[entity].insert(message).second)
+			GE_CORE_WARN("{0}", message);
+	}
+
+	void AnimationSystem::ApplyTwoHandIK(entt::entity entity, TwoHandIKComponent& ik,
+		const Mesh& mesh, std::vector<glm::mat4>& palette)
+	{
+		GE_PROFILE_SCOPE("AnimationSystem::ApplyTwoHandIK");
+
+		// Weight 0 still resolves and measures - the solver reports reach without touching the
+		// pose - so a readout works with the hands off. Enabled is the off switch.
+		if (!ik.Enabled)
+			return;
+		const float weights[2] = { ik.RightWeight, ik.LeftWeight };
+
+		const Skeleton& skeleton = mesh.GetSkeleton();
+		const std::vector<std::string>& names = skeleton.JointNames;
+		const Entity self{ entity, &m_Scene };
+		// Built only on a failure path; a solved frame allocates no strings.
+		const auto Where = [&self]() { return "Two-hand IK on '" + self.GetName() + "'"; };
+		auto access = View<WeaponAccess>();
+
+		// The weapon: the first child whose socket is aimed at this rig. Target zero means the
+		// socket's parent, which for a child is this entity.
+		Entity weapon;
+		const BoneAttachmentComponent* socket = nullptr;
+		if (auto relationship = access.FindOne<RelationshipComponent>(self))
+		{
+			for (UUID childID : relationship->Children)
+			{
+				Entity child = m_Scene.FindEntityByUUID(childID);
+				if (!child)
+					continue;
+
+				auto attachment = access.FindOne<BoneAttachmentComponent>(child);
+				if (!attachment || (attachment->Target != UUID{ 0 } && attachment->Target != self.GetUUID()))
+					continue;
+
+				weapon = child;
+				socket = attachment.Get();
+				break;
+			}
+		}
+		if (!weapon || !socket)
+		{
+			WarnHandIK(entity, Where() + " finds no weapon: no child has a BoneAttachmentComponent "
+				"on this rig - leaving the arms on the clip");
+			return;
+		}
+
+		int32_t& anchor = ik.Resolved[6];
+		anchor = ResolveJointIndex(names, socket->Joint, anchor);
+		glm::mat4 anchorFrame{ 1.0f };
+		if (anchor < 0 || !TryGetJointFrame(mesh, palette, anchor, anchorFrame))
+		{
+			WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' is socketed to joint '"
+				+ socket->Joint + "', which mesh '" + mesh.GetPath() + "' does not resolve - "
+				"leaving the arms on the clip");
+			return;
+		}
+
+		// Mesh space, exactly as BoneAttachmentSystem builds it minus the rig's world matrix:
+		// the anchor's frame from this palette, times the socket's offset at the weapon's scale.
+		auto weaponTransform = access.FindOne<TransformComponent>(weapon);
+		if (!weaponTransform)
+			return;
+		const glm::mat4 weaponFrame = anchorFrame * socket->OffsetMatrix(weaponTransform->Scale);
+
+		// Markers are authored in mesh space (the joint frames TryGetJointFrame reports: unit
+		// basis, metres); the solver works where the globals live. A position comes back through
+		// inverse(skin); an orientation through its rotation part only. TryGetJointFrame divides
+		// the bind scale back out, so a joint frame's basis is skin rotation × global rotation.
+		const glm::mat4 skin = mesh.GetSkinTransform();
+		const float skinDet = glm::determinant(skin);
+		if (!std::isfinite(skinDet) || std::abs(skinDet) < 1e-20f)
+		{
+			WarnHandIK(entity, Where() + " cannot invert mesh '" + mesh.GetPath() + "' skin transform - "
+				"leaving the arms on the clip");
+			return;
+		}
+		const glm::mat4 meshToSkin = glm::inverse(skin);
+		const glm::mat3 meshToSkinRotation = glm::transpose(OrthonormalRotation(glm::mat3(skin)));
+		const glm::vec3 upSkin = glm::normalize(meshToSkinRotation * glm::vec3(0.0f, 1.0f, 0.0f));
+
+		const std::string* chainNames[2][3] = {
+			{ &ik.RightUpper, &ik.RightLower, &ik.RightEnd },
+			{ &ik.LeftUpper, &ik.LeftLower, &ik.LeftEnd } };
+		const std::string* markerNames[2] = { &ik.RightMarker, &ik.LeftMarker };
+		const char* handNames[2] = { "right", "left" };
+
+		bool chainResolved[2] = { true, true };
+		for (int hand = 0; hand < 2; hand++)
+		{
+			for (int slot = 0; slot < 3; slot++)
+			{
+				int32_t& index = ik.Resolved[(size_t)(hand * 3 + slot)];
+				index = ResolveJointIndex(names, *chainNames[hand][slot], index);
+				if (index < 0)
+				{
+					chainResolved[hand] = false;
+					WarnHandIK(entity, Where() + " references joint '" + *chainNames[hand][slot]
+						+ "', which mesh '" + mesh.GetPath() + "' does not have - leaving the "
+						+ handNames[hand] + " hand on the clip");
+				}
+			}
+		}
+
+		// Content-compared, like the aim cache: a hot-reloaded mesh can land at the old address.
+		HandIKSubtreeCache& cache = m_HandIKSubtrees[entity];
+		bool dirty = cache.Parents != skeleton.ParentIndices;
+		for (size_t i = 0; i < cache.Joints.size(); i++)
+			dirty = dirty || cache.Joints[i] != ik.Resolved[i];
+		if (dirty)
+		{
+			cache.Parents = skeleton.ParentIndices;
+			for (size_t i = 0; i < cache.Joints.size(); i++)
+			{
+				cache.Joints[i] = ik.Resolved[i];
+				BuildSubtree(skeleton, cache.Joints[i], cache.Subtrees[i]);
+			}
+		}
+
+		bool clean = chainResolved[0] && chainResolved[1];
+		for (int hand = 0; hand < 2; hand++)
+		{
+			if (!chainResolved[hand])
+				continue;
+
+			const std::vector<uint32_t>& armSubtree = cache.Subtrees[(size_t)(hand * 3)];
+
+			// A weapon socketed inside this arm (the old RightHand setup) would move with the
+			// solve that is meant to reach it. That hand carries the weapon; the other still solves.
+			if (SubtreeContains(armSubtree.data(), (uint32_t)armSubtree.size(), anchor))
+			{
+				clean = false;
+				WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' is socketed to '"
+					+ socket->Joint + "', inside the " + handNames[hand] + " arm - that hand carries "
+					"the weapon and is not solved");
+				continue;
+			}
+
+			Entity marker;
+			if (auto weaponRelationship = access.FindOne<RelationshipComponent>(weapon))
+			{
+				for (UUID childID : weaponRelationship->Children)
+				{
+					Entity child = m_Scene.FindEntityByUUID(childID);
+					if (child && child.GetName() == *markerNames[hand])
+					{
+						marker = child;
+						break;
+					}
+				}
+			}
+			if (!marker)
+			{
+				clean = false;
+				WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' has no child named '"
+					+ *markerNames[hand] + "' - leaving the " + handNames[hand] + " hand on the clip");
+				continue;
+			}
+			auto markerTransform = access.FindOne<TransformComponent>(marker);
+			if (!markerTransform)
+				continue;
+
+			const glm::mat4 markerFrame = weaponFrame * markerTransform->GetLocalTransform();
+			const glm::vec3 target = glm::vec3(meshToSkin * glm::vec4(glm::vec3(markerFrame[3]), 1.0f));
+			const glm::quat targetRotation = glm::normalize(glm::quat_cast(
+				meshToSkinRotation * OrthonormalRotation(glm::mat3(markerFrame))));
+
+			TwoBoneChain chain;
+			chain.Upper = ik.Resolved[(size_t)(hand * 3 + 0)];
+			chain.Lower = ik.Resolved[(size_t)(hand * 3 + 1)];
+			chain.End = ik.Resolved[(size_t)(hand * 3 + 2)];
+			for (int slot = 0; slot < 3; slot++)
+			{
+				const std::vector<uint32_t>& subtree = cache.Subtrees[(size_t)(hand * 3 + slot)];
+				chain.Subtrees[slot] = subtree.data();
+				chain.SubtreeCounts[slot] = (uint32_t)subtree.size();
+			}
+
+			// Only used when the clip's elbow sits on the reach line. Down and out: away from
+			// the weapon's joint, which is on the spine, with the vertical taken out.
+			const glm::vec3 shoulder = Origin(m_Globals[(size_t)chain.Upper]);
+			glm::vec3 outward = shoulder - Origin(m_Globals[(size_t)anchor]);
+			const float outwardLength = glm::length(outward);
+			outward -= upSkin * glm::dot(outward, upSkin);
+			chain.PoleHint = glm::length(outward) > 1e-3f * outwardLength
+				? glm::normalize(glm::normalize(outward) - upSkin) : -upSkin;
+
+			// The clip's own elbow is the pole, so the arm keeps the clip's style.
+			const glm::vec3 pole = Origin(m_Globals[(size_t)chain.Lower]);
+
+			const TwoBoneResult result = SolveTwoBone(skeleton, chain, target, targetRotation, pole,
+				weights[hand], m_Globals);
+			ik.Valid[(size_t)hand] = result.Valid;
+			ik.Reached[(size_t)hand] = result.Reached;
+			ik.Stretch[(size_t)hand] = result.Stretch;
+			if (!result.Valid)
+			{
+				clean = false;
+				WarnHandIK(entity, Where() + " cannot solve the " + std::string(handNames[hand]) + " arm '"
+					+ *chainNames[hand][0] + "/" + *chainNames[hand][1] + "/" + *chainNames[hand][2]
+					+ "': not one limb, or a zero-length bone - leaving it on the clip");
+				continue;
+			}
+
+			// The same expression as Evaluate's palette loop, so an entry is bit-identical to
+			// what a full rebuild after the solve would write. The anchor is outside this arm
+			// (checked above), so the entry the weapon frame came from is not touched. Weight 0
+			// moved nothing, and rewriting nothing keeps the palette bit-identical.
+			if (!(std::isfinite(weights[hand]) && weights[hand] > 0.0f))
+				continue;
+			for (uint32_t k : armSubtree)
+				palette[k] = m_Globals[k] * skeleton.InverseBind[k];
+		}
+
+		if (clean)
+			m_WarnedHandIK.erase(entity);
 	}
 }

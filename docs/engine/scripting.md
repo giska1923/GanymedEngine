@@ -271,6 +271,16 @@ lands on this frame's pose. **No-op without the component.** `GetAimOffset` stil
 `{ pitch = 0, yaw = 0 }` in that case, rather than nil. The chain, weights and limits are authored
 data; scripts only write the live angles.
 
+### Two-hand IK
+
+`SetHandIKWeight(right, left)` sets how far each hand is pulled onto its weapon marker, which is
+meant for fading a hand off the weapon for a reload or a lowered weapon and back. 0 leaves that arm
+exactly as the clip poses it. The pass clamps the value to [0, 1]; the binding does not.
+
+Timing is the same as the aim offset: `AnimationSystem` runs after both script systems, so a write
+lands on this frame's pose. **No-op without `TwoHandIKComponent`.** The chains, the marker names
+and `Enabled` are authored data. There is no getter; the reach readout is the editor's.
+
 ### Bone attachments
 
 `HasBoneAttachment`, `AttachToBone(target, joint [, offset [, rotation]])`, `DetachFromBone`.
