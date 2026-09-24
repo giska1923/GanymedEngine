@@ -72,9 +72,9 @@ Application::Run loop
 │   │   │   ├─ PhysicsSystem               fixed-step Jolt, collision events, transform writeback
 │   │   │   ├─ NativeScriptSystem          script lifecycle + OnUpdate
 │   │   │   ├─ LuaScriptSystem             the same lifecycle for Lua ScriptComponents
-│   │   │   ├─ AnimationSystem             sample clips, aim-offset the chain, write the joint palette
+│   │   │   ├─ AnimationSystem             sample clips, aim offset, palette, two-hand IK (arms, aim lock)
 │   │   │   ├─ TransformSystem             recompute dirty world transforms (ChangeView)
-│   │   │   ├─ BoneAttachmentSystem        pin entities to joints; rewrite world + subtree
+│   │   │   ├─ BoneAttachmentSystem        pin entities to joints (aim-locked weapon: the IK frame)
 │   │   │   ├─ CameraSystem                resolve primary camera → RenderContext singleton
 │   │   │   ├─ AudioSystem                 push voice state + emitter/listener poses to AudioEngine
 │   │   │   ├─ ParticleSystem              CPU emit/age/integrate (edit and play)

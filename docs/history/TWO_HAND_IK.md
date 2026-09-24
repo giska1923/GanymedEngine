@@ -1,14 +1,23 @@
 # Milestone — Two-hand weapon IK
 
-**Status: H1–H4 done on `master` (the solver; the component, the pass, serialization and Lua;
-the inspector section and the overlay; the aim lock). H5 done on `first-game` (the Proving Ground
-content), and its notes exist only in this branch's copy of this file. H6 planned.** H3's three
-interactive checks (drag the rifle, drag a marker, scrub) have not been done by hand yet; see
-H3's notes.
+**Status: complete.** H1–H4 landed on `master`, H5 on `first-game` (`d9574ad`), and H6 closed it
+on `master`. Live behaviour is in [scene.md](../engine/scene.md), [ecs.md](../engine/ecs.md),
+[scripting.md](../engine/scripting.md) and [editor.md](../editor/editor.md). The Proving Ground
+record of H5 is `first-game`'s copy of [PROVING_GROUND.md](../ToDo/PROVING_GROUND.md), under
+"Two-hand IK — the rifle on the chest". What was not watched, and the aim idle this milestone does
+not supply, are in [cross-cutting.md](../ToDo/cross-cutting.md#two-hand-ik-leftovers).
 
-> **Engine and editor milestone.** H1–H4 touch `GanymedEngine/source/` or `GanymedEditor/source/`,
-> which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`. H5 is game content
-> and lands on `first-game` after `master` is merged into it — never the other way.
+This record was assembled from `first-game`'s copy of the plan, the only one carrying H5's notes;
+`first-game` never merges into `master`.
+
+Execution notes are at the bottom of each phase: [H1](#phase-h1--the-solver),
+[H2](#phase-h2--the-component-and-the-pass), [H3](#phase-h3--inspector-readouts-overlay),
+[H4](#phase-h4--aim-lock), [H5](#phase-h5--proving-ground-first-game),
+[H6](#phase-h6--docs-and-close).
+
+> **Engine and editor milestone.** H1–H4 touched `GanymedEngine/source/` or `GanymedEditor/source/`,
+> which the [branch policy](../ToDo/PROVING_GROUND.md#branch-policy) puts on `master`. H5 was game content
+> and landed on `first-game` after `master` was merged into it — never the other way.
 
 The rifle is posed from the character's chest and the aim; both hands are then solved onto grip
 points authored on the rifle. The clip drives the body and legs. The arms follow the weapon.
@@ -98,7 +107,7 @@ a *Two Bone IK Constraint* per arm, targets parented to the weapon, and a *Multi
 | **H3** | Inspector section, reach readouts, overlay — **done** (interactive checks pending) | `master` | ~0.75 day |
 | **H4** | Aim lock: the barrel onto the aim direction — **done** | `master` | ~0.5 day |
 | **H5** | Proving Ground: rifle onto `Spine`, `Grip`/`Support` markers, measured — **done** | `first-game` | ~0.75 day |
-| **H6** | Docs, close | both | ~0.25 day |
+| **H6** | Docs, close — **done** | both | ~0.25 day |
 
 ~4 days. **H4 is the phase to cut** if the budget tightens: H1–H3 and H5 give a two-handed grip;
 H4 makes the barrel exact.
@@ -212,7 +221,7 @@ The 5.5 µm shortfall and the 0.51° bend at full reach are the ε clamp, and bo
 prediction from ε = 1e-5. The rotation check is `2·atan2(|v|, |w|)` of the delta quaternion. The
 two aim probes' inline `2·acos(|dot|)` cannot express an error between 0 and about 7e-4 rad in float, so it
 cannot test a 1e-4 tolerance (see
-[cross-cutting.md](cross-cutting.md#aim-offset-leftovers)).
+[cross-cutting.md](../ToDo/cross-cutting.md#aim-offset-leftovers)).
 
 Builds checked: Debug engine and editor, and Release engine, all with no warnings. No source files
 were added, so premake does not need to regenerate the projects.
@@ -399,7 +408,7 @@ clear of the H1 near-full-reach risk.
 - **First-frame socket warning.** `BoneAttachmentSystem` warns "targets 'Body', which has no rigged
   mesh" on the first frame of the *unmodified* Proving Ground, while the mesh is still loading. The
   warning predates H2 and is misleading. See
-  [cross-cutting.md](cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
+  [cross-cutting.md](../ToDo/cross-cutting.md#skeletal-leftovers-after-the-attachment-and-tooling-close).
 
 ---
 
@@ -452,7 +461,7 @@ keeps it after `AnimationSystem`.
 **4. Found, not fixed: the editor font has no em dash.** The inspector font is Inter, loaded with
 ImGui's default glyph range (Latin-1), so U+2014 renders as "?". This affects eleven existing
 UI strings across four panels, including the aim-offset readout. The new strings use ASCII. See
-[cross-cutting.md](cross-cutting.md#editor-text-outside-latin-1-renders-as-).
+[cross-cutting.md](../ToDo/cross-cutting.md#editor-text-outside-latin-1-renders-as-).
 
 **Verification.** The rig was `ArmoredHumanoid` from `first-game`, through the H2 scratch
 worktree and scenes. A temporary startup hook selected `Body`, framed the camera and scrolled
@@ -626,7 +635,8 @@ The three interactive H3 checks are still open.
 ### Execution notes (2026-09-24, `first-game`)
 
 The full record, with the derivation, the per-clip table, the P5 A/B and the frames seen, is
-[PROVING_GROUND.md](PROVING_GROUND.md), under "Two-hand IK — the rifle on the chest". This file has
+`first-game`'s copy of [PROVING_GROUND.md](../ToDo/PROVING_GROUND.md), under "Two-hand IK — the rifle on
+the chest". This file has
 the outcome and where the plan was wrong.
 
 **Branch.** `master` was merged into `first-game` first (`8c4c0d1`), with two ToDo-doc conflicts
@@ -669,7 +679,7 @@ the scene, two comments in `Player.lua`, and docs.
 
 Live docs updated in each phase's own change. H6 audits them, moves this file to
 `docs/history/TWO_HAND_IK.md` with execution notes, links it from [docs/README.md](../README.md), and
-removes its row from [ToDo/README.md](README.md).
+removes its row from [ToDo/README.md](../ToDo/README.md).
 
 | Phase | Doc |
 |---|---|
@@ -678,6 +688,47 @@ removes its row from [ToDo/README.md](README.md).
 | H5 | `PROVING_GROUND.md` on `first-game` |
 
 **New source files:** probably one shared header for `OffsetMatrix` (premake regeneration).
+
+### Execution notes (2026-09-24)
+
+**Done**, on `master`. `first-game` receives it by merge.
+
+Every phase updated its live docs in its own change. This phase checked them against the code and
+added no changelog.
+
+| Doc | Audit |
+|---|---|
+| [scene.md](../engine/scene.md) | The component bullet: fields, `HandStatus`, the lock's runtime fields. `SolveTwoBone`. The pass and the aim lock. `BoneAttachmentSystem`'s `RO` access, `ResolvedJoint`, and its locked branch. The overlay. `Scene::Copy`: four sweeps, and none needed for `TwoHandIKComponent`. Reflection: 41 types, 168 members, 30 components, 27 in `ComponentList`, the no-sentinel list. Each checked against the source. Present |
+| [ecs.md](../engine/ecs.md) | `ValidateOrdering`: `AnimationSystem` after the script systems is now enforced through `RO<TransformComponent>`; why `BoneAttachmentSystem` declares its component `RO`; the locked-frame read. Present |
+| [scripting.md](../engine/scripting.md) | `SetHandIKWeight`, `SetAimLock`. The bindings do not clamp, and both are no-ops without the component. `ganymed.d.ts` mirrors both. Present |
+| [editor.md](../editor/editor.md) | The section, the per-hand and aim-lock readouts, the Bone Attachment note under a lock, the overlay line under Visualizers, `ResolvedJoint` for the joint highlight. Present |
+| [architecture.md](../engine/architecture.md) | The frame-flow tree's `AnimationSystem` and `BoneAttachmentSystem` lines did not mention the IK pass or the locked weapon. **Fixed in this phase** |
+| `PROVING_GROUND.md` | The H5 section, on `first-game` only |
+
+**Moved and relinked:**
+
+- This file moved from `docs/ToDo/` to `docs/history/`, and is linked from
+  [docs/README.md](../README.md).
+- Its row left [ToDo/README.md](../ToDo/README.md).
+- Four links in [cross-cutting.md](../ToDo/cross-cutting.md) now point here.
+- Two aim-offset leftovers that H4 and H5 overtook were rewritten:
+  - the lowered idle, which is no longer lowered;
+  - the barrel meeting the handle's point, which the lock now does.
+
+**Leftovers,** in [cross-cutting.md](../ToDo/cross-cutting.md#two-hand-ik-leftovers):
+
+- H3's three interactive checks, which were never done by hand, and the UI states never seen on
+  screen;
+- the idle's left-hand clamps, whose fix is an aim idle;
+- the barrel-versus-chest shot count, which was never measured;
+- H1's three rig risks. None showed in the frames looked at, but none were swept.
+
+**History that H5 overtook** is listed in [ToDo/README.md](../ToDo/README.md)'s stale list, not
+rewritten. The skeletal-attachment and aim-offset records describe the rifle socketed to
+`RightHand`.
+
+This phase changed documents only. No build was needed, and none was claimed.
+
 
 ## Design tensions, recorded
 

@@ -441,7 +441,7 @@ ImGui intact.
 The em dash is the common case: eleven UI strings across `AssetPreview`, `AssetInspectorPanel`,
 `MapPanel` and the aim-offset readout in `SceneHierarchyPanel`. Three of them are a bare "—"
 placeholder in the clip tables, so those cells show a lone "?". The problem was found in the
-two-hand IK inspector (H3 of [TWO_HAND_IK.md](TWO_HAND_IK.md)), whose own strings were switched to
+two-hand IK inspector (H3 of [TWO_HAND_IK.md](../history/TWO_HAND_IK.md)), whose own strings were switched to
 ASCII rather than fixed here.
 
 **The fix** is a glyph-range array for the two Inter faces: the default range plus General
@@ -522,7 +522,7 @@ rigged". The socket recovers on the next frame, and the warning is cleared once 
 resolves. It is wrong rather than harmful: it names a real failure that is not happening, on
 every load of every socketed scene. The fix is to split out `!Mesh.Ready()` and stay quiet (or
 say "still loading") while the handle is pending. Found in H2 of
-[TWO_HAND_IK.md](TWO_HAND_IK.md).
+[TWO_HAND_IK.md](../history/TWO_HAND_IK.md).
 
 **A general `Visible` / `Enabled` bit `RenderSystem` honours.** Decided in the attachments A2
 follow-up: hide an unresolved socket during the frames a skinned mesh is still streaming. Not a
@@ -559,17 +559,17 @@ omitted from the scene so the defaults apply. They were not tuned against the ov
 share at the waist is the thing those numbers exist to avoid; whether a sixth / a third / a half
 looks right is still a look, not a measurement.
 
-**The lowered idle is still the wrong pose for standing still.** `Lower_Weapon_Look_Raise` points
-the barrel as far as −78°. Spine pitch does not turn that into an aim, and the milestone did not
-download a clip that would. `BarrelPoint`'s ~35° check is what keeps those shots on the chest
-fallback until that clip exists.
+**Standing still still has no aim idle.** The lowering this item used to describe is gone. Since
+two-hand IK's H5 on `first-game`, the rifle sits on the chest, locked to the aim, through the
+idle. What is left of the missing aim idle is now the two-hand IK leftover below: the idle's
+look-around pulls the left hand off the rifle.
 
 **The viewport line does not search upwards.** It walks `RelationshipComponent` children of the
 selected entity for the tag `Muzzle`. On this branch that chain is `Body` → `Rifle` → `Muzzle`,
 so selecting `Body` does find it. The line was not watched. It is one frame behind the pose,
-because the drag writes `Pitch` / `Yaw` after `AnimationSystem` has evaluated. Closing it so the
-barrel meets the point is closed-loop aiming, which the milestone left alone; it is H4 of
-[TWO_HAND_IK.md](TWO_HAND_IK.md), along with the left hand on the rifle.
+because the drag writes `Pitch` / `Yaw` after `AnimationSystem` has evaluated. The barrel meeting
+the point is done: two-hand IK's aim lock (H4 of [TWO_HAND_IK.md](../history/TWO_HAND_IK.md)) holds
+the barrel on the aim offset's angles. The one-frame lag is not done.
 
 **Two of the aim probes' rotation checks are quantised.** The twisted-pitch probe and the two-joint
 yaw+pitch probe in `RunAimOffsetProbes` measure rotation error as `2·acos(|dot|)` against a 1e-4 rad
@@ -577,6 +577,53 @@ tolerance. `RotationDelta` does not have this problem: `glm::angle` switches to 
 zero. In float, the first `|dot|` below 1.0 is already about
 7e-4 rad, so the check passes only while the dot rounds to exactly 1. It fails spuriously the moment
 it does not, and it cannot see an error between 0 and 7e-4 rad. That is too strict and blind at the
-same time. The two-bone probes (H1 of [TWO_HAND_IK.md](TWO_HAND_IK.md)) use
+same time. The two-bone probes (H1 of [TWO_HAND_IK.md](../history/TWO_HAND_IK.md)) use
 `2·atan2(|v|, |w|)` of the delta quaternion (`RotationError` in `AnimationSystem.cpp`). The fix is
 to switch those two checks to `RotationError`.
+
+## Two-hand IK leftovers
+
+[TWO_HAND_IK.md](../history/TWO_HAND_IK.md) is in history. H1–H4 are on `master`; H5 is on
+`first-game` (`d9574ad`). These were named in that close and are still open.
+
+**H3's interactive checks were never done by hand.** The harness could launch the editor and
+capture it, but not drive it. Three checks are open:
+
+- drag the rifle with the socket gizmo, and see the hands follow and the reach readout update;
+- drag a marker past reach, and see "Clamped" and the overlay line appear;
+- scrub the animator, and see the hands stay on the markers.
+
+These have never been seen on screen either: undo of a combo edit, multi-select propagation, six
+of the eight hand-status wordings, the Bone Attachment note under a live lock, and an `AimLock`
+between 0 and 1.
+
+The live-follow behaviour is structural: the pass reads the socket and the markers every frame.
+H2's and H5's sweeps measured the hands on the markers through every clip, but nobody has watched
+it.
+
+**The idle pulls the left hand off the rifle for 1.4 s of its loop.** With `AimLock 1`,
+`Lower_Weapon_Look_Raise`'s chest looks around by ±70° while the rifle stays on the aim. The left
+hand clamps from 3.07 to 4.47 s of the 5.2 s loop, up to 12% of an arm (about 6 cm) short. Every
+shooting clip reaches on every frame (worst 87%). No weapon pose fixes this.
+
+The fix is content: an aim idle, which the aim-offset leftovers above already want. Until then
+there are two cheaper options, both gameplay calls:
+
+- `SetAimLock` fading with the aim blend. The rifle then rides the chest while not aiming, but
+  standing and aiming, the common case, still clamps.
+- A shooting clip held at a neutral frame, as a stand-in idle.
+
+**The barrel-versus-chest shot count was never measured.** It is asked for by aim-offset A3 and
+by two-hand IK H5. `Player:BarrelPoint` runs only under mouse aim, and no gate mode drives the
+mouse, so it needs a human or a scripted aim run.
+
+**H1's rig risks were looked at, not swept.** In four captured frames:
+
+- no wrist twist showed at the Meshy rig's twist-joint-free wrists, although the lock turns the
+  rifle up to 75° in the idle, 55° in the strafe and 45° in the run;
+- the elbow did not pop at the 3° pole-fallback switch;
+- the elbow did not flutter near full reach.
+
+Nobody has watched a whole clip for any of the three. The same goes for the left hand's milder
+weight contamination (`PROVING_GROUND.md` on `first-game`). If one of these shows, the remedies
+are in H1's notes: a forearm twist share, a blended pole switch, soft IK.
