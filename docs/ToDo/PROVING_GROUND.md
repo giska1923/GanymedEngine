@@ -792,19 +792,31 @@ appears, lower the hop limit rather than re-rigging.
   not follow the mouse at all. Facing then grew a third mode, and the aim offset is what splits
   the legs from the torso:
 
-  - **Aiming and moving, within 90° of the velocity heading** — `meshYaw` still follows the
-    velocity, so the forward clip stays pointed along the run. `AimOffsetComponent` on `Body`
-    takes `wrap(camera yaw − meshYaw)` and the elevation from the chest (`capsule.y + 0.5`, the
-    same point `Fire` uses) to `AimPoint`. The chain is `Spine02` / `Spine01` / `Spine`,
-    root-most first (`Spine02` is the child of `Hips` in `ArmoredHumanoid.glb`). Weights are the
-    component defaults 0.10 / 0.20 / 0.30, which normalise to a sixth, a third and a half, least
-    on the waist. An even split was rejected because the waist would swing the arms and the
-    rifle. These were not scrubbed against the overlay.
-  - **Aiming otherwise** — standing, or moving more than 90° off the aim: the body faces the
-    camera's yaw, eased at 20/s. Past that limit the forward clip still plays in reverse. The
-    moon-walk is only the backpedal now. There is still no backpedal clip.
-  - **Not aiming** — the velocity rule above, unchanged. Cursor captured but not shooting and
-    not standing does not twist the spine; the body is already on the velocity.
+  - **Aiming and moving, outside the backpedal** — `meshYaw` follows the velocity, turned toward
+    the aim only as far as keeps the torso within `TORSO_TWIST` (60°): the legs target
+    `camera yaw − clamp(twist, ±60°)`. `AimOffsetComponent` on `Body` takes
+    `wrap(camera yaw − meshYaw)` and the elevation from the chest (`capsule.y + 0.5`, the same
+    point `Fire` uses) to `AimPoint`. The chain is `Spine02` / `Spine01` / `Spine`, root-most
+    first (`Spine02` is the child of `Hips` in `ArmoredHumanoid.glb`). Weights are the component
+    defaults 0.10 / 0.20 / 0.30, which normalise to a sixth, a third and a half, least on the
+    waist. An even split was rejected because the waist would swing the arms and the rifle.
+    These were not scrubbed against the overlay.
+  - **Backpedal** — aiming and moving more than 115° off the aim, left again under 100°: the body
+    faces the camera's yaw, eased at 20/s, and the forward clip plays in reverse. There is still
+    no backpedal clip. Standing and aiming also faces the camera's yaw.
+  - **Not aiming** — the velocity rule above, unchanged.
+
+  **Two things the first wiring got wrong, both found by runtime probes after A3.** It switched
+  modes at exactly 90° off the velocity, which is where a pure A/D strafe lands, so float
+  rounding picked the branch: at a camera yaw of 0.7 the twist came out one ulp past π/2 on all
+  586 frames, the strafe mode never engaged, and a 90° twist was the spine's whole job whenever
+  it did. And the offset was written as `(0, 0)` the frame aiming ended — the chest twist went
+  from 45° to 0 in one 22 ms frame. Now the inputs are held while aiming and faded by a 0.25 s
+  smoothstep weight, so the chest tracks the mouse directly while aiming and eases only in and
+  out. Re-probed at the camera yaw that failed: a pure strafe holds strafe mode on every frame
+  with zero flips, legs 30.0° off the velocity, torso 60.0°; moving straight at the camera holds
+  the backpedal on every frame; the largest one-frame change of the offset is 0.111 rad on release
+  and 0.136 rad on fade-in, against 0.785 before.
 
   **Shots converge on the crosshair** when a human is aiming (`Player:AimPoint`). The camera ray
   is cast from the player's depth along it — an Enemy standing between camera and player put the

@@ -542,9 +542,10 @@ clip holds the rifle lowered.
 
 **Nothing in the milestone was watched on the character.** A2's preview drag, save/reload and
 Ctrl+Z were not done in the window. A4's four rows — drag up, drag past the limit, Play, the
-muzzle line — were not done either; the Debug editor was built. A3's frozen-clip elevation,
-strafe, backpedal, gate re-run and barrel-versus-chest count were not done. The scene is
-`ProvingGround.ganymede` on `first-game`.
+muzzle line — were not done either; the Debug editor was built. A3's strafe, backpedal and
+aim-release fade have since been probed in the runtime and fixed (see `PROVING_GROUND.md`'s facing
+paragraph), but not watched by a person; its frozen-clip elevation, gate re-run and
+barrel-versus-chest count were not done. The scene is `ProvingGround.ganymede` on `first-game`.
 
 **The spine weights are the A1 defaults.** `Spine02` / `Spine01` / `Spine` at 0.10 / 0.20 / 0.30,
 omitted from the scene so the defaults apply. They were not tuned against the overlay. An even

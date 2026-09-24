@@ -117,6 +117,12 @@ local Player = {
     meshYaw = nil,
     -- Seconds left in which the body keeps facing the aim after a shot (see Player:Animate).
     aimHold = 0.0,
+    -- Legs-versus-aim mode, with hysteresis (see BACKPEDAL_ENTER).
+    backpedal = false,
+    -- The aim offset's inputs are held while aiming and faded by aimBlend, never zeroed.
+    aimBlend = 0.0, -- linear 0..1 ramp; the applied weight is its smoothstep
+    aimPitchHeld = 0.0,
+    aimYawHeld = 0.0,
     stepTimer = 0.0,
     steps = 0,
     muzzleBursts = 0,
@@ -639,16 +645,27 @@ end
 -- The legs and the torso are not the same facing. The clips are all forward strides, so the
 -- body (meshYaw) turns toward the velocity and the forward clip stays the right one. The rifle
 -- is socketed to the hand, so AimOffsetComponent twists the spine on top of that: yaw is
--- wrap(camera yaw - meshYaw), pitch is the elevation from the chest to AimPoint. The pass
--- clamps both. Inside the yaw limit a strafe keeps the legs on the velocity and the chest on
--- the crosshair. Past it — moving more than 90 degrees off the aim — the body turns to the
--- camera yaw and the forward clip plays in reverse. That moon-walk is only the backpedal.
--- There is still no backpedal clip; the strafe no longer needs one.
+-- wrap(camera yaw - meshYaw), pitch is the elevation from the chest to AimPoint.
 --
--- YAW_LIMIT is AimOffsetComponent's default on Body (the scene omits the field). The pass
--- clamps to whatever the component stores; this constant is only the mode switch.
+-- The torso takes at most TORSO_TWIST of that. Past it, the legs turn off the velocity toward
+-- the aim just far enough that the torso needs no more, so a pure A/D strafe runs the legs 30
+-- degrees off their heading instead of asking the spine for 90 - the point where a spine-only
+-- twist stops reading as a person. Moving well behind the aim switches to the backpedal: the
+-- body turns to the camera yaw and the forward clip plays in reverse. There is still no
+-- backpedal clip; the strafe no longer needs one.
 local AIM_HOLD = 0.8
-local YAW_LIMIT = math.pi / 2
+local TORSO_TWIST = math.rad(60)
+-- Hysteresis on the backpedal switch, so no heading sits on a boundary. The first version
+-- switched at exactly 90 degrees, which is where a pure strafe lands, and float rounding of the
+-- velocity heading chose the branch: at a camera yaw of 0.7 the twist came out one ulp past pi/2
+-- on every frame, and the strafe never engaged.
+local BACKPEDAL_ENTER = math.rad(115)
+local BACKPEDAL_EXIT = math.rad(100)
+-- Seconds for the aim offset to fade fully in when aiming starts, or out when it stops. A linear
+-- ramp through smoothstep, so the bend starts and ends at rest; an exponential ease moves fastest
+-- on its first frame, and a probe measured a 0.255 rad step there out of a 60 degree twist. Only
+-- the transitions ease; while aiming, the chest tracks the mouse directly.
+local AIM_BLEND_TIME = 0.25
 local CHEST_HEIGHT = 0.5
 
 local function WrapAngle(a)
@@ -679,12 +696,20 @@ function Player:Animate(ts)
     -- The mode follows the velocity heading, not the eased mesh yaw, or a turn in progress
     -- would flip between "strafe" and "turn the whole body" every frame.
     local twist = WrapAngle(self.yaw - velYaw)
+    if not (aiming and moving) then
+        self.backpedal = false
+    elseif self.backpedal then
+        self.backpedal = math.abs(twist) > BACKPEDAL_EXIT
+    else
+        self.backpedal = math.abs(twist) > BACKPEDAL_ENTER
+    end
 
     local target, rate = nil, 14.0
-    if aiming and moving and math.abs(twist) <= YAW_LIMIT then
-        -- Legs run forward. The offset carries the aim, so this can stay on the slow turn;
-        -- speeding it up was only so the gun would not trail the mouse.
-        target = velYaw
+    if aiming and moving and not self.backpedal then
+        -- Legs on the velocity, turned toward the aim only as far as keeps the torso within
+        -- TORSO_TWIST. Inside it this is exactly velYaw. The offset carries the rest of the
+        -- aim, so this can stay on the slow turn.
+        target = self.yaw - math.max(-TORSO_TWIST, math.min(TORSO_TWIST, twist))
     elseif aiming then
         target, rate = self.yaw, 20.0
     elseif moving then
@@ -699,8 +724,8 @@ function Player:Animate(ts)
         self.meshYaw = self.meshYaw + diff * math.min(1.0, ts * rate)
     end
 
-    -- Moving against the way the body faces. Inside the yaw limit the body faces the
-    -- velocity, so this is only the backpedal branch above.
+    -- Moving against the way the body faces. Outside the backpedal the legs are within
+    -- TORSO_TWIST of the aim, so this is only the backpedal branch above.
     local backwards = false
     if moving and self.meshYaw then
         local facing = -math.sin(self.meshYaw) * v.x - math.cos(self.meshYaw) * v.z
@@ -738,16 +763,29 @@ function Player:Animate(ts)
     local localYaw = (self.meshYaw or self.yaw) - self.yaw + math.pi
     self.body:SetRotation(Vec3(0, localYaw, 0))
 
-    -- After the ease, so the torso tracks the camera while the legs are still catching
-    -- the velocity. Zero when not aiming: running with the cursor captured but not
-    -- shooting already faces the velocity, and a pitch on that heading would bend the
-    -- spine toward a point the chest is not turned to.
-    local pitch, aimYaw = 0.0, 0.0
+    -- After the ease, so the torso tracks the camera while the legs are still catching the
+    -- velocity. Not aiming fades the bend out: running with the cursor captured but not
+    -- shooting already faces the velocity, and a pitch on that heading would bend the spine
+    -- toward a point the chest is not turned to.
+    --
+    -- Held and faded, never written as zero. The first version wrote (0, 0) the frame aiming
+    -- ended, and a probe logged the chest twist going from 45 degrees to 0 in one 22 ms frame.
+    -- The weight fades rather than the angles easing, so the chest stays on the crosshair while
+    -- aiming. The inputs update only while aiming, and pitch only while there is an aim point
+    -- (Escape during AIM_HOLD makes AimPoint nil), so a fade never chases a camera the player
+    -- has stopped aiming with.
     if aiming and self.meshYaw then
-        aimYaw = WrapAngle(self.yaw - self.meshYaw)
-        pitch = self:ChestAimPitch()
+        self.aimYawHeld = WrapAngle(self.yaw - self.meshYaw)
+        self.aimPitchHeld = self:ChestAimPitch() or self.aimPitchHeld
     end
-    self.body:SetAimOffset(pitch, aimYaw)
+    local step = ts / AIM_BLEND_TIME
+    if aiming then
+        self.aimBlend = math.min(1.0, self.aimBlend + step)
+    else
+        self.aimBlend = math.max(0.0, self.aimBlend - step)
+    end
+    local weight = self.aimBlend * self.aimBlend * (3.0 - 2.0 * self.aimBlend)
+    self.body:SetAimOffset(self.aimPitchHeld * weight, self.aimYawHeld * weight)
 
     self.clip = clip
 end
@@ -847,7 +885,7 @@ function Player:AimPoint()
     return origin + dir * 200.0
 end
 
--- Elevation from the chest to the aim point, or 0 when there is nothing to aim at.
+-- Elevation from the chest to the aim point, or nil when there is nothing to aim at.
 --
 -- Not the camera pitch. The lens is 1.6 m above the capsule and 5 m behind it, so at short
 -- range its pitch and the gun's pitch disagree by the parallax AimPoint already exists to
@@ -857,7 +895,7 @@ end
 function Player:ChestAimPitch()
     local aim = self:AimPoint()
     if not aim then
-        return 0.0
+        return nil
     end
 
     local p = self.entity:GetTranslation()
