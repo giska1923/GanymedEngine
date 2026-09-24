@@ -732,6 +732,79 @@ which on a limb picks the wrong end.
 contamination which is below the threshold and currently invisible; if a left-hand sheet ever
 appears, lower the hop limit rather than re-rigging.
 
+#### Two more rifle clips, retargeted from a new rig (2026-09-24)
+
+`ArmoredHumanoid.glb` now carries five clips: the three above plus **`Walk_Backward_While_Shooting`**
+(library `233`) and **`Walk_Left_with_Gun`** (`528`). The backpedal is wired (see the facing
+paragraph); the strafe clip is asset content only. Original kept at
+`archive_unrigged/ArmoredHumanoid.glb.preclips`; handle unchanged.
+
+**What was asked for and what exists.** The goal was a two-handed rifle set — aim idle, walk, run,
+strafe both ways, backpedal — to fix the lowered idle, the strafe slide past `TORSO_TWIST`, the
+reversed-clip backpedal and the left hand that never reaches the rifle (see the IK item in
+`cross-cutting.md`). Mixamo is Adobe's and has no API, so it cannot come through Meshy. Meshy's
+library (678 actions, listed free at `GET /openapi/v1/animations/library`) has **no rifle set, no
+rifle aim idle and no right strafe**; the rifle-adjacent clips are `233` / `529` / `541` backpedals,
+`528` / `527` left strafes, and turn-in-place clips.
+
+**The original rig task was gone**, and so was every other task on the account — Meshy deletes
+tasks and their assets after a few days (`expires_at`; 3 days for Text-to-Motion). Animations need
+a live `rig_task_id`, so the installed glb was re-rigged by upload (`model_url` as a data URI,
+`height_meters: 1.8`, 5 credits). Two findings from that:
+
+- **The re-rig decimated the mesh**: 925 vertices back for 14 523 sent. Switching the character to
+  the new rig was never an option.
+- **The skeleton is the same template but not the same rest pose**: 24 joints, same names, same
+  hierarchy, same 0.01 `Armature`, but rest rotations differ by up to 23.8° (`LeftHand`), 17.7°
+  (`Spine02`), 15.2° (`Hips`) and offsets by up to 5.1 cm. Keys are relative to each joint's rest,
+  so a direct transplant would distort every pose.
+
+**So the clips were retargeted onto the installed skeleton**, offline: per key, each joint's
+world-space rotation away from the new rig's rest is applied on top of the installed rest, then
+brought back to parent-relative; non-root joints keep the installed bone offsets, and `Hips`
+takes the source's offset from rest scaled by the hip-height ratio (1.016). **Validated against a
+control** — `234` bought again on the new rig (3 credits) and retargeted, against the installed
+`234` from the original rig, joint positions relative to `Hips` over all 99 keys: spine and head
+0.3–0.4 cm, hands 3.1–3.7 cm, left foot 7.8 cm worst, 1.4 cm mean, 4.2° worst world rotation. That
+is an upper bound on the method's error: each library clip is already Meshy's own fit to a rig.
+
+Then, same as A1: root motion detrended and re-centred on the rest pose (`233` travelled 1.22 m,
+`528` 1.31 m; 0.000 after), scale channels dropped (all within 1e-6 of 1), and the clips appended
+to the existing glb — rotation on all 24 joints plus `Hips` translation, 25 channels each. The mesh,
+indices, inverse binds, materials and the three original clips are byte-identical; the new keys
+read back within 0.03°. In the engine: the importer lists all five clips with no warning, and
+playing them puts the rifle where the offline numbers said.
+
+**What each clip is worth, measured with the rifle placed as the socket places it:**
+
+| Clip | Hands apart | Right→left hand line | Barrel vs forward (current socket) | Verdict |
+|---|---|---|---|---|
+| `Walk_Backward_While_Shooting` | 42 cm | 27–31° across the body | +4..+7° yaw, +3..+6° up | **Same grip family as the forward walk** — the socket fits. The backpedal clip |
+| `Walk_Left_with_Gun` | 38–39 cm | **3–5° off forward** | **−26° yaw** | **A real forward two-handed hold**, hands exactly the rifle's grip-to-handguard length apart — but crouched (head 1.20 m vs ~1.5) and a different grip, so the current socket skews it 26° |
+| Text-to-Motion aim idle | 31–32 cm | 35–38° across | +90° yaw, +39° up | **Rejected**: hands crossed at the chest, not a forward aim; not imported |
+
+The aim idle came from Text-to-Motion (`prime`, 4 s): the first prompt timed out server-side
+(0 credits), the shorter retry succeeded (10 + 3 to apply) but produced the same across-the-chest
+hold the library has. Prompting harder may or may not fix that; it was not retried.
+
+**Spent: 27 credits** (rig 5, library clips 9 including the `234` control, Text-to-Motion 13);
+balance 623 → 596. The tooling is kept next to the API key in `D:\Projects\C++\meshy\`
+(`meshy_rig.py`, `meshy_animate.py`, `meshy_retarget.py vet|install`), with this run's rig task
+and downloads in `work\2026-09-24\`; `install` reproduces the installed asset byte for byte.
+
+**Open, and each needs a decision rather than more download:**
+
+- **Backpedal speed.** The clip is wired, capped at 2x playback against a 6 m/s backpedal. Most
+  shooters backpedal at a fraction of the forward speed; ~2 m/s would let this clip play at ~2x
+  with almost no slide. A movement change, so it is a gameplay decision, not done here.
+- **Strafe wiring.** `Walk_Left_with_Gun` wants a strafe mode that faces the aim and plays it,
+  reversed for right, and either accepts the crouch or is not used.
+- **`528`'s hands sit on a forward rifle line**, so a clip-specific rifle placement along it
+  would put the left hand on the handguard with no IK. IK was chosen instead, so the grip stops
+  depending on how each clip and each future model happens to be authored — see
+  `docs/ToDo/TWO_HAND_IK.md` on `master`.
+- **Still no aim idle.**
+
 #### What the character import left open
 
 - **Three facing/animation defects, three unrelated causes** — all fixed, all worth remembering
@@ -802,8 +875,10 @@ appears, lower the hop limit rather than re-rigging.
     waist. An even split was rejected because the waist would swing the arms and the rifle.
     These were not scrubbed against the overlay.
   - **Backpedal** — aiming and moving more than 115° off the aim, left again under 100°: the body
-    faces the camera's yaw, eased at 20/s, and the forward clip plays in reverse. There is still
-    no backpedal clip. Standing and aiming also faces the camera's yaw.
+    faces the camera's yaw, eased at 20/s, and plays `Walk_Backward_While_Shooting` (below) at
+    `speed / 0.96` capped at 2x — the clip was authored at 0.96 m/s and the backpedal runs at the
+    full 6 m/s, so the feet slide the difference. The reversed forward clip is gone. Standing and
+    aiming also faces the camera's yaw.
   - **Not aiming** — the velocity rule above, unchanged.
 
   **Two things the first wiring got wrong, both found by runtime probes after A3.** It switched

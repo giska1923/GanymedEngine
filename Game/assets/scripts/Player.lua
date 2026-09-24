@@ -651,8 +651,7 @@ end
 -- the aim just far enough that the torso needs no more, so a pure A/D strafe runs the legs 30
 -- degrees off their heading instead of asking the spine for 90 - the point where a spine-only
 -- twist stops reading as a person. Moving well behind the aim switches to the backpedal: the
--- body turns to the camera yaw and the forward clip plays in reverse. There is still no
--- backpedal clip; the strafe no longer needs one.
+-- body turns to the camera yaw and plays Walk_Backward_While_Shooting.
 local AIM_HOLD = 0.8
 local TORSO_TWIST = math.rad(60)
 -- Hysteresis on the backpedal switch, so no heading sits on a boundary. The first version
@@ -666,6 +665,8 @@ local BACKPEDAL_EXIT = math.rad(100)
 -- on its first frame, and a probe measured a 0.255 rad step there out of a 60 degree twist. Only
 -- the transitions ease; while aiming, the chest tracks the mouse directly.
 local AIM_BLEND_TIME = 0.25
+-- Walk_Backward_While_Shooting's authored root speed, m/s.
+local BACKPEDAL_CLIP_SPEED = 0.96
 local CHEST_HEIGHT = 0.5
 
 local function WrapAngle(a)
@@ -751,8 +752,17 @@ function Player:Animate(ts)
         clip, animSpeed = "Run_and_Shoot", 1.7
     end
 
+    -- Library 233, retargeted onto this skeleton (PROVING_GROUND.md, "Two more rifle clips"). Same
+    -- grip family as the forward walk, so the rifle socket fits it; it replaced the forward clip
+    -- played at negative speed, the moon-walk.
+    --
+    -- Authored at 0.96 m/s (1.22 m in 1.27 s, measured before the root motion was stripped). The
+    -- backpedal runs at the full move speed, 6 m/s, which no backpedal clip matches: 6.2x would be
+    -- a blur of a stride. Capped at 2x, so the feet cover ~1.9 m/s and slide the rest - the same
+    -- kind of compromise as Run_and_Shoot above, only larger. The real fix is a slower backpedal.
     if backwards then
-        animSpeed = -animSpeed
+        clip = "Walk_Backward_While_Shooting"
+        animSpeed = math.max(0.5, math.min(2.0, speed / BACKPEDAL_CLIP_SPEED))
     end
 
     self.body:PlayAnimation(clip)
