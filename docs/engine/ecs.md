@@ -265,7 +265,8 @@ Owned by `Scene`; registration order **is** execution order. The built-in regist
 
   `BoneAttachmentSystem`'s slot after `TransformSystem` and before `CameraSystem` *is* checked:
   it writes `WorldTransformComponent` and `CameraSystem` only reads it. The palette read against
-  `AnimationSystem` is also checked. Two writers of world (this and `TransformSystem`) are not.
+  `AnimationSystem` is also checked, and so is its read of two-hand IK's locked weapon frame
+  (`OptRO<TwoHandIKComponent>`), which `AnimationSystem` writes. Two writers of world (this and `TransformSystem`) are not.
 
   `AudioSystem`'s slot is the same shape one step further out: its read of `WorldTransformComponent`
   after `TransformSystem` *is* checked, but its placement after `CameraSystem` is not — that

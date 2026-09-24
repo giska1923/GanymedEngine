@@ -1172,6 +1172,35 @@ namespace GanymedE {
 				ImGui::TextDisabled("Weight 0: measured, but the arm stays on the clip.");
 		}
 
+		// The lock's verdict from the pass. The angle is how far the full lock turns the weapon
+		// off where the chest pose put it: a big number means the clip's chest is far from the
+		// aim, and the wrists are twisting to follow.
+		void DrawTwoHandIKAimLockReadout(const TwoHandIKComponent& ik)
+		{
+			using AimLockStatus = TwoHandIKComponent::AimLockStatus;
+			ImGui::PushTextWrapPos(0.0f);
+			switch (ik.AimLockState)
+			{
+				case AimLockStatus::Off:
+					ImGui::TextDisabled(ik.AimLock > 0.0f ? "Not evaluated." : "Off: the weapon sits on its socket.");
+					break;
+				case AimLockStatus::NoAimOffset:
+					ImGui::TextDisabled("Needs an Aim Offset on this entity: the aim is its pitch and yaw.");
+					break;
+				case AimLockStatus::NoAimMarker:
+					ImGui::TextDisabled("The weapon has no child named '%s' to aim.", ik.AimMarker.c_str());
+					break;
+				case AimLockStatus::Locked:
+					if (ik.AimLock >= 1.0f)
+						ImGui::Text("Barrel on the aim, %.0f deg off the chest pose", glm::degrees(ik.AimLockAngle));
+					else
+						ImGui::Text("Turned %.0f%% of %.0f deg onto the aim", ik.AimLock * 100.0f,
+							glm::degrees(ik.AimLockAngle));
+					break;
+			}
+			ImGui::PopTextWrapPos();
+		}
+
 		// The reasons are sentences, and the inspector is narrow: wrap rather than clip.
 		void DrawTwoHandIKHandReadout(const TwoHandIKComponent& ik, int hand)
 		{
@@ -2514,6 +2543,22 @@ namespace GanymedE {
 					ImGui::TextDisabled("Mesh is rigged but lists no joint names");
 			}
 
+			// An aim-locked weapon is drawn from the IK pass's frame, not from this socket. Say so where
+			// the socket is authored: otherwise the Rotation rows and the socket gizmo appear dead.
+			if (target && target.HasComponent<TwoHandIKComponent>())
+			{
+				const auto& ik = target.GetComponent<TwoHandIKComponent>();
+				if (ik.Weapon == entity.GetUUID()
+					&& ik.AimLockState == TwoHandIKComponent::AimLockStatus::Locked)
+				{
+					ImGui::PushTextWrapPos(0.0f);
+					ImGui::TextDisabled("Aim lock on '%s' turns this weapon onto the aim. Only where this "
+						"socket puts the grip counts, not its rotation, and the gizmo shows the socket, not "
+						"the drawn weapon. Set Aim Lock to 0 to author the pose.", target.GetName().c_str());
+					ImGui::PopTextWrapPos();
+				}
+			}
+
 			edited |= DrawReflected(entity, m_Context.get(), m_Selection, component);
 			return edited;
 		});
@@ -2630,6 +2675,13 @@ namespace GanymedE {
 					DrawTwoHandIKHandReadout(component, hand);
 				ImGui::PopID();
 			}
+
+			ImGui::SeparatorText("Aim lock");
+			ImGui::BeginDisabled(!weapon);
+			nameCombo("Aim Marker", &TwoHandIKComponent::AimMarker, markerOptions);
+			ImGui::EndDisabled();
+			if (rigged && entity.HasComponent<AnimatorComponent>())
+				DrawTwoHandIKAimLockReadout(component);
 
 			ImGui::Separator();
 			edited |= DrawReflected(entity, m_Context.get(), m_Selection, component);

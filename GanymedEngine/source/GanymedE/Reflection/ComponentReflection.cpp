@@ -281,9 +281,9 @@ namespace GanymedE::Reflection {
 			GE_REFLECT_COMPONENT(TwoHandIKComponent)
 				.custom<Attr>(Attr{}.Label("Two-Hand IK")
 					.Tip("Solves both arms onto the Grip and Support markers under this rig's weapon."))
-				// Joint names are combos over this entity's skeleton and marker names are combos over
-				// the weapon's children, so all eight are CustomDrawer. On disk they are ordinary
-				// omitted-when-default strings.
+				// Joint names are combos over this entity's skeleton and marker names (AimMarker too)
+				// are combos over the weapon's children, so all nine are CustomDrawer. On disk they
+				// are ordinary omitted-when-default strings.
 				.data<&TwoHandIKComponent::RightUpper>("RightUpper")
 					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
 				.data<&TwoHandIKComponent::RightLower>("RightLower")
@@ -308,6 +308,11 @@ namespace GanymedE::Reflection {
 					.custom<Attr>(Attr{}.Label("Left Weight").Range(0.0f, 1.0f).Speed(0.01f))
 				.data<&TwoHandIKComponent::Enabled>("Enabled")
 					.traits(Trait::OmitIfDefault)
+				.data<&TwoHandIKComponent::AimLock>("AimLock")
+					.traits(Trait::OmitIfDefault)
+					.custom<Attr>(Attr{}.Label("Aim Lock").Range(0.0f, 1.0f).Speed(0.01f))
+				.data<&TwoHandIKComponent::AimMarker>("AimMarker")
+					.traits(Trait::OmitIfDefault | Trait::CustomDrawer)
 				.data<&TwoHandIKComponent::Resolved>("Resolved")
 					.traits(Trait::Runtime)
 				.data<&TwoHandIKComponent::Status>("Status")
@@ -319,6 +324,12 @@ namespace GanymedE::Reflection {
 				.data<&TwoHandIKComponent::Weapon>("Weapon")
 					.traits(Trait::Runtime)
 				.data<&TwoHandIKComponent::Markers>("Markers")
+					.traits(Trait::Runtime)
+				.data<&TwoHandIKComponent::AimLockState>("AimLockState")
+					.traits(Trait::Runtime)
+				.data<&TwoHandIKComponent::AimLockAngle>("AimLockAngle")
+					.traits(Trait::Runtime)
+				.data<&TwoHandIKComponent::LockedWeaponFrame>("LockedWeaponFrame")
 					.traits(Trait::Runtime);
 
 			// The projection type gates which six of the seven camera fields are meaningful, so

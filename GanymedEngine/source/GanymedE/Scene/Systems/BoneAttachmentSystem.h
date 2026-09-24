@@ -39,10 +39,15 @@ namespace GanymedE {
 		// The skinned mesh lives on a *different* entity than the socket. Declared so
 		// ValidateOrdering knows we read the palette AnimationSystem just wrote. Never
 		// iterated; Find() is the access.
+		//
+		// The target's TwoHandIKComponent is read for the aim lock: a weapon the pass has turned
+		// onto the aim is drawn from the frame the pass recorded, not re-derived here, so the
+		// hands and the weapon have one owner.
 		using TargetAccess = ECS::AccessView<
 			ECS::RO<WorldTransformComponent>,
 			ECS::OptRO<AnimatorComponent>,
-			ECS::OptRO<StaticMeshComponent>>;
+			ECS::OptRO<StaticMeshComponent>,
+			ECS::OptRO<TwoHandIKComponent>>;
 
 		using Views = TypeList<AttachView, TargetAccess>;
 

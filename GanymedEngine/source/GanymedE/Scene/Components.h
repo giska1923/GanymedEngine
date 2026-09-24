@@ -365,6 +365,14 @@ namespace GanymedE {
 		float LeftWeight = 1.0f;
 		bool Enabled = true;
 
+		// Aim lock: turns the weapon, about its right-hand marker, so the barrel points along the
+		// aim this entity's AimOffsetComponent describes - whatever the clip does to the chest.
+		// The barrel is AimMarker's forward (-Z, the engine's forward everywhere), so no weapon
+		// needs an axis convention. 0 is off, and leaves the weapon exactly where its socket puts
+		// it; the default, so a scene authored before the lock looks the same.
+		float AimLock = 0.0f;
+		std::string AimMarker = "Muzzle";
+
 		// What the pass made of a hand this frame. The pass is the one place that decides why a
 		// hand is not solved; the inspector and the overlay read this rather than re-deriving
 		// the rules. Solved means measured: Reached and Stretch hold, and the arm moved unless
@@ -392,6 +400,21 @@ namespace GanymedE {
 		std::array<float, 2> Stretch{ 0.0f, 0.0f };    // marker distance / arm length
 		UUID Weapon{ 0 };                               // the weapon the pass found
 		std::array<UUID, 2> Markers{ UUID{ 0 }, UUID{ 0 } };
+
+		enum class AimLockStatus : uint8_t
+		{
+			Off = 0,       // AimLock 0, the pass disabled, or no pass ran
+			NoAimOffset,   // the aim comes from this entity's AimOffsetComponent, and it has none
+			NoAimMarker,   // the weapon has no child named AimMarker
+			Locked
+		};
+		AimLockStatus AimLockState = AimLockStatus::Off;
+		float AimLockAngle = 0.0f;   // radians the full lock turns the weapon; how far the chest is off the aim
+
+		// The weapon's mesh-space frame after the lock, valid while AimLockState is Locked.
+		// BoneAttachmentSystem draws the weapon from this instead of its socket, so the pass is
+		// the one owner of where an aimed weapon is and the hands cannot land beside it.
+		glm::mat4 LockedWeaponFrame{ 1.0f };
 
 		TwoHandIKComponent() = default;
 		TwoHandIKComponent(const TwoHandIKComponent&) = default;

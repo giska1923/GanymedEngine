@@ -151,6 +151,13 @@ declare interface Entity {
 	 */
 	SetHandIKWeight(right: number, left: number): void;
 
+	/**
+	 * How far the weapon is turned so its barrel points along the aim offset's aim, 0–1
+	 * (clamped by the pass). Needs an aim offset on the same entity. Turn it off with the hand
+	 * weights for a lowered weapon. No-op on an entity without two-hand IK.
+	 */
+	SetAimLock(weight: number): void;
+
 	HasBoneAttachment(): boolean;
 
 	/**

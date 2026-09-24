@@ -969,11 +969,18 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   reached; the reason when the hand is skipped (no weapon, socket joint does not resolve, joint
   not on the mesh, no child named the marker, weapon socketed inside this arm, not one limb); and
   a note when the weight is 0 (measured, arm on the clip). Reach is the number a weapon pose is
-  tuned against. Readout lines wrap. The section says when there is no rigged mesh or no
+  tuned against. Under an **Aim lock** separator, **Aim Marker** is a combo over the weapon's
+  children, and the lock's readout says "Barrel on the aim, N deg off the chest pose" (or the
+  fraction turned, below a full lock), or why it is not locking: no Aim Offset on the entity, or
+  no child with the aim marker's name. Aim Lock itself is a reflected 0–1 row. Readout lines
+  wrap. The section says when there is no rigged mesh or no
   Animator, since the pass runs only where the per-entity palette lives. The weapon pose itself
   is edited with the socket gizmo on the weapon, and the markers with the ordinary gizmo; there
   is no IK-specific gizmo. Icon `ICON_LC_HAND_GRAB`; **Add
   Component → Two-Hand IK**.
+- Bone attachment, on a weapon that an aim lock is turning: a wrapped note says that only where
+  the socket puts the grip counts, not its rotation, and that the gizmo shows the socket rather
+  than the drawn weapon. Author the pose with Aim Lock at 0.
 - Bone attachment: **Target** is a drop from the outliner (zero / Parent button = hierarchy parent),
   and **Joint** is a combo over the *target's* `skeleton.JointNames`, not this entity's — the
   inspector has not previously read another entity's mesh for any component. A crosshair next to

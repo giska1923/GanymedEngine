@@ -144,11 +144,14 @@ copyable, no behavior beyond small helpers.
   - Six joint names: `RightUpper` / `RightLower` / `RightEnd` (defaults `RightArm` /
     `RightForeArm` / `RightHand`) and the same three for the left.
   - Two marker names: `RightMarker` / `LeftMarker` (defaults `Grip` / `Support`).
-  - `RightWeight` / `LeftWeight` (0–1, default 1) and `Enabled`. Every authored field is
-    omitted when it holds its default, so the Meshy defaults serialize as `{}`.
+  - `RightWeight` / `LeftWeight` (0–1, default 1) and `Enabled`.
+  - `AimLock` (0–1, default 0 = off) and `AimMarker` (default `Muzzle`): the aim lock, below.
+  - Every authored field is omitted when it holds its default, so the Meshy defaults serialize
+    as `{}`.
   - Runtime and never serialized: the joint hints (`Resolved`, seven: both chains, then the
-    weapon's socket joint); per hand `Status`, `Reached` and `Stretch`; and the `Weapon` and
-    `Markers` UUIDs the pass found. The hints are checked by name. Everything else is cleared and
+    weapon's socket joint); per hand `Status`, `Reached` and `Stretch`; the `Weapon` and
+    `Markers` UUIDs the pass found; and the lock's `AimLockState` (`Off`, `NoAimOffset`,
+    `NoAimMarker`, `Locked`), `AimLockAngle` and `LockedWeaponFrame`. The hints are checked by name. Everything else is cleared and
     rewritten on every evaluation, so `Scene::Copy` and undo carry it without a sweep.
   - `Status` (`HandStatus`) is the pass's verdict per hand: `NotEvaluated` (no pass ran: no
     animator, or the mesh is not loaded), `Disabled`, `NoWeapon`, `NoWeaponFrame` (the socket joint
@@ -368,6 +371,32 @@ the frame, so the two cannot disagree. For each hand the pass then:
 The right hand is solved first, then the left. The chains are independent, and the weapon frame is
 final before either moves.
 
+**Aim lock.** With `AimLock` above 0, the weapon frame is turned onto the aim *before* the hands
+are solved, so the hands land on the weapon where it is drawn. The steps:
+
+1. **The aim** comes from this entity's `AimOffsetComponent`: `ModelForward` turned by yaw about
+   +Y, then by pitch about the right turned by that yaw. That is the direction `ApplyAimOffset`
+   splits across the spine, with the same clamp, which is one function (`ClampAimAngle`). The
+   lock uses the component's `Pitch` and `Yaw` whether or not its spine bend is `Enabled`.
+2. **The barrel** is the `AimMarker` child's −Z. That is the engine's forward everywhere, and
+   the Proving Ground's `Muzzle` already has its −Z down the barrel. No weapon needs an axis
+   convention.
+3. **The turn** is a look-at with up, not a shortest arc. The target frame puts −Z on the aim and
+   +Y as near mesh up as the aim allows; a pure vertical aim falls back to the shortest arc. So a
+   chest that rolls through a run does not cant the weapon. The cost is that under a full lock
+   the socket's authored rotation stops mattering, and only where it puts the pivot counts.
+4. **The pivot** is the right-hand marker (the weapon origin if there is none), so the weapon
+   turns in the grip.
+5. **The blend** is a slerp from identity by `AimLock`.
+
+`AimLockAngle` is the full turn: how far the clip's chest pose is off the aim.
+
+The locked frame is written to `LockedWeaponFrame`, and `BoneAttachmentSystem` draws the weapon
+from it (below). The pass is therefore the one owner of where an aimed weapon is. A lock that
+cannot aim warns once and leaves the weapon on its socket. That happens with no
+`AimOffsetComponent` (`NoAimOffset`) or no child named `AimMarker` (`NoAimMarker`). At `AimLock`
+0 nothing here runs, and the socket is computed exactly as without the lock.
+
 A hand is skipped whole, with one warning per entity per distinct message and its reason in
 `Status`, in any of these cases:
 
@@ -377,7 +406,8 @@ A hand is skipped whole, with one warning per entity per distinct message and it
   the solve meant to reach it, so that hand carries the weapon and the other hand still solves;
 - the solver refuses the chain.
 
-No weapon, an unresolved socket joint, or a singular skin transform skips both hands.
+No weapon, an unresolved socket joint, or a singular skin transform skips both hands. A failed
+aim lock keeps its warning armed the same way.
 
 `Enabled` false returns immediately. Weight 0 still resolves and measures, because the solver
 reports reach without moving anything, and it rewrites no palette entry. So a disabled component
@@ -386,7 +416,9 @@ and a zero weight both leave the palette bit-identical to no component at all.
 The pass reads other entities (the weapon's socket and scale, and the markers' local transforms)
 through a declared `WeaponAccess` view: `OptRO<BoneAttachmentComponent>`, `RO<TransformComponent>`,
 `RO<RelationshipComponent>`. This is the first time this system has read anything beyond its own
-entity. Measured cost is 2.8 µs per call in Release (one character, both hands, mean of 352 calls).
+entity. Measured cost is 2.8 µs per call in Release (one character, both hands, mean of 352 calls),
+measured before the aim lock existed; the lock adds a handful of matrix products and was not
+re-measured.
 
 A Debug boot self-test runs H1's verification table on a six-joint arm probe, once on a metre rig
 and once on a centimetre rig whose `RootTransform` carries the scale. Its rotation check uses
@@ -444,6 +476,13 @@ rebuilt every evaluation and read through `ResolvedJoint(entity)` (−1 when the
 placed). That split is what lets `AnimationSystem`, which runs earlier, read a weapon's socket
 without `ValidateOrdering` calling it a stale read.
 
+An aim-locked weapon is the one exception to the socket formula. `TargetAccess` also declares
+`OptRO<TwoHandIKComponent>`. When the target's component reports `AimLockState == Locked` for
+this entity as its `Weapon`, the world is `targetWorld × LockedWeaponFrame`, which is the frame
+the IK pass turned onto the aim and solved the hands onto. The joint still has to resolve first:
+the lock only replaces the final multiply. The weapon's children follow through `OverrideWorld`
+as for any socket.
+
 **Why `LocalTransform` is in there.** `Renderer3D` draws a skinned submesh as
 `entityWorld * LocalTransform * Palette * v` — the importer deliberately keeps the mesh node's
 transform on skinned submeshes because `RootTransform` carries its inverse, and the two cancel.
@@ -470,7 +509,7 @@ or a camera on a head, has to move when the inspector scrubs `Time`.
 
 Its slot after `TransformSystem` and before `CameraSystem` is enforced against `CameraSystem`
 (both declare `WorldTransformComponent`; the later one only reads it). The palette read against
-`AnimationSystem` is also checked. Two writers of world (this and `TransformSystem`) are
+`AnimationSystem` is also checked, and so is the read of two-hand IK's locked weapon frame. Two writers of world (this and `TransformSystem`) are
 invisible to `ValidateOrdering` by design.
 
 ### CameraSystem — [`Systems/CameraSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/CameraSystem.h)
@@ -723,7 +762,7 @@ anyway.
 
 ### What is registered
 
-41 types, 163 members (the boot log prints both — a count far below that is the cheapest signal that a
+41 types, 168 members (the boot log prints both — a count far below that is the cheapest signal that a
 registration block was dropped by the linker). Measured at editor boot after `TwoHandIKComponent`:
 
 - The **30 components** — all 27 `ComponentList` entries, plus `IDComponent` and `TagComponent`

@@ -412,6 +412,13 @@ namespace GanymedE {
 					ik.RightWeight = right;
 					ik.LeftWeight = left;
 				},
+				// How far the weapon is turned onto the aim, 0-1 (clamped by the pass). Off for a
+				// lowered weapon, so the rifle is not held level at the aim with the hands off it.
+				"SetAimLock", [](Entity& e, float weight)
+				{
+					if (e.HasComponent<TwoHandIKComponent>())
+						e.GetComponent<TwoHandIKComponent>().AimLock = weight;
+				},
 
 				// --- Bone sockets ---
 				// BoneAttachmentComponent is untracked, so these need no MarkChanged. The system

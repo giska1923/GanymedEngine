@@ -1,8 +1,8 @@
 # Milestone — Two-hand weapon IK
 
-**Status: H1–H3 done on `master` (the solver; the component, the pass, serialization and Lua;
-the inspector section and the overlay). H4–H6 planned.** H3's three interactive checks (drag the
-rifle, drag a marker, scrub) have not been done by hand yet; see H3's notes.
+**Status: H1–H4 done on `master` (the solver; the component, the pass, serialization and Lua;
+the inspector section and the overlay; the aim lock). H5–H6 planned.** H3's three interactive
+checks (drag the rifle, drag a marker, scrub) have not been done by hand yet; see H3's notes.
 
 > **Engine and editor milestone.** H1–H4 touch `GanymedEngine/source/` or `GanymedEditor/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`. H5 is game content
@@ -94,7 +94,7 @@ a *Two Bone IK Constraint* per arm, targets parented to the weapon, and a *Multi
 | **H1** | Analytic two-bone IK over globals, with boot self-tests — **done** | `master` | ~0.75 day |
 | **H2** | `TwoHandIKComponent`, weapon frame resolution, the pass, serialization, Lua — **done** | `master` | ~1 day |
 | **H3** | Inspector section, reach readouts, overlay — **done** (interactive checks pending) | `master` | ~0.75 day |
-| **H4** | Aim lock: the barrel onto the aim direction | `master` | ~0.5 day |
+| **H4** | Aim lock: the barrel onto the aim direction — **done** | `master` | ~0.5 day |
 | **H5** | Proving Ground: rifle onto `Spine`, `Grip`/`Support` markers, measured | `first-game` | ~0.75 day |
 | **H6** | Docs, close | both | ~0.25 day |
 
@@ -500,6 +500,104 @@ But nobody has watched it. **Before H5, check the three rows by hand.**
 |---|---|
 | Aim pitch/yaw sweep, idle clip frozen | Muzzle forward vs aim direction within 0.5° |
 | AimLock 0 | Identical to H3 |
+
+### Execution notes (2026-09-24)
+
+Landed on `master`. The current behaviour is in [scene.md](../engine/scene.md) (the lock in the
+pass, and the socket's locked branch), [editor.md](../editor/editor.md) and
+[scripting.md](../engine/scripting.md) (`SetAimLock`).
+
+**Step 3, decided: the pass owns the aimed frame.** It writes `LockedWeaponFrame` onto the
+component, and `BoneAttachmentSystem` draws the weapon from it while `AimLockState == Locked`. It
+reads the frame through a declared `OptRO<TwoHandIKComponent>`, so the ordering is checked.
+
+The rejected option was giving `BoneAttachmentSystem` the same correction. That would have made
+two computations of one fact, with the aim-offset inputs duplicated into a second system. Keeping
+the old socket multiply as the only unlocked path is also what makes "AimLock 0 identical to H3"
+true by construction rather than by float luck.
+
+**Step 2, as built:**
+
+- **Barrel = an `AimMarker` child's −Z**, default `Muzzle`. The plan's "the weapon's −Z" was
+  already wrong for the rifle, whose barrel is its local −X. The existing `Muzzle`'s rotation of
+  `(0, π/2, 0)` maps its −Z onto that barrel. So the forward is the engine's forward convention
+  (`GetWorldForward`, lights), read off a marker the weapon already has.
+- **A look-at with up, not a shortest arc.** Not a plan item. The barrel goes on the aim, and the
+  muzzle's +Y goes as near mesh up as the aim allows, so a rolling chest does not cant the rifle.
+  This is Unity Multi-Aim's world-up shape.
+
+  The consequence: under a full lock the socket's rotation no longer matters, only where it puts
+  the grip. The Bone Attachment section says so when a lock is active, because otherwise the
+  Rotation rows and the socket gizmo look dead. **Author the weapon pose with Aim Lock at 0.**
+- **The aim is the aim offset's `Pitch` / `Yaw`**, clamped by one shared function
+  (`ClampAimAngle`) that `ApplyAimOffset` now also uses. The lock needs an
+  `AimOffsetComponent`, and it ignores that component's `Enabled` flag, which only governs the
+  spine bend.
+
+**Also added:**
+
+- `AimLock` defaults to 0, so a scene written before H4 is unchanged.
+- The runtime `AimLockState` / `AimLockAngle` feed an inspector readout, and `SetAimLock(weight)`
+  was added in Lua for a lowered weapon.
+- Reflection went from 163 to 168 members.
+
+**A bug I made and fixed before it shipped.** A lock that failed (no aim offset, or no aim marker)
+while both hands solved let the pass count the frame as clean. That erased the warning set, so
+the lock warning would have fired every frame. The lock failure now keeps the set armed. A scene
+with `AimMarker: Barrel` logs exactly one warning over about 25 seconds.
+
+**Verification.** The rig was `ArmoredHumanoid` from `first-game`, through the scratch worktree.
+Temporary code, since removed:
+
+- drove the aim offset's `Pitch` over {−1.2, −0.6, −0.3, 0, 0.3, 0.6, 1.2} and its `Yaw` over
+  {−2, −1, −0.5, 0, 0.5, 1, 2}, so 49 cells including past both limits, each held 4 frames in edit
+  mode;
+- measured, at the end of `BoneAttachmentSystem`, the *drawn* `Muzzle` world −Z against an aim
+  direction rebuilt independently from the component's fields and the body's world rotation;
+- measured the drawn wrists against the markers' worlds.
+
+| Probe | Pass condition | Result |
+|---|---|---|
+| Sweep, idle clip frozen (`Lower_Weapon_Look_Raise` t = 0), `AimLock 1` | Barrel within 0.5° | **6.6e-5°** max over 49 cells, all `Locked`. Wrists on markers within 4.9e-7 m, none clamped |
+| Same sweep, walk clip frozen | Barrel within 0.5° | 6.4e-5° max. Right wrist 4.8e-7 m. **Left hand clamped on all 49**: see below |
+| Signs | — | Pitch +1.2 (clamped to 1.0) aims world +Y 0.84. Yaw ±2 (clamped to ±π/2) swings the aim ±90° |
+| `AimLock 0` | Identical to H3 | Weapon world **bit-identical** (`memcmp`) to `bodyWorld × jointFrame × OffsetMatrix`, state `Off`. Wrists 6e-7 m |
+| Failing lock (`AimMarker: Barrel`) | — | One warning, weapon on its socket |
+| Readout | — | "Barrel on the aim, 19 deg off the chest pose" in the inspector (screen capture) |
+
+Builds checked: Debug and Release editor and Debug runtime, all with no warnings. `tsc --noEmit` is
+clean. The aim-offset boot self-tests still pass on the shared clamp.
+
+**What the sweep showed that the plan did not expect.** Without the lock, the barrel error was
+18.54° **in every one of the 49 cells**. It did not grow with the aim. The rifle is socketed on
+`Spine`, the top joint of the aim-offset chain, and each chain joint turns its whole subtree, so
+`Spine` carries the whole aim rotation. The aim offset alone already makes the barrel follow every
+*change* in the aim. The lock removes the constant the clip leaves: the chest pose at that frame,
+plus its roll. That constant is 18.9° at the idle's t = 0 and 8.2° at the walk's, and it varies
+over a clip (the plan's 78° was the lowered idle on the old hand socket).
+
+So H4 is not what makes aiming work. It is what makes a clip's chest pose stop mattering to the
+barrel. That is still the milestone's claim of "new clips need nothing", just a smaller correction
+than the plan implied.
+
+**What H5 inherits:**
+
+- **Left-hand margin.** The lock turns the rifle about `Grip`, which moves `Support`. On the walk,
+  8.2° about a ~0.42 m lever is about 6 cm, which took the left hand from 94% reach to clamped on
+  every sample. The weapon pose H5 authors has to leave the left hand real margin once the lock
+  is on, measured *with* the lock.
+- **`Player:BarrelPoint`'s ~35° guard.** With the lock at 1 the barrel is on the aim to 1e-4°, so
+  the guard can only trip while the lock is being faded. Decide in H5 whether to keep it as that
+  guard.
+- **A lowered weapon needs `SetAimLock(0)` as well as `SetHandIKWeight(0, 0)`.** Otherwise the
+  rifle stays level on the aim while the hands drop away from it.
+
+**Not verified by hand:**
+
+- the Bone Attachment note under a live lock;
+- a lock weight between 0 and 1 on screen (the slerp is exercised only by construction).
+
+The three interactive H3 checks are still open.
 
 ---
 

@@ -61,11 +61,12 @@ namespace GanymedE {
 		void ApplyAim(entt::entity entity, AimOffsetComponent& aim, const Mesh& mesh);
 
 		// Builds the weapon frame from `palette` (already written from the post-aim globals),
-		// solves each usable hand on m_Globals, and rewrites the palette entries of the arms it
-		// moved. A hand whose joints, marker or weapon cannot be resolved is skipped whole,
-		// with one warning; disabled, or both weights zero, leaves the palette untouched.
-		void ApplyTwoHandIK(entt::entity entity, TwoHandIKComponent& ik, const Mesh& mesh,
-			std::vector<glm::mat4>& palette);
+		// turns it onto `aim`'s direction when the component's AimLock asks, solves each usable
+		// hand on m_Globals, and rewrites the palette entries of the arms it moved. A hand whose
+		// joints, marker or weapon cannot be resolved is skipped whole, with one warning;
+		// disabled, or both weights zero, leaves the palette untouched.
+		void ApplyTwoHandIK(entt::entity entity, TwoHandIKComponent& ik, const AimOffsetComponent* aim,
+			const Mesh& mesh, std::vector<glm::mat4>& palette);
 
 		// One warning per entity per distinct message; a setup that is fixed and then broken
 		// again warns again, because a fully solved frame clears the entity's set.

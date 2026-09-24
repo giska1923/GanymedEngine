@@ -254,6 +254,18 @@ namespace GanymedE {
 
 			m_Warned.erase(item.second);
 			m_Resolved[item.second] = resolved;
+
+			// An aim-locked weapon: AnimationSystem already built this frame from the same joint
+			// frame and offset, then turned it onto the aim and solved the hands onto it. Only
+			// while Locked - at AimLock 0 the socket is computed exactly as it always was.
+			auto ik = targets.FindOne<TwoHandIKComponent>(target);
+			if (ik && ik->AimLockState == TwoHandIKComponent::AimLockStatus::Locked
+				&& ik->Weapon == entity.GetUUID())
+			{
+				transforms->OverrideWorld(entity, targetWorld->World * ik->LockedWeaponFrame);
+				continue;
+			}
+
 			transforms->OverrideWorld(entity, targetWorld->World * jointGlobal
 				* attachment.OffsetMatrix(entity.GetComponent<TransformComponent>().Scale));
 		}

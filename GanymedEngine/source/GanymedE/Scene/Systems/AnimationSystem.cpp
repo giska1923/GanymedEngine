@@ -10,6 +10,7 @@
 
 namespace GanymedE {
 
+
 	namespace {
 
 		struct KeyPair
@@ -94,6 +95,27 @@ namespace GanymedE {
 				case AimOffsetComponent::Axis::PosZ:
 				default: return { 0.0f, 0.0f, 1.0f };
 			}
+		}
+
+		// The one clamp rule for aim angles. ApplyAimOffset bends the spine with it and the aim
+		// lock points the barrel with it, so the spine and the weapon cannot disagree on a limit.
+		float ClampAimAngle(float angle, float limit)
+		{
+			const float bound = std::isfinite(limit) ? std::abs(limit) : 0.0f;
+			return std::isfinite(angle) ? std::clamp(angle, -bound, bound) : 0.0f;
+		}
+
+		// The direction the aim offset aims, in mesh space: ModelForward turned by yaw about up,
+		// then by pitch about the right turned by that yaw - the construction ApplyAimOffset
+		// splits across the spine. Up is +Y; right is forward x up.
+		glm::vec3 AimDirectionInMesh(const AimOffsetComponent& aim)
+		{
+			const float pitch = ClampAimAngle(aim.Pitch, aim.PitchLimit);
+			const float yaw = ClampAimAngle(aim.Yaw, aim.YawLimit);
+			const glm::vec3 up{ 0.0f, 1.0f, 0.0f };
+			const glm::vec3 forward = ModelForwardVector(aim.ModelForward);
+			const glm::vec3 pitchAxis = glm::angleAxis(yaw, up) * glm::cross(forward, up);
+			return glm::normalize(glm::angleAxis(pitch, pitchAxis) * (glm::angleAxis(yaw, up) * forward));
 		}
 
 		// Mesh-space character axes into the space SampleClipGlobals writes. right is
@@ -234,6 +256,8 @@ namespace GanymedE {
 			ik.Stretch.fill(0.0f);
 			ik.Weapon = UUID{ 0 };
 			ik.Markers.fill(UUID{ 0 });
+			ik.AimLockState = TwoHandIKComponent::AimLockStatus::Off;
+			ik.AimLockAngle = 0.0f;
 		}
 
 #ifdef GE_DEBUG
@@ -812,7 +836,7 @@ namespace GanymedE {
 			// TryGetJointFrame - the same function and the same entry BoneAttachmentSystem
 			// draws the weapon from later this frame. The pass then rewrites only the arms.
 			if (ik)
-				ApplyTwoHandIK(entity, *ik, *mesh, animator.Palette);
+				ApplyTwoHandIK(entity, *ik, aim ? &*aim : nullptr, *mesh, animator.Palette);
 		}
 	}
 
@@ -936,16 +960,8 @@ namespace GanymedE {
 		if (chain.Count <= 0 || globals.size() != skeleton.JointCount())
 			return;
 
-		const auto Limit = [](float limit)
-		{
-			return std::isfinite(limit) ? std::abs(limit) : 0.0f;
-		};
-		if (!std::isfinite(pitch))
-			pitch = 0.0f;
-		if (!std::isfinite(yaw))
-			yaw = 0.0f;
-		pitch = std::clamp(pitch, -Limit(chain.PitchLimit), Limit(chain.PitchLimit));
-		yaw = std::clamp(yaw, -Limit(chain.YawLimit), Limit(chain.YawLimit));
+		pitch = ClampAimAngle(pitch, chain.PitchLimit);
+		yaw = ClampAimAngle(yaw, chain.YawLimit);
 		if (pitch == 0.0f && yaw == 0.0f)
 			return;
 
@@ -1252,7 +1268,7 @@ namespace GanymedE {
 	}
 
 	void AnimationSystem::ApplyTwoHandIK(entt::entity entity, TwoHandIKComponent& ik,
-		const Mesh& mesh, std::vector<glm::mat4>& palette)
+		const AimOffsetComponent* aim, const Mesh& mesh, std::vector<glm::mat4>& palette)
 	{
 		GE_PROFILE_SCOPE("AnimationSystem::ApplyTwoHandIK");
 
@@ -1325,7 +1341,89 @@ namespace GanymedE {
 			Both(HandStatus::NoWeaponFrame);
 			return;
 		}
-		const glm::mat4 weaponFrame = anchorFrame * socket->OffsetMatrix(weaponTransform->Scale);
+		glm::mat4 weaponFrame = anchorFrame * socket->OffsetMatrix(weaponTransform->Scale);
+
+		// Markers are direct children of the weapon, found by name.
+		const auto ChildNamed = [&](const std::string& name)
+		{
+			if (auto weaponRelationship = access.FindOne<RelationshipComponent>(weapon))
+			{
+				for (UUID childID : weaponRelationship->Children)
+				{
+					Entity child = m_Scene.FindEntityByUUID(childID);
+					if (child && child.GetName() == name && access.FindOne<TransformComponent>(child))
+						return child;
+				}
+			}
+			return Entity{};
+		};
+		const Entity markers[2] = { ChildNamed(ik.RightMarker), ChildNamed(ik.LeftMarker) };
+
+		// Aim lock, before the hands: they are solved onto the weapon where it will be drawn.
+		// A look-at with up, not a shortest arc from the current barrel. The barrel goes onto the
+		// aim, and the weapon's up (AimMarker's +Y) stays as near the character's up as that
+		// allows, so a chest that rolls through a run does not cant the rifle. The cost is that
+		// under a full lock the socket's authored rotation no longer matters; only where it puts
+		// the pivot does. The pivot is the right-hand marker, so the lock turns the weapon in the
+		// grip rather than swinging the grip away from the hand.
+		const float lockWeight = std::isfinite(ik.AimLock) ? std::clamp(ik.AimLock, 0.0f, 1.0f) : 0.0f;
+		bool lockClean = true; // a failed lock must keep its warning armed like a failed hand
+		if (lockWeight > 0.0f)
+		{
+			const Entity aimMarker = ChildNamed(ik.AimMarker);
+			if (!aim)
+			{
+				ik.AimLockState = TwoHandIKComponent::AimLockStatus::NoAimOffset;
+				lockClean = false;
+				WarnHandIK(entity, Where() + " has an aim lock but no AimOffsetComponent to aim with - "
+					"leaving the weapon on its socket");
+			}
+			else if (!aimMarker)
+			{
+				ik.AimLockState = TwoHandIKComponent::AimLockStatus::NoAimMarker;
+				lockClean = false;
+				WarnHandIK(entity, Where() + ": weapon '" + weapon.GetName() + "' has no child named '"
+					+ ik.AimMarker + "' to aim - leaving the weapon on its socket");
+			}
+			else
+			{
+				const glm::mat4 muzzleFrame = weaponFrame
+					* access.FindOne<TransformComponent>(aimMarker)->GetLocalTransform();
+				const glm::mat3 muzzleBasis = OrthonormalRotation(glm::mat3(muzzleFrame));
+				const glm::vec3 aimDirection = AimDirectionInMesh(*aim);
+
+				// The target basis: -Z on the aim, +Y as near mesh up as it can be, X completing a
+				// right-handed frame. Aiming straight up or down has no such up; there the shortest
+				// arc from the current barrel is the only rotation that means anything.
+				glm::quat delta;
+				const glm::vec3 z = -aimDirection;
+				const glm::vec3 x = glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), z);
+				if (glm::length(x) > 1e-4f)
+				{
+					const glm::vec3 xn = glm::normalize(x);
+					const glm::mat3 target(xn, glm::cross(z, xn), z);
+					delta = glm::normalize(glm::quat_cast(target * glm::transpose(muzzleBasis)));
+				}
+				else
+				{
+					delta = RotationBetween(-muzzleBasis[2], aimDirection);
+				}
+				if (delta.w < 0.0f)
+					delta = -delta; // the short way round, so the blend and the angle agree
+				ik.AimLockAngle = 2.0f * std::atan2(glm::length(glm::vec3(delta.x, delta.y, delta.z)), delta.w);
+
+				const glm::quat turn = lockWeight >= 1.0f ? delta
+					: glm::normalize(glm::slerp(glm::quat(1.0f, 0.0f, 0.0f, 0.0f), delta, lockWeight));
+				const glm::vec3 pivot = markers[0]
+					? glm::vec3((weaponFrame * access.FindOne<TransformComponent>(markers[0])->GetLocalTransform())[3])
+					: glm::vec3(weaponFrame[3]);
+				weaponFrame = glm::translate(glm::mat4(1.0f), pivot) * glm::mat4_cast(turn)
+					* glm::translate(glm::mat4(1.0f), -pivot) * weaponFrame;
+
+				ik.LockedWeaponFrame = weaponFrame;
+				ik.AimLockState = TwoHandIKComponent::AimLockStatus::Locked;
+			}
+		}
 
 		// Markers are authored in mesh space (the joint frames TryGetJointFrame reports: unit
 		// basis, metres); the solver works where the globals live. A position comes back through
@@ -1383,7 +1481,7 @@ namespace GanymedE {
 			}
 		}
 
-		bool clean = chainResolved[0] && chainResolved[1];
+		bool clean = chainResolved[0] && chainResolved[1] && lockClean;
 		for (int hand = 0; hand < 2; hand++)
 		{
 			if (!chainResolved[hand])
@@ -1403,19 +1501,7 @@ namespace GanymedE {
 				continue;
 			}
 
-			Entity marker;
-			if (auto weaponRelationship = access.FindOne<RelationshipComponent>(weapon))
-			{
-				for (UUID childID : weaponRelationship->Children)
-				{
-					Entity child = m_Scene.FindEntityByUUID(childID);
-					if (child && child.GetName() == *markerNames[hand])
-					{
-						marker = child;
-						break;
-					}
-				}
-			}
+			const Entity marker = markers[hand];
 			if (!marker)
 			{
 				clean = false;
@@ -1426,11 +1512,6 @@ namespace GanymedE {
 			}
 			ik.Markers[(size_t)hand] = marker.GetUUID();
 			auto markerTransform = access.FindOne<TransformComponent>(marker);
-			if (!markerTransform)
-			{
-				ik.Status[(size_t)hand] = HandStatus::NoMarker;
-				continue;
-			}
 
 			const glm::mat4 markerFrame = weaponFrame * markerTransform->GetLocalTransform();
 			const glm::vec3 target = glm::vec3(meshToSkin * glm::vec4(glm::vec3(markerFrame[3]), 1.0f));
