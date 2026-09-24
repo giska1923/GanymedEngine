@@ -31,11 +31,10 @@ documented.** A file here is a promise, not a description.
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | [PROVING_GROUND.md](PROVING_GROUND.md)             | **Milestone plan** — the test game, and the engine work that must land first                                                                                                                                                            | Phase 0 + P1-P7                   |
 | [MAP_EDITOR.md](MAP_EDITOR.md)                     | **Milestone plan** — in-editor map authoring: surface raycast, placement + snapping, collider↔mesh parity, scatter brush, markers, top-down view                                                                                        | M0–M6 done                        |
-| [TWO_HAND_IK.md](TWO_HAND_IK.md)                   | **Milestone plan** — two-hand weapon IK: the rifle posed from the chest and the aim, both arms solved onto `Grip`/`Support` markers on the weapon, aim lock | H1–H4 done; H5–H6 planned         |
 | [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the frustum's near-plane depth convention                                                            | 4                                 |
 | [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                                 |
 | [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                                 |
-| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, editor text outside Latin-1, three skeletal leftovers (A3 grip picture, `Visible` bit, a socket warning while the mesh loads), and the aim-offset probes that were not watched | 20                                |
+| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, editor text outside Latin-1, three skeletal leftovers (A3 grip picture, `Visible` bit, a socket warning while the mesh loads), and the aim-offset probes that were not watched, and the two-hand IK checks not done by hand | 21                                |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
@@ -79,6 +78,13 @@ the Proving Ground wiring is on `first-game`. The record is
 [`AIM_OFFSET.md`](../history/AIM_OFFSET.md). The probes that were not watched, the untuned spine
 weights, and the aim-idle the milestone does not supply are in
 [cross-cutting.md](cross-cutting.md#aim-offset-leftovers).
+
+**Two-hand IK is done.** The solver, the component and its pass, the inspector and overlay, and the
+aim lock are on `master`. The Proving Ground weapon pose is on `first-game`. The record is
+[`TWO_HAND_IK.md`](../history/TWO_HAND_IK.md), assembled from `first-game`'s copy because only that
+copy carries H5. What was not done by hand, the idle's left-hand clamps (an aim idle fixes them),
+and the unmeasured barrel-versus-chest count are in
+[cross-cutting.md](cross-cutting.md#two-hand-ik-leftovers).
 
 **Runtime prefab spawning is done** — `Scene.Spawn` and `Entity:Destroy` in Lua, `Prefab` as a
 managed asset, physics bodies reconciled per frame, and a spawn cap. The record, including the three
@@ -146,3 +152,7 @@ describe problems that were fixed later. Verified stale, recorded here so nobody
   (it cost ~0.2 s on every Debug start). `ComponentEditCommand`'s aim-offset special case is now the
   generic `Trait::Runtime` rule. See [scene.md](../engine/scene.md) and
   [editor.md](../editor/editor.md).
+- `AIM_OFFSET.md`, `SKELETAL_ATTACHMENTS.md` and `SKELETAL_TOOLING.md`: "the rifle is socketed to
+  `RightHand`". On `first-game` it has been socketed to `Spine` since two-hand IK's H5, and it is
+  turned onto the aim with both hands solved onto it. The hand-socket numbers in those records
+  describe the Proving Ground before that. See [`TWO_HAND_IK.md`](../history/TWO_HAND_IK.md).
