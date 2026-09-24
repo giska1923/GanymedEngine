@@ -489,3 +489,13 @@ the same content change, not a new one. The line is also one frame behind the po
 drag writes `Pitch` / `Yaw` after `AnimationSystem` has evaluated. Closing it so the barrel meets
 the point is closed-loop aiming, which the milestone left alone; it is H4 of
 [TWO_HAND_IK.md](TWO_HAND_IK.md), along with the left hand on the rifle.
+
+**Two of the aim probes' rotation checks are quantised.** The twisted-pitch probe and the two-joint
+yaw+pitch probe in `RunAimOffsetProbes` measure rotation error as `2·acos(|dot|)` against a 1e-4 rad
+tolerance. `RotationDelta` does not have this problem: `glm::angle` switches to an asin form near
+zero. In float, the first `|dot|` below 1.0 is already about
+7e-4 rad, so the check passes only while the dot rounds to exactly 1. It fails spuriously the moment
+it does not, and it cannot see an error between 0 and 7e-4 rad. That is too strict and blind at the
+same time. The two-bone probes (H1 of [TWO_HAND_IK.md](TWO_HAND_IK.md)) use
+`2·atan2(|v|, |w|)` of the delta quaternion (`RotationError` in `AnimationSystem.cpp`). The fix is
+to switch those two checks to `RotationError`.

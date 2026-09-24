@@ -1,6 +1,6 @@
 # Milestone — Two-hand weapon IK
 
-**Status: planned. Nothing built.** Phases H1–H6 below.
+**Status: H1 done on `master` (the solver and its boot self-tests; no caller yet). H2–H6 planned.**
 
 > **Engine and editor milestone.** H1–H4 touch `GanymedEngine/source/` or `GanymedEditor/source/`,
 > which the [branch policy](PROVING_GROUND.md#branch-policy) puts on `master`. H5 is game content
@@ -89,7 +89,7 @@ a *Two Bone IK Constraint* per arm, targets parented to the weapon, and a *Multi
 
 | Phase | What | Branch | Size |
 |---|---|---|---|
-| **H1** | Analytic two-bone IK over globals, with boot self-tests | `master` | ~0.75 day |
+| **H1** | Analytic two-bone IK over globals, with boot self-tests — **done** | `master` | ~0.75 day |
 | **H2** | `TwoHandIKComponent`, weapon frame resolution, the pass, serialization, Lua | `master` | ~1 day |
 | **H3** | Inspector section, reach readouts, overlay | `master` | ~0.75 day |
 | **H4** | Aim lock: the barrel onto the aim direction | `master` | ~0.5 day |
@@ -155,6 +155,83 @@ With the skeleton overlay on, placing a wrist marker is direct.
 | End rotation | Wrist global rotation equals the target within 1e-4 rad |
 
 Boot self-tests in Debug, like the aim offset's — no timing loop in them.
+
+### Execution notes (2026-09-24)
+
+Landed as `SolveTwoBone` in `Animation.h` / `AnimationSystem.cpp`, beside `ApplyAimOffset`. The
+current behaviour is described in [scene.md](../engine/scene.md#animationsystem--systemsanimationsystemh).
+These notes cover where the build departed from the steps above.
+
+**The signature settled like this.** The subtree lists live on `TwoBoneChain` (`Subtrees[3]`,
+`SubtreeCounts[3]`, caller-owned), as they do on `AimOffsetChain`, and the chain carries its own
+`PoleHint`. The plan left both as "subtree lists..." and "a per-chain hint".
+`TwoBoneResult` gained a third field, **`Valid`**. Without it, a chain the solver refuses (for
+example `Lower` not under `Upper`, or a zero-length bone) would read the same as "out of reach",
+and those are different failures for H3's readout.
+
+**Five decisions the plan did not make:**
+
+- **What the weight means.** The weight blends the *goal*: the position lerps and the rotation
+  slerps from the current wrist frame to the target, and then the solver solves fully. This is how
+  Unity Animation Rigging's two-bone constraint blends. The alternative was scaling each solved
+  delta rotation, but the forearm's delta is computed after the upper arm has already moved, so
+  that does not blend cleanly. With the clip's elbow as the pole, a partial weight is continuous
+  from the clip pose.
+- **What `Reached` and `Stretch` describe.** Both describe the *full-weight* target. H3's readout
+  should show how far the marker is from the arm, not how far a faded solve landed.
+- **ε is relative:** 1e-5 of the chain length, not a fixed distance. The same arm measures 0.55 on
+  a metre rig and 55 on a centimetre one, so a fixed ε would be wrong on one of them.
+- **The pole threshold is 3°.** Past it the solver falls back to the hint, then to any
+  perpendicular if the hint is also on the reach line. The switch is hard; see the risk below.
+- **Chain validity is checked every call.** The solver refuses the chain unless `Lower` is in
+  `Upper`'s subtree and `End` is in `Lower`'s. The check is a linear scan of an arm's subtree
+  (four or five joints on the Meshy rig).
+
+**Verification,** measured with the Debug editor's boot self-test. Each case ran on a metre rig and
+on a centimetre rig (`RootTransform` = scale 100). Errors are in metres. The measurements came from
+one temporary logging build, and the log lines were removed afterwards:
+
+| Probe | Pass condition | Metre rig | Centimetre rig |
+|---|---|---|---|
+| Weight 0 | Globals bit-identical | identical | identical |
+| Reachable target | Wrist within 1e-4 m | 1.5e-8 | 7.6e-8 |
+| | Bone lengths within 1e-5 m (upper / lower / hand tip) | 6.0e-8 / 3.0e-8 / 7.5e-8 | 3.8e-8 / 3.8e-8 / 1.9e-7 |
+| | Chest and head bit-identical, shoulder origin fixed | yes, 1.5e-8 | yes, 0 |
+| End rotation | Within 1e-4 rad | 4.6e-8 rad | 1.4e-7 rad |
+| Target past reach (Stretch 1/0.55) | `Reached == false`, wrist on the line at full length, arm straight within 1° | Stretch 1.81818, 5.6e-6 short, 0.513° | 1.81818, 5.5e-6, 0.513° |
+| Pole +X vs −X | Elbow on the pole's side, same elbow angle | x = ±0.178, Δangle 7.2e-7 rad | ±0.178, 4.8e-7 rad |
+| Pole on the reach line, and on the shoulder | Hint used (elbow below, the hint is down), no NaN | elbow y −0.187, wrist 1.6e-7 | −0.187, 1.7e-7 |
+| Weight 0.5 (added) | Wrist on the halfway goal | 3.7e-8 | 8.5e-8 |
+| Not one limb (added) | `Valid == false`, globals untouched | yes | yes |
+
+The 5.5 µm shortfall and the 0.51° bend at full reach are the ε clamp, and both match the
+prediction from ε = 1e-5. The rotation check is `2·atan2(|v|, |w|)` of the delta quaternion. The
+two aim probes' inline `2·acos(|dot|)` cannot express an error between 0 and about 7e-4 rad in float, so it
+cannot test a 1e-4 tolerance (see
+[cross-cutting.md](cross-cutting.md#aim-offset-leftovers)).
+
+Builds checked: Debug engine and editor, and Release engine, all with no warnings. No source files
+were added, so premake does not need to regenerate the projects.
+
+**What H2 inherits:**
+
+- The pass builds each chain's three subtrees in a topology-keyed cache like `AimSubtreeCache`.
+- It passes the clip's own elbow (`globals[Lower]` origin) as `pole`.
+- It sets `PoleHint` to "down and out" in the space `SampleClipGlobals` writes, turned from mesh
+  space the way `AimAxesInSkinSpace` turns the aim axes.
+
+**Risks that only the rig will show** (H2/H5 should check for them on `ArmoredHumanoid`):
+
+- **Candy-wrapper at the wrist.** The forearm swing is shortest-arc, and the hand takes its whole
+  target rotation, so a marker rotated far about the forearm's axis twists the wrist's skinning.
+  The Meshy rig has no twist joints. If H5 shows it, the usual fix is to give the forearm a share
+  of the hand's twist about the forearm axis, which is a few lines in `SolveTwoBone`.
+- **Elbow pop at the 3° switch.** This can happen if a clip's elbow crosses 3° of the reach line
+  mid-clip. It is unlikely with the rifle clips, whose elbows are well bent.
+- **Elbow speed near full reach.** Near full reach, `d(angle)/d(distance)` goes to infinity, so a
+  marker that sits just inside reach will make the elbow flutter. H5's rule of no clamped frame in
+  the shooting clips should keep the markers away from full reach. If it does not, the standard
+  remedy is soft IK, as in Unreal's two-bone node with stretch limits. That remedy is not in H1.
 
 ---
 

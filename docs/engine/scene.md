@@ -278,6 +278,50 @@ an unresolved name warns once per entity per name and skips the bend. The palett
 so the clip inspector still measures the clip. The socket, the skeleton overlay and joint picking
 read the palette and follow the bend with no code of their own.
 
+`Animation.h` also declares **`SolveTwoBone`**, analytic two-bone IK over the same globals. **No
+system calls it yet**; the pass that will is H2 of [TWO_HAND_IK.md](../ToDo/TWO_HAND_IK.md). A
+`TwoBoneChain` names the shoulder, elbow and wrist joints (`Upper` / `Lower` / `End`) and carries
+caller-owned subtree lists, the way `AimOffsetChain` does. The solve does four things:
+
+1. It takes both bone lengths from the current globals, not the rest pose.
+2. It clamps the shoulder→target distance to 1e-5 of the chain inside the reach. A clamped arm is
+   therefore straight to about half a degree (0.51° on the probe rig).
+3. It puts the elbow in the plane of shoulder, target and a `pole` position, using the law of
+   cosines.
+4. It makes three shortest-arc subtree rotations: the upper arm about the shoulder so the elbow
+   lands, the forearm about the elbow so the wrist lands, and the hand about its own origin so it
+   takes `targetRotation`.
+
+Rotations are applied on the left of each global, so bone lengths and any scale in the joint
+matrices survive. The rotation read strips scale, so a centimetre rig works too. Every tolerance is
+a fraction of the chain, not a distance.
+
+When the pole is within 3° of the reach line (or on the shoulder), `PoleHint` is used as the bend
+direction instead, and failing that any perpendicular. The switch is hard, not blended.
+
+`weight` blends the *goal* from the current wrist frame to the target (lerp and slerp) and then
+solves fully. Weight 0 returns before touching anything, so the globals are bit-identical.
+
+`TwoBoneResult` has three fields:
+
+- `Valid` is false when the solve is refused. That happens when `Lower` is not in `Upper`'s
+  subtree, `End` is not in `Lower`'s, a bone has zero length or an input is non-finite. The globals
+  are untouched in that case.
+- `Reached` is false exactly when the distance was clamped.
+- `Stretch` is the target distance over the chain length.
+
+`Reached` and `Stretch` always describe the full-weight target, so a readout shows where the
+marker is, not where a faded solve landed.
+
+The forearm swing is shortest-arc, and the hand takes the whole of its target rotation. No twist is
+distributed into the forearm, so on a rig without twist joints a large wrist twist lands entirely
+on the wrist's skinning.
+
+A Debug boot self-test runs H1's verification table on a six-joint arm probe, once on a metre rig
+and once on a centimetre rig whose `RootTransform` carries the scale. Its rotation check uses
+`2·atan2(|v|, |w|)` of the delta quaternion rather than `2·acos(|dot|)`: the acos form cannot
+resolve anything below about 7e-4 rad in float.
+
 An unresolvable clip name warns once per distinct name and holds the bind pose; a missing skeleton
 clears the palette. `RenderSystem` then uses `Mesh::GetRestPalette()` if the mesh still has a
 skeleton, or `SubmitMesh` if it does not. Scratch pose and global arrays are system members reused
