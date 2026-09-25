@@ -6,15 +6,11 @@
 bin/
 # That covers vendor/premake/bin/ too: scripts/setup.py downloads premake per machine.
 
-# Assets
-GanymedEditor/assets/AssetRegistry.gr
-GanymedEditor/assets/.assets
-
-# The runtime's mesh cache is derived and rebuilds on first load. Its AssetRegistry.gr is
-# NOT ignored, unlike the editor's: scenes store bare asset handles, so a runtime with no
-# registry silently loses every mesh, environment and script. For a shipped game the
-# registry is authored content. See docs/engine/assets.md, "Registry portability".
-GanymedRuntime/assets/.assets
+# Assets - one tree, assets/ at the root, shared by the editor and the runtime.
+# AssetRegistry.gr is the legacy identity file; the .meta sidecars replaced it and a local one
+# is read only as a migration seed. .assets is the abandoned pre-sidecar mesh cache.
+assets/AssetRegistry.gr
+assets/.assets
 
 # Compiled asset outputs - block-compressed textures and binary mesh blobs, keyed by a hash
 # of the source path. Derived from committed sources and rebuilt on demand, so it is ignored

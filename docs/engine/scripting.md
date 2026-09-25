@@ -558,8 +558,8 @@ component uses — `Script` (handle) with a `ScriptPath` fallback.
 Optional layer. The engine only ever loads `.lua`; hand-written Lua remains fully supported.
 
 ```
+assets/scripts/           ← emitted .lua — what the engine loads (tracked in git)
 GanymedEditor/
-├── assets/scripts/       ← emitted .lua — what the engine loads (tracked in git)
 └── scripts-src/          ← the TS project (not scanned by AssetManager)
     ├── package.json / tsconfig.json / package-lock.json
     ├── types/ganymed.d.ts
@@ -569,7 +569,7 @@ GanymedEditor/
 ```
 cd GanymedEditor/scripts-src
 npm install        # once
-npm run watch      # recompiles into ../assets/scripts on every save
+npm run watch      # recompiles into ../../assets/scripts on every save
 ```
 
 [`types/ganymed.d.ts`](../../GanymedEditor/scripts-src/types/ganymed.d.ts) is the hand-written TS

@@ -7,7 +7,7 @@
 
 # The project: the directory StartScene and UIDocument are relative to, and the root the
 # asset scan walks. Relative to the working directory, so the default keeps a shipped
-# game's content beside its executable. Point it elsewhere ("../Game/assets") to run a
+# game's content beside its executable. Point it elsewhere ("path/to/project") to run a
 # project in place instead of copying it here first.
 #
 # This file is not inside the project - it is read from assets/runtime.yaml before any

@@ -62,7 +62,7 @@ namespace GanymedE::EditorUI {
 
 	void InitTitleBar()
 	{
-		constexpr const char* kIcon = "resources/icon.png";
+		constexpr const char* kIcon = "assets/icons/icon.png";
 		if (std::filesystem::exists(kIcon))
 			s_AppIcon = Texture2D::Create(kIcon);
 		else

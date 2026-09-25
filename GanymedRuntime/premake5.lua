@@ -32,8 +32,10 @@ project "GanymedRuntime"
 		"GanymedEngine"
 	}
 
-	-- Assets are loaded via relative paths, so the debugger must launch from the project folder
-	debugdir "%{prj.location}"
+	-- Assets are loaded via "assets/..." relative paths, and the workspace has one assets/ tree
+	-- at its root, so the debugger launches from there. A shipped build keeps assets/ beside
+	-- the executable instead, which is the same relative layout.
+	debugdir "%{wks.location}"
 
 	-- Xcode puts includedirs in USER_HEADER_SEARCH_PATHS which angled includes (spdlog) don't see
 	filter "action:xcode4"

@@ -35,12 +35,12 @@ step does, and for the escape hatches on hosts where a prebuilt tool will not ru
 
 - run `python3 scripts/setup.py` to generate GanymedE projects
 - run command: make -j$(nproc) config=debug in root to build everything
-- run command: cd GanymedEditor && ../bin/Debug-linux-x86_64/GanymedEditor/GanymedEditor to run Editor
-- run command: cd GanymedRuntime && ../bin/Debug-linux-x86_64/GanymedRuntime/GanymedRuntime to run the game runtime
+- run command: bin/Debug-linux-x86_64/GanymedEditor/GanymedEditor from the repository root to run Editor
+- run command: bin/Debug-linux-x86_64/GanymedRuntime/GanymedRuntime from the repository root to run the game runtime
 
 ## macOS
 
 - run `python3 scripts/setup.py` to generate GanymedE projects
 - run command: xcodebuild -workspace GanymedEngine.xcworkspace -scheme GanymedEditor -configuration Debug build to build Editor
-- run command: cd GanymedEditor && ../bin/Debug-macosx-x86_64/GanymedEditor/GanymedEditor to run Editor
-- run command: cd GanymedRuntime && ../bin/Debug-macosx-x86_64/GanymedRuntime/GanymedRuntime to run the game runtime
+- run command: bin/Debug-macosx-x86_64/GanymedEditor/GanymedEditor from the repository root to run Editor
+- run command: bin/Debug-macosx-x86_64/GanymedRuntime/GanymedRuntime from the repository root to run the game runtime

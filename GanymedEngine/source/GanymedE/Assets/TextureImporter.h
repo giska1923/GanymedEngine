@@ -43,7 +43,7 @@ namespace GanymedE {
 	//
 	// Editor chrome (icons, the checkerboard) deliberately stays on the
 	// Texture2D(path) constructor: those live outside the asset cache and are
-	// addressed by hard-coded resources/ paths.
+	// addressed by hard-coded assets/icons/ and assets/textures/ paths.
 	class TextureImporter
 	{
 	public:

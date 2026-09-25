@@ -421,8 +421,8 @@ ship/
   msvcp140.dll vcruntime140.dll vcruntime140_1.dll
   assets/                            the whole project root, .meta and .compiled included
     runtime.yaml                     with AssetRoot: assets
-    fonts/                           ENGINE-owned, from GanymedRuntime/assets/fonts
-    shaders/compiled/                ENGINE-owned, from GanymedRuntime/assets/shaders
+    fonts/                           ENGINE-owned (montserrat/; inter/ and lucide/ are editor-only)
+    shaders/compiled/                ENGINE-owned
 ```
 
 The two engine-owned directories are the part that surprises. `UIEngine` loads its faces from
@@ -442,6 +442,22 @@ Two things would make this repeatable, and they are separable:
 - **Resolving engine chrome against the executable** rather than the working directory, which
   would let a shipped game's `assets/` hold only the game. Bigger, and it touches every
   `Shader::Create` call site.
+
+## Dead and dangling files found while merging the asset trees
+
+Found while folding `GanymedEditor/assets/` and `GanymedRuntime/assets/` into the root `assets/`.
+None of them was caused by the move, and none blocks anything:
+
+- **`assets/scenes/BoxesPhysicsExample.ganymede` names an environment that does not exist.** Its
+  `SkyLightComponent.Environment` is `13533065294358047213`. No sidecar carries that handle, and
+  neither did the editor's local `AssetRegistry.gr`. It was already dangling on master before the
+  merge. The scene loads and its sky light falls back. Fix: re-point it at
+  `environments/studio_small_08_1k.hdr` in the editor, or clear it.
+- **`assets/shaders/*.glsl` (17 files) look dead.** `Shader::Create` reduces its argument to a stem
+  and loads the compiled `.bin`; the runtime never had these files and loads every shader. Delete
+  them after confirming nothing opens them by path.
+- **`GanymedEditor/resources/icons/PlayButton.png` and `StopButton.png` are unused.** Play/Stop is
+  an icon-font glyph. They were left in `resources/` rather than moved into the project tree.
 
 ## Skeletal leftovers after the attachment and tooling close
 
