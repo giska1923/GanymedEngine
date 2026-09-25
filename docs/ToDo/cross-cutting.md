@@ -480,18 +480,7 @@ Two things would make this repeatable, and they are separable:
 
 [SKELETAL_ATTACHMENTS.md](../history/SKELETAL_ATTACHMENTS.md) and
 [SKELETAL_TOOLING.md](../history/SKELETAL_TOOLING.md) are in history. Two items they named were
-deliberately not built, so they live here rather than vanishing with the plans. A third was found
-later.
-
-**A socket warns "no rigged mesh" while the mesh is only loading.** Opening the unmodified
-`ProvingGround.ganymede` logs, once on the first frame: "BoneAttachment on 'Rifle' targets
-'Body', which has no rigged mesh". `Body`'s mesh is not `Ready()` yet, and
-`BoneAttachmentSystem` uses one branch for "no `StaticMeshComponent`", "not loaded" and "not
-rigged". The socket recovers on the next frame, and the warning is cleared once the socket
-resolves. It is wrong rather than harmful: it names a real failure that is not happening, on
-every load of every socketed scene. The fix is to split out `!Mesh.Ready()` and stay quiet (or
-say "still loading") while the handle is pending. Found in H2 of
-[TWO_HAND_IK.md](../history/TWO_HAND_IK.md).
+deliberately not built, so they live here rather than vanishing with the plans.
 
 **A general `Visible` / `Enabled` bit `RenderSystem` honours.** Decided in the attachments A2
 follow-up: hide an unresolved socket during the frames a skinned mesh is still streaming. Not a
@@ -539,16 +528,6 @@ the same content change, not a new one. The line is also one frame behind the po
 drag writes `Pitch` / `Yaw` after `AnimationSystem` has evaluated. The barrel meeting the point
 is done: two-hand IK's aim lock (H4 of [TWO_HAND_IK.md](../history/TWO_HAND_IK.md)) holds the barrel on the
 aim offset's angles. The one-frame lag is not done.
-
-**Two of the aim probes' rotation checks are quantised.** The twisted-pitch probe and the two-joint
-yaw+pitch probe in `RunAimOffsetProbes` measure rotation error as `2·acos(|dot|)` against a 1e-4 rad
-tolerance. `RotationDelta` does not have this problem: `glm::angle` switches to an asin form near
-zero. In float, the first `|dot|` below 1.0 is already about
-7e-4 rad, so the check passes only while the dot rounds to exactly 1. It fails spuriously the moment
-it does not, and it cannot see an error between 0 and 7e-4 rad. That is too strict and blind at the
-same time. The two-bone probes (H1 of [TWO_HAND_IK.md](../history/TWO_HAND_IK.md)) use
-`2·atan2(|v|, |w|)` of the delta quaternion (`RotationError` in `AnimationSystem.cpp`). The fix is
-to switch those two checks to `RotationError`.
 
 ## Two-hand IK leftovers
 
