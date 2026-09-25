@@ -18,7 +18,7 @@ namespace GanymedE {
 	// `PrefabSerializer::Instantiate` call site was an editor gesture, so re-reading the file per
 	// call was a read per drag-drop. Runtime spawning is what changes the arithmetic - a script
 	// firing projectiles would re-read and re-parse the same file per spawn. See
-	// docs/ToDo/RUNTIME_PREFAB_SPAWNING.md.
+	// docs/history/RUNTIME_PREFAB_SPAWNING.md.
 	//
 	// ---- What is cached is the document, not a Scene ----
 	//

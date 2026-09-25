@@ -804,7 +804,7 @@ namespace GanymedE {
 			// The counterpart to Entity:GetUUID(), and the one lookup that is stable: a tag can
 			// be renamed or duplicated, a UUID cannot. This is what a script holds onto across
 			// frames, and what runtime prefab spawning will hand back - see
-			// docs/ToDo/RUNTIME_PREFAB_SPAWNING.md.
+			// docs/history/RUNTIME_PREFAB_SPAWNING.md.
 			//
 			// int64 in, for the reason GetUUID returns int64 out - see the comment there. The
 			// pair round-trips bit-exactly across the whole 64-bit range, which is the property

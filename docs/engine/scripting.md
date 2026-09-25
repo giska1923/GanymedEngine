@@ -155,7 +155,7 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 > top half of the range as negative. A script must treat the value as **opaque**: equality and table
 > keys work, arithmetic is meaningless. The pair round-trips exactly across the full 64-bit range,
 > which is the property runtime prefab spawning depends on
-> ([RUNTIME_PREFAB_SPAWNING.md](../ToDo/RUNTIME_PREFAB_SPAWNING.md)).
+> ([RUNTIME_PREFAB_SPAWNING.md](../history/RUNTIME_PREFAB_SPAWNING.md)).
 >
 > The general rule this is an instance of: **any engine handle wider than 53 bits needs its Lua
 > representation chosen deliberately.** Asset handles are `UUID` too.
