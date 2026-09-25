@@ -1,2 +1,5 @@
 # Shell scripts must keep LF endings or bash on Linux/macOS fails with '\r' errors
 *.sh text eol=lf
+
+# Same for scripts/setup.py: a CRLF shebang fails with "python3\r: No such file or directory"
+*.py text eol=lf

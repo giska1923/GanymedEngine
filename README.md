@@ -14,23 +14,33 @@ sudo apt install libglfw3-dev libwayland-dev libxkbcommon-dev xorg-dev
 
 # Build & Run
 
+Every platform starts with the same script, which needs Python 3.8+ and git. It downloads premake,
+checks out the submodules, builds bgfx's shader compiler, compiles the shaders and generates the
+project files. It skips any step that is already up to date, so it is safe to re-run after every
+pull:
+
+- `python scripts/setup.py` opens an interactive menu that shows each step's state and can force
+  any of them
+- `python scripts/setup.py auto` runs it unattended
+
+See [docs/engine/build-and-tooling.md](docs/engine/build-and-tooling.md#workspace) for what each
+step does, and for the escape hatches on hosts where a prebuilt tool will not run.
+
 ## Windows
 
-- run ./scripts/Win_GenerateProjects.bat to generate .sln
+- run `python scripts/setup.py` to generate GanymedEngine.sln
 - open ./GanymedEngine.sln, build solution and run
 
 ## Linux
 
-- run ./scripts/setup_dependencies.sh
-- run ./scripts/Linux_GenerateProjects.sh to generate GanymedE projects
+- run `python3 scripts/setup.py` to generate GanymedE projects
 - run command: make -j$(nproc) config=debug in root to build everything
 - run command: cd GanymedEditor && ../bin/Debug-linux-x86_64/GanymedEditor/GanymedEditor to run Editor
 - run command: cd GanymedRuntime && ../bin/Debug-linux-x86_64/GanymedRuntime/GanymedRuntime to run the game runtime
 
 ## macOS
 
-- run ./scripts/setup_dependencies.sh
-- run ./scripts/macOS_GenerateProjects.sh to generate GanymedE projects
+- run `python3 scripts/setup.py` to generate GanymedE projects
 - run command: xcodebuild -workspace GanymedEngine.xcworkspace -scheme GanymedEditor -configuration Debug build to build Editor
 - run command: cd GanymedEditor && ../bin/Debug-macosx-x86_64/GanymedEditor/GanymedEditor to run Editor
 - run command: cd GanymedRuntime && ../bin/Debug-macosx-x86_64/GanymedRuntime/GanymedRuntime to run the game runtime

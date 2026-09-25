@@ -12,7 +12,7 @@ namespace GanymedE {
 
 	namespace {
 
-		// Must match the profile folders written by scripts/compile_shaders.bat.
+		// Must match the profile folders in SHADER_PROFILES in scripts/setup.py.
 		const char* ProfileDirectory()
 		{
 			switch (bgfx::getRendererType())
@@ -98,7 +98,7 @@ namespace GanymedE {
 
 		if (!bgfx::isValid(vs) || !bgfx::isValid(fs))
 		{
-			GE_CORE_ERROR("Failed to load shader '{0}' - run scripts/compile_shaders.bat", name);
+			GE_CORE_ERROR("Failed to load shader '{0}' - run: python scripts/setup.py shaders", name);
 			if (bgfx::isValid(vs)) bgfx::destroy(vs);
 			if (bgfx::isValid(fs)) bgfx::destroy(fs);
 			return;

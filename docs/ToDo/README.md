@@ -34,7 +34,7 @@ documented.** A file here is a promise, not a description.
 | [rendering.md](rendering.md)                       | All four backends render, pick and match on colour; MSAA deferred; dead 2D-era types; offline IBL; the frustum's near-plane depth convention                                                            | 4                                 |
 | [reflection.md](reflection.md)                     | Per-field override marking on hand-written sections (permanent)                                                                                                                                                                         | 1                                 |
 | [assets.md](assets.md)                             | Dependency hashing; mesh-apply file I/O; indivisible texture uploads                                                                                                                                                                    | 3                                 |
-| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, Linux system packages, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, editor text outside Latin-1, the Play-mode game UI taking the wheel over other panels, `DesktopShell` unrun off Windows, two skeletal leftovers (A3 grip picture, `Visible` bit), and the aim-offset probes that were not watched, and the two-hand IK checks not done by hand | 23                                |
+| [cross-cutting.md](cross-cutting.md)               | macOS coverage, WSL-vs-native gaps, Tracy, build residue, first-frame timestep spike, triplicated Input files, six gaps around character controllers and contacts, a fixed HUD data model, two shipping gaps, editor text outside Latin-1, the Play-mode game UI taking the wheel over other panels, `DesktopShell` unrun off Windows, two skeletal leftovers (A3 grip picture, `Visible` bit), and the aim-offset probes that were not watched, and the two-hand IK checks not done by hand | 22                                |
 
 **The Proving Ground record is split across two branches, and part of it does not exist.** By that
 milestone's own branch policy the game lives on `first-game`, so its phase write-ups land there:
@@ -126,6 +126,12 @@ more. Jolt now runs on `Core/JobSystem` — see [physics.md](../engine/physics.m
 Those documents are historical and are **not** rewritten when the code moves on, so some of them
 describe problems that were fixed later. Verified stale, recorded here so nobody re-opens them:
 
+- Every mention of `scripts/build_shader_tools.*`, `scripts/compile_shaders.*`,
+  `Win_GenerateProjects.bat` or the other per-OS scripts (`BGFX_MIGRATION.md`,
+  `RUNTIME_AUDIO_ROADMAP.md`, `PARTICLE_ROADMAP.md`, `ANIMATION_ROADMAP.md`,
+  `editor-visual-parity.md`, `Scripting-And-UI-Integration.md`): those eleven scripts were replaced
+  by `scripts/setup.py`, whose `shadertools`, `shaders` and `generate` steps do the same jobs
+  ([build-and-tooling.md](../engine/build-and-tooling.md#workspace)).
 - `BGFX_MIGRATION.md` §8.8 "Shadows are inert" — shadows work: 4 cascades, skinned casters
   ([rendering.md](../engine/rendering.md)).
 - `REFLECTION_ROADMAP.md` R2 note "`Attr::Section` is unread by the generic path" — it is read, at

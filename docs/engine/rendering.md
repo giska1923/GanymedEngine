@@ -82,8 +82,9 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
 [`Shader`](../../GanymedEngine/source/GanymedE/Renderer/Shader.h) wraps a `bgfx::ProgramHandle`.
 **Shaders are compiled offline**: sources are `.sc` pairs (`vs_Name.sc`/`fs_Name.sc` + shared
 `varying.def.sc`, per-shader `varying.<Name>.def.sc` when the layout differs — ImGui has one) in
-`assets/shaders/src/`, compiled by `scripts/compile_shaders.bat|.sh` into
-`assets/shaders/compiled/<profile>/` for `dx11`, `spirv` and `glsl`. At runtime the constructor
+`assets/shaders/src/`, compiled by the `shaders` step of `scripts/setup.py` into
+`assets/shaders/compiled/<profile>/` (`dx11`, `spirv` and `glsl` on Windows; the per-OS set is in
+[build-and-tooling.md](build-and-tooling.md#shader-toolchain)). At runtime the constructor
 picks the profile matching `bgfx::getRendererType()` (mapping in `Shader.cpp::ProfileDirectory`).
 Call sites still say `Shader::Create("assets/shaders/Foo.glsl")` — the path is reduced to its stem.
 
@@ -93,7 +94,7 @@ skinned programs use it: they differ from their static counterparts only in the 
 without it the naming rule alone would force a duplicate copy of the 300-line `fs_Phong` to sit
 next to it. (Not to be confused with the three-argument `Shader::Create`, which takes source.)
 
-**Edit a shader → re-run `compile_shaders`.** A missing/failed program logs an error and its draws
+**Edit a shader → re-run `python scripts/setup.py shaders`.** A missing/failed program logs an error and its draws
 are skipped (the engine keeps running).
 
 API notes:
@@ -114,7 +115,7 @@ BloomDownsample, BloomUpsample, Tonemap, FXAA, Blit, ImGui, RmlUi, Particle.
 
 Two of those ship a per-shader `varying.<name>.def.sc` because their vertex layout is fixed by a
 third party and does not match the engine's: **ImGui** and **RmlUi** (whose colour and texcoord
-attributes are in the opposite order to ImGui's). `compile_shaders` prefers such a file
+attributes are in the opposite order to ImGui's). The `shaders` step prefers such a file
 automatically.
 
 ## Textures & framebuffers

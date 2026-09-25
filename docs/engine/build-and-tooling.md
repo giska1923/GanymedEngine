@@ -2,19 +2,70 @@
 
 ## Workspace
 
-[`premake5.lua`](../../premake5.lua) (workspace) + per-project `premake5.lua` files. Generate with:
+[`premake5.lua`](../../premake5.lua) (workspace) + per-project `premake5.lua` files. Everything a
+checkout needs before it can be built is one script,
+[`scripts/setup.py`](../../scripts/setup.py), on every OS:
 
-- Windows: `scripts/Win_GenerateProjects.bat` → `GanymedEngine.sln` (VS2022), build in the IDE.
-- Linux: `scripts/setup_dependencies.sh`, `scripts/Linux_GenerateProjects.sh`, then
-  `make -j$(nproc) config=debug`.
-- macOS: `scripts/macOS_GenerateProjects.sh` → Xcode workspace.
+```
+python scripts/setup.py                    # menu: each step's state; run what is needed, or force steps
+python scripts/setup.py auto               # non-interactive: each out-of-date step, then generate
+python scripts/setup.py status             # report only; exits 1 if any step is out of date
+python scripts/setup.py shaders generate   # force the named steps, in pipeline order
+```
 
-`scripts/fix_submodules.sh` is the first thing to run when a build fails naming a dependency
-that should exist. `--check` reports every path in `.gitmodules` and changes nothing; with no
-arguments it syncs the URLs and runs `git submodule update --init --recursive`, which restores
-the **pinned** commits; `--force` deinitialises first, for a working tree that will not move.
-It reads `.gitmodules` rather than a list of its own, so a new submodule is covered the day it
-is added.
+It needs Python 3.8+ (standard library only) and git. Building shaderc additionally needs Visual
+Studio on Windows, or `make` and a C++ compiler elsewhere. The steps, in dependency order:
+
+| Step | Does | Up to date when |
+|---|---|---|
+| `premake` | downloads premake `5.0.0-beta8` into `vendor/premake/bin/` | the binary runs and reports the pinned version |
+| `submodules` | `git submodule sync`, then `update --init --recursive` | every submodule is at its pinned commit and non-empty |
+| `shadertools` | builds bgfx's shaderc into `scripts/tools/<os>/` ([below](#shader-toolchain)) | shaderc exists and `shaderc.bgfx-commit` matches bgfx's `HEAD` |
+| `shaders` | compiles `assets/shaders/src` into each app's `assets/shaders/compiled/` | every output is newer than everything it depends on |
+| `generate` | `premake5 vs2022` / `gmake` / `xcode4` by OS; `--action` overrides | never: `auto` always runs it |
+
+`auto` re-reads each step's state just before deciding, because earlier steps change what later
+ones see. A fresh clone runs all five. An ordinary pull usually runs only `generate`, plus `shaders`
+if a `.sc` changed. `generate` always runs because it takes seconds, and generated project files
+are gitignored, so a pull that changes `premake5.lua` or `extern/*.lua` would otherwise leave them
+stale. Forcing a step by name runs it even when it is up to date. For `shaders`, that means
+recompiling everything, not just what is stale.
+
+Why one Python script rather than `.bat`/`.sh` pairs: the previous eleven scripts had drifted
+apart. `setup_premake.sh` fetched premake beta2 while the Windows binary was beta8.
+`setup_dependencies.sh` checked for the long-deleted Glad and pointed at script names that did
+not exist. And every rule, from the shader target list to the profile table, had to be kept in two
+shells. Python is the one scripting runtime every host OS either ships or installs in a minute, and
+the standard library covers downloading, archives and a worker pool without a dependency.
+
+**premake is not committed.** `vendor/premake/bin/` falls under the `bin/` ignore rule, so every
+machine downloads it, and the `premake` step pins one version for every OS. beta8 renamed the
+`gmake2` action to `gmake`; the old name still works as an alias. premake's **Linux release binary
+needs glibc 2.38** (Ubuntu 24.04+). On Ubuntu 22.04 it fails in the loader, and the step says so
+instead of installing a binary that cannot run. premake builds from source in about a minute
+(verified on 22.04), and **`PREMAKE=<path>`** points the script at the result. That binary is then
+never downloaded over:
+
+```
+git clone --depth 1 --branch v5.0.0-beta8 https://github.com/premake/premake-core
+make -C premake-core -f Bootstrap.mak linux
+PREMAKE=$PWD/premake-core/bin/release/premake5 python3 scripts/setup.py
+```
+
+The `submodules` step is the first thing to run when a build fails naming a dependency that
+should exist. It reads `.gitmodules` rather than a list of its own, so a new submodule is covered
+the day it is added. It syncs the URLs and runs `git submodule update --init --recursive`, which
+restores the **pinned** commits. It never re-adds or re-clones anything, because
+`git submodule add` checks out the upstream tip. The menu's `d` option (or
+`submodules --deinit`) deinitialises first, for a working tree that will not move; that
+discards edits inside the submodules. A submodule checked out at a commit other than the pinned
+one counts as out of date, and `auto` moves it back. That is right after a pull that bumps a pin,
+and wrong while you are deliberately testing another commit inside a submodule (the commit stays
+reachable through that submodule's reflog). On Linux the step also warns when the X11/xcb
+headers are missing, and prints the `apt` line from the top-level README. bgfx's
+`renderer_vk.h` defines `VK_USE_PLATFORM_XCB_KHR` unconditionally on Linux and GLFW's X11 backend
+needs `Xlib.h`, so an image with only the runtime libraries (`libx11-6`, `libx11-xcb1`) fails
+compiling bgfx with `xcb/xcb.h: No such file or directory`. The step never runs `sudo` itself.
 
 The failure it exists for is quiet. A missing or empty submodule directory still gets a premake
 project generated for it — premake does not check that the sources it was told about are on
@@ -31,12 +82,11 @@ Two other things produce that same message, and they are worth ruling out in thi
 directory** rather than at the root, where only the workspace makefile knows what has to be
 built first.
 
-`Linux_GenerateProjects.sh` wants a native `vendor/premake/bin/premake5`, and only the Windows
-`premake5.exe` is committed. `setup_premake.sh` downloads one; **premake also cross-generates**,
-which needs no download and no Wine:
+**premake also cross-generates**, which needs no Linux premake at all when the Linux build shares
+a checkout with Windows (WSL):
 
 ```
-vendor/premake/bin/premake5.exe --os=linux gmake2
+vendor/premake/bin/premake5.exe --os=linux gmake
 ```
 
 The emitted makefiles carry only relative paths, so the generated tree builds unchanged on a Linux
@@ -210,7 +260,7 @@ Other build facts that have bitten before (details in
   headers angled resolves against nothing. The workspace `premake5.lua` defines
   **`angledIncludeDirs(dirs)`** for this: it declares the paths as `includedirs` normally, plus
   as `externalincludedirs` (→ `SYSTEM_HEADER_SEARCH_PATHS`, i.e. `-isystem`) under
-  `filter "action:xcode4"`. It is scoped to that action so vs2022/gmake2 output is unchanged.
+  `filter "action:xcode4"`. It is scoped to that action so vs2022/gmake output is unchanged.
   Any dependency whose sources use `#include <Lib/Header.h>` for its *own* headers must declare
   its include paths through this helper, not `includedirs` — currently bx/bimg/bgfx, Jolt, RmlUi
   and FreeType. GLFW's angled includes are system frameworks. ImGui's own headers are quoted, but
@@ -345,23 +395,33 @@ submodule*, which reports the submodule as dirty in `git status` and in GUI clie
 
 ## Shader toolchain
 
-Shaders are **compiled offline**; the compiled `.bin` files are gitignored. On a fresh clone:
+Shaders are **compiled offline**; the compiled `.bin` files are gitignored. Two steps of
+[`scripts/setup.py`](#workspace) produce them, and `auto` runs both on a fresh clone:
 
 ```
-scripts\build_shader_tools.bat    # builds bgfx's shaderc via its GENie build (once per machine)
-                                  # → staged at scripts/tools/<os>/shaderc
-scripts\compile_shaders.bat       # every .sc in assets/shaders/src → dx11 / spirv / glsl profiles
-                                  # → <profile>/ under each app's assets/shaders/compiled/
+python scripts/setup.py shadertools   # builds bgfx's shaderc via its GENie build (once per machine)
+                                      # → staged at scripts/tools/<os>/shaderc
+python scripts/setup.py shaders       # every .sc in assets/shaders/src → this OS's profiles
+                                      # → <profile>/ under each app's assets/shaders/compiled/
 ```
 
-The script carries a hard-coded `TARGETS` list — one entry per app that loads shaders at runtime,
-currently `GanymedEditor` and `GanymedRuntime` — because assets resolve relative to the
-working directory, so each app needs its own copy. **A new app means a third entry in both
-`compile_shaders.bat` and `compile_shaders.sh`;** forget it and that app loads no shaders and draws
-nothing but the clear colour.
+`SHADER_TARGETS` in the script lists one entry per app that loads shaders at runtime, currently
+`GanymedEditor` and `GanymedRuntime`. Assets resolve relative to the working directory, so each app
+needs its own copy. **A new app that renders needs an entry there.** Without one, that app loads no
+shaders and draws nothing but the clear colour.
 
-`.sh` twins exist for Linux/macOS (`build_shader_tools.sh`, `compile_shaders.sh`). The profile-folder
-↔ backend mapping must match `ProfileDirectory()` in
+**When `shaders` recompiles:** an output is stale when it is missing, or older than any of its
+inputs: its `.sc`, the varying file it uses, `bgfx/src/bgfx_shader.sh`, or shaderc itself.
+Rebuilding shaderc therefore recompiles everything. The check uses mtimes, so a `git checkout` that
+rewrites a source triggers a recompile even when the content is unchanged. That errs in the cheap
+direction: shaderc runs one process per core, and all 264 Windows outputs (44 stage sources × 3
+profiles × 2 apps) recompile in about 2.5 s on the development machine. `shadertools` writes
+`shaderc.bgfx-commit` next to the binary and is out of date when bgfx's `HEAD` moves. A shaderc
+built before that stamp existed reports "bgfx commit unknown" and is not rebuilt automatically,
+because a rebuild costs minutes. Force the step after a bgfx update.
+
+`SHADER_PROFILES` in the script holds the profile-folder ↔ backend mapping, which must match
+`ProfileDirectory()` in
 [`Shader.cpp`](../../GanymedEngine/source/GanymedE/Renderer/Shader.cpp), and **the profile set is
 per-OS**, because the folder is picked at runtime from the live bgfx backend:
 
@@ -373,15 +433,15 @@ per-OS**, because the folder is picked at runtime from the live bgfx backend:
 
 `metal` is shaderc's alias for Metal 1.2. Missing it is not a build error — bgfx selects Metal on
 macOS, `ProfileDirectory()` asks for `compiled/metal/`, and every shader silently fails to load.
-`compile_shaders` prefers a per-shader `varying.<Name>.def.sc` over the shared `varying.def.sc`
-when present (ImGui needs this). There is no file watcher: **edit a shader → re-run the script →
-restart the app** (a failed/missing program logs and skips its draws rather than crashing).
+The `shaders` step prefers a per-shader `varying.<Name>.def.sc` over the shared `varying.def.sc`
+when present (ImGui and RmlUi need this). There is no file watcher: **edit a shader → re-run
+`setup.py shaders` (or `auto`) → restart the app** (a failed/missing program logs and skips its draws rather than crashing).
 
 It is deliberately not a premake prebuild step — that would hard-fail builds on machines that
 haven't built shaderc yet.
 
-`build_shader_tools.sh` drives bgfx's GENie build using the **prebuilt GENie binary bundled in
-bx** (`extern/bx/tools/bin/<os>/genie`), and neither of the Unix ones runs everywhere:
+On Linux and macOS, `shadertools` drives bgfx's GENie build using the **prebuilt GENie binary
+bundled in bx** (`extern/bx/tools/bin/<os>/genie`), and neither of the Unix ones runs everywhere:
 
 | Bundled binary | Built for | Fails on |
 |---|---|---|
@@ -396,20 +456,20 @@ environment variable**, which overrides the bundled path:
 
 ```
 git clone https://github.com/bkaradzic/GENie && make -C GENie
-GENIE=/path/to/GENie/bin/darwin/genie ./scripts/build_shader_tools.sh
+GENIE=/path/to/GENie/bin/darwin/genie python3 scripts/setup.py shadertools
 ```
 
-The script preflights whichever GENie it ends up with and fails with that instruction rather than
+The step preflights whichever GENie it ends up with and fails with that instruction rather than
 letting a raw loader error escape. Note it checks for *output*, not exit status: `genie --version`
 prints its banner to stdout and then exits **1**, so an exit-code check would reject a working
 binary.
 
-bx generates its makefiles into `.build/projects/<action>-<--gcc value>`, so the script derives
+bx generates its makefiles into `.build/projects/<action>-<--gcc value>`, so the step derives
 that directory from the toolchain name rather than spelling it out — `linux-gcc` gives
 `gmake-linux-gcc`, not `gmake-linux`. Getting it wrong surfaces only after GENie succeeds, as
 `make: *** .build/projects/…: No such file or directory`.
 
-The macOS branch also passes **`--with-macos=13.0`**. bx defaults its macOS target to `10.13.6`
+On macOS the step also passes **`--with-macos=13.0`**. bx defaults its macOS target to `10.13.6`
 for the `gmake` action — the newer defaults are wired only to the `xcode*` actions, and its own
 `--with-macos` help text claiming "default 13.0" is wrong for this path. glslang uses
 `std::filesystem`, which libc++ marks unavailable before 10.15, so without the override the tool
