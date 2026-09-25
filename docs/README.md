@@ -79,14 +79,15 @@ the code does _now_, read the subsystem docs above; for what is still open, read
 
 ## Building & running
 
-See the top-level [README](../README.md) for per-platform build steps. Two one-time steps matter on
-a fresh clone, because compiled shader bytecode is gitignored:
+See the top-level [README](../README.md) for per-platform build steps. On every OS, one script
+prepares a checkout. It downloads premake, checks out the submodules, builds shaderc, compiles the
+shaders and generates the project files, skipping whatever is already up to date:
 
 ```
-scripts\build_shader_tools.bat   # builds bgfx's shaderc (once per machine)
-scripts\compile_shaders.bat      # compiles assets/shaders/src -> compiled/<profile>/
+python scripts/setup.py          # interactive menu; `auto` runs it unattended
 ```
 
-Without them the app runs but draws nothing except the clear color and the UI. Re-run
-`compile_shaders` after any shader edit — shaders are no longer compiled at runtime
-(see [Rendering — shaders](engine/rendering.md#shaders)).
+Compiled shader bytecode is gitignored, so without the shader steps the app runs but draws nothing
+except the clear color and the UI. Re-run `python scripts/setup.py shaders` after any shader edit.
+Shaders are not compiled at runtime (see [Rendering — shaders](engine/rendering.md#shaders) and
+[Build & tooling](engine/build-and-tooling.md#workspace)).

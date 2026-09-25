@@ -45,7 +45,7 @@ namespace GanymedE {
 		if (!m_Shader || !m_Shader->IsValid())
 		{
 			GE_CORE_ERROR("RmlUi bgfx backend: failed to load the RmlUi shader "
-				"- run scripts/compile_shaders.bat");
+				"- run: python scripts/setup.py shaders");
 			return false;
 		}
 

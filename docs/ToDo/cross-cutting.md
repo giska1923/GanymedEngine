@@ -134,42 +134,9 @@ Options, in ascending order of effort:
   back.
 - `git clean -xdf` also does it, but it destroys every build output and the `.compiled/` asset
   caches with it — a full rebuild plus a texture recompile to remove one stale folder.
-- Teach the generate scripts in `scripts/` to reap `extern/*.vcxproj` whose `.lua` no longer
-  exists. Recorded for completeness, not recommended: projects leave this workspace rarely, and a
+- Teach the `generate` step of `scripts/setup.py` to reap `extern/*.vcxproj` whose `.lua` no
+  longer exists. Recorded for completeness, not recommended: projects leave this workspace rarely, and a
   script that deletes build files by pattern is a worse failure mode than the folder it cleans.
-
-## Nothing installs the Linux system packages, and `setup_dependencies.sh` is stale
-
-Found while verifying the Sandbox removal: a Linux build in the project's own WSL image now fails in
-bgfx with
-
-```
-bgfx/3rdparty/khronos/vulkan-local/vulkan.h:52:10: fatal error: xcb/xcb.h: No such file or directory
-```
-
-`renderer_vk.h:15` defines `VK_USE_PLATFORM_XCB_KHR` unconditionally on Linux, so bgfx's Vulkan
-path needs the xcb headers. Both `/usr/include/xcb/xcb.h` and `/usr/include/X11/Xlib.h` are absent
-from that image — only the *runtime* libraries (`libx11-6`, `libx11-xcb1`) are installed, not the
-`-dev` packages. GLFW's X11 backend needs `Xlib.h` for the same reason.
-
-**No script in this repository installs them.** `scripts/setup_dependencies.sh` is named as though
-it would, but it only runs `git submodule update --init --recursive` and then checks that submodule
-files exist. The system-package step does not exist anywhere, so the Linux instructions are
-incomplete by exactly the amount that stops a fresh machine from building — which is the same gap
-recorded above under WSL-vs-native, seen from the other side.
-
-While reading it, three separate staleness bugs in that one script:
-
-- It checks for `GanymedEngine/extern/Glad/premake5.lua` and reports a **failure** if it is missing.
-  Glad was deleted by the bgfx migration. On a correct fresh clone this script now says
-  `❌ Glad premake5.lua missing` and prints the "some dependencies are still missing" path.
-- It points at `./scripts/setup_premake_Unix.sh` and `./scripts/GenerateProjects_Unix.sh`. Neither
-  exists; the real names are `setup_premake.sh` and `Linux_GenerateProjects.sh`.
-- It never mentions the system packages above.
-
-Unlike the untracked `extern/Glad/` folder in the entry above, **this one is committed**, so every
-clone has it. Worth fixing together: add the apt/dnf package list, drop the Glad check, correct the
-two script names.
 
 ## Nothing prunes stale objects out of the Linux static archives
 
@@ -195,7 +162,7 @@ Options, none of them obviously right:
 - **Nothing.** Document the trap (done — see
   [build-and-tooling.md](../engine/build-and-tooling.md)) and delete the tree when it bites. It has
   bitten once in the project's life.
-- **Have the generate scripts `make clean` when the source list changes.** Correct, and it throws
+- **Have `scripts/setup.py`'s `generate` step `make clean` when the source list changes.** Correct, and it throws
   away a full dependency rebuild every time a file is added — minutes, for a problem measured in
   years.
 - **Switch the archive rule to delete the `.a` first.** One line in the gmake template, but that

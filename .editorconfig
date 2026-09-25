@@ -6,3 +6,8 @@ root = true
 end_of_line = lf
 insert_final_newline = true
 indent_style = tab
+
+# Python follows PEP 8 rather than the tab rule above
+[*.py]
+indent_style = space
+indent_size = 4

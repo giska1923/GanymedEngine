@@ -13,8 +13,8 @@ namespace GanymedE {
 	// Concrete wrapper over a bgfx program (a linked vertex + fragment shader).
 	//
 	// Shaders are no longer compiled at runtime: shaderc produces bytecode
-	// offline (scripts/compile_shaders.bat) and this loads the blob matching the
-	// active backend. Editing a shader now means re-running that script.
+	// offline (the shaders step of scripts/setup.py) and this loads the blob
+	// matching the active backend. Editing a shader means re-running that step.
 	//
 	// Uniforms differ from GL in two ways that leak into this API:
 	//   - bgfx uniforms are vec4/mat4 only, so scalars are padded into a vec4.

@@ -54,7 +54,7 @@ namespace GanymedE {
 			if (!s_Shader || !s_Shader->IsValid())
 			{
 				GE_CORE_ERROR("ImGui bgfx backend: failed to load the ImGui shader "
-					"- run scripts/compile_shaders.bat");
+					"- run: python scripts/setup.py shaders");
 				return false;
 			}
 

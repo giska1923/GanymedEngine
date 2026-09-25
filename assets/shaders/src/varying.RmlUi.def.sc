@@ -3,8 +3,8 @@
 // Rml::Vertex is fixed by RmlUi as vec2 position + premultiplied RGBA8 colour +
 // vec2 texcoord, which matches neither the engine's shared varying.def.sc (vec3
 // positions) nor ImGui's (whose colour and texcoord are the other way round).
-// compile_shaders picks this up automatically because it is named
-// varying.<name>.def.sc.
+// scripts/setup.py (the shaders step) picks this up automatically because it
+// is named varying.<name>.def.sc.
 //
 // Attribute ORDER here must match the bgfx::VertexLayout in RmlUiRendererBgfx,
 // which in turn must match the field order of Rml::Vertex.

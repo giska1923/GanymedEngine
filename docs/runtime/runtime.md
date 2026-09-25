@@ -148,7 +148,7 @@ Two consequences worth knowing before adding content:
 and gitignored. **A shipped build should ship `.compiled/` anyway**: the runtime treats `assets/` as
 read-only, and without the tree it recompiles every asset on every boot. It warns once when that
 happens rather than failing, so a missing tree is slow rather than fatal.
-`scripts/compile_shaders.bat` writes this app's copy alongside the editor's.
+The `shaders` step of `scripts/setup.py` writes this app's copy alongside the editor's.
 
 ## The demo scene
 
