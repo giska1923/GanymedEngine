@@ -304,7 +304,8 @@ pitch share", which interleave across joints — with three joints at 1/6, 1/3, 
 by 7.8° at a 90° twist and 0.3 pitch, 26° at both limits; measured after the change on
 `ArmoredHumanoid`, the muzzle turns by the target to 0.000°. A Debug boot self-test on a four-joint
 probe skeleton asserts the zero early-out, sign, clamp, and the yaw + pitch target on one joint and
-across two. Axes come from
+across two, to 1e-4 rad measured with the same `atan2` rotation error as the two-hand
+IK self-test below. Axes come from
 `ModelForward` in mesh space, taken into joint space by the rotation part of
 `inverse(Mesh::GetSkinTransform())`, not from the joint's local axes. Positive pitch looks up;
 positive yaw turns the chest toward the character's left. The pitch axis is the character's
@@ -421,9 +422,9 @@ measured before the aim lock existed; the lock adds a handful of matrix products
 re-measured.
 
 A Debug boot self-test runs H1's verification table on a six-joint arm probe, once on a metre rig
-and once on a centimetre rig whose `RootTransform` carries the scale. Its rotation check uses
-`2·atan2(|v|, |w|)` of the delta quaternion rather than `2·acos(|dot|)`: the acos form cannot
-resolve anything below about 7e-4 rad in float.
+and once on a centimetre rig whose `RootTransform` carries the scale. Its rotation check, like the
+aim offset's, uses `RotationError`, `2·atan2(|v|, |w|)` of the delta quaternion, rather than
+`2·acos(|dot|)`: the acos form cannot resolve anything below about 7e-4 rad in float.
 
 An unresolvable clip name warns once per distinct name and holds the bind pose; a missing skeleton
 clears the palette. `RenderSystem` then uses `Mesh::GetRestPalette()` if the mesh still has a
@@ -468,7 +469,11 @@ The skeleton overlay and the editor's joint picking and labels read the same fun
 A missing target, a skeleton with no usable
 palette, a singular inverse bind, or a joint name the skeleton does not have warns once per
 distinct failure and leaves the entity at its **parent** transform (parent cache × local), never
-at the origin. An empty joint is quiet — authoring a socket before picking a name.
+at the origin. Two cases take the same fallback quietly. One is an empty joint: authoring a
+socket before picking a name. The other is a target whose mesh has a handle but is not `Ready()`
+yet: every socketed scene passes through that on its first frames. A mesh that *failed* to load
+also lands in the quiet branch, because `AssetRef` cannot tell failed from pending, and the asset
+layer has already logged the failure against the file.
 
 It declares `RO<BoneAttachmentComponent>`: the component is authored data, and the system writes
 nothing into it. Which sockets it placed this frame, and on which joint, is system state that is

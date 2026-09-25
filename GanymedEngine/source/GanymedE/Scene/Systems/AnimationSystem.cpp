@@ -281,6 +281,16 @@ namespace GanymedE {
 			return glm::angle(delta);
 		}
 
+		// Angle of a⁻¹b from its vector part, for the probes' rotation tolerances. The obvious
+		// 2 acos(|dot|) is quantised near zero - one float step below 1 is already 7e-4 rad - so
+		// it cannot resolve a 1e-4 tolerance: it passes only while the dot rounds to exactly 1.
+		// The absolute w ignores the q / -q double cover quat_cast and angleAxis do not agree on.
+		float RotationError(const glm::quat& a, const glm::quat& b)
+		{
+			const glm::quat delta = glm::normalize(glm::inverse(a) * b);
+			return 2.0f * std::atan2(glm::length(glm::vec3(delta.x, delta.y, delta.z)), std::abs(delta.w));
+		}
+
 		Skeleton MakeProbeSkeleton()
 		{
 			Skeleton skeleton;
@@ -420,15 +430,8 @@ namespace GanymedE {
 				const glm::quat actual = glm::normalize(
 					glm::inverse(glm::quat_cast(rest[2])) * glm::quat_cast(posed[2]));
 
-				// 2 acos(|dot|) is the rotation angle, and the absolute value ignores the
-				// q / -q double cover quat_cast and angleAxis do not agree on.
-				const auto AngleBetween = [](const glm::quat& a, const glm::quat& b)
-				{
-					const float d = glm::clamp(std::abs(glm::dot(a, b)), 0.0f, 1.0f);
-					return 2.0f * std::acos(d);
-				};
-				const float expectedError = AngleBetween(expected, actual);
-				const float wrongError = AngleBetween(wrong, actual);
+				const float expectedError = RotationError(expected, actual);
+				const float wrongError = RotationError(wrong, actual);
 				if (expectedError > 1e-4f || !(wrongError > 1e-3f))
 				{
 					FailProbe("twisted pitch error " + std::to_string(expectedError)
@@ -470,8 +473,7 @@ namespace GanymedE {
 					glm::angleAxis(0.3f, pitchAxis) * glm::angleAxis(1.0f, up));
 				const glm::quat actual = glm::normalize(
 					glm::inverse(glm::quat_cast(rest[(size_t)neck])) * glm::quat_cast(posed[(size_t)neck]));
-				const float d = glm::clamp(std::abs(glm::dot(expected, actual)), 0.0f, 1.0f);
-				const float error = 2.0f * std::acos(d);
+				const float error = RotationError(expected, actual);
 				if (error > 1e-4f)
 				{
 					FailProbe("two-joint yaw+pitch misses the target by " + std::to_string(error) + " rad");
@@ -484,15 +486,6 @@ namespace GanymedE {
 		{
 			GE_CORE_ERROR("Two-bone IK probe failed (unit {0}): {1}", unit, message);
 			GE_CORE_ASSERT(false, "Two-bone IK probe failed");
-		}
-
-		// Angle of a⁻¹b from its vector part. The 2 acos(|dot|) form the aim probes use is
-		// quantised near zero - one float step below 1 is already 7e-4 rad - so it cannot
-		// resolve a 1e-4 tolerance.
-		float RotationError(const glm::quat& a, const glm::quat& b)
-		{
-			const glm::quat delta = glm::normalize(glm::inverse(a) * b);
-			return 2.0f * std::atan2(glm::length(glm::vec3(delta.x, delta.y, delta.z)), std::abs(delta.w));
 		}
 
 		// Chest, a bent arm hanging off it, a hand tip below the wrist that must follow the hand,

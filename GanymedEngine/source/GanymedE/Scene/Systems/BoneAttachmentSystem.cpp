@@ -191,6 +191,16 @@ namespace GanymedE {
 			auto animator = targets.FindOne<AnimatorComponent>(target);
 			auto meshComponent = targets.FindOne<StaticMeshComponent>(target);
 
+			// A mesh still streaming in is quiet: every socketed scene passes through this on its
+			// first frames, and "no rigged mesh" would name a failure that is not happening. A
+			// load that fails stays here too, but the asset layer has already logged that with
+			// the file's name, which is the useful message.
+			if (meshComponent && meshComponent->Mesh.HasHandle() && !meshComponent->Mesh.Ready())
+			{
+				Restore();
+				continue;
+			}
+
 			if (!meshComponent || !meshComponent->Mesh.Ready() || !meshComponent->Mesh->HasSkeleton())
 			{
 				WarnOnce(item.second,
