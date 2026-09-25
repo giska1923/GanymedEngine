@@ -9,9 +9,14 @@ device identity and session, typed Lua bindings for leaderboards and push notifi
 later, the hooks a dedicated server needs to be allocated by a fleet and to verify the players
 it admits.
 
-The backend itself is **not in this repository**. It is a Go service in its own repo, with its own
-design document and its own phases (B1–B5 below). This file covers only what lands in
-`GanymedEngine/`, `GanymedRuntime/` and, for O3's game use, `first-game`.
+The backend itself is **not in this repository**. It is a Go service in its own repo,
+[GanymedServer](https://github.com/giska1923/GanymedServer), with its own design document
+(`docs/ToDo/BACKEND.md` there) and its own phases (B1–B5 below). This file covers only what lands
+in `GanymedEngine/`, `GanymedRuntime/` and, for O3's game use, `first-game`.
+
+**Naming, because the two are easy to confuse:** *GanymedServer* is the backend (accounts,
+leaderboards, matchmaking, allocation). *`GanymedDedicated`* is the planned engine app that runs
+one match headless: the game server the backend allocates and the one O5 is about.
 
 ---
 
@@ -45,7 +50,7 @@ up to O4 can be exercised by the game that already exists.
 - `Backend.*` Lua bindings. They are **typed per endpoint**, and there is no generic HTTP.
 - One WebSocket push channel with reconnect and backoff.
 - Later (O5): lifecycle reporting, connect-token verification and match-result posting in
-  `GanymedServer`.
+  `GanymedDedicated`.
 
 ## What it deliberately is not
 
@@ -94,12 +99,12 @@ engine, and it is also correct: a client that reads its own token's claims start
 |---|---|---|
 | Backend (Go), Postgres, Redis | Docker Compose on the dev machine | Pinned database versions, one command up and down, and the same file moves to a VPS unchanged |
 | Go stub game server (backend B5) | Docker, alongside the backend | Pure Go, no GPU, nothing to port |
-| Fleet agent (backend B5) | **Native**, on the host | It spawns `GanymedServer`, which is a Windows executable |
-| `GanymedServer` (O5) | **Native**, spawned by the agent | Docker Desktop runs Linux containers. Containerising it needs a Linux headless build first |
+| Fleet agent (backend B5) | **Native**, on the host | It spawns `GanymedDedicated`, which is a Windows executable |
+| `GanymedDedicated` (O5) | **Native**, spawned by the agent | Docker Desktop runs Linux containers. Containerising it needs a Linux headless build first |
 | `GanymedRuntime` / `GanymedEditor` | Native | They are the clients |
 
 The engine reaches the backend at `--backend=<url>`, default `http://127.0.0.1:8080`, which is the
-port Compose publishes. Containerising `GanymedServer` later, one container per match (the
+port Compose publishes. Containerising `GanymedDedicated` later, one container per match (the
 Agones model), is a reasonable follow-up once a Linux headless build exists. It is not a
 prerequisite for anything here.
 
@@ -114,7 +119,7 @@ prerequisite for anything here.
 | **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth | master | **B1** (device auth) | 1–2 days |
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores | master + `first-game` | **B2** (leaderboards) | 1–2 days |
 | **O4** | The WebSocket push channel: reconnect, backoff, Lua subscriptions | master | **B3** (realtime gateway) | 2–3 days |
-| **O5** | `GanymedServer` hooks: lifecycle, connect tokens, results | master | **B5** + dedicated server | blocked, unsized |
+| **O5** | `GanymedDedicated` hooks: lifecycle, connect tokens, results | master | **B5** + dedicated server | blocked, unsized |
 
 These are estimates, not measurements. O1 is the phase that matters. Everything after it is a
 consumer of O1's threading and ownership rules, and getting those wrong shows up as a crash on
@@ -459,11 +464,11 @@ herd. With one client that is invisible. It is recorded here because the habit i
 
 ## Phase O5 — dedicated server hooks (blocked)
 
-**Blocked on** a dedicated-server milestone that does not exist yet (`GanymedServer`, a headless
+**Blocked on** a dedicated-server milestone that does not exist yet (`GanymedDedicated`, a headless
 `ApplicationSpecification`, a Scene role, netcode), and on backend B5. Written only as far as
 the contract, so that milestone is designed with these hooks in view rather than retrofitted.
 
-What `GanymedServer` will need from `Online/`:
+What `GanymedDedicated` will need from `Online/`:
 
 - **Lifecycle reporting** to the fleet agent on localhost: `Starting → Ready → Allocated →
   Shutdown`, plus a periodic health ping. The agent passes its address and a per-process secret on
