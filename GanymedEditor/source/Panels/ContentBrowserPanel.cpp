@@ -178,8 +178,8 @@ namespace GanymedE {
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_BaseDirectory(GetAssetRoot()), m_CurrentDirectory(m_BaseDirectory)
 	{
-		m_DirectoryIcon = Texture2D::Create("resources/icons/ContentBrowser/DirectoryIcon.png");
-		m_FileIcon = Texture2D::Create("resources/icons/ContentBrowser/FileIcon.png");
+		m_DirectoryIcon = Texture2D::Create("assets/icons/ContentBrowser/DirectoryIcon.png");
+		m_FileIcon = Texture2D::Create("assets/icons/ContentBrowser/FileIcon.png");
 	}
 
 	void ContentBrowserPanel::SetSelected(const std::filesystem::path& path)

@@ -21,7 +21,7 @@ Studio on Windows, or `make` and a C++ compiler elsewhere. The steps, in depende
 | `premake` | downloads premake `5.0.0-beta8` into `vendor/premake/bin/` | the binary runs and reports the pinned version |
 | `submodules` | `git submodule sync`, then `update --init --recursive` | every submodule is at its pinned commit and non-empty |
 | `shadertools` | builds bgfx's shaderc into `scripts/tools/<os>/` ([below](#shader-toolchain)) | shaderc exists and `shaderc.bgfx-commit` matches bgfx's `HEAD` |
-| `shaders` | compiles `assets/shaders/src` into each app's `assets/shaders/compiled/` | every output is newer than everything it depends on |
+| `shaders` | compiles `assets/shaders/src` into `assets/shaders/compiled/` | every output is newer than everything it depends on |
 | `generate` | `premake5 vs2022` / `gmake` / `xcode4` by OS; `--action` overrides | never: `auto` always runs it |
 
 `auto` re-reads each step's state just before deciding, because earlier steps change what later
@@ -402,20 +402,20 @@ Shaders are **compiled offline**; the compiled `.bin` files are gitignored. Two 
 python scripts/setup.py shadertools   # builds bgfx's shaderc via its GENie build (once per machine)
                                       # → staged at scripts/tools/<os>/shaderc
 python scripts/setup.py shaders       # every .sc in assets/shaders/src → this OS's profiles
-                                      # → <profile>/ under each app's assets/shaders/compiled/
+                                      # → assets/shaders/compiled/<profile>/
 ```
 
-`SHADER_TARGETS` in the script lists one entry per app that loads shaders at runtime, currently
-`GanymedEditor` and `GanymedRuntime`. Assets resolve relative to the working directory, so each app
-needs its own copy. **A new app that renders needs an entry there.** Without one, that app loads no
-shaders and draws nothing but the clear colour.
+`SHADER_TARGETS` in the script lists where compiled shaders go, relative to the repository root.
+It holds one entry, `.`: every app runs with the root as its working directory and loads
+`assets/shaders/compiled/...`, so one copy serves the editor and the runtime alike. A new app that
+renders needs nothing here, as long as it also runs from the root.
 
 **When `shaders` recompiles:** an output is stale when it is missing, or older than any of its
 inputs: its `.sc`, the varying file it uses, `bgfx/src/bgfx_shader.sh`, or shaderc itself.
 Rebuilding shaderc therefore recompiles everything. The check uses mtimes, so a `git checkout` that
 rewrites a source triggers a recompile even when the content is unchanged. That errs in the cheap
-direction: shaderc runs one process per core, and all 264 Windows outputs (44 stage sources × 3
-profiles × 2 apps) recompile in about 2.5 s on the development machine. `shadertools` writes
+direction: shaderc runs one process per core, and all 132 Windows outputs (44 stage sources × 3
+profiles) recompile in about 1.3 s on the development machine. `shadertools` writes
 `shaderc.bgfx-commit` next to the binary and is out of date when bgfx's `HEAD` moves. A shaderc
 built before that stamp existed reports "bgfx commit unknown" and is not rebuilt automatically,
 because a rebuild costs minutes. Force the step after a bgfx update.
@@ -512,22 +512,26 @@ Take the pair the lockfile records rather than upgrading TypeScript on its own. 
 
 ## Assets
 
-Each app resolves `assets/` **relative to its working directory** — run the editor from
-`GanymedEditor/`, the runtime from `GanymedRuntime/` (`debugdir "%{prj.location}"` sets this for the
-debugger). `GanymedEditor/assets/` holds shaders (`src/` + gitignored `compiled/`), environments,
-models, scenes, textures, fonts, and one `.meta` sidecar per asset carrying its handle — those are
-**tracked**, for both apps, and that is the point of them ([assets.md](assets.md#the-meta-sidecar)).
-The legacy `AssetRegistry.gr` is still present and still read as a migration seed.
+The workspace has **one** asset tree, `assets/` at the repository root. Both apps resolve
+`assets/...` **relative to their working directory**, which is the repository root
+(`debugdir "%{wks.location}"` sets this for the debugger; run from there by hand too). It holds
+shaders (`src/` + gitignored `compiled/`), environments, models, scenes, scripts, prefabs, audio,
+UI documents, fonts, the editor's icons and textures, `runtime.yaml`, and one `.meta` sidecar per
+asset carrying its handle. The sidecars are **tracked**, and that is the point of them
+([assets.md](assets.md#the-meta-sidecar)). A local `AssetRegistry.gr` is gitignored and still read
+as a migration seed if one exists.
 `assets/.compiled/` holds compiled artifacts — block-compressed textures and binary mesh blobs,
 keyed by a hash of the source path, with a `.dep` epoch record beside each. Safe to delete at any
 time; the next load rebuilds it. The content browser hides it, along with the sidecars.
 `assets/.assets/` is the abandoned pre-Phase-4 mesh cache and can be deleted outright.
 
-`GanymedRuntime/assets/` is a copied snapshot of that content, trimmed to what the game uses, plus
-`audio/` — authored for the demo rather than copied (see [runtime.md](../runtime/runtime.md)).
-Sharing or packing a single tree is a non-goal for now. The `.gitignore` asymmetry that remains is
-the compiled tree: `**/assets/.compiled/` is untracked in both apps, while identity now travels with
-the asset in both.
+There used to be three trees: `GanymedEditor/assets/`, a hand-copied `GanymedRuntime/assets/`
+snapshot, and the shader sources here. They were merged because the copy had to be kept in sync by
+hand, and each copy carried its own handles for the same file. The runtime's handles were remapped
+onto the editor's in `Demo.ganymede`, the only file that referenced them. What is lost is the
+separation of engine and editor chrome from project content *on disk*. It still exists in code
+(see [the project root](assets.md#the-project-root)), and `--project=` still opens a project
+elsewhere.
 
 **Compilation is not covered by `AssetManager::Init(false)`**, so a read-only-assets app compiles
 on a cold tree, and writing the result is best effort — it warns once and keeps going if the

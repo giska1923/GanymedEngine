@@ -593,7 +593,7 @@ namespace GanymedE {
 				std::filesystem::path root = arg.substr(prefix.size());
 				if (root.empty())
 				{
-					GE_WARN("--project= with no path; opening the editor's own assets/");
+					GE_WARN("--project= with no path; opening the workspace's assets/");
 					break;
 				}
 
@@ -617,7 +617,7 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		// --project=<path> opens a project other than the editor's own assets/ tree. Only the
+		// --project=<path> opens a project other than the workspace's assets/ tree. Only the
 		// project moves: the editor's fonts, its checkerboard and its HUD document are loaded
 		// relative to the working directory because they ship with the editor, not with the
 		// content. Without the switch this is exactly what it always was.

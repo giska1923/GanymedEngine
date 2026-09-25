@@ -21,8 +21,10 @@ relocatable:
 | the editor | Inter and Lucide, `Checkerboard.png`, the editor's own `hud.rml` | the **working directory** — same reason |
 | the project | scenes, prefabs, models, scripts, materials, audio | **`GetAssetRoot()`** |
 
-So pointing an app at another project moves the content and leaves the application's own assets
-alone. The editor takes `--project=<path>` ([editor.md](../editor/editor.md)); the runtime reads
+In this workspace the two coincide: both apps run with the repository root as their working
+directory and the project root defaults to `assets`, so engine chrome, editor chrome and project
+content all live in the one root `assets/` tree. The split still matters, because pointing an app
+at another project moves the content and leaves the application's own assets alone. The editor takes `--project=<path>` ([editor.md](../editor/editor.md)); the runtime reads
 `AssetRoot` from `runtime.yaml` ([runtime.md](../runtime/runtime.md)). The default is `assets`,
 which is what both apps have always used, so neither changes behaviour when the switch is absent.
 
@@ -454,7 +456,7 @@ Two things that hold assets alive and are easy to forget: `Renderer3D` keeps a `
 for the duration of a frame, and the editor's undo stack snapshots whole components, so an
 `AssetRef` in undo history keeps its asset resident. Both are correct — they are real references —
 but they mean resident counts lag a scene close until the undo stack is cleared. The Content
-Browser's type icons are still fixed `resources/` textures. Mesh thumbnails are a separate
+Browser's type icons are still fixed `assets/icons/` textures. Mesh thumbnails are a separate
 128×128 `Texture2D` cache on `AssetPreview` — they are not `Mesh` refs, so opening a folder of
 200 meshes does not pin 200 meshes resident. See [Thumbnail cache](#thumbnail-cache).
 
@@ -1166,8 +1168,10 @@ same path, and it is what keeps the uncompiled fallback matching the compiled pa
 rather than only in content.
 
 Editor chrome that is still a texture (`ContentBrowserPanel` file/folder icons, the checkerboard)
-stays on the `Texture2D(path)` constructor with hard-coded `resources/` paths — outside the asset
-cache, since it has no asset identity and no reason to be evictable. Play/Stop in the toolbar is
+stays on the `Texture2D(path)` constructor with hard-coded `assets/icons/` and `assets/textures/`
+paths — outside the asset cache, since it is never looked up by identity and has no reason to be
+evictable. Those files sit inside the project tree, so the scan still gives them sidecars; nothing
+references those handles. Play/Stop in the toolbar is
 an icon-font glyph, not a texture.
 
 ## Reload
@@ -1211,9 +1215,8 @@ component is invisible to eviction, keeps its asset resident forever, and goes s
 
 Asset roots: paths resolve against `GetAssetRoot()`
 ([`AssetPaths.h`](../../GanymedEngine/source/GanymedE/Assets/AssetPaths.h)) — the relative
-directory `assets/`, i.e. **relative to the working directory**, which is why the apps must run
-with their project folder as CWD (each app has its own `assets/`; the editor's is
-`GanymedEditor/assets/`).
+directory `assets/` by default, i.e. **relative to the working directory**, which is why both apps
+run with the repository root as CWD: the workspace has exactly one `assets/` tree, at the root.
 
 ## Mesh import (cgltf)
 

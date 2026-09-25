@@ -4,13 +4,15 @@ The editor application (`GanymedEditor/source/`). It is a thin client of the eng
 `Application` subclass ([`GanymedEditorApp.cpp`](../../GanymedEditor/source/GanymedEditorApp.cpp))
 pushing a single [`EditorLayer`](../../GanymedEditor/source/EditorLayer.h), plus the hierarchy,
 Joints, content browser, Asset Inspector, and Map panels.
-Run it with `GanymedEditor/` as the working directory — the editor's *own* assets (Inter, Lucide,
-the checkerboard, its HUD document) resolve relative to CWD. A scene path may be passed
+Run it with the **repository root** as the working directory (`debugdir "%{wks.location}"` sets
+this for the debugger). The editor's *own* assets (Inter, Lucide, the checkerboard, the title-bar
+and content-browser icons, its HUD document) resolve relative to CWD, i.e. from the workspace's one
+`assets/` tree. A scene path may be passed
 positionally, and `--renderer=<backend>` selects the graphics backend (see
 [rendering.md](../engine/rendering.md#backend-selection)). Options and the scene path may appear in
 either order.
 
-`--project=<path>` opens a project other than `GanymedEditor/assets/`. Only the **project** moves:
+`--project=<path>` opens a project other than the workspace's `assets/`. Only the **project** moves:
 the editor's own assets above still come from the working directory, because they ship with the
 editor rather than with the content — see [the project root](../engine/assets.md#the-project-root).
 The path is logged at boot, and a path that is not a directory is opened anyway with a warning,
@@ -173,7 +175,7 @@ a Win32 subclass so drag, snap, edge resize and maximize-without-covering-the-ta
 native; Linux (X11) and macOS drag with `glfwSetWindowPos`. Wayland keeps OS decorations and
 this strip is not drawn.
 
-The strip is 40 px `ChromeBg`: app icon (`resources/icon.png`), a **Menu** button whose popup
+The strip is 40 px `ChromeBg`: app icon (`assets/icons/icon.png`), a **Menu** button whose popup
 holds File / Edit / View (the same items the old `BeginMenuBar` had), one document tab (scene
 filename + dirty `*`, `SurfaceBg` fill — Ganymed has one open scene, so a strip of fake tabs
 would be a lie), then min / restore-or-max / close. Close hovers `Error`. The title-bar child

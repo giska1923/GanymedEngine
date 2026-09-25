@@ -12,7 +12,7 @@ Entities:
       Children:
         []
     SkyLightComponent:
-      Environment: 1000000000000000001
+      Environment: 7862165199193339401
       SkyColor: [0.449999988, 0.620000005, 0.899999976]
       GroundColor: [0.280000001, 0.25999999, 0.219999999]
       Intensity: 0.349999994
@@ -68,7 +68,7 @@ Entities:
       Children:
         []
     StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Mesh: 938641464213506982
     RigidBodyComponent:
       Type: 0
       Mass: 1
@@ -92,9 +92,9 @@ Entities:
       Children:
         - 2000000000000000009
     StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Mesh: 938641464213506982
     ScriptComponent:
-      Script: 1000000000000000004
+      Script: 13879412455023508266
     RigidBodyComponent:
       Type: 1
       Mass: 1
@@ -118,7 +118,7 @@ Entities:
       Children:
         []
     PrefabInstanceComponent:
-      Source: 1000000000000000007
+      Source: 457739056084338527
     ParticleEmitterComponent:
       RateOverTime: 0
       MaxParticles: 64
@@ -148,9 +148,9 @@ Entities:
       Children:
         - 2000000000000000010
     StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Mesh: 938641464213506982
     ScriptComponent:
-      Script: 1000000000000000004
+      Script: 13879412455023508266
     RigidBodyComponent:
       Type: 1
       Mass: 1
@@ -174,7 +174,7 @@ Entities:
       Children:
         []
     PrefabInstanceComponent:
-      Source: 1000000000000000007
+      Source: 457739056084338527
     ParticleEmitterComponent:
       RateOverTime: 0
       MaxParticles: 64
@@ -204,9 +204,9 @@ Entities:
       Children:
         []
     StaticMeshComponent:
-      Mesh: 1000000000000000002
+      Mesh: 938641464213506982
     ScriptComponent:
-      Script: 1000000000000000003
+      Script: 18186787810652536289
     AudioSourceComponent:
       Clip: 1000000000000000006
       Group: SFX

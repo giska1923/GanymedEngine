@@ -17,7 +17,7 @@ namespace GanymedE {
 	{
 		// The project: the directory the two paths below are relative to, and the root handed
 		// to AssetManager::Init. Relative to the working directory, so the default keeps a
-		// shipped game's content beside its executable. Point it elsewhere ("../Game/assets")
+		// shipped game's content beside its executable. Point it elsewhere ("path/to/project")
 		// to run the editor's project without copying it first. See docs/engine/assets.md.
 		//
 		// This file itself is *not* project content - it is read from assets/runtime.yaml

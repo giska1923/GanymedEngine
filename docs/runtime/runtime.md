@@ -11,8 +11,8 @@ game must *not* do had to become opt-in for this app to be possible — see
 | | |
 |---|---|
 | Sources | `GanymedRuntime/source/` — three files: `RuntimeApp.cpp`, `RuntimeLayer`, `RuntimeConfig` |
-| Content | `GanymedRuntime/assets/` — a copied snapshot of editor-authored assets, each with its `.meta` sidecar (see [Assets](#assets)) |
-| Working directory | the project folder (`debugdir "%{prj.location}"`); all asset paths are relative to it |
+| Content | the workspace's root `assets/`, the same tree the editor authors into (see [Assets](#assets)) |
+| Working directory | the repository root (`debugdir "%{wks.location}"`); all asset paths are relative to it |
 | Windows subsystem | `ConsoleApp`, except Dist which is `WindowedApp` + `mainCRTStartup` so a shipped game has no console behind it |
 
 ## Boot sequence
@@ -90,7 +90,7 @@ exe that starts and tells you what is wrong beats one that refuses to start.
 
 | Key | Default | Notes |
 |---|---|---|
-| `AssetRoot` | `assets` | [The project root](../engine/assets.md#the-project-root): what the scan walks, and what the two paths below are relative to. Point it elsewhere (`../Game/assets`) to run a project in place instead of copying it here first |
+| `AssetRoot` | `assets` | [The project root](../engine/assets.md#the-project-root): what the scan walks, and what the two paths below are relative to. Point it elsewhere to run another project in place |
 | `StartScene` | `scenes/Demo.ganymede` | Relative to `AssetRoot`. The only field the command line can override |
 | `UIDocument` | `ui/hud.rml` | Relative to `AssetRoot`. Empty string = no HUD |
 | `Title` | `GanymedEngine Runtime` | Window title |
@@ -117,24 +117,26 @@ divergence here is scale-honest — six keys in a file the app parses, not an as
 
 ## Assets
 
-`GanymedRuntime/assets/` is a **copied snapshot** of editor-authored content. Sharing a tree with
-the editor, or packing it, is a non-goal for this milestone: every app resolves `assets/` from its
-working directory, and cooking is its own milestone.
+The runtime reads the **same** `assets/` tree the editor writes: both run from the repository root,
+so there is no copy step during development. A shipped build still needs a copy of that tree
+beside the executable; packing and cooking are their own work (see
+[cross-cutting.md](../ToDo/cross-cutting.md#there-is-no-packaging-step)).
 
-Two consequences worth knowing before adding content:
+Things worth knowing before adding content:
 
-- **The snapshot must include the `.meta` sidecars.** Scenes store bare handles, and
+- **A shipped copy must include the `.meta` sidecars.** Scenes store bare handles, and
   `AssetManager::Init(false)` can only *adopt* the identity it finds on disk — a read-only scan
   mints handles in memory but persists nothing, so an asset shipped without its sidecar gets a
   different handle on every boot and the scene silently loses it. This was verified the hard way
   before sidecars existed: a runtime with no identity file loads its scene, reports the right entity
-  count, and renders nothing but the procedural sky. Add an asset by copying **both** the file and
-  its `foo.ext.meta`. The old `assets/AssetRegistry.gr` is still committed and still read as a
-  migration seed, but it no longer carries identity for anything new; see
-  [assets.md](../engine/assets.md#migration-from-assetregistrygr).
-- Only the three font faces `UIEngine` actually loads are shipped (`Montserrat-Regular`, `-Bold`,
-  `-Italic`, plus the OFL licence). RmlUi hard-requires them: missing fonts render as a silently
-  empty UI, not an error.
+  count, and renders nothing but the procedural sky. Ship **both** the file and its `foo.ext.meta`.
+  The runtime used to carry a committed `AssetRegistry.gr` as well. It was dropped when the trees
+  merged, because every asset it listed has a sidecar
+  ([assets.md](../engine/assets.md#migration-from-assetregistrygr)).
+- `UIEngine` loads three font faces (`Montserrat-Regular`, `-Bold`, `-Italic`) from
+  `assets/fonts/montserrat/`. RmlUi hard-requires them: missing fonts render as a silently empty
+  UI, not an error. The editor's Inter and Lucide sit beside them in the same tree; a shipped game
+  does not need those.
 - **Audio splits both ways.** `audio/music.mp3` and `audio/hum.wav` are referenced by handle from
   `AudioSourceComponent`s. `audio/impact.wav` and `audio/chime.wav` are played by
   `Audio.PlayOneShot` from Lua, which takes a **path** — that asymmetry is the visible consequence
@@ -148,7 +150,7 @@ Two consequences worth knowing before adding content:
 and gitignored. **A shipped build should ship `.compiled/` anyway**: the runtime treats `assets/` as
 read-only, and without the tree it recompiles every asset on every boot. It warns once when that
 happens rather than failing, so a missing tree is slow rather than fatal.
-The `shaders` step of `scripts/setup.py` writes this app's copy alongside the editor's.
+The `shaders` step of `scripts/setup.py` writes the one copy both apps load.
 
 ## The demo scene
 

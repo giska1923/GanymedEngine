@@ -52,9 +52,9 @@ BGFX = os.path.join(EXTERN, "bgfx")
 PREMAKE_VERSION = "5.0.0-beta8"
 PREMAKE_URL = "https://github.com/premake/premake-core/releases/download/v{0}/premake-{0}-{1}"
 
-# Every app that loads shaders at runtime gets its own compiled copy, because assets resolve
-# relative to the working directory. A new app that renders needs an entry here.
-SHADER_TARGETS = ["GanymedEditor", "GanymedRuntime"]
+# Where compiled shaders go, relative to the repository root. Every app runs with the root as its
+# working directory and loads "assets/shaders/compiled/...", so one copy serves all of them.
+SHADER_TARGETS = ["."]
 SHADER_SRC = os.path.join(ROOT, "assets", "shaders", "src")
 
 # (folder, shaderc -p profile) per OS. The folder names must match ProfileDirectory() in
@@ -447,8 +447,8 @@ def shader_jobs():
     sources = sorted(f for f in os.listdir(SHADER_SRC)
                      if f.endswith(".sc") and (f.startswith("vs_") or f.startswith("fs_")))
     jobs = []
-    for app in SHADER_TARGETS:
-        compiled = os.path.join(ROOT, app, "assets", "shaders", "compiled")
+    for target in SHADER_TARGETS:
+        compiled = os.path.normpath(os.path.join(ROOT, target, "assets", "shaders", "compiled"))
         for folder, profile in SHADER_PROFILES[OS]:
             for source in sources:
                 stem = source[:-3]

@@ -13,7 +13,7 @@ Plan of record: [`Scripting-And-UI-Integration.md`](../history/Scripting-And-UI-
 | Render backend | [`Platform/RmlUi/RmlUiRendererBgfx.h`](../../GanymedEngine/source/Platform/RmlUi/RmlUiRendererBgfx.h) | `Rml::RenderInterface` on bgfx |
 | System interface | [`Platform/RmlUi/RmlUiSystemInterface.h`](../../GanymedEngine/source/Platform/RmlUi/RmlUiSystemInterface.h) | Clock + log routing |
 | Shaders | `assets/shaders/src/{vs,fs}_RmlUi.sc` + `varying.RmlUi.def.sc` | One program, RmlUi's vertex layout |
-| Example | `GanymedEditor/assets/ui/hud.{rml,rcss}` | A static HUD |
+| Example | `assets/ui/hud.{rml,rcss}` | A static HUD |
 
 `UIEngine.h` carries no RmlUi types beyond forward declarations, the same discipline
 `ScriptEngine.h` applies to sol2 — which is why the editor project has no RmlUi include path at
@@ -75,7 +75,7 @@ a hand-written build script has to supply it. Without it everything compiles and
 `div`. An inline element ignores `width` and `height`, so a styled box lays out at zero width,
 renders nothing, and logs nothing. RmlUi ships the defaults as an *asset*, not as library
 behaviour: `Samples/assets/rml.rcss`, copied here to
-`GanymedEditor/assets/ui/rml.rcss`. **Every document must `<link>` it before its own stylesheet.**
+`assets/ui/rml.rcss`. **Every document must `<link>` it before its own stylesheet.**
 
 Related: RCSS is not CSS. `@font-face` is rejected outright (faces are registered in C++ via
 `Rml::LoadFontFace`), and on a bad at-rule the parser recovers by skipping to the next `}` — which
