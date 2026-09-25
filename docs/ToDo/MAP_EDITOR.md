@@ -10,7 +10,7 @@ top-down orthographic view.
 
 ## Why this, and why now
 
-The evidence is in the one real map the engine has. `Game/assets/scenes/ProvingGround.ganymede` is
+The evidence is in the one real map the engine has. `assets/scenes/ProvingGround.ganymede` is
 48 entities, and its buildings are hand-assembled entity-by-entity:
 
 ```
@@ -114,7 +114,7 @@ volume. Keep it last, and drop it without ceremony if M1–M4 run long.
 **Done.** `Math::ScreenPointToRay` and `RaycastScene` are live; Edit-mode Stats shows `Surface:`
 plus the per-ray milliseconds. The Proving Ground probes below (GroundTile, Warehouse wall, 1 000
 rays in Release) still need that scene, which lives on `first-game`. They were not run in M6 —
-they need a human in the editor with `--project=` pointed at `Game/assets`. Not a reason to keep
+they need a human in the editor on `first-game`, where the map is the default project. Not a reason to keep
 M0 open.
 
 ### Goal
@@ -732,7 +732,7 @@ bullets for the holes and the missing ledge are struck there.
 
 **Still not run**, and still not a reason to keep M0/M5 open: the editor-side ProvingGround
 probes (GroundTile ray, 1 000 rays in Release, Top (Ortho) over the map). Those need a human in
-the editor pointing `--project=` at `Game/assets`.
+the editor on `first-game`, where the map is the default project.
 
 ---
 

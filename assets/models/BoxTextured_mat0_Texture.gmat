@@ -6,4 +6,3 @@ Material:
   AlbedoMap: models/BoxTextured_textures/albedo_0.png
   TwoSided: false
   Transparent: false
-# hand-authored marker

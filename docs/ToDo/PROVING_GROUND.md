@@ -5,6 +5,12 @@ runs in `GanymedRuntime`, Dist, from a shipped install. What is left of this doc
 record rather than a plan, and it belongs in `docs/history/` once the branch is merged — see
 [ToDo/README.md](README.md) for the one thing missing from it first.
 
+**Layout note, added after completion:** the game no longer lives in `Game/assets/`. When the
+workspace moved to a single root `assets/` tree, `first-game` removed master's demo content
+from that tree and moved the game to its top level. Both apps now open it by default, with no
+`--project=` and no `AssetRoot: ../Game/assets`. Every `Game/assets/...` path below is the layout
+at the time it was written; the same relative path under `assets/` is where the file is now.
+
 A small third-person shooter, built to find out what is wrong with the engine. The game is the
 instrument, not the goal: every phase below is chosen for the engine surface it puts under load,
 and a phase that would be fun but tests nothing already built is cut.

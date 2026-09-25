@@ -1,79 +1,1172 @@
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
-local ____exports = {}
+-- Proving Ground - player controller (P1)
+--
+-- Movement is velocity-driven on a rotation-locked dynamic capsule. The capsule itself never
+-- turns: its TransformComponent is overwritten from Jolt every frame by SyncTransforms, so a yaw
+-- written here would be erased before it was ever seen. Facing therefore lives on a child entity
+-- ("Yaw"), which has no body and whose local transform nothing else touches.
+--
+-- Looking is on the mouse. P0.5 landed cursor capture, and the prediction this comment used to
+-- carry - "reads a mouse delta instead and nothing else here changes" - was nearly right: the
+-- movement code below is untouched. What it missed is that capture needs a way *out*.
+--
+-- Click to capture, Escape to release. Not captured on OnCreate, because scripts also run in the
+-- editor's play mode, and the editor has no Escape handling at all: a script that grabbed the
+-- cursor unconditionally would trap it over the editor with no way to reach the Stop button. In
+-- the runtime Escape quits, so the same key gets you out of both.
+--
+-- Pitch lives on the camera and yaw on the "Yaw" entity, because they must not multiply: pitching
+-- a parent that a child yaws under rolls the horizon.
+--
+-- The capsule is a CharacterControllerComponent, not a rotation-locked rigid body. The first
+-- version was the latter, and P1's gate failed on it: a velocity-driven body cannot slide along a
+-- wall, so it jammed on the same corner every lap. Nothing in this script changed for the swap -
+-- SetLinearVelocity routes to either - which is the point of that API accepting both.
+
 local Player = {
     entity = nil,
-    Properties = {speed = 3, drainRate = 12, bobHeight = 1, masterVolume = 0.8},
-    speed = 0,
-    drainRate = 0,
-    bobHeight = 0,
-    masterVolume = 0,
-    elapsed = 0,
-    health = 100,
-    score = 0,
-    musicMuted = false,
-    musicKeyWasDown = false,
-    humFrames = 0,
-    OnCreate = function(self)
-        Log.Info(((("Player created: " .. self.entity:GetName()) .. " (speed=") .. tostring(self.speed)) .. ")")
-        UI.SetHealth(self.health)
-        UI.SetScore(self.score)
-        Audio.SetMasterVolume(self.masterVolume)
-        Log.Info("Player has an audio source: " .. tostring(self.entity:HasAudioSource()))
-        self.entity:SetSoundLooping(true)
-        self.entity:SetSoundVolume(0.6)
-    end,
-    OnUpdate = function(self, ts)
-        self.elapsed = self.elapsed + ts
-        self.health = self.health - ts * self.drainRate
-        if self.health <= 0 then
-            self.health = 100
-            Audio.PlayOneShot("audio/chime.wav")
-        end
-        UI.SetHealth(self.health)
-        self.score = math.floor(self.elapsed * 10)
-        UI.SetScore(self.score)
-        local pos = self.entity:GetTranslation()
-        if Input.IsKeyPressed(Key.W) then
-            pos.z = pos.z - self.speed * ts
-        end
-        if Input.IsKeyPressed(Key.S) then
-            pos.z = pos.z + self.speed * ts
-        end
-        if Input.IsKeyPressed(Key.A) then
-            pos.x = pos.x - self.speed * ts
-        end
-        if Input.IsKeyPressed(Key.D) then
-            pos.x = pos.x + self.speed * ts
-        end
-        local bob = math.sin(self.elapsed * 2)
-        pos.y = bob * self.bobHeight
-        self.entity:SetTranslation(pos)
-        if Input.IsKeyPressed(Key.Space) then
-            self.entity:PlaySound()
-            self.entity:SetSoundPitch(1 + bob * 0.15)
-            self.humFrames = self.humFrames + 1
-            if self.humFrames == 1 or self.humFrames % 120 == 0 then
-                Log.Info((("Hum: " .. tostring(self.humFrames)) .. " PlaySound calls, IsSoundPlaying=") .. tostring(self.entity:IsSoundPlaying()))
-            end
-        elseif self.humFrames > 0 then
-            self.entity:StopSound()
-            Log.Info((("Hum stopped after " .. tostring(self.humFrames)) .. " PlaySound calls, IsSoundPlaying=") .. tostring(self.entity:IsSoundPlaying()))
-            self.humFrames = 0
-        end
-        local musicKeyDown = Input.IsKeyPressed(Key.M)
-        if musicKeyDown and not self.musicKeyWasDown then
-            self.musicMuted = not self.musicMuted
-            Audio.SetGroupVolume("Music", self.musicMuted and 0 or 1)
-            Log.Info("Music " .. (self.musicMuted and "muted" or "unmuted"))
-        end
-        self.musicKeyWasDown = musicKeyDown
-    end,
-    OnCollisionEnter = function(self, other)
-        Log.Warn("Hit " .. other:GetName())
-    end,
-    OnDestroy = function(self)
-        Log.Info("Player destroyed")
-    end
+    Properties = {
+        speed = 6.0,        -- metres/second on the ground plane
+        turnSpeed = 2.4,    -- radians/second, for the keyboard fallback
+        -- Radians of turn per pixel of mouse movement. 0.0022 is about 0.13 degrees a pixel,
+        -- which is the middle of the range shooters ship with.
+        sensitivity = 0.0022,
+        -- P3. muzzleSpeed is deliberately moderate: Decision 2 accepted that projectiles tunnel
+        -- at some speed, and nothing here does continuous collision detection, so a round fast
+        -- enough to cross a 0.3 m wall in one step would pass through it.
+        muzzleSpeed = 28.0,
+        fireInterval = 0.12,
+        -- Gate mode: fire every frame instead of on a trigger, to put Scene.Spawn and the
+        -- 64-per-frame cap under sustained load. Off for play.
+        autofire = false,
+        -- Drives the circuit below with no keyboard, for gate runs. **Off by default now**: with
+        -- mouse look there is a human driving. The gate runs in the roadmap all set it true.
+        autopilot = false,
+        -- P4's gate. Drives LOS_ROUTE instead of ROUTE - walk to a marked spot, stop, stand
+        -- still long enough for the Sentry's answer to be unambiguous, move to the next. Also
+        -- sets PG.freeze, which makes every enemy sense without moving: six of them converging
+        -- on the probe point would shove the player off the spot the measurement is taken at.
+        losgate = false,
+        -- P5's gate. Drives P5_ROUTE: stand and fight until it hurts, heal, arm, upgrade.
+        p5gate = false,
+
+        -- ---- P5: health and the things that change it ----
+        maxHealth = 100.0,
+        -- Per touch from an enemy. Enemies close to 0.8 m now (Enemy.lua's standoff), so contact
+        -- is continuous once one reaches you - the cooldown, not the contact, sets the rate.
+        contactDamage = 6.0,
+        damageCooldown = 1.0,
+        -- Health per second while standing in a heal spot. Faster than two enemies can take it
+        -- off, or the spot is scenery.
+        healRate = 14.0,
+        -- What the upgrade station charges for +1 projectile damage.
+        upgradeCost = 2.0,
+
+        -- P6. Seconds between footsteps at full speed. 0.42 is a brisk walk; the sound is
+        -- retriggered rather than looped, so this is the only thing setting the cadence.
+        stepInterval = 0.42,
+    },
+    speed = 6.0,
+    turnSpeed = 2.4,
+    sensitivity = 0.0022,
+    muzzleSpeed = 28.0,
+    fireInterval = 0.12,
+    autofire = false,
+    autopilot = false,
+    losgate = false,
+    p5gate = false,
+    maxHealth = 100.0,
+    contactDamage = 6.0,
+    damageCooldown = 1.0,
+    healRate = 14.0,
+    upgradeCost = 2.0,
+    stepInterval = 0.42,
+
+    -- Probe-route state, shared by both gate modes: they differ only in which table they walk.
+    probeWp = 1,
+    probeHold = 0.0,
+    probeDrive = false,
+    probeSlow = 1.0,
+    probeDone = false,
+
+    -- P5 state.
+    health = 100.0,
+    hurtCooldown = 0.0,
+    hits = 0,          -- times an enemy has landed a touch
+    inHeal = 0,        -- how many heal-spot sensors we are standing in
+    healed = 0.0,
+    weapon = 1,
+    upgrades = 0,
+    lastKills = 0,
+    downed = false,
+    downFor = 0.0,
+    uiHealth = -1.0,
+    uiScore = -1,
+    uiMismatch = 0,
+    pendingHurt = 0,
+    probeAborted = false,
+
+    -- P6.
+    footsteps = nil,
+    muzzle = nil,
+    -- P8. The mesh child, which carries the skin and the AnimatorComponent.
+    body = nil,
+    clip = nil,
+    -- World yaw the legs are turned to. Velocity while moving, including a strafe
+    -- inside the aim-offset yaw limit. The camera's yaw when standing and aiming,
+    -- and when a backpedal is past that limit.
+    meshYaw = nil,
+    -- Seconds left in which the body keeps facing the aim after a shot (see Player:Animate).
+    aimHold = 0.0,
+    -- Legs-versus-aim mode, with hysteresis (see BACKPEDAL_ENTER).
+    backpedal = false,
+    -- The aim offset's inputs are held while aiming and faded by aimBlend, never zeroed.
+    aimBlend = 0.0, -- linear 0..1 ramp; the applied weight is its smoothstep
+    aimPitchHeld = 0.0,
+    aimYawHeld = 0.0,
+    stepTimer = 0.0,
+    steps = 0,
+    muzzleBursts = 0,
+
+    fireCooldown = 0.0,
+    refused = 0,
+    yaw = 0.0,
+    pitch = 0.0,
+    looking = false,
+    yawEntity = nil,
+    cameraEntity = nil,
+    -- Gate diagnostics: the P1 gate is "walk for two minutes without tipping, sinking or
+    -- sticking", and all three are invisible without a readout.
+    t = 0.0,
+    nextReport = 5.0,
+    startY = 0.0,
+    minY = 1e9,
+    maxTilt = 0.0,
+    stuckFor = 0.0,
+    lastPos = nil,
+    worstStuck = 0.0,
+    fell = false,
+    wp = 1,
+    frames = 0,
+    groundedFrames = 0,
+    -- Sampled extents lie: a 5 s report against a ~9 s lap aliases onto two points and makes a
+    -- route that crosses the map look like a 4 m box. These are tracked every frame.
+    xmn = 1e9, xmx = -1e9, zmn = 1e9, zmx = -1e9,
+    wpHits = nil,
+    -- P2's gate is about solidity, so the two things worth counting are whether the character
+    -- was ever inside a building, and whether it was ever inside one of its *walls*.
+    inBH = 0, inWH = 0, inWall = 0,
 }
+
+-- Footprints in world XZ. A position inside the outer box but not clear of the wall thickness
+-- plus the capsule radius means the character is standing in a 0.3 m wall - which is what
+-- tunnelling looks like from here.
+-- door = the world XZ of the opening's centre, and the half-width of the corridor through it.
+-- Without this, every legitimate doorway transit counts as being inside a wall: passing through a
+-- door *is* being inside the footprint and within a wall thickness of the edge. The first run
+-- reported inWall=299 for exactly that reason and none of it was tunnelling.
+--
+-- Only openings the *mesh* actually has. The first pass listed the Blockhouse's two window-wall
+-- holes and the Warehouse's 0.90 m X- gap as doors, because that is where the box sets were open.
+-- Those holes are closed (see PROVING_GROUND.md). Treating them as doors now would hide tunnelling
+-- at the old locations: inWall would not increment if the capsule clipped a now-solid wall there.
+-- Radius is the opening's half-width plus the capsule's 0.35 m.
+local FOOTPRINTS = {
+    { name = "BH", x = 16,  z = -6,  hx = 4.0,  hz = 3.58, doors = {
+        { 16.465, -2.57, 1.29 },  -- +Z doorway, 1.87 m, the only walkable opening on either building
+    } },
+    { name = "WH", x = -22, z = -14, hx = 10.0, hz = 5.775, doors = {
+        -- Sealed shell. No aperture at walking height on any face.
+    } },
+}
+
+-- The circuit, in world XZ. Chosen to drive the capsule *into* the three obstacles from more than
+-- one side, because sticking only shows up against geometry, and to stay well inside the ground
+-- plane, which spans +-50. The first attempt at this steered by constant arcs instead; two arcs
+-- of opposite curvature make an S, an S translates, and it wandered off the map at t=80s.
+-- Every point is in OPEN space. The second attempt aimed at the obstacles' centres, which are
+-- inside solid geometry: the capsule pressed against a block's west face for 124 s and the route
+-- never advanced, because a velocity-driven capsule does not slide along a wall - drive it
+-- straight at a surface and the solver cancels the whole velocity, leaving no tangential
+-- component to carry it sideways. That is CharacterVirtual's job, not this flag's.
+--
+-- So the route grazes the geometry instead of aiming through it. The three placeholder boxes it
+-- was originally laid out against - two cover blocks and a 0.2 m step at z = -8 - are gone; the
+-- buildings are the only obstacles now, and the waypoints below are kept because the *path* is
+-- what the gate measures, not what it passes. See docs/ToDo/PROVING_GROUND.md for the step-up
+-- coverage that went with the Step.
+-- P2 extends this through the buildings. The doorways these waypoints originally aimed at were
+-- NOT measured off the meshes - they were holes in the box sets, on walls the meshes draw solid,
+-- and the route walked through them. Re-derived from the geometry (docs/ToDo/PROVING_GROUND.md):
+--   Blockhouse  centre (16, -6),  8.0 x 7.2,  the only doorway is 1.87 m wide on its +Z wall,
+--                                             world x 15.53..17.40 at z = -2.57
+--   Warehouse   centre (-22, -14), 20 x 11.5, SEALED - no opening on any face, at any height
+--
+-- So one building is walked through and one is walked into, which is the honest version of the
+-- gate: "walk inside and out of every building that has a door, and bounce off the one that does
+-- not."
+local ROUTE = {
+    {  0,   -7 },   -- open floor (was head-on at the 0.2 m Step, removed with the boxes)
+    { 12,    4 },   -- 0.30 m StepUp Ledge, 4 x 4 m pad (0.2 < h < StepHeight 0.4)
+    {  9,   -4 },   -- open floor (was along Block A's east face)
+    { 16.5,  1.5 }, -- line up on the Blockhouse doorway from outside, on its +Z face
+    { 16.5, -6 },   -- through it, into the middle of the Blockhouse, past the Sentry
+    { 16.5,  1.5 }, -- and back out the way it came
+    {  4,    6 },   -- open floor, a long run to reach full speed
+    {-11,    5 },   -- open floor (was past Block B's west end)
+    {-33,  -14 },   -- a long run west, at full speed, ending clear of the Warehouse's -X wall
+    {-22,   -6 },   -- cut back northeast. This line meets the sealed -X wall at speed, so the leg
+                    -- is the no-tunnelling test and the wall-slide test in one: the capsule has to
+                    -- slide north along the wall, round the corner at (-32, -8.2) and arrive.
+    {  0,    0 },   -- back through the middle
+}
+
+-- P4's gate route. Not a circuit - a sequence of marked spots to stand on, because the question
+-- "does the wall occlude" only has a clean answer while nothing is moving.
+--
+-- The geometry it is built on. The first version of this route ran on the -Z side, through what
+-- was believed to be a 1.8 m doorway at x 17.66..19.46 and was in fact a hole in the box set on a
+-- wall the mesh draws solid. That hole is closed; the real doorway is on +Z, so the probe line
+-- moved with it.
+--
+-- The Blockhouse's +Z wall is two collider segments at world z = -2.57, spanning x 12.00..15.53
+-- and x 17.40..20.00, with the 1.87 m doorway between them and a lintel above it from y = 3.11.
+-- The Sentry stands inside at (18.4, -6), facing +Z (yaw pi) through that door. It never turns.
+-- At 1.5 m its eye passes well under the lintel.
+--
+-- A sight line from (18.4, -6) to a player at (px, 1.0) crosses z = -2.57 at
+--     x = 18.4 + 0.49 * (px - 18.4)
+-- so the doorway's east jamb at x = 17.40 predicts the crossover at **px = 16.36**. That is the
+-- falsifiable part: the Sentry should acquire the player within a body-width of x = 16.4 on the
+-- way west, and lose it again near the same x on the way back.
+--
+-- { x, z, seconds to stand there, what it is for }
+local LOS_ROUTE = {
+    {  2.00, -11.0, 0.5, "staging - open floor, off the Blockhouse's sight lines" },
+    { 20.00,   1.0, 8.0, "behind the +Z wall's east segment: the Sentry must NOT acquire" },
+    { 15.50,   1.0, 8.0, "on the doorway's sight line: it must" },
+    { 20.00,   1.0, 6.0, "back behind the wall: it must lose me again" },
+}
+
+-- P5's gate route. Each stop exercises one mechanism, in the order that makes the next one mean
+-- something: you cannot show a heal spot working without first being hurt, and you cannot show an
+-- upgrade station working without first having banked something to spend.
+--
+-- Leg 1 also fires, which is not decoration: the enemies that come to hurt you are the ones that
+-- die to give you the score leg 4 spends.
+local P5_ROUTE = {
+    {   2.0,  -2.0, 14.0, "stand and fight - take contact damage, and bank kills" },
+    {  -6.0,  -6.0,  8.0, "the heal spot: health must climb back" },
+    {  10.0,   2.0,  3.0, "the weapon crate: fire interval must halve, and it must be consumed" },
+    { -14.0,   6.0,  5.0, "the upgrade station: spend score for projectile damage" },
+    {   0.0,   0.0,  3.0, "back to the middle" },
+}
+
+function Player:OnCreate()
+    self.yawEntity = self.entity:GetChildByName("Yaw")
+    if not self.yawEntity then
+        Log.Error("Player: no child named 'Yaw' - turning and the camera will not work")
+    else
+        self.cameraEntity = self.yawEntity:GetChildByName("Main Camera")
+        if self.cameraEntity then
+            -- Seed pitch from whatever the scene authored, so capturing the mouse does not snap
+            -- the view level on the first frame.
+            self.pitch = self.cameraEntity:GetRotation().x
+        end
+    end
+
+    -- P6. Both are optional on purpose: the scripts have to keep working in a scene that has
+    -- not been given sound or particles yet, and a missing child is an authoring state rather
+    -- than an error.
+    self.footsteps = self.entity:GetChildByName("Footsteps")
+    -- Under Yaw, not under the capsule: the capsule is LockRotation and never turns, so a
+    -- mesh parented to it cannot face where the player is aiming. Yaw is the entity the mouse
+    -- drives, and it already carries the camera.
+    self.body = self.yawEntity and self.yawEntity:GetChildByName("Body") or nil
+    -- The muzzle is the barrel tip, a child of the socketed Rifle: rifle-local (-0.97, 0.19, 0),
+    -- just past the bore, turned so its -Z (GetWorldForward) runs down the barrel - the rifle's
+    -- -X. +Y stays the rifle's up, so the flash still fans upward as it did under Yaw. Its local
+    -- transform says nothing about where it is drawn; Fire reads the world one.
+    local rifle = self.body and self.body:GetChildByName("Rifle") or nil
+    self.muzzle = rifle and rifle:GetChildByName("Muzzle") or nil
+    if not self.footsteps then Log.Warn("Player: no 'Footsteps' child - no step sound") end
+    if not self.muzzle then Log.Warn("Player: no 'Muzzle' under Body/Rifle - no muzzle flash, fire from the chest") end
+    if not self.body then Log.Warn("Player: no 'Body' child - the player will not animate") end
+
+    Log.Info("Player: click to look, Escape to release the cursor")
+
+    local p = self.entity:GetTranslation()
+    self.startY = p.y
+    self.lastPos = p
+    Log.Info(string.format("Player ready at (%.2f, %.2f, %.2f)", p.x, p.y, p.z))
+
+    -- P5. PG.damage is what an enemy subtracts when a round lands, and it lives in PG because
+    -- there is no way to call into another entity's script instance; PG.score is banked here and
+    -- spent at the upgrade station. Both are seeded once, by whoever gets here first.
+    PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
+    PG.damage = PG.damage or 1
+    PG.score = PG.score or 0
+    self.health = self.maxHealth
+    self:PushUI()
+
+    if self.p5gate then
+        PG.freeze = false
+        Log.Info("P5GATE armed")
+    end
+
+    if self.losgate then
+        -- The full initialiser, not `PG or {}`: Fire() only fills the counters in when PG is
+        -- absent entirely, so a PG that exists but holds nothing but `freeze` would make the
+        -- first shot add 1 to nil.
+        PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
+        PG.freeze = true
+        Log.Info("LOSGATE armed: enemies sense but do not move")
+    end
+end
+
+-- ---- P5: health, and the four things that change it ----
+--
+-- Every one of these arrives as a contact, and every one of them is a contact the engine could not
+-- deliver until P5: the player is a CharacterVirtual, and a character had no presence in the
+-- broadphase at all. Enemies passed through it, projectiles passed through it, and a trigger
+-- volume could not notice it. The inner body landed on master for this phase.
+function Player:OnCollisionEnter(other)
+    if not other then return end
+    local name = other:GetName()
+
+    if name == "Heal Spot" or name == "Weapon Crate" or name == "Upgrade Station" then
+        Audio.PlayOneShot("audio/chime.wav", nil, 0.8)
+    end
+
+    if name == "Enemy" then
+        -- A budget of ticks, not a "while touching" flag, and the difference is an engine gap
+        -- rather than a preference. **There is no OnCollisionStay.** Enter fires once when the
+        -- contact is made and never again while it lasts, so "an enemy is on me" has to be
+        -- reconstructed by counting enter/exit pairs - and that counter leaks the moment an enemy
+        -- dies while touching, because the entity is gone before its contact-removed event can be
+        -- resolved back to it. A budget cannot leak: three ticks per touch, spent one a second,
+        -- and the jostling re-makes the contact often enough to keep it topped up.
+        -- Recorded in docs/ToDo/cross-cutting.md.
+        self.pendingHurt = math.min((self.pendingHurt or 0) + 3, 6)
+    elseif name == "Heal Spot" then
+        self.inHeal = self.inHeal + 1
+    elseif name == "Weapon Crate" then
+        self.weapon = self.weapon + 1
+        -- Halving the interval is the visible half of the pickup; the fired count in the gate
+        -- report is what proves it, because nothing else about the run changes.
+        self.fireInterval = self.fireInterval * 0.5
+        Log.Info(string.format("PICKUP weapon -> level %d, fireInterval %.3f",
+            self.weapon, self.fireInterval))
+    elseif name == "Upgrade Station" then
+        self:Upgrade()
+    end
+end
+
+function Player:OnCollisionExit(other)
+    if other and other:GetName() == "Heal Spot" and self.inHeal > 0 then
+        self.inHeal = self.inHeal - 1
+    end
+end
+
+function Player:Hurt()
+    if self.downed then
+        return
+    end
+    self.hurtCooldown = self.damageCooldown
+    self.hits = self.hits + 1
+    self.health = math.max(0.0, self.health - self.contactDamage)
+    if self.health <= 0.0 then
+        self.downed = true
+        self.downFor = 0.0
+        -- Not a respawn. A character cannot be teleported from script - its TransformComponent is
+        -- overwritten from the controller every frame by SyncTransforms, and nothing exposes
+        -- CharacterVirtual::SetPosition - so "back to the spawn point" is not expressible today.
+        -- Recorded in docs/ToDo/cross-cutting.md. It recovers where it fell instead.
+        Log.Warn(string.format("PLAYER DOWN at %.0f hits taken", self.hits))
+    end
+end
+
+function Player:Upgrade()
+    if PG.score < self.upgradeCost then
+        self.refusedUpgrades = (self.refusedUpgrades or 0) + 1
+        Log.Info(string.format("UPGRADE refused: score %d < cost %d",
+            PG.score, math.floor(self.upgradeCost)))
+        return
+    end
+    PG.score = PG.score - self.upgradeCost
+    PG.damage = PG.damage + 1
+    self.upgrades = self.upgrades + 1
+    Log.Info(string.format("UPGRADE bought: projectile damage -> %d, score left %d",
+        PG.damage, PG.score))
+end
+
+-- The HUD data model is the thing P5 is meant to put under real gameplay: it has been bound since
+-- the runtime milestone and has never had a number in it that gameplay produced. Written only on
+-- change, and **read straight back**, because a setter that silently drops its value would look
+-- exactly like a setter that worked.
+function Player:PushUI()
+    if self.health ~= self.uiHealth then
+        self.uiHealth = self.health
+        UI.SetHealth(self.health)
+        if math.abs(UI.GetHealth() - self.health) > 0.001 then
+            self.uiMismatch = self.uiMismatch + 1
+        end
+    end
+    if PG.score ~= self.uiScore then
+        self.uiScore = PG.score
+        UI.SetScore(PG.score)
+        if UI.GetScore() ~= PG.score then
+            self.uiMismatch = self.uiMismatch + 1
+        end
+    end
+end
+
+-- Walk to the next probe point, stand on it, move on. Returns a steering contribution in the
+-- same units AutoTurn uses, and sets probeDrive / probeSlow, which the movement block reads.
+--
+-- The slowdown is not polish. At 6 m/s a frame covers 0.1 m, so a tight arrival radius is
+-- overshot and the capsule orbits the point forever; a large one makes the probe position
+-- imprecise, and this gate is a claim about a specific x. Easing to 1.2 m/s inside 3 m makes a
+-- 0.35 m radius reachable without either.
+function Player:ProbeTurn(ts)
+    local route = self.losgate and LOS_ROUTE or P5_ROUTE
+    local tag = self.losgate and "LOSGATE" or "P5GATE"
+    local p = self.entity:GetTranslation()
+    local target = route[self.probeWp]
+
+    if self.probeDone then
+        self.probeDrive = false
+        self.probeSlow = 1.0
+        return 0.0
+    end
+
+    -- A route measured in XZ will happily report arriving at every remaining waypoint while the
+    -- capsule falls through the world, because horizontal control still works in freefall. The
+    -- first P5 run did exactly that: shoved through the ground plane at t=83s, and 700 m down it
+    -- was still "reaching" probe 3. Diagnose already shouts about the fall; this makes the route
+    -- stop claiming things, so a failed run cannot read as a passing one.
+    if self.fell then
+        if not self.probeAborted then
+            self.probeAborted = true
+            Log.Error(tag .. " ABORTED: left the ground plane, so nothing below is measured")
+        end
+        self.probeDrive = false
+        self.probeSlow = 1.0
+        return 0.0
+    end
+
+    if self.probeHold > 0.0 then
+        -- Leg 1 of the P5 route is "stand until it hurts", not "stand for 14 seconds". A fixed
+        -- hold made the gate depend on whether an enemy happened to arrive in time: one run
+        -- reached the heal spot at full health, where a heal spot proves nothing. It still has a
+        -- ceiling, because a gate that can hang is not a gate.
+        if not self.losgate and self.probeWp == 1 and self.hits < 3 and self.t < 45.0 then
+            return 0.0
+        end
+        self.probeHold = self.probeHold - ts
+        self.probeDrive = false
+        self.probeSlow = 1.0
+        if self.probeHold <= 0.0 then
+            Log.Info(string.format("%s probe %d done, standing at (%.2f, %.2f) hp=%.0f score=%d",
+                tag, self.probeWp, p.x, p.z, self.health, PG.score))
+            if self.probeWp >= #route then
+                self.probeDone = true
+                Log.Info(tag .. " route complete")
+            else
+                self.probeWp = self.probeWp + 1
+            end
+        end
+        return 0.0
+    end
+
+    local dx, dz = target[1] - p.x, target[2] - p.z
+    local dist = math.sqrt(dx * dx + dz * dz)
+
+    if dist < 0.35 then
+        -- max(..., 0.001) so a zero-second hold still takes the branch above next frame rather
+        -- than re-arriving, and re-logging, every frame.
+        self.probeHold = math.max(target[3], 0.001)
+        self.probeDrive = false
+        self.probeSlow = 1.0
+        Log.Info(string.format("%s probe %d at (%.2f, %.2f), holding %.1fs - %s",
+            tag, self.probeWp, p.x, p.z, target[3], target[4]))
+        return 0.0
+    end
+
+    self.probeDrive = true
+    self.probeSlow = dist < 3.0 and 0.2 or 1.0
+
+    local want = math.atan(-dx, -dz)
+    local diff = (want - self.yaw + math.pi) % (2 * math.pi) - math.pi
+    return math.max(-1.0, math.min(1.0, diff * 2.0))
+end
+
+function Player:OnUpdate(ts)
+    -- Frame 1 spans boot and is over a second long (docs/ToDo/cross-cutting.md). Applying a
+    -- second of input to a character on its first frame launches it across the map, so the first
+    -- frame is skipped outright rather than clamped - a controller has nothing useful to do with
+    -- it either way.
+    if ts > 0.25 then
+        return
+    end
+
+    self.t = self.t + ts
+
+    -- ---- capture ----
+    if not self.looking and Input.IsMouseButtonPressed(Mouse.ButtonLeft) then
+        Input.SetCursorMode(Cursor.Locked)
+        self.looking = true
+    elseif self.looking and Input.IsKeyPressed(Key.Escape) then
+        Input.SetCursorMode(Cursor.Normal)
+        self.looking = false
+    end
+
+    -- ---- look ----
+    if self.looking then
+        -- NOT scaled by ts. The delta is pixels moved last frame - an amount, not a rate - and
+        -- multiplying it by frame time makes sensitivity depend on framerate.
+        local dx, dy = Input.GetMouseDelta()
+        self.yaw = self.yaw - dx * self.sensitivity
+        self.pitch = self.pitch - dy * self.sensitivity
+        -- ~80 degrees. Past vertical the forward vector flips and the controls invert.
+        if self.pitch > 1.4 then self.pitch = 1.4 end
+        if self.pitch < -1.4 then self.pitch = -1.4 end
+        if self.cameraEntity then
+            self.cameraEntity:SetRotation(Vec3(self.pitch, 0, 0))
+        end
+    end
+
+    -- ---- fire ----
+    -- The same left button captures the cursor and then fires, which is the convention every
+    -- shooter uses: the first click is "I am playing now", the rest are shots.
+    self.fireCooldown = self.fireCooldown - ts
+    if self.autofire then
+        -- Three phases, so one run answers all of P3's gate rather than only the easy part:
+        --   < 50 s  one round a frame - sustained fire, which is what a leak would show up in
+        --   50-60 s 100 requests a frame - the only way to reach a 64-per-frame cap, since one
+        --           shot a frame never comes close to it
+        --   > 60 s  stop, and let the 3 s lifetime drain the last rounds so "entity count
+        --           returns to baseline" can actually be observed rather than inferred
+        local shots = 0
+        if self.t < 20.0 then shots = 1
+        elseif self.t < 24.0 then shots = 80 end
+        for _ = 1, shots do self:Fire() end
+    elseif self.p5gate and not self.probeDone and self.probeWp == 1 and self.fireCooldown <= 0.0 then
+        -- Only on the first leg, and on the ordinary cooldown rather than every frame: this is
+        -- meant to look like someone shooting back, and the fired count has to stay a number the
+        -- weapon pickup can visibly change later in the run.
+        self.fireCooldown = self.fireInterval
+        self:Fire()
+    elseif self.looking and Input.IsMouseButtonPressed(Mouse.ButtonLeft)
+        and self.fireCooldown <= 0.0 then
+        self.fireCooldown = self.fireInterval
+        self:Fire()
+    end
+
+    -- ---- turn (keyboard fallback, and the autopilot's only steering) ----
+    local turn = 0.0
+    if Input.IsKeyPressed(Key.Q) or Input.IsKeyPressed(Key.Left) then turn = turn + 1.0 end
+    if Input.IsKeyPressed(Key.E) or Input.IsKeyPressed(Key.Right) then turn = turn - 1.0 end
+    if self.autopilot then turn = turn + self:AutoTurn() end
+    if self.losgate or self.p5gate then turn = turn + self:ProbeTurn(ts) end
+    self.yaw = self.yaw + turn * self.turnSpeed * ts
+    if self.yawEntity then
+        self.yawEntity:SetRotation(Vec3(0, self.yaw, 0))
+    end
+
+    -- ---- move ----
+    -- Forward is -Z at yaw 0, matching the engine's camera convention.
+    local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
+    local fx, fz = -sinY, -cosY
+    local rx, rz = cosY, -sinY
+
+    local ix, iz = 0.0, 0.0
+    if self.autopilot then ix, iz = ix + fx, iz + fz end
+    if self.probeDrive then ix, iz = ix + fx, iz + fz end
+    if Input.IsKeyPressed(Key.W) then ix = ix + fx; iz = iz + fz end
+    if Input.IsKeyPressed(Key.S) then ix = ix - fx; iz = iz - fz end
+    if Input.IsKeyPressed(Key.D) then ix = ix + rx; iz = iz + rz end
+    if Input.IsKeyPressed(Key.A) then ix = ix - rx; iz = iz - rz end
+
+    local len = math.sqrt(ix * ix + iz * iz)
+    if len > 0.0 then
+        ix, iz = ix / len, iz / len
+    end
+
+    -- Keep the body's own vertical velocity. Overwriting it with 0 would cancel gravity and the
+    -- capsule would hang in the air the moment it walked off anything.
+    local v = self.entity:GetLinearVelocity()
+    -- Downed is not dead: a character cannot be moved from script, so there is nowhere to
+    -- respawn to. It stops instead, and gets back up where it fell.
+    local speed = self.downed and 0.0 or (self.speed * self.probeSlow)
+    self.entity:SetLinearVelocity(Vec3(ix * speed, v.y, iz * speed))
+
+    self:Tick(ts)
+    self:PushPending()
+    self:Diagnose(ts)
+end
+
+-- Health, score and the HUD, once a frame.
+function Player:Tick(ts)
+    self.hurtCooldown = math.max(0.0, self.hurtCooldown - ts)
+
+    if (self.pendingHurt or 0) > 0 and self.hurtCooldown <= 0.0 and not self.downed then
+        self.pendingHurt = self.pendingHurt - 1
+        self:Hurt()
+    end
+
+    if self.downed then
+        self.downFor = self.downFor + ts
+        if self.downFor > 3.0 then
+            self.downed = false
+            self.health = self.maxHealth
+            Log.Info("PLAYER up again (in place - see Player:Hurt)")
+        end
+    elseif self.inHeal > 0 and self.health < self.maxHealth then
+        self.health = math.min(self.maxHealth, self.health + self.healRate * ts)
+        self.healed = self.healed + self.healRate * ts
+    end
+
+    -- Score is banked from kills. Enemy.lua owns PG.kills, because the victim counts its own
+    -- death; this only notices the counter moving.
+    if PG.kills > self.lastKills then
+        PG.score = PG.score + (PG.kills - self.lastKills)
+        self.lastKills = PG.kills
+    end
+
+    self:Step(ts)
+    self:Animate(ts)
+    self:PushUI()
+end
+
+-- The player's own three clips, chosen from the capsule's measured horizontal speed rather
+-- than from the input. Easing toward a probe point runs at 1.2 m/s (Player:Route), and driving
+-- this off "is a key held" would snap between idle and a sprint through the whole approach.
+--
+-- The legs and the torso are not the same facing. The clips are all forward strides, so the
+-- body (meshYaw) turns toward the velocity and the forward clip stays the right one.
+-- AimOffsetComponent twists the spine on top of that: yaw is wrap(camera yaw - meshYaw), pitch is
+-- the elevation from the chest to AimPoint. The rifle is socketed to the chest (Spine), and Body's
+-- TwoHandIKComponent turns it onto that same aim (AimLock 1) and solves both hands onto its Grip
+-- and Support markers, so the barrel follows these two angles whatever the clip's chest is doing.
+--
+-- The torso takes at most TORSO_TWIST of that. Past it, the legs turn off the velocity toward
+-- the aim just far enough that the torso needs no more, so a pure A/D strafe runs the legs 30
+-- degrees off their heading instead of asking the spine for 90 - the point where a spine-only
+-- twist stops reading as a person. Moving well behind the aim switches to the backpedal: the
+-- body turns to the camera yaw and plays Walk_Backward_While_Shooting.
+local AIM_HOLD = 0.8
+local TORSO_TWIST = math.rad(60)
+-- Hysteresis on the backpedal switch, so no heading sits on a boundary. The first version
+-- switched at exactly 90 degrees, which is where a pure strafe lands, and float rounding of the
+-- velocity heading chose the branch: at a camera yaw of 0.7 the twist came out one ulp past pi/2
+-- on every frame, and the strafe never engaged.
+local BACKPEDAL_ENTER = math.rad(115)
+local BACKPEDAL_EXIT = math.rad(100)
+-- Seconds for the aim offset to fade fully in when aiming starts, or out when it stops. A linear
+-- ramp through smoothstep, so the bend starts and ends at rest; an exponential ease moves fastest
+-- on its first frame, and a probe measured a 0.255 rad step there out of a 60 degree twist. Only
+-- the transitions ease; while aiming, the chest tracks the mouse directly.
+local AIM_BLEND_TIME = 0.25
+-- Walk_Backward_While_Shooting's authored root speed, m/s.
+local BACKPEDAL_CLIP_SPEED = 0.96
+local CHEST_HEIGHT = 0.5
+
+local function WrapAngle(a)
+    return (a + math.pi) % (2 * math.pi) - math.pi
+end
+
+function Player:Animate(ts)
+    if not self.body then
+        return
+    end
+
+    local v = self.entity:GetLinearVelocity()
+    local speed = math.sqrt(v.x * v.x + v.z * v.z)
+
+    -- Airborne or downed is not walking, whatever the horizontal velocity says. Same test
+    -- Player:Step uses to keep footsteps off a falling character.
+    if self.downed or not self.entity:IsGrounded() then
+        speed = 0.0
+    end
+
+    self.aimHold = math.max(0.0, self.aimHold - ts)
+    local aiming = not self.downed
+        and (self.aimHold > 0.0 or (self.looking and speed < 0.5))
+
+    -- Same convention as Enemy:Chase: -Z is forward at yaw 0.
+    local moving = speed > 0.5
+    local velYaw = math.atan(-v.x, -v.z)
+    -- The mode follows the velocity heading, not the eased mesh yaw, or a turn in progress
+    -- would flip between "strafe" and "turn the whole body" every frame.
+    local twist = WrapAngle(self.yaw - velYaw)
+    if not (aiming and moving) then
+        self.backpedal = false
+    elseif self.backpedal then
+        self.backpedal = math.abs(twist) > BACKPEDAL_EXIT
+    else
+        self.backpedal = math.abs(twist) > BACKPEDAL_ENTER
+    end
+
+    local target, rate = nil, 14.0
+    if aiming and moving and not self.backpedal then
+        -- Legs on the velocity, turned toward the aim only as far as keeps the torso within
+        -- TORSO_TWIST. Inside it this is exactly velYaw. The offset carries the rest of the
+        -- aim, so this can stay on the slow turn.
+        target = self.yaw - math.max(-TORSO_TWIST, math.min(TORSO_TWIST, twist))
+    elseif aiming then
+        target, rate = self.yaw, 20.0
+    elseif moving then
+        target = velYaw
+    end
+
+    if target then
+        self.meshYaw = self.meshYaw or self.yaw
+        -- Shortest way round, then eased, so tapping S turns through 180 degrees over a couple
+        -- of frames instead of popping.
+        local diff = WrapAngle(target - self.meshYaw)
+        self.meshYaw = self.meshYaw + diff * math.min(1.0, ts * rate)
+    end
+
+    -- Moving against the way the body faces. Outside the backpedal the legs are within
+    -- TORSO_TWIST of the aim, so this is only the backpedal branch above.
+    local backwards = false
+    if moving and self.meshYaw then
+        local facing = -math.sin(self.meshYaw) * v.x - math.cos(self.meshYaw) * v.z
+        backwards = facing < -0.3 * speed
+    end
+
+    -- A1: the weapon-carry set. Names are Meshy's library entries baked into the glb, and the
+    -- engine resolves clips by name off the mesh asset, so renaming means re-exporting.
+    local clip, animSpeed
+    if speed < 0.5 then
+        clip, animSpeed = "Lower_Weapon_Look_Raise", 1.0
+    elseif speed < 4.0 then
+        clip, animSpeed = "Walk_Forward_While_Shooting", 1.0
+    else
+        -- Run_and_Shoot was authored at 2.57 m/s (its own root motion, measured before that
+        -- motion was stripped). Against this character's 6 m/s, matching the feet to the ground
+        -- exactly would need 2.34, which turns a tactical jog into a sprint on fast-forward.
+        -- 1.7 splits the difference: the feet run at ~4.4 m/s, so some slide remains.
+        --
+        -- The principled fix is the other direction - 6 m/s is 21.6 km/h, which is sprint pace
+        -- for someone carrying a rifle. Dropping `speed` to ~4.0 would let this play at 1.55
+        -- with almost no slide. It also moves every P1-P7 gate number, so it is not done here.
+        clip, animSpeed = "Run_and_Shoot", 1.7
+    end
+
+    -- Library 233, retargeted onto this skeleton (PROVING_GROUND.md, "Two more rifle clips"). Same
+    -- grip family as the forward walk, so the rifle socket fits it; it replaced the forward clip
+    -- played at negative speed, the moon-walk.
+    --
+    -- Authored at 0.96 m/s (1.22 m in 1.27 s, measured before the root motion was stripped). The
+    -- backpedal runs at the full move speed, 6 m/s, which no backpedal clip matches: 6.2x would be
+    -- a blur of a stride. Capped at 2x, so the feet cover ~1.9 m/s and slide the rest - the same
+    -- kind of compromise as Run_and_Shoot above, only larger. The real fix is a slower backpedal.
+    if backwards then
+        clip = "Walk_Backward_While_Shooting"
+        animSpeed = math.max(0.5, math.min(2.0, speed / BACKPEDAL_CLIP_SPEED))
+    end
+
+    self.body:PlayAnimation(clip)
+    self.body:SetAnimationSpeed(animSpeed)
+
+    -- Body is a child of Yaw, so this has to be written in Yaw's frame. The extra pi is the
+    -- rig's own +Z facing, the same correction Enemy.lua carries.
+    local localYaw = (self.meshYaw or self.yaw) - self.yaw + math.pi
+    self.body:SetRotation(Vec3(0, localYaw, 0))
+
+    -- After the ease, so the torso tracks the camera while the legs are still catching the
+    -- velocity. Not aiming fades the bend out: running with the cursor captured but not
+    -- shooting already faces the velocity, and a pitch on that heading would bend the spine
+    -- toward a point the chest is not turned to.
+    --
+    -- Held and faded, never written as zero. The first version wrote (0, 0) the frame aiming
+    -- ended, and a probe logged the chest twist going from 45 degrees to 0 in one 22 ms frame.
+    -- The weight fades rather than the angles easing, so the chest stays on the crosshair while
+    -- aiming. The inputs update only while aiming, and pitch only while there is an aim point
+    -- (Escape during AIM_HOLD makes AimPoint nil), so a fade never chases a camera the player
+    -- has stopped aiming with.
+    if aiming and self.meshYaw then
+        self.aimYawHeld = WrapAngle(self.yaw - self.meshYaw)
+        self.aimPitchHeld = self:ChestAimPitch() or self.aimPitchHeld
+    end
+    local step = ts / AIM_BLEND_TIME
+    if aiming then
+        self.aimBlend = math.min(1.0, self.aimBlend + step)
+    else
+        self.aimBlend = math.max(0.0, self.aimBlend - step)
+    end
+    local weight = self.aimBlend * self.aimBlend * (3.0 - 2.0 * self.aimBlend)
+    self.body:SetAimOffset(self.aimPitchHeld * weight, self.aimYawHeld * weight)
+
+    self.clip = clip
+end
+
+-- Footsteps.
+--
+-- An AudioSourceComponent rather than Audio.PlayOneShot. That started as a workaround: the
+-- one-shot binding could not be given a volume - AudioEngine::PlayOneShot takes one, and its own
+-- comment says it exists "for footsteps and impacts", but the Lua side passed a hardcoded 1.0, so
+-- every one-shot was full blast. That is fixed on master now, and PlayOneShot takes an optional
+-- gain.
+--
+-- It stays on the component anyway, because the two routes are not the same test. This one
+-- exercises PlaySound/StopSound on a component-owned voice and the Stop-then-Play retrigger idiom;
+-- the shot and the impact exercise one-shots, now including the volume that was missing.
+--
+-- Retriggered with Stop-then-Play, because PlaySound on an already-playing source is documented
+-- as a no-op rather than a restart - which is what makes calling it every frame from a branch
+-- safe everywhere else, and exactly wrong here.
+function Player:Step(ts)
+    if not self.footsteps then
+        return
+    end
+
+    local v = self.entity:GetLinearVelocity()
+    local speed = math.sqrt(v.x * v.x + v.z * v.z)
+    -- Grounded matters: the same velocity while falling is not walking, and a character sliding
+    -- down a slope should not sound like it is striding.
+    if speed < 1.0 or not self.entity:IsGrounded() then
+        -- Reset rather than pause, so the first step after stopping lands immediately instead of
+        -- on whatever fraction of a stride was left over.
+        self.stepTimer = self.stepInterval
+        return
+    end
+
+    self.stepTimer = self.stepTimer - ts
+    if self.stepTimer > 0.0 then
+        return
+    end
+
+    -- Cadence with speed: full speed is 6 m/s, and a slow walk should not tick at the same rate.
+    self.stepTimer = self.stepInterval * (self.speed / math.max(speed, 0.1))
+    self.steps = self.steps + 1
+    self.footsteps:StopSound()
+    self.footsteps:PlaySound()
+end
+
+-- The world point under the crosshair, or nil when there is no mouse aim to honour.
+--
+-- The crosshair is the centre of the camera, and the camera sits behind and above the capsule
+-- (Yaw-local (0, 1.6, 5) in the scene). A round fired along the camera's forward from the chest
+-- would run parallel to the crosshair ray and miss it by that offset at every range. So: cast
+-- the camera ray, take what it hits, and aim the round from the muzzle *at that point* - the
+-- usual third-person convergence. Past 200 m nothing is hit and the far point stands in.
+--
+-- Computed by hand because Lua can only read local transforms. The capsule never rotates, so
+-- Yaw's translation is already a world offset; the camera's is in Yaw's frame and needs the yaw.
+function Player:AimPoint()
+    if not self.looking or not self.yawEntity or not self.cameraEntity then
+        return nil
+    end
+
+    local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
+    local c = self.cameraEntity:GetTranslation()
+    local origin = self.entity:GetTranslation() + self.yawEntity:GetTranslation()
+        + Vec3(c.x * cosY + c.z * sinY, c.y, -c.x * sinY + c.z * cosY)
+
+    -- Ry(yaw) * Rx(pitch) * (0, 0, -1): positive pitch looks up.
+    local cosP = math.cos(self.pitch)
+    local dir = Vec3(-sinY * cosP, math.sin(self.pitch), -cosY * cosP)
+
+    -- Start the cast level with the player, not at the lens. Anything between the camera and the
+    -- character - an enemy that has run round behind, a doorframe - is behind the muzzle and
+    -- cannot be shot, and the probe run caught exactly that: an Enemy at 4 m on the camera ray
+    -- put the aim point behind the gun. The crosshair still sits on the same ray.
+    local along = (self.entity:GetTranslation() - origin):Dot(dir)
+    if along > 0.0 then
+        origin = origin + dir * along
+    end
+
+    -- Sensors (heal spots, pickups) stop a ray like a wall does, and rounds fly through them
+    -- (Projectile:OnCollisionEnter's passThrough). Converging on a sensor's surface would bend
+    -- the shot off the crosshair, so step past any of them, a few at most.
+    local from, left = origin, 200.0
+    for _ = 1, 4 do
+        local hit = Physics.Raycast(from, dir, left, self.entity)
+        if not hit then
+            break
+        end
+        local name = hit.entity and hit.entity:GetName()
+        if not (name and PG and PG.passThrough and PG.passThrough[name]) then
+            return hit.point
+        end
+        from = hit.point + dir * 0.01
+        left = left - hit.distance - 0.01
+    end
+    return origin + dir * 200.0
+end
+
+-- Elevation from the chest to the aim point, or nil when there is nothing to aim at.
+--
+-- Not the camera pitch. The lens is 1.6 m above the capsule and 5 m behind it, so at short
+-- range its pitch and the gun's pitch disagree by the parallax AimPoint already exists to
+-- remove. The chest is the same point Fire uses for the fallback spawn (CHEST_HEIGHT above
+-- the capsule origin), not the muzzle: the muzzle moves with this pitch, and feeding it
+-- back would be the closed loop the offset deliberately is not.
+function Player:ChestAimPitch()
+    local aim = self:AimPoint()
+    if not aim then
+        return nil
+    end
+
+    local p = self.entity:GetTranslation()
+    local to = aim - Vec3(p.x, p.y + CHEST_HEIGHT, p.z)
+    local horiz = math.sqrt(to.x * to.x + to.z * to.z)
+    return math.atan(to.y, horiz)
+end
+
+-- Where the round leaves the gun, or nil when the gun is not in a position to have fired it.
+--
+-- The barrel no longer moves with the clip: the two-hand IK aim lock holds it on the aim offset's
+-- pitch and yaw (to 1e-4 degrees, measured), and the idle no longer lowers it. The ~35 degree
+-- check stays anyway, as a guard for what the lock does not cover: the aim offset fading in and
+-- out over AIM_BLEND_TIME (the barrel follows the faded angles, not the aim point), and parallax
+-- at close range (the lock aims along the chest's line to the aim point, and the muzzle is half
+-- a metre off the chest). Two ways a shot from the gun goes wrong, both caught by a probe run:
+--
+--   - A barrel behind or beside the player: the round flies through the player's own capsule,
+--     and Projectile:OnCollisionEnter counts that as a hit and despawns it. So the barrel has to
+--     be clear of the capsule (0.35 radius + the round's 0.075 + slack) and ahead along the yaw.
+--   - A barrel pointing at the floor: the round leaves a lowered gun and climbs to the crosshair.
+--     So the barrel's own forward has to be within ~35 degrees of the line to the aim point.
+--
+-- Otherwise the chest point stands in, as it did before there was a gun. GetWorldPosition is
+-- last frame's, so at a 6 m/s run the round starts ~0.1 m behind the barrel: inside the flash,
+-- and not worth a per-frame velocity correction.
+function Player:BarrelPoint(p, fx, fz, aim)
+    if not self.muzzle then
+        return nil
+    end
+    local b = self.muzzle:GetWorldPosition()
+    local hx, hz = b.x - p.x, b.z - p.z
+    if hx * hx + hz * hz < 0.5 * 0.5 or hx * fx + hz * fz < 0.25 then
+        return nil
+    end
+    local toAim = (aim - b):Normalized()
+    if toAim:Dot(self.muzzle:GetWorldForward()) < 0.82 then
+        return nil
+    end
+    return b
+end
+
+function Player:Fire()
+    local p = self.entity:GetTranslation()
+    local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
+    local fx, fz = -sinY, -cosY
+
+    -- A metre ahead and at chest height. Spawning inside the capsule would have the round collide
+    -- with the player on its first step, and the shot would die where it was born.
+    local muzzle = Vec3(p.x + fx * 1.0, p.y + CHEST_HEIGHT, p.z + fz * 1.0)
+
+    -- Horizontal along yaw unless a human is aiming with the mouse. The gate modes never capture
+    -- the cursor, so they keep firing flat from the chest and their numbers do not move.
+    local dir = Vec3(fx, 0.0, fz)
+    local aim = self:AimPoint()
+    if aim then
+        muzzle = self:BarrelPoint(p, fx, fz, aim) or muzzle
+        local toAim = aim - muzzle
+        -- A point behind the muzzle, or almost on it (a wall right in front of the camera), has
+        -- no useful direction from here. Flat forward is the least surprising fallback.
+        if toAim:Dot(dir) > 0.5 then
+            dir = toAim:Normalized()
+        end
+    end
+    self.aimHold = AIM_HOLD
+
+    local id = Scene.Spawn("prefabs/Projectile.gprefab", muzzle)
+    if not id then
+        -- nil means the per-frame spawn cap refused it. Counting refusals is the point of
+        -- autofire: the cap should hold without the game noticing anything but fewer rounds.
+        self.refused = self.refused + 1
+        return
+    end
+
+    PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
+    PG.fired = PG.fired + 1
+
+    -- P6. **After the spawn, not before.** The first version flashed and banged first, and the
+    -- gate caught it in one line: muzzle-bursts=2602 against fired=1894 with refused=708, and
+    -- 1894 + 708 = 2602 exactly. Every shot the spawn cap turned away still made a noise and a
+    -- flash, which is a gun that fires blanks under load - visible only because the counters were
+    -- kept separately.
+    --
+    -- The shot itself is unspatialised: it is at the listener by definition, and spatialising a
+    -- sound that starts inside the ear gives you a bang that pans depending on which way you were
+    -- facing when you pulled the trigger.
+    Audio.PlayOneShot("audio/impact.wav", nil, 0.7)
+    if self.muzzle then
+        self.muzzleBursts = self.muzzleBursts + 1
+        self.muzzle:EmitBurst(6)
+    end
+
+    -- The entity does not exist until the command queue flushes at the next FrameBegin, so the
+    -- velocity cannot be set here. Stash the id and push it next frame.
+    self.pending = self.pending or {}
+    self.pending[#self.pending + 1] = {
+        id = id,
+        vx = dir.x * self.muzzleSpeed,
+        vy = dir.y * self.muzzleSpeed,
+        vz = dir.z * self.muzzleSpeed,
+    }
+end
+
+function Player:PushPending()
+    if not self.pending or #self.pending == 0 then return end
+    local still = {}
+    for i = 1, #self.pending do
+        local q = self.pending[i]
+        local e = Scene.FindEntityByUUID(q.id)
+        if e then
+            e:SetLinearVelocity(Vec3(q.vx, q.vy, q.vz))
+        else
+            -- Not there yet; the flush happens at FrameBegin so one frame of lag is normal.
+            -- Anything still missing after that is a spawn that failed and is dropped.
+            if not q.waited then q.waited = true; still[#still + 1] = q end
+        end
+    end
+    self.pending = still
+end
+
+-- A circuit that walks the map and meets every obstacle in it: straight stretches long enough to
+-- reach full speed, turns that bring it back around, and headings that used to aim at the three
+-- placeholder boxes. Those are gone, so the buildings carry that job alone now. Walking *into*
+-- things is the point - sticking is
+-- one of the three failure modes and it only shows up against geometry.
+function Player:AutoTurn()
+    local p = self.entity:GetTranslation()
+    local target = ROUTE[self.wp]
+    local dx, dz = target[1] - p.x, target[2] - p.z
+
+    -- Advance on arrival, or on having been stuck for a second and a half. The escape stays for
+    -- P4's enemies, which need the same behaviour, but on a character controller it should now
+    -- never fire: sliding along a wall is exactly what it was compensating for. Every firing is
+    -- a finding, so it logs as a warning rather than quietly recovering.
+    if self.stuckFor > 1.5 then
+        self.stuckFor = 0.0
+        self.wp = (self.wp % #ROUTE) + 1
+        self.wpHits = self.wpHits or {}
+        self.wpHits[self.wp] = (self.wpHits[self.wp] or 0) + 1
+        Log.Warn(string.format("autopilot: stuck at (%.1f, %.1f), skipping to waypoint %d",
+            p.x, p.z, self.wp))
+        target = ROUTE[self.wp]
+        dx, dz = target[1] - p.x, target[2] - p.z
+    elseif (dx * dx + dz * dz) < 2.25 then
+        self.wp = (self.wp % #ROUTE) + 1
+        self.wpHits = self.wpHits or {}
+        self.wpHits[self.wp] = (self.wpHits[self.wp] or 0) + 1
+        target = ROUTE[self.wp]
+        dx, dz = target[1] - p.x, target[2] - p.z
+    end
+
+    -- Forward is -Z at yaw 0, so the yaw that points at (dx, dz) is atan2(-dx, -dz). Steering is
+    -- proportional and clamped to +-1, which is what the keyboard would supply.
+    local want = math.atan(-dx, -dz)
+    local diff = (want - self.yaw + math.pi) % (2 * math.pi) - math.pi
+    return math.max(-1.0, math.min(1.0, diff * 2.0))
+end
+
+-- The three ways P1's gate can fail, measured rather than eyeballed.
+function Player:Diagnose(ts)
+    local p = self.entity:GetTranslation()
+    local r = self.entity:GetRotation()
+
+    if p.x < self.xmn then self.xmn = p.x end
+    if p.x > self.xmx then self.xmx = p.x end
+    if p.z < self.zmn then self.zmn = p.z end
+    if p.z > self.zmx then self.zmx = p.z end
+
+    -- grounded: a character that is never grounded is falling, and a gate that only checks
+    -- height would not notice it skimming the floor.
+    if self.entity:IsGrounded() then self.groundedFrames = self.groundedFrames + 1 end
+    self.frames = self.frames + 1
+
+    -- tipping: any rotation away from upright at all - a character never rotates from physics
+    local tilt = math.max(math.abs(r.x), math.abs(r.z))
+    if tilt > self.maxTilt then self.maxTilt = tilt end
+
+    -- sinking: the capsule's centre should never drop below where it settled
+    if p.y < self.minY then self.minY = p.y end
+
+    -- Falling off the world is not "sinking", it is a different failure, and it has to be said
+    -- loudly: the first gate run reported a 2.13 s stick and a minY of -5229, both of which were
+    -- one event - the capsule left the ground plane and never landed.
+    if p.y < -5.0 and not self.fell then
+        self.fell = true
+        Log.Error(string.format("GATE FAIL: left the ground plane at (%.1f, %.1f, %.1f)",
+            p.x, p.y, p.z))
+    end
+
+    -- sticking: asking to move but not moving. Excludes anything in freefall, where horizontal
+    -- movement is legitimately zero and counting it produced a false 2.13 s.
+    local moved = math.sqrt((p.x - self.lastPos.x) ^ 2 + (p.z - self.lastPos.z) ^ 2)
+    local grounded = math.abs(self.entity:GetLinearVelocity().y) < 1.0
+    local wants = grounded and (self.autopilot or self.probeDrive or Input.IsKeyPressed(Key.W)
+        or Input.IsKeyPressed(Key.S) or Input.IsKeyPressed(Key.A) or Input.IsKeyPressed(Key.D))
+    if wants and moved < 0.001 then
+        self.stuckFor = self.stuckFor + ts
+        if self.stuckFor > self.worstStuck then self.worstStuck = self.stuckFor end
+    else
+        self.stuckFor = 0.0
+    end
+    self.lastPos = p
+
+    for i = 1, #FOOTPRINTS do
+        local f = FOOTPRINTS[i]
+        local dx, dz = math.abs(p.x - f.x), math.abs(p.z - f.z)
+        if dx < f.hx and dz < f.hz then
+            if f.name == "BH" then self.inBH = self.inBH + 1 else self.inWH = self.inWH + 1 end
+            if dx > f.hx - 0.65 or dz > f.hz - 0.65 then
+                -- ... unless it is in the doorway, which is the one place being there is correct.
+                local atDoor = false
+                for k = 1, #f.doors do
+                    local d = f.doors[k]
+                    local ddx, ddz = p.x - d[1], p.z - d[2]
+                    if (ddx * ddx + ddz * ddz) <= (d[3] * d[3]) then atDoor = true break end
+                end
+                if not atDoor then
+                    self.inWall = self.inWall + 1
+                    if self.inWall == 1 then
+                        Log.Warn(string.format(
+                            "GATE: inside %s's wall at (%.2f, %.2f) - possible tunnelling",
+                            f.name, p.x, p.z))
+                    end
+                end
+            end
+        end
+    end
+
+    if self.t >= self.nextReport then
+        self.nextReport = self.nextReport + 5.0
+        Log.Info(string.format(
+            "GATE t=%.0fs pos=(%.1f, %.2f, %.1f) grounded=%.0f%% inWall=%d inBH=%d inWH=%d | fired=%d live=%d despawned=%d hits=%d kills=%d refused=%d",
+            self.t, p.x, p.y, p.z,
+            100.0 * self.groundedFrames / math.max(self.frames, 1), self.inWall, self.inBH, self.inWH,
+            PG.fired, PG.fired - PG.despawned, PG.despawned, PG.hits, PG.kills, self.refused))
+        Log.Info(string.format(
+            "P5   hp=%.0f/%.0f taken=%d healed=%.0f weapon=%d dmg=%d score=%d upgrades=%d "
+            .. "triggers=%d ui-mismatch=%d",
+            self.health, self.maxHealth, self.hits, self.healed, self.weapon, PG.damage,
+            PG.score, self.upgrades, PG.triggers or 0, self.uiMismatch))
+        Log.Info(string.format(
+            "P6   steps=%d muzzle-bursts=%d impacts=%d impacts-despawned=%d live-impacts=%d "
+            .. "ui-health=%.0f ui-score=%d",
+            self.steps, self.muzzleBursts, PG.impacts or 0, PG.impactsDespawned or 0,
+            (PG.impacts or 0) - (PG.impactsDespawned or 0), UI.GetHealth(), UI.GetScore()))
+        -- Voices are the audio equivalent of P3's entity count: component-owned voices should sit
+        -- at a fixed number (one per enemy, plus music and footsteps) and one-shots should drain
+        -- back toward zero. Both counters were bound for this line.
+        Log.Info(string.format("P6b  voices=%d one-shots=%d",
+            Audio.GetVoiceCount(), Audio.GetOneShotCount()))
+        local hits = ""
+        for i = 1, #ROUTE do
+            hits = hits .. string.format(" wp%d=%d", i, (self.wpHits and self.wpHits[i]) or 0)
+        end
+        Log.Info(string.format("EXTENT x %.1f..%.1f  z %.1f..%.1f  arrivals:%s",
+            self.xmn, self.xmx, self.zmn, self.zmx, hits))
+    end
+end
+
+local ____exports = {}
 ____exports.default = Player
 return ____exports

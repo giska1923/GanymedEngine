@@ -1,8 +1,9 @@
-/* RmlUi is not a browser: RCSS is roughly CSS2 plus much of CSS3 (flexbox,
+/* Proving Ground HUD.
+   RmlUi is not a browser: RCSS is roughly CSS2 plus much of CSS3 (flexbox,
    transitions, transforms, animations). Check the RCSS reference before assuming
-   a property exists - the in-editor Debugger shows computed values. */
+   a property exists - the in-editor Debugger shows computed values.
 
-/* No @font-face here: the faces are registered in C++ by UIEngine::Init via
+   No @font-face here: the faces are registered in C++ by UIEngine::Init via
    Rml::LoadFontFace, and RCSS rejects the CSS @font-face at-rule outright - the
    parser then recovers by skipping to the next '}', which silently swallows the
    rule that follows it. */
@@ -30,7 +31,9 @@ body {
 	height: 100%;
 	background-color: #c0392b;
 	border-radius: 4dp;
-	/* Driving this from a gameplay script lands in milestone 6. */
+	/* The transition is the reason this HUD is worth looking at rather than
+	   reading: a heal spot pushes health up 14 a second, and without easing the
+	   bar steps once per script write instead of sliding. */
 	transition: width 0.2s cubic-out;
 }
 
@@ -48,4 +51,35 @@ body {
 	right: 30dp;
 	font-weight: bold;
 	font-size: 22dp;
+}
+
+/* Centred by 50% + a negative margin of half the size. RCSS has no `transform:
+   translate(-50%, -50%)` shorthand against percentages of the element's own box,
+   so the margin is the portable way to do this. */
+#crosshair {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 18dp;
+	height: 18dp;
+	margin-left: -9dp;
+	margin-top: -9dp;
+}
+
+#crosshair-h {
+	position: absolute;
+	left: 0;
+	top: 8dp;
+	width: 18dp;
+	height: 2dp;
+	background-color: #ffffffb0;
+}
+
+#crosshair-v {
+	position: absolute;
+	left: 8dp;
+	top: 0;
+	width: 2dp;
+	height: 18dp;
+	background-color: #ffffffb0;
 }
