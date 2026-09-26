@@ -386,7 +386,7 @@ Game/assets/
   models/buildings/    blockhouse, warehouse - the things with interiors
   models/props/        crates, drums, barriers - cover, and what Meshy is best at
   models/characters/   player and enemy
-  models/weapons/      rifle, projectile
+  models/weapons/      pistol, SMG, rifle, LMG, minigun, projectile
   materials/           .gmat sidecars the importer writes
   textures/            maps extracted out of GLBs on first import
   scenes/  scripts/
@@ -519,6 +519,54 @@ the same as looking at it before the `.gmat` was wired up.
 
 The rule is about the mesh, not the exporter: **cull a solid, keep both faces on a shell.** The
 test costs one screenshot from inside.
+
+#### The weapon ladder — four more guns around the rifle (2026-09-26)
+
+Four weapons were generated to bracket the existing `Rifle`, smallest and weakest to largest and
+heaviest, in its look (dark gunmetal, angular panels, cyan energy strips). They are **imported
+assets only** — nothing in a scene or a script references them yet.
+
+| Asset          | Length  | Tris | Role                                                    |
+| -------------- | ------- | ---- | ------------------------------------------------------- |
+| `Pistol.glb`   | 0.24 m  | 1505 | sidearm                                                 |
+| `SMG.glb`      | 0.55 m  | 1953 | compact automatic                                       |
+| `Rifle.glb`    | 0.856 m | 2443 | the existing one, at `Scale: 0.45`                      |
+| `LMG.glb`      | 1.15 m  | 3477 | heavy squad gun, drum, deployed bipod                   |
+| `Minigun.glb`  | 1.30 m  | 4540 | rotary cluster, ammo box, top handle                    |
+
+How they were made, and what differs from the Rifle:
+
+- **API, not the web app:** `text-to-3d` preview (`should_remesh`, triangle, `target_polycount`
+  1500–4500 by size, `origin_at: center`) then `refine` with `enable_pbr` at 2k. 30 credits per
+  gun, plus one 20-credit LMG re-roll (the first read as a slim rifle). Balance 596 → 456.
+  Tooling in `D:\Projects\C++\meshy\`: `meshy_text3d.py` (prompts included),
+  `meshy_weapon_import.py` (the strip/scale below), `glb_render.py` (a PIL side/top render for
+  vetting a download without the editor); raw downloads and task ids in `work/2026-09-26-weapons/`.
+- **Metric, at `Scale: 1`.** Each glb was scaled so its length is the table's, with one uniform
+  factor baked into `POSITION`. The Rifle is still Meshy's 1.9-unit box at `Scale: 0.45`. Barrel
+  is **-X**, up is +Y, centred on the origin — the same frame as the Rifle, so no rotation.
+- **Stripped the same way as every other model:** the three embedded JPEGs were written
+  byte-for-byte to `<Name>_textures/`, removed from the glb (~6 MB → 0.1–0.3 MB), and the
+  `.gmat` hand-authored with albedo, normal and metallicRoughness. Indices, normals and UVs were
+  diffed identical before and after. `TwoSided: false`: each mesh has 6–56 open edges, but so
+  does the Rifle (36), which culls fine — they are remesh cracks, not shells.
+- **Handles minted by the editor's scan** (`20 handles minted, 0 handle collisions`), not written
+  by hand. Verified in a throwaway lineup scene: all five draw, textured, same orientation.
+
+Left open, in order of need:
+
+- **None of them is wired in.** No stats, no pickup, no socket offset. The natural hook is the
+  existing weapon level (`Weapon Crate` halves `fireInterval`): swapping the carried mesh per
+  level would make the ladder visible. Each gun needs its own `BoneAttachmentComponent` offset,
+  muzzle child and two-hand IK grip markers — the Rifle's values are specific to its geometry.
+- **The LMG's bipod is deployed**, front legs and a rear leg. Carried, those legs will cross the
+  player's thighs. Fine as a pickup or a display piece; for a held weapon, a re-roll with the
+  bipod folded is 30 credits.
+- **The Rifle is the only non-metric weapon.** Re-scaling its glb to 0.856 m and setting
+  `Scale: 1` would make the set consistent, but it moves every offset measured on it (A3, H5),
+  so it is not a free tidy-up.
+- **2048 maps on a 24 cm pistol** are generous. `MaxSize: 1024` on its sidecars is the cheap fix
+  if VRAM ever matters; not done, same reasoning as the buildings above.
 
 #### The placeholder boxes are gone, and two things went with them
 

@@ -1,0 +1,10 @@
+Material:
+  Name: BakedMaterial
+  Albedo: [1, 1, 1, 1]
+  Metallic: 1
+  Roughness: 1
+  AlbedoMap: models/weapons/LMG_textures/albedo_0.jpg
+  NormalMap: models/weapons/LMG_textures/normal_0.jpg
+  MetallicRoughnessMap: models/weapons/LMG_textures/metallicRoughness_0.jpg
+  TwoSided: false
+  Transparent: false
