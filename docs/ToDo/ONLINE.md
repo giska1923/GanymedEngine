@@ -347,7 +347,11 @@ blocking boot, keeps its session alive, and degrades to "offline" without affect
 3. On `Online::Init`, send the backend's device-auth call (B1's route) asynchronously. Store the
    returned session and refresh tokens in memory only.
 4. On a `401`, refresh once, then retry the original request once. A second `401` is a failure
-   returned to the caller.
+   returned to the caller. **Refresh tokens rotate** (backend B1): every refresh returns a new
+   refresh token and consumes the old one, and presenting a consumed one revokes the whole
+   session. So the client must replace its stored refresh token on every refresh, and must never
+   run two refreshes at once. Concurrent `401`s from several in-flight requests share one
+   refresh rather than each starting their own.
 5. An `Online::GetStatus()` of `Offline`, `SigningIn` or `SignedIn`, plus the player's display name.
    Exposed to Lua as `Backend.IsSignedIn()` and `Backend.GetPlayerName()`.
 
@@ -431,7 +435,8 @@ type.
 ### Steps
 
 1. One `ix::WebSocket` in `Online.cpp`, opened after sign-in with the session token. The
-   upgrade request carries it as a header or a query parameter, whichever B3 specifies.
+   upgrade request carries it as an `Authorization: Bearer` header (backend B3's choice: a native
+   client can set headers on the upgrade, where a browser cannot).
 2. Its message callback runs on IX's thread (per the IX docs) and follows the same path as O1:
    copy, `SubmitToMainThread`, route by message type.
 3. Reconnect with exponential backoff and jitter, capped. On reconnect, re-authenticate if the
