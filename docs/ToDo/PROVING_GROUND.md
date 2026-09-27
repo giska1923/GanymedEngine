@@ -386,7 +386,7 @@ Game/assets/
   models/buildings/    blockhouse, warehouse - the things with interiors
   models/props/        crates, drums, barriers - cover, and what Meshy is best at
   models/characters/   player and enemy
-  models/weapons/      pistol, SMG, rifle, LMG, minigun, projectile
+  models/weapons/      pistol, SMG, rifle, LMG, minigun; knife, axe; projectile
   materials/           .gmat sidecars the importer writes
   textures/            maps extracted out of GLBs on first import
   scenes/  scripts/
@@ -520,11 +520,11 @@ the same as looking at it before the `.gmat` was wired up.
 The rule is about the mesh, not the exporter: **cull a solid, keep both faces on a shell.** The
 test costs one screenshot from inside.
 
-#### The weapon ladder — four more guns around the rifle (2026-09-26)
+#### The weapon ladder — four more guns around the rifle, and two melee weapons (2026-09-26)
 
-Four weapons were generated to bracket the existing `Rifle`, smallest and weakest to largest and
-heaviest, in its look (dark gunmetal, angular panels, cyan energy strips). They are **imported
-assets only** — nothing in a scene or a script references them yet.
+Four guns were generated to bracket the existing `Rifle`, smallest and weakest to largest and
+heaviest, plus a knife and an axe, all in its look (dark gunmetal, angular panels, cyan energy
+strips). They are **imported assets only** — nothing in a scene or a script references them yet.
 
 | Asset          | Length  | Tris | Role                                                    |
 | -------------- | ------- | ---- | ------------------------------------------------------- |
@@ -533,25 +533,34 @@ assets only** — nothing in a scene or a script references them yet.
 | `Rifle.glb`    | 0.856 m | 2443 | the existing one, at `Scale: 0.45`                      |
 | `LMG.glb`      | 1.15 m  | 3477 | heavy squad gun, drum, deployed bipod                   |
 | `Minigun.glb`  | 1.30 m  | 4540 | rotary cluster, ammo box, top handle                    |
+| `Knife.glb`    | 0.30 m  | 1510 | combat knife, cyan edge line                            |
+| `Axe.glb`      | 0.65 m  | 2027 | tactical tomahawk, rear spike, cyan edge; length is +Y  |
 
 How they were made, and what differs from the Rifle:
 
 - **API, not the web app:** `text-to-3d` preview (`should_remesh`, triangle, `target_polycount`
   1500–4500 by size, `origin_at: center`) then `refine` with `enable_pbr` at 2k. 30 credits per
-  gun, plus one 20-credit LMG re-roll (the first read as a slim rifle). Balance 596 → 456.
+  model, plus one 20-credit LMG re-roll (the first read as a slim rifle) and one 10-credit axe
+  re-texture (the first came back plain steel, 0.19% cyan texels vs 0.77%). Balance 596 → 386.
   Tooling in `D:\Projects\C++\meshy\`: `meshy_text3d.py` (prompts included),
   `meshy_weapon_import.py` (the strip/scale below), `glb_render.py` (a PIL side/top render for
   vetting a download without the editor); raw downloads and task ids in `work/2026-09-26-weapons/`.
-- **Metric, at `Scale: 1`.** Each glb was scaled so its length is the table's, with one uniform
-  factor baked into `POSITION`. The Rifle is still Meshy's 1.9-unit box at `Scale: 0.45`. Barrel
-  is **-X**, up is +Y, centred on the origin — the same frame as the Rifle, so no rotation.
+- **Metric, at `Scale: 1`.** Each glb was scaled so its longest side is the table's length, with
+  one uniform factor baked into `POSITION`. The Rifle is still Meshy's 1.9-unit box at
+  `Scale: 0.45`. The working end faces **-X**, up is +Y, centred on the origin — the Rifle's frame.
+  Guns and axe arrived in it. The knife arrived lying flat and was turned 90° about X
+  (`(x, y, z) → (x, -z, y)`, applied to normals too, exact) so its blade shows in side view, spine
+  up. The axe stands upright: handle down, head up, edge toward -X — the same "grip hangs, business
+  end forward" relationship as a gun's pistol grip and muzzle.
 - **Stripped the same way as every other model:** the three embedded JPEGs were written
   byte-for-byte to `<Name>_textures/`, removed from the glb (~6 MB → 0.1–0.3 MB), and the
-  `.gmat` hand-authored with albedo, normal and metallicRoughness. Indices, normals and UVs were
-  diffed identical before and after. `TwoSided: false`: each mesh has 6–56 open edges, but so
+  `.gmat` hand-authored with albedo, normal and metallicRoughness. Indices and UVs were diffed
+  identical before and after, positions and normals exact to the transform. `TwoSided: false`:
+  each mesh has 6–56 open edges, but so
   does the Rifle (36), which culls fine — they are remesh cracks, not shells.
-- **Handles minted by the editor's scan** (`20 handles minted, 0 handle collisions`), not written
-  by hand. Verified in a throwaway lineup scene: all five draw, textured, same orientation.
+- **Handles minted by the editor's scan** (`20` for the guns, `10` for the melee pair, `0 handle
+  collisions`), not written by hand. Verified in throwaway lineup scenes: all seven draw, textured,
+  same orientation.
 
 Left open, in order of need:
 
@@ -559,6 +568,9 @@ Left open, in order of need:
   existing weapon level (`Weapon Crate` halves `fireInterval`): swapping the carried mesh per
   level would make the ladder visible. Each gun needs its own `BoneAttachmentComponent` offset,
   muzzle child and two-hand IK grip markers — the Rifle's values are specific to its geometry.
+- **Melee has no gameplay at all.** P3 is projectile-only: no melee attack, hit volume or clip.
+  The knife and axe are props until a melee attack exists — a short sensor sweep in front of the
+  player on a swing clip, which `Physics.Raycast` / sensors (P0.3, P0.4) can already express.
 - **The LMG's bipod is deployed**, front legs and a rear leg. Carried, those legs will cross the
   player's thighs. Fine as a pickup or a display piece; for a held weapon, a re-roll with the
   bipod folded is 30 credits.
