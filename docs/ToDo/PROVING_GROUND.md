@@ -955,6 +955,13 @@ placement closure per frame over the loop variables, so every frame placed the w
 last frame's hand. The cut measurements were unaffected (computed immediately). Fixed by binding
 per frame. A box prefilter also took the check from over an hour to 21 s for all 50 combinations.
 
+**`Thrust_Slash` floor-clamped too.** Its lunge sank up to 6.1 cm on the Ork (0.4–3.7 cm on the
+others) while the rest of the clip stood on the floor, so `--clamp` lifted only the sinking keys:
+16–52 of 91 per rig. Only that clip's Hips channel changed. Nothing sinks now; the frames that
+stand 1.7–5.3 cm above the floor are the lunge's push-off, identical before and after. The knife's
+cut (100%) and every clipping count are unchanged, as a vertical lift of the whole body must leave
+them.
+
 **In the Armory**, the knife rows play `Thrust_Slash` and the axe rows `Axe_Chop`; the pistol rows
 keep each character's own idle. Seen in Play mode, eight frames through each attack: the axe goes
 overhead, comes down with the body bending into it, and recovers head-forward with the feet on the
@@ -967,8 +974,6 @@ Left open:
   the same frame, so a script could switch grips per attack.
 - **The Ork's chop** brushes its own body on 5 of 19 sampled frames. Look at it at full speed
   before treating it as a defect.
-- **`Thrust_Slash` sinks** up to 6.1 cm on the Ork (−0.8 to −3.7 cm on the others) at its lowest;
-  `ground_clips.py --clamp` is now the fix and was not applied to it.
 - **No hit detection** (weapon-ladder section above).
 
 #### The placeholder boxes are gone, and two things went with them
