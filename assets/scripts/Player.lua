@@ -752,6 +752,55 @@ local function WrapAngle(a)
     return (a + math.pi) % (2 * math.pi) - math.pi
 end
 
+-- One-handed locomotion, for the knife and the axe. The rifle set is wrong for them twice over: its
+-- poses hold the right hand across the chest, where the axe sits inside the body on every frame
+-- (carry_check.py: 33 of 33 sampled frames of the forward walk), and the free hand holds an
+-- invisible handguard. These three put the weapon hand at the side and clear the body on every
+-- sampled frame with both weapons:
+--   Axe_Breathe_and_Look_Around  installed with the melee set; an idle with an axe in the hand
+--   Casual_Walk, run_fast_4      the Soldier's own walk and run, retargeted onto this skeleton
+-- Each plays at the character's speed over the speed its own stride covers, so the feet match the
+-- ground. The run is measured: the Soldier's download kept its root motion, 3.64 m in 0.67 s,
+-- 5.46 m/s, and 5.6 on this rig's 2.6% longer legs - so at the full 6 m/s it plays at 1.07, where
+-- Run_and_Shoot needs 1.7 and still slides. The walk was authored in place, so its figure is the
+-- planted foot's speed, scaled by 1.34: that estimate read the run at 4.19 against the measured 5.6.
+local MELEE_WALK_GROUND = 0.90
+local MELEE_RUN_GROUND = 5.6
+-- Below this the walk, above it the run. The casual walk is slow, so a walk faster than about
+-- 1.8 m/s (2x) slides; the band between is only crossed while accelerating or easing to a stop.
+local MELEE_RUN_FROM = 2.0
+
+-- The knife has two grips. The fitted one (holds.json, the socket ProvingGround.ganymede authors)
+-- serves the attack, the idle and the walk, where the blade already points up. In run_fast_4 the fist
+-- is turned so that grip points the blade back at the holder, so the run swaps to a reverse grip
+-- fitted for it (knife_carry_fit.py): the handle stays in the palm, pivoting on its centroid, and the
+-- tip sits 53-62 deg up and leans away from the body on every frame, with no body contact. The swap
+-- lands on the frame the run clip starts or stops, which is already a hard cut.
+local KNIFE_GRIPS = {
+    hold = { Vec3(-0.0866638, 0.000847120, -0.0217498), Vec3(0.270508, -0.760665, 1.309071) },
+    run  = { Vec3(-0.1307996, 0.148501302, 0.0406194), Vec3(0.550934, -0.227784, -0.859616) },
+}
+
+function Player:KnifeGrip(name)
+    local knife = self.weapons and self.weapons.Knife
+    if not knife or self.knifeGrip == name then
+        return
+    end
+    self.knifeGrip = name
+    local g = KNIFE_GRIPS[name]
+    -- The component already exists, so this lands this frame (BoneAttachmentSystem runs later).
+    knife.entity:AttachToBone(self.body, "RightHand", g[1], g[2])
+end
+
+function Player:MeleeLocomotion(speed)
+    if speed < 0.5 then
+        return "Axe_Breathe_and_Look_Around", 1.0
+    elseif speed < MELEE_RUN_FROM then
+        return "Casual_Walk", math.max(0.6, math.min(2.0, speed / MELEE_WALK_GROUND))
+    end
+    return "run_fast_4", math.max(0.6, math.min(2.0, speed / MELEE_RUN_GROUND))
+end
+
 function Player:Animate(ts)
     if not self.body then
         return
@@ -820,7 +869,11 @@ function Player:Animate(ts)
     -- A1: the weapon-carry set. Names are Meshy's library entries baked into the glb, and the
     -- engine resolves clips by name off the mesh asset, so renaming means re-exporting.
     local clip, animSpeed
-    if speed < 0.5 then
+    local melee = self.equipped ~= "Gun"
+    if melee then
+        clip, animSpeed = self:MeleeLocomotion(speed)
+        self:KnifeGrip(clip == "run_fast_4" and "run" or "hold")
+    elseif speed < 0.5 then
         clip, animSpeed = "Lower_Weapon_Look_Raise", 1.0
     elseif speed < 4.0 then
         clip, animSpeed = "Walk_Forward_While_Shooting", 1.0
@@ -844,7 +897,9 @@ function Player:Animate(ts)
     -- backpedal runs at the full move speed, 6 m/s, which no backpedal clip matches: 6.2x would be
     -- a blur of a stride. Capped at 2x, so the feet cover ~1.9 m/s and slide the rest - the same
     -- kind of compromise as Run_and_Shoot above, only larger. The real fix is a slower backpedal.
-    if backwards then
+    -- Not with a melee weapon: there is no one-handed backpedal, and nothing aims a knife, so the
+    -- legs face the velocity and `backwards` can only be left over from a shot before the switch.
+    if backwards and not melee then
         clip = "Walk_Backward_While_Shooting"
         animSpeed = math.max(0.5, math.min(2.0, speed / BACKPEDAL_CLIP_SPEED))
     end
@@ -976,6 +1031,7 @@ end
 -- were measured on the clip without a spine twist on top.
 function Player:AnimateAttack(ts)
     local a = self.attack
+    self:KnifeGrip("hold")
     self.meshYaw = self.meshYaw or self.yaw
     self.meshYaw = self.meshYaw + WrapAngle(a.yaw - self.meshYaw) * math.min(1.0, ts * 20.0)
     self.body:PlayAnimation(a.clip)

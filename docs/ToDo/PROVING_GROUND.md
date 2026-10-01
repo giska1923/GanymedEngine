@@ -1150,9 +1150,8 @@ position, so it still passes; a human standing and shooting will feel it.
 
 Left open:
 
-- **Moving with a melee weapon plays the rifle clips.** Idle, walk and run are rifle-carry poses,
-  so the free hand holds an invisible rifle. Each character has a weaponless idle (the Armory's
-  pistol rows use it); the player would also need a weaponless walk and run.
+- **The walk is an estimate, and the player is the only one with these clips.** See "One-handed
+  locomotion" below.
 - **Attacks are long and rooted.** The 3.0 s thrust is a thrust (window 0.60–0.77 s) and a slow
   follow-up slash. Ending it near 1.4 s needs a crossfade or a clip trimmed offline.
 - **Enemy health 100 is a tuning choice, not a spec.** It makes melee a three-hit, ~10 s fight
@@ -1160,6 +1159,90 @@ Left open:
   (above). Health 40 would make every melee hit a kill and the rifle take 4 rounds.
 - **No hit feedback.** Nothing plays on a melee hit: no sound, no flinch, no particles.
 - **Switching is instant.** No holster or draw clip, and the hand IK snaps on or off.
+
+#### One-handed locomotion for the knife and axe (2026-10-01)
+
+With a knife or axe out, the player used to move on the rifle set. That was worse than an invisible
+rifle in the free hand: those poses hold the right hand across the chest, and **the axe sat inside
+the body on 33 of 33 sampled frames** of the forward walk. There is no layering in the engine (no
+bone masks, no blend trees), so an arms-only fix on top of the rifle legs is not available. Every
+locomotion state needs its own full-body clip.
+
+The player now has its own set, chosen in `Player:MeleeLocomotion`. None of it cost Meshy credits:
+
+| State | Clip                          | Source                                         |
+| ----- | ----------------------------- | ---------------------------------------------- |
+| Idle  | `Axe_Breathe_and_Look_Around` | already installed with the melee set           |
+| Walk  | `Casual_Walk`                 | the Soldier's own, retargeted onto this rig    |
+| Run   | `run_fast_4`                  | the Soldier's own, retargeted onto this rig    |
+
+**Chosen by measurement**, with `carry_check.py` (new in the Meshy tooling). It takes every frame of
+a clip with each weapon on its socket and reports: sampled frames where the weapon comes within
+2 cm of the body, its lowest point against the sole, and where its far end points.
+
+| Clip                        | Knife                 | Axe                     |
+| --------------------------- | --------------------- | ----------------------- |
+| rifle walk (before)         | clear                 | **33/33 in the body**   |
+| `Axe_Breathe_and_Look_Around` | clear, blade down   | clear, head level       |
+| Soldier `Casual_Walk`       | clear                 | clear                   |
+| Eldar `Quick_Walk`          | clear                 | 3/31 in the body        |
+| Soldier `run_fast_4`        | clear                 | clear, axe carried up   |
+
+Eldar's `Quick_Walk` was the faster walk, and was rejected for the axe contact. The weapon never
+goes below 0.47 m above the sole in any of them. The rig has no finger joints, so the grip is the
+hand joint's frame alone and survives the change of clip unchanged.
+
+**Matched to the ground.** Root motion is stripped from every installed clip, so the strides were
+measured separately.
+
+- **The run is measured.** The Soldier's original download kept its root motion: 3.64 m in 0.67 s,
+  so 5.46 m/s, and 5.6 m/s on the player's legs, which are 2.6% longer. At the full 6 m/s it
+  plays at 1.07×, where `Run_and_Shoot` needs 1.7× and still slides.
+- **The walk is an estimate.** It was authored in place, so the only figure is the planted foot's
+  speed, scaled by 1.34: that same estimate read the run at 4.19 m/s against the measured 5.6.
+  That gives 0.90 m/s.
+- **The walk below 2 m/s, the run above it**, each at speed over stride, clamped to 0.6–2×. The
+  player only crosses that band while accelerating or stopping.
+
+`Casual_Walk` floated 1.8 cm on this rig, inside `ground_clips.py`'s default tolerance; it was
+lowered with a tighter one. `run_fast_4` was within 3 mm. With a melee weapon out there is no
+backpedal: nothing aims a knife, so the legs face the velocity.
+
+**Seen in the Debug `GanymedRuntime`**, in screenshots:
+
+- **Axe:** run with the axe up in the right hand and the left arm swinging free.
+- **Knife:** idle with the blade down at the side; running toward the camera with `S` turns the
+  legs, it does not backpedal.
+
+A chop, a run and a switch back to the rifle in one run: both chops hit, and nothing logged an
+error or an unknown clip.
+
+**The knife has a second grip, for the run.** Seen in play, the run pointed the blade back at the
+player. `carry_check.py` had missed it by measuring the knife's far vertex, which is the pommel, so
+its knife "tip" figures above are the pommel's. Measured at the blade tip (`knife_carry_fit.py`, new):
+
+| Clip                          | Fitted grip       | Run grip                  |
+| ----------------------------- | ----------------- | ------------------------- |
+| `Axe_Breathe_and_Look_Around` | +59..75° (up)     |                           |
+| `Casual_Walk`                 | +59..83° (up)     |                           |
+| `run_fast_4`                  | −19..−10°, inward | +53..62°, leaning outward |
+
+- **No single grip does all three.** The search turns the knife about the handle's centroid, so the
+  hand stays on the handle, with the handle axis within 50° of the fitted one either way round. The
+  best one-grip answer tilts the run's blade up only to +35°, and still inward on every frame.
+- **The run takes a reverse grip of its own**, and the idle, walk and attack keep the fitted one.
+  `Player:KnifeGrip` swaps them with `AttachToBone`, which updates an existing socket the same
+  frame. The swap lands on the frame the run clip starts or stops, which is already a hard cut.
+- **Checked:** no body contact on any of the run's 21 keys. Seen in the runtime running side-on:
+  the blade stands up out of the fist.
+
+Left open:
+
+- **Only the player has these clips.** No enemy wields melee yet; when one does, each rig needs
+  the same three. The Soldier's pair exists on every human-proportioned rig through the same
+  retarget.
+- **The walk's 0.90 m/s is not measured**; the feet were not checked against the ground at walking
+  speed.
 
 #### The placeholder boxes are gone, and two things went with them
 
