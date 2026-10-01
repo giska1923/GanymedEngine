@@ -20,14 +20,14 @@ Entities:
       MaterialOverrides: [9305541366150441952]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [-0.189380871, 0.138883677, 0.00823946638]
-      Rotation: [-2.71431051, 0.254526392, 1.60998707]
+      Offset: [-0.198001418, 0.113201122, 0.0295450238]
+      Rotation: [-1.81808252, 0.202984192, 1.39274669]
   - Entity: 2
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.122037322, -0.200818316, -0.000758250009]
-      Rotation: [2.90459679, -0.436818554, 1.61265638]
+      Translation: [0.0934727432, -0.201231074, -0.0605050815]
+      Rotation: [2.39847236, -1.23916573, 1.00888175]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1
@@ -37,8 +37,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.202498738, -0.263566058, 0.000203320797]
-      Rotation: [0.821419872, -0.400111867, 1.05976832]
+      Translation: [0.146258692, -0.264378726, -0.120823079]
+      Rotation: [0.753532602, 0.235801776, 0.449463255]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1
@@ -48,8 +48,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.130133311, -0.207131964, -0.000661497211]
-      Rotation: [2.02992676, -0.655035649, 1.75508683]
+      Translation: [0.0987840403, -0.207584961, -0.0665742498]
+      Rotation: [1.23471879, -0.717029972, 0.602084973]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1
@@ -59,8 +59,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.140590898, -0.215287301, -0.000536521653]
-      Rotation: [2.23688746, -0.538042409, 1.93846176]
+      Translation: [0.105644641, -0.215792275, -0.0744137925]
+      Rotation: [1.48414866, -0.821819323, 0.84294585]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1
@@ -70,8 +70,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.132721917, -0.209150685, -0.000630561544]
-      Rotation: [1.48961249, -0.735374934, 1.56894099]
+      Translation: [0.10048227, -0.209616548, -0.0685148011]
+      Rotation: [0.919090626, -0.391305755, 0.598004438]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1

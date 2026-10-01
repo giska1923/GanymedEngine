@@ -565,13 +565,13 @@ How they were made, and what differs from the Rifle:
 
 Left open, in order of need:
 
-- **None of them is wired in.** No stats, no pickup, no socket offset. The natural hook is the
-  existing weapon level (`Weapon Crate` halves `fireInterval`): swapping the carried mesh per
-  level would make the ladder visible. Each gun needs its own `BoneAttachmentComponent` offset,
-  muzzle child and two-hand IK grip markers — the Rifle's values are specific to its geometry.
-- **Melee has no gameplay at all.** P3 is projectile-only: no melee attack, hit volume or clip.
-  The knife and axe are props until a melee attack exists — a short sensor sweep in front of the
-  player on a swing clip, which `Physics.Raycast` / sensors (P0.3, P0.4) can already express.
+- **None of them is wired in.** No stats and no pickup. Sockets, muzzles and per-character grips
+  now exist (prefabs and `Armory.ganymede`, below); the natural gameplay hook is still the existing
+  weapon level (`Weapon Crate` halves `fireInterval`), swapping the carried mesh per level.
+- **Melee has no gameplay.** The knife and axe now have attack clips and grips fitted to them
+  (melee section below), but P3 is projectile-only: nothing detects a hit. A short sensor sweep in
+  front of the attacker during the swing, which `Physics.Raycast` / sensors (P0.3, P0.4) can
+  already express, is the missing piece.
 - **The LMG's bipod is deployed**, front legs and a rear leg. Carried, those legs will cross the
   player's thighs. Fine as a pickup or a display piece; for a held weapon, a re-roll with the
   bipod folded is 30 credits.
@@ -887,6 +887,67 @@ Left open:
   engine-side hand correction above).
 - **Interpenetration is unchecked:** the LMG's deployed bipod, the Eldar's tabard, the minigun's
   bulk against the chest.
+
+#### Melee: knife and axe attacks, and grips fitted to them (2026-10-01)
+
+**Clips.** Five library clips, chosen from the preview GIFs as the one-handed ones (shield clips,
+two-handed overheads and a spear stance rejected): `Axe_Breathe_and_Look_Around` (335, a ready
+idle), `Right_Hand_Sword_Slash` (219), `Thrust_Slash` (240), `Axe_Spin_Attack` (238),
+`Charged_Slash` (242). The three character rig tasks had expired, so a fresh rig of the Soldier's
+refine mesh was bought as the source (5 credits, task `01a0f61a-…`, live until 2026-10-04) and the
+clips on it (15); balance 174 → 154. Retargeted with the arm-aligned retarget onto all five
+characters, the player included (its glb only gains clips; mesh, skin and its existing clips
+diffed identical on every rig). Floating ones grounded as before. `Thrust_Slash` lunges about
+0.8 m; detrended like every clip, so the body now moves forward and back around its capsule
+rather than sliding away and snapping back.
+
+**Do they cut?** `melee_check.py` places each weapon by its socket on every frame. Over the fast
+part of each swing (striking point above half its peak speed), it measures the angle between the
+striking point's velocity and the surface meant to strike: the axe's edge; the knife's tip or
+either edge (the blade is ground on both, measured by slicing its triangles). Under 45° cuts,
+around 90° slaps flat.
+
+- **With the grips transferred from the rifle's pistol grip, nothing cut:** 60–85° median on
+  every rig and clip. Holding the weapons right is necessary but not sufficient.
+- **Why: these are sword clips.** Measured in the hand's own axes, three of the four drive the
+  hand wrist-and-back-of-hand first, and the blade's velocity is dominated by the wrist's turn. A
+  blade held in a pistol-grip relation meets that flat.
+- **Fit, constrained to grips a hand can hold.** The weapon is turned in the hand about its handle
+  centroid: rake (about the palm normal) and roll (about the handle axis), scored over all five
+  rigs. An unconstrained fit "won" with the blade or head out of the pinky side and the edge
+  toward the back of the hand: an upside-down axe. A second fit laid the knife's handle along the
+  fingers, which no hand can close on. The constraints that survive are: handle within 50° of
+  across the palm; knife forward or reverse grip (forward chosen); axe forward with its edge
+  toward the knuckles. Results: knife rake −80°, roll 150°; axe rake 0°, roll 50°
+  (`weapon_holds.py` `fit`). Static renders of the Soldier's hand show the axe in a plain hammer
+  grip and the knife across the palm, out past the thumb.
+
+| Fast frames cutting (5 rigs) | `Right_Hand_Sword_Slash` | `Thrust_Slash` | `Axe_Spin_Attack` | `Charged_Slash` |
+| ---------------------------- | ------------------------ | -------------- | ----------------- | --------------- |
+| Knife                        | 67–78%                   | **100%**       | 88–100%           | **100%**        |
+| Axe                          | 30–33%                   | 28–37%         | **67–73%**        | 29–50%          |
+
+Median lead with the fitted grips: knife 18–38°, axe 36° on `Axe_Spin_Attack`. Within 2 cm of the
+body or forearm: axe never; knife 1–2 of 12–17 sampled frames of the two slashes on some rigs.
+
+**In the Armory**, the knife rows play `Thrust_Slash` and the axe rows `Axe_Spin_Attack`; the
+pistol rows keep each character's own idle. Seen in Play mode, eight frames through each attack:
+the axe winds up overhead, head up, and spins through the cut; the knife thrusts and cuts and
+stays in the hand. No warnings.
+
+Left open:
+
+- **The axe has one good attack.** The library has no one-handed axe chop; the other three are
+  sword choreography and slap with the axe's flat on most frames. A dedicated chop through
+  text-to-motion (13 credits) on the source rig, before it expires on 2026-10-04, is the cheap
+  next step.
+- **A grip is fitted to its clips.** Another attack may want another roll. `AttachToBone` updates
+  an existing socket the same frame, so a script could switch grips per attack.
+- **`Thrust_Slash` sinks** up to 6.1 cm on the Ork (−0.8 to −3.7 cm on the others) at its lowest.
+  The grounder lifts only floats; the lunge's deepest frame was left as is.
+- **The knife's near-contacts** with the forearm in the slashes were found by measurement, not
+  seen; check at full speed in the editor.
+- **No hit detection** (weapon-ladder section above).
 
 #### The placeholder boxes are gone, and two things went with them
 

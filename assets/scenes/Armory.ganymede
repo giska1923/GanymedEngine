@@ -4659,7 +4659,7 @@ Entities:
       Mesh: 17641149922961688873
       MaterialOverrides: [6151183210390514080]
     AnimatorComponent:
-      Clip: Lower_Weapon_Look_Raise
+      Clip: Thrust_Slash
       Speed: 1
       Playing: true
       Loop: true
@@ -4687,14 +4687,14 @@ Entities:
       MaterialOverrides: [2339951690665419349]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [-0.159230432, 0.102566768, 0.000322193658]
-      Rotation: [-2.71431051, 0.254526392, 0.0989196268]
+      Offset: [-0.0866638448, 0.000847119767, -0.0217498189]
+      Rotation: [0.270508102, -0.760665313, 1.30907136]
   - Entity: 4000000000000000303
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.173155019, 0.0767537646, -0.000758250009]
-      Rotation: [2.682847, 0.188213958, 0.198493021]
+      Translation: [0.0248480782, -0.0734546552, -0.044400235]
+      Rotation: [0.6869699, 0.444509745, -1.36166996]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000302
@@ -4706,8 +4706,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.24059388, 0.153326074, 0.000203320797]
-      Rotation: [0.599851295, 0.707367681, 2.16731687]
+      Translation: [-0.0453108443, -0.13632658, -0.0836059722]
+      Rotation: [2.88555551, 0.523415876, -2.18016666]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000302
@@ -4719,8 +4719,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.179940686, 0.084458434, -0.000661497211]
-      Rotation: [2.06611332, 0.738618165, 1.11371628]
+      Translation: [0.0177887207, -0.0797807984, -0.0483450977]
+      Rotation: [1.55334152, 0.775819271, -1.26518353]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000302
@@ -4732,8 +4732,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.188705728, 0.0944105531, -0.000536521653]
-      Rotation: [2.33658374, 0.69888346, 1.00159885]
+      Translation: [0.00867015092, -0.0879522757, -0.0534406755]
+      Rotation: [1.34985042, 0.637627124, -1.06584357]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000302
@@ -4745,8 +4745,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.182110329, 0.0869219192, -0.000630561544]
-      Rotation: [1.48674302, 0.77228318, 1.68219128]
+      Translation: [0.0155315671, -0.0818035147, -0.0496064251]
+      Rotation: [2.16140691, 0.886398639, -1.55610372]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000302
@@ -4769,7 +4769,7 @@ Entities:
       Mesh: 6030618387453150548
       MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
-      Clip: Short_Breathe_and_Look_Around
+      Clip: Thrust_Slash
       Speed: 1
       Playing: true
       Loop: true
@@ -4797,14 +4797,14 @@ Entities:
       MaterialOverrides: [2339951690665419349]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [0.0294703853, 0.268890374, -0.0906851964]
-      Rotation: [-0.199150241, 0.876257674, -2.30114884]
+      Offset: [0.0353053523, 0.142847044, -0.0773060276]
+      Rotation: [-2.84991587, -0.50570597, -2.17322948]
   - Entity: 4000000000000000310
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.173155019, 0.0767537646, -0.000758250009]
-      Rotation: [2.682847, 0.188213958, 0.198493021]
+      Translation: [0.0248480782, -0.0734546552, -0.044400235]
+      Rotation: [0.6869699, 0.444509745, -1.36166996]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000309
@@ -4816,8 +4816,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.24059388, 0.153326074, 0.000203320797]
-      Rotation: [0.599851295, 0.707367681, 2.16731687]
+      Translation: [-0.0453108443, -0.13632658, -0.0836059722]
+      Rotation: [2.88555551, 0.523415876, -2.18016666]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000309
@@ -4829,8 +4829,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.179940686, 0.084458434, -0.000661497211]
-      Rotation: [2.06611332, 0.738618165, 1.11371628]
+      Translation: [0.0177887207, -0.0797807984, -0.0483450977]
+      Rotation: [1.55334152, 0.775819271, -1.26518353]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000309
@@ -4842,8 +4842,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.188705728, 0.0944105531, -0.000536521653]
-      Rotation: [2.33658374, 0.69888346, 1.00159885]
+      Translation: [0.00867015092, -0.0879522757, -0.0534406755]
+      Rotation: [1.34985042, 0.637627124, -1.06584357]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000309
@@ -4855,8 +4855,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.182110329, 0.0869219192, -0.000630561544]
-      Rotation: [1.48674302, 0.77228318, 1.68219128]
+      Translation: [0.0155315671, -0.0818035147, -0.0496064251]
+      Rotation: [2.16140691, 0.886398639, -1.55610372]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000309
@@ -4879,7 +4879,7 @@ Entities:
       Mesh: 17943707131996266704
       MaterialOverrides: [12945549415387591862]
     AnimatorComponent:
-      Clip: Idle_3
+      Clip: Thrust_Slash
       Speed: 1
       Playing: true
       Loop: true
@@ -4907,14 +4907,14 @@ Entities:
       MaterialOverrides: [2339951690665419349]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [-0.0441587515, 0.182067061, -0.0664372251]
-      Rotation: [-2.86140754, 1.19640574, 0.468380875]
+      Offset: [-0.0346166808, 0.0555627259, -0.0687977598]
+      Rotation: [-1.52773684, -1.27715095, -0.734676964]
   - Entity: 4000000000000000317
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.173155019, 0.0767537646, -0.000758250009]
-      Rotation: [2.682847, 0.188213958, 0.198493021]
+      Translation: [0.0248480782, -0.0734546552, -0.044400235]
+      Rotation: [0.6869699, 0.444509745, -1.36166996]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000316
@@ -4926,8 +4926,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.24059388, 0.153326074, 0.000203320797]
-      Rotation: [0.599851295, 0.707367681, 2.16731687]
+      Translation: [-0.0453108443, -0.13632658, -0.0836059722]
+      Rotation: [2.88555551, 0.523415876, -2.18016666]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000316
@@ -4939,8 +4939,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.179940686, 0.084458434, -0.000661497211]
-      Rotation: [2.06611332, 0.738618165, 1.11371628]
+      Translation: [0.0177887207, -0.0797807984, -0.0483450977]
+      Rotation: [1.55334152, 0.775819271, -1.26518353]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000316
@@ -4952,8 +4952,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.188705728, 0.0944105531, -0.000536521653]
-      Rotation: [2.33658374, 0.69888346, 1.00159885]
+      Translation: [0.00867015092, -0.0879522757, -0.0534406755]
+      Rotation: [1.34985042, 0.637627124, -1.06584357]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000316
@@ -4965,8 +4965,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.182110329, 0.0869219192, -0.000630561544]
-      Rotation: [1.48674302, 0.77228318, 1.68219128]
+      Translation: [0.0155315671, -0.0818035147, -0.0496064251]
+      Rotation: [2.16140691, 0.886398639, -1.55610372]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000316
@@ -4989,7 +4989,7 @@ Entities:
       Mesh: 10248262953794268767
       MaterialOverrides: [9273337225897796824]
     AnimatorComponent:
-      Clip: Alert
+      Clip: Thrust_Slash
       Speed: 1
       Playing: true
       Loop: true
@@ -5017,14 +5017,14 @@ Entities:
       MaterialOverrides: [2339951690665419349]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [-0.045884279, 0.193843254, -0.0695910773]
-      Rotation: [-3.11730945, 1.0112869, 0.680325874]
+      Offset: [-0.0445335965, 0.0670589623, -0.0647034348]
+      Rotation: [-1.11347926, -1.16057774, -0.225519366]
   - Entity: 4000000000000000324
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.173155019, 0.0767537646, -0.000758250009]
-      Rotation: [2.682847, 0.188213958, 0.198493021]
+      Translation: [0.0248480782, -0.0734546552, -0.044400235]
+      Rotation: [0.6869699, 0.444509745, -1.36166996]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000323
@@ -5036,8 +5036,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.24059388, 0.153326074, 0.000203320797]
-      Rotation: [0.599851295, 0.707367681, 2.16731687]
+      Translation: [-0.0453108443, -0.13632658, -0.0836059722]
+      Rotation: [2.88555551, 0.523415876, -2.18016666]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000323
@@ -5049,8 +5049,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.179940686, 0.084458434, -0.000661497211]
-      Rotation: [2.06611332, 0.738618165, 1.11371628]
+      Translation: [0.0177887207, -0.0797807984, -0.0483450977]
+      Rotation: [1.55334152, 0.775819271, -1.26518353]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000323
@@ -5062,8 +5062,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.188705728, 0.0944105531, -0.000536521653]
-      Rotation: [2.33658374, 0.69888346, 1.00159885]
+      Translation: [0.00867015092, -0.0879522757, -0.0534406755]
+      Rotation: [1.34985042, 0.637627124, -1.06584357]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000323
@@ -5075,8 +5075,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.182110329, 0.0869219192, -0.000630561544]
-      Rotation: [1.48674302, 0.77228318, 1.68219128]
+      Translation: [0.0155315671, -0.0818035147, -0.0496064251]
+      Rotation: [2.16140691, 0.886398639, -1.55610372]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000323
@@ -5099,7 +5099,7 @@ Entities:
       Mesh: 11750366539208205490
       MaterialOverrides: [3960279412773191025]
     AnimatorComponent:
-      Clip: Idle
+      Clip: Thrust_Slash
       Speed: 1
       Playing: true
       Loop: true
@@ -5127,14 +5127,14 @@ Entities:
       MaterialOverrides: [2339951690665419349]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [0.0145961756, 0.190481731, -0.064989626]
-      Rotation: [0.718202617, 1.49084535, -3.06463557]
+      Offset: [0.00529382897, 0.0641578648, -0.0724540252]
+      Rotation: [-2.24162305, -0.968738799, -1.55439478]
   - Entity: 4000000000000000331
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.173155019, 0.0767537646, -0.000758250009]
-      Rotation: [2.682847, 0.188213958, 0.198493021]
+      Translation: [0.0248480782, -0.0734546552, -0.044400235]
+      Rotation: [0.6869699, 0.444509745, -1.36166996]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000330
@@ -5146,8 +5146,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.24059388, 0.153326074, 0.000203320797]
-      Rotation: [0.599851295, 0.707367681, 2.16731687]
+      Translation: [-0.0453108443, -0.13632658, -0.0836059722]
+      Rotation: [2.88555551, 0.523415876, -2.18016666]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000330
@@ -5159,8 +5159,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.179940686, 0.084458434, -0.000661497211]
-      Rotation: [2.06611332, 0.738618165, 1.11371628]
+      Translation: [0.0177887207, -0.0797807984, -0.0483450977]
+      Rotation: [1.55334152, 0.775819271, -1.26518353]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000330
@@ -5172,8 +5172,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.188705728, 0.0944105531, -0.000536521653]
-      Rotation: [2.33658374, 0.69888346, 1.00159885]
+      Translation: [0.00867015092, -0.0879522757, -0.0534406755]
+      Rotation: [1.34985042, 0.637627124, -1.06584357]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000330
@@ -5185,8 +5185,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.182110329, 0.0869219192, -0.000630561544]
-      Rotation: [1.48674302, 0.77228318, 1.68219128]
+      Translation: [0.0155315671, -0.0818035147, -0.0496064251]
+      Rotation: [2.16140691, 0.886398639, -1.55610372]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000330
@@ -5209,7 +5209,7 @@ Entities:
       Mesh: 17641149922961688873
       MaterialOverrides: [6151183210390514080]
     AnimatorComponent:
-      Clip: Lower_Weapon_Look_Raise
+      Clip: Axe_Spin_Attack
       Speed: 1
       Playing: true
       Loop: true
@@ -5237,14 +5237,14 @@ Entities:
       MaterialOverrides: [9305541366150441952]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [-0.189380871, 0.138883677, 0.00823946638]
-      Rotation: [-2.71431051, 0.254526392, 1.60998707]
+      Offset: [-0.198001418, 0.113201122, 0.0295450238]
+      Rotation: [-1.81808252, 0.202984192, 1.39274669]
   - Entity: 4000000000000000338
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.122037322, -0.200818316, -0.000758250009]
-      Rotation: [2.90459679, -0.436818554, 1.61265638]
+      Translation: [0.0934727432, -0.201231074, -0.0605050815]
+      Rotation: [2.39847236, -1.23916573, 1.00888175]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000337
@@ -5256,8 +5256,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.202498738, -0.263566058, 0.000203320797]
-      Rotation: [0.821419872, -0.400111867, 1.05976832]
+      Translation: [0.146258692, -0.264378726, -0.120823079]
+      Rotation: [0.753532602, 0.235801776, 0.449463255]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000337
@@ -5269,8 +5269,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.130133311, -0.207131964, -0.000661497211]
-      Rotation: [2.02992676, -0.655035649, 1.75508683]
+      Translation: [0.0987840403, -0.207584961, -0.0665742498]
+      Rotation: [1.23471879, -0.717029972, 0.602084973]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000337
@@ -5282,8 +5282,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.140590898, -0.215287301, -0.000536521653]
-      Rotation: [2.23688746, -0.538042409, 1.93846176]
+      Translation: [0.105644641, -0.215792275, -0.0744137925]
+      Rotation: [1.48414866, -0.821819323, 0.84294585]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000337
@@ -5295,8 +5295,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.132721917, -0.209150685, -0.000630561544]
-      Rotation: [1.48961249, -0.735374934, 1.56894099]
+      Translation: [0.10048227, -0.209616548, -0.0685148011]
+      Rotation: [0.919090626, -0.391305755, 0.598004438]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000337
@@ -5319,7 +5319,7 @@ Entities:
       Mesh: 6030618387453150548
       MaterialOverrides: [9019350524092801456]
     AnimatorComponent:
-      Clip: Short_Breathe_and_Look_Around
+      Clip: Axe_Spin_Attack
       Speed: 1
       Playing: true
       Loop: true
@@ -5347,14 +5347,14 @@ Entities:
       MaterialOverrides: [9305541366150441952]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [0.0284685468, 0.316017985, -0.0989698057]
-      Rotation: [-0.199150241, 0.876257674, -0.790081397]
+      Offset: [0.0111244782, 0.300485313, -0.124381489]
+      Rotation: [-0.771959252, 0.144327759, -0.484394064]
   - Entity: 4000000000000000345
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.122037322, -0.200818316, -0.000758250009]
-      Rotation: [2.90459679, -0.436818554, 1.61265638]
+      Translation: [0.0934727432, -0.201231074, -0.0605050815]
+      Rotation: [2.39847236, -1.23916573, 1.00888175]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000344
@@ -5366,8 +5366,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.202498738, -0.263566058, 0.000203320797]
-      Rotation: [0.821419872, -0.400111867, 1.05976832]
+      Translation: [0.146258692, -0.264378726, -0.120823079]
+      Rotation: [0.753532602, 0.235801776, 0.449463255]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000344
@@ -5379,8 +5379,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.130133311, -0.207131964, -0.000661497211]
-      Rotation: [2.02992676, -0.655035649, 1.75508683]
+      Translation: [0.0987840403, -0.207584961, -0.0665742498]
+      Rotation: [1.23471879, -0.717029972, 0.602084973]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000344
@@ -5392,8 +5392,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.140590898, -0.215287301, -0.000536521653]
-      Rotation: [2.23688746, -0.538042409, 1.93846176]
+      Translation: [0.105644641, -0.215792275, -0.0744137925]
+      Rotation: [1.48414866, -0.821819323, 0.84294585]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000344
@@ -5405,8 +5405,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.132721917, -0.209150685, -0.000630561544]
-      Rotation: [1.48961249, -0.735374934, 1.56894099]
+      Translation: [0.10048227, -0.209616548, -0.0685148011]
+      Rotation: [0.919090626, -0.391305755, 0.598004438]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000344
@@ -5429,7 +5429,7 @@ Entities:
       Mesh: 17943707131996266704
       MaterialOverrides: [12945549415387591862]
     AnimatorComponent:
-      Clip: Idle_3
+      Clip: Axe_Spin_Attack
       Speed: 1
       Playing: true
       Loop: true
@@ -5457,14 +5457,14 @@ Entities:
       MaterialOverrides: [9305541366150441952]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [-0.0499850566, 0.229538873, -0.068206795]
-      Rotation: [-2.86140754, 1.19640574, 1.97944832]
+      Offset: [-0.0812443262, 0.215156003, -0.0662509404]
+      Rotation: [-1.20823201, 0.794177691, 0.481396547]
   - Entity: 4000000000000000352
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.122037322, -0.200818316, -0.000758250009]
-      Rotation: [2.90459679, -0.436818554, 1.61265638]
+      Translation: [0.0934727432, -0.201231074, -0.0605050815]
+      Rotation: [2.39847236, -1.23916573, 1.00888175]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000351
@@ -5476,8 +5476,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.202498738, -0.263566058, 0.000203320797]
-      Rotation: [0.821419872, -0.400111867, 1.05976832]
+      Translation: [0.146258692, -0.264378726, -0.120823079]
+      Rotation: [0.753532602, 0.235801776, 0.449463255]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000351
@@ -5489,8 +5489,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.130133311, -0.207131964, -0.000661497211]
-      Rotation: [2.02992676, -0.655035649, 1.75508683]
+      Translation: [0.0987840403, -0.207584961, -0.0665742498]
+      Rotation: [1.23471879, -0.717029972, 0.602084973]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000351
@@ -5502,8 +5502,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.140590898, -0.215287301, -0.000536521653]
-      Rotation: [2.23688746, -0.538042409, 1.93846176]
+      Translation: [0.105644641, -0.215792275, -0.0744137925]
+      Rotation: [1.48414866, -0.821819323, 0.84294585]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000351
@@ -5515,8 +5515,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.132721917, -0.209150685, -0.000630561544]
-      Rotation: [1.48961249, -0.735374934, 1.56894099]
+      Translation: [0.10048227, -0.209616548, -0.0685148011]
+      Rotation: [0.919090626, -0.391305755, 0.598004438]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000351
@@ -5539,7 +5539,7 @@ Entities:
       Mesh: 10248262953794268767
       MaterialOverrides: [9273337225897796824]
     AnimatorComponent:
-      Clip: Alert
+      Clip: Axe_Spin_Attack
       Speed: 1
       Playing: true
       Loop: true
@@ -5567,14 +5567,14 @@ Entities:
       MaterialOverrides: [9305541366150441952]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [-0.0491120551, 0.241427213, -0.0735908782]
-      Rotation: [-3.11730945, 1.0112869, 2.19139332]
+      Offset: [-0.0801710564, 0.229480028, -0.0646221854]
+      Rotation: [-1.47534647, 0.904263258, 0.748585561]
   - Entity: 4000000000000000359
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.122037322, -0.200818316, -0.000758250009]
-      Rotation: [2.90459679, -0.436818554, 1.61265638]
+      Translation: [0.0934727432, -0.201231074, -0.0605050815]
+      Rotation: [2.39847236, -1.23916573, 1.00888175]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000358
@@ -5586,8 +5586,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.202498738, -0.263566058, 0.000203320797]
-      Rotation: [0.821419872, -0.400111867, 1.05976832]
+      Translation: [0.146258692, -0.264378726, -0.120823079]
+      Rotation: [0.753532602, 0.235801776, 0.449463255]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000358
@@ -5599,8 +5599,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.130133311, -0.207131964, -0.000661497211]
-      Rotation: [2.02992676, -0.655035649, 1.75508683]
+      Translation: [0.0987840403, -0.207584961, -0.0665742498]
+      Rotation: [1.23471879, -0.717029972, 0.602084973]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000358
@@ -5612,8 +5612,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.140590898, -0.215287301, -0.000536521653]
-      Rotation: [2.23688746, -0.538042409, 1.93846176]
+      Translation: [0.105644641, -0.215792275, -0.0744137925]
+      Rotation: [1.48414866, -0.821819323, 0.84294585]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000358
@@ -5625,8 +5625,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.132721917, -0.209150685, -0.000630561544]
-      Rotation: [1.48961249, -0.735374934, 1.56894099]
+      Translation: [0.10048227, -0.209616548, -0.0685148011]
+      Rotation: [0.919090626, -0.391305755, 0.598004438]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000358
@@ -5649,7 +5649,7 @@ Entities:
       Mesh: 11750366539208205490
       MaterialOverrides: [3960279412773191025]
     AnimatorComponent:
-      Clip: Idle
+      Clip: Axe_Spin_Attack
       Speed: 1
       Playing: true
       Loop: true
@@ -5677,14 +5677,14 @@ Entities:
       MaterialOverrides: [9305541366150441952]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [0.0171474515, 0.238271537, -0.0655145282]
-      Rotation: [0.718202617, 1.49084535, -1.55356813]
+      Offset: [-0.0139517976, 0.22925352, -0.077319032]
+      Rotation: [-0.754276144, 0.692933114, -0.11838999]
   - Entity: 4000000000000000366
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.122037322, -0.200818316, -0.000758250009]
-      Rotation: [2.90459679, -0.436818554, 1.61265638]
+      Translation: [0.0934727432, -0.201231074, -0.0605050815]
+      Rotation: [2.39847236, -1.23916573, 1.00888175]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000365
@@ -5696,8 +5696,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.202498738, -0.263566058, 0.000203320797]
-      Rotation: [0.821419872, -0.400111867, 1.05976832]
+      Translation: [0.146258692, -0.264378726, -0.120823079]
+      Rotation: [0.753532602, 0.235801776, 0.449463255]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000365
@@ -5709,8 +5709,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.130133311, -0.207131964, -0.000661497211]
-      Rotation: [2.02992676, -0.655035649, 1.75508683]
+      Translation: [0.0987840403, -0.207584961, -0.0665742498]
+      Rotation: [1.23471879, -0.717029972, 0.602084973]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000365
@@ -5722,8 +5722,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.140590898, -0.215287301, -0.000536521653]
-      Rotation: [2.23688746, -0.538042409, 1.93846176]
+      Translation: [0.105644641, -0.215792275, -0.0744137925]
+      Rotation: [1.48414866, -0.821819323, 0.84294585]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000365
@@ -5735,8 +5735,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.132721917, -0.209150685, -0.000630561544]
-      Rotation: [1.48961249, -0.735374934, 1.56894099]
+      Translation: [0.10048227, -0.209616548, -0.0685148011]
+      Rotation: [0.919090626, -0.391305755, 0.598004438]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 4000000000000000365
