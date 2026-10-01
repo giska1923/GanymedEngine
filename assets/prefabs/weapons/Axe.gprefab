@@ -20,14 +20,14 @@ Entities:
       MaterialOverrides: [9305541366150441952]
     BoneAttachmentComponent:
       Joint: RightHand
-      Offset: [-0.198001418, 0.113201122, 0.0295450238]
-      Rotation: [-1.81808252, 0.202984192, 1.39274669]
+      Offset: [-0.188299649, 0.137791985, 0.0378093787]
+      Rotation: [-1.9879233, 0.34011235, 1.56255231]
   - Entity: 2
     TagComponent:
       Tag: Grip
     TransformComponent:
-      Translation: [0.0934727432, -0.201231074, -0.0605050815]
-      Rotation: [2.39847236, -1.23916573, 1.00888175]
+      Translation: [0.0921565552, -0.213676023, -0.0415049999]
+      Rotation: [2.78406266, -1.15085151, 1.55173337]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1
@@ -37,8 +37,8 @@ Entities:
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
-      Translation: [0.146258692, -0.264378726, -0.120823079]
-      Rotation: [0.753532602, 0.235801776, 0.449463255]
+      Translation: [0.145387773, -0.289660828, -0.0839901728]
+      Rotation: [0.629815974, 0.0216706531, 0.466556992]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1
@@ -48,8 +48,8 @@ Entities:
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
-      Translation: [0.0987840403, -0.207584961, -0.0665742498]
-      Rotation: [1.23471879, -0.717029972, 0.602084973]
+      Translation: [0.0975126551, -0.221321578, -0.0457798379]
+      Rotation: [1.24472702, -0.891551777, 0.783729287]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1
@@ -59,8 +59,8 @@ Entities:
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
-      Translation: [0.105644641, -0.215792275, -0.0744137925]
-      Rotation: [1.48414866, -0.821819323, 0.84294585]
+      Translation: [0.104431128, -0.231197339, -0.0513016447]
+      Rotation: [1.57323382, -0.95364683, 1.11321446]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1
@@ -70,8 +70,8 @@ Entities:
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:
-      Translation: [0.10048227, -0.209616548, -0.0685148011]
-      Rotation: [0.919090626, -0.391305755, 0.598004438]
+      Translation: [0.0992252104, -0.223766162, -0.0471466713]
+      Rotation: [0.827608394, -0.598915058, 0.660846298]
       Scale: [1, 1, 1]
     RelationshipComponent:
       Parent: 1

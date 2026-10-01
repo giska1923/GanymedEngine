@@ -918,35 +918,57 @@ around 90° slaps flat.
   toward the back of the hand: an upside-down axe. A second fit laid the knife's handle along the
   fingers, which no hand can close on. The constraints that survive are: handle within 50° of
   across the palm; knife forward or reverse grip (forward chosen); axe forward with its edge
-  toward the knuckles. Results: knife rake −80°, roll 150°; axe rake 0°, roll 50°
-  (`weapon_holds.py` `fit`). Static renders of the Soldier's hand show the axe in a plain hammer
-  grip and the knife across the palm, out past the thumb.
+  toward the knuckles. Results: knife rake −80°, roll 150°; axe rake +10°, roll 40° (refitted
+  with the chop below; `weapon_holds.py` `fit`). Static renders of the Soldier's hand show the
+  axe in a plain hammer grip and the knife across the palm, out past the thumb.
 
-| Fast frames cutting (5 rigs) | `Right_Hand_Sword_Slash` | `Thrust_Slash` | `Axe_Spin_Attack` | `Charged_Slash` |
-| ---------------------------- | ------------------------ | -------------- | ----------------- | --------------- |
-| Knife                        | 67–78%                   | **100%**       | 88–100%           | **100%**        |
-| Axe                          | 30–33%                   | 28–37%         | **67–73%**        | 29–50%          |
+**An axe chop, generated.** The library has no one-handed axe chop, so one was generated with
+text-to-motion on the source rig: "holding a small axe in the right hand only … raises the right
+arm high above the shoulder, then chops hard down and forward diagonally to waist height, and
+returns to a ready stance. Feet stay planted." The motion cost 10 credits (prime) and applying it
+3; balance 154 → 141. Meshy names every generated clip `retarget_clip`, so it was renamed
+`Axe_Chop` before install. It is 2.5 s with 3 cm of root travel. The hand travels pinky-first
+(+0.94 on the hand's thumb-to-pinky axis), a hammer blow, which is how a hammer-gripped axe chops.
 
-Median lead with the fitted grips: knife 18–38°, axe 36° on `Axe_Spin_Attack`. Within 2 cm of the
-body or forearm: axe never; knife 1–2 of 12–17 sampled frames of the two slashes on some rigs.
+- **The source sinks**: 2 cm below the floor at rest, 4 cm at the bottom of the chop, and the
+  retarget's hip-height scaling takes the Ork to 6.4 cm. A constant shift would make the standing
+  frames float, so `ground_clips.py --clamp` lifts each sinking Hips key by exactly its frame's
+  depth: a floor constraint, like a foot-IK pelvis adjustment. All 75 keys lifted (4.3–6.4 cm at
+  the deepest); the lowest vertex is now 0.0 cm on every frame.
+- **The axe grip was refitted over the spin and the chop together**: chop 43% → 83% cutting, spin
+  71% → 60–73%.
 
-**In the Armory**, the knife rows play `Thrust_Slash` and the axe rows `Axe_Spin_Attack`; the
-pistol rows keep each character's own idle. Seen in Play mode, eight frames through each attack:
-the axe winds up overhead, head up, and spins through the cut; the knife thrusts and cuts and
-stays in the hand. No warnings.
+| Fast frames cutting (5 rigs) | `Right_Hand_Sword_Slash` | `Thrust_Slash` | `Axe_Spin_Attack` | `Charged_Slash` | `Axe_Chop` |
+| ---------------------------- | ------------------------ | -------------- | ----------------- | --------------- | ---------- |
+| Knife                        | 67–78%                   | **100%**       | 88–100%           | **100%**        | —          |
+| Axe                          | 30–40%                   | 28–37%         | 60–73%            | 29–50%          | **83%**    |
+
+Median lead with the fitted grips: knife 18–38°; axe 37–39° on `Axe_Chop`, 38–41° on
+`Axe_Spin_Attack`.
+
+**Within 2 cm of the body or forearm** (sampled frames): axe `Axe_Spin_Attack` 0 on every rig;
+`Axe_Chop` 0 on the player and Soldier, 2/19 on the Necron and Eldar, **5/19 on the Ork**; the
+knife 0–2 per attack. Holding the Ork's axe 4 or 8 cm lower on the handle did not change its 5
+frames, so the contact is not the handle's end, and no per-character grip slide was added.
+The clipping counts reported earlier in this section were wrong. `melee_check.py` stored a
+placement closure per frame over the loop variables, so every frame placed the weapon with the
+last frame's hand. The cut measurements were unaffected (computed immediately). Fixed by binding
+per frame. A box prefilter also took the check from over an hour to 21 s for all 50 combinations.
+
+**In the Armory**, the knife rows play `Thrust_Slash` and the axe rows `Axe_Chop`; the pistol rows
+keep each character's own idle. Seen in Play mode, eight frames through each attack: the axe goes
+overhead, comes down with the body bending into it, and recovers head-forward with the feet on the
+floor; the knife thrusts and cuts and stays in the hand. No warnings.
 
 Left open:
 
-- **The axe has one good attack.** The library has no one-handed axe chop; the other three are
-  sword choreography and slap with the axe's flat on most frames. A dedicated chop through
-  text-to-motion (13 credits) on the source rig, before it expires on 2026-10-04, is the cheap
-  next step.
-- **A grip is fitted to its clips.** Another attack may want another roll. `AttachToBone` updates
-  an existing socket the same frame, so a script could switch grips per attack.
-- **`Thrust_Slash` sinks** up to 6.1 cm on the Ork (−0.8 to −3.7 cm on the others) at its lowest.
-  The grounder lifts only floats; the lunge's deepest frame was left as is.
-- **The knife's near-contacts** with the forearm in the slashes were found by measurement, not
-  seen; check at full speed in the editor.
+- **A grip is fitted to its clips.** The axe's three sword clips still slap with the flat on most
+  frames (29–50%). Another attack may want another roll; `AttachToBone` updates an existing socket
+  the same frame, so a script could switch grips per attack.
+- **The Ork's chop** brushes its own body on 5 of 19 sampled frames. Look at it at full speed
+  before treating it as a defect.
+- **`Thrust_Slash` sinks** up to 6.1 cm on the Ork (−0.8 to −3.7 cm on the others) at its lowest;
+  `ground_clips.py --clamp` is now the fix and was not applied to it.
 - **No hit detection** (weapon-ladder section above).
 
 #### The placeholder boxes are gone, and two things went with them
