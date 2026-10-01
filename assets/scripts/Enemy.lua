@@ -186,6 +186,16 @@ function Enemy:OnUpdate(ts)
         return
     end
 
+    -- Melee lands through PG, the only channel between script instances (MeleeAttacker.lua).
+    local melee = PG.meleeDamage and PG.meleeDamage[self.entity:GetUUID()]
+    if melee then
+        PG.meleeDamage[self.entity:GetUUID()] = nil
+        self:TakeDamage(melee)
+        if self.dead then
+            return
+        end
+    end
+
     self.t = self.t + ts
 
     local player = self:Player()
@@ -420,7 +430,18 @@ function Enemy:OnCollisionEnter(other)
         return
     end
 
-    -- Shot from somewhere it cannot see: go and look. Standard, and it is also the only path in
+    -- The damage is the player's, not the projectile's - the upgrade station raises it - and PG is
+    -- the only channel between two script instances there is.
+    self:TakeDamage(PG.damage or 1)
+end
+
+-- One path for every source of damage: projectiles above, melee through PG.meleeDamage in OnUpdate.
+function Enemy:TakeDamage(amount)
+    if self.dead then
+        return
+    end
+
+    -- Hit from somewhere it cannot see: go and look. Standard, and it is also the only path in
     -- this script that reaches "search" without ever having had line of sight.
     if self.state ~= "hunt" then
         local player = self:Player()
@@ -431,9 +452,7 @@ function Enemy:OnCollisionEnter(other)
         end
     end
 
-    -- The damage is the player's, not the projectile's - the upgrade station raises it - and PG is
-    -- the only channel between two script instances there is.
-    self.health = self.health - (PG.damage or 1)
+    self.health = self.health - amount
     if self.health > 0 then
         return
     end

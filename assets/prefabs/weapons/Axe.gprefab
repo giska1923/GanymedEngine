@@ -15,6 +15,9 @@ Entities:
         - 4
         - 5
         - 6
+        - 7
+        - 8
+        - 9
     StaticMeshComponent:
       Mesh: 5282366377563608684
       MaterialOverrides: [9305541366150441952]
@@ -23,6 +26,39 @@ Entities:
       Offset: [-0.188299649, 0.137791985, 0.0378093787]
       Rotation: [-1.9879233, 0.34011235, 1.56255231]
   - Entity: 2
+    TagComponent:
+      Tag: Trace1
+    TransformComponent:
+      Translation: [-0.107604504, 0.315358892, -0.00089944982]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 3
+    TagComponent:
+      Tag: Trace2
+    TransformComponent:
+      Translation: [-0.115838216, 0.278735714, -0.000206522437]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 4
+    TagComponent:
+      Tag: Trace3
+    TransformComponent:
+      Translation: [-0.107614826, 0.235842136, 7.24687779e-05]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 5
     TagComponent:
       Tag: Grip
     TransformComponent:
@@ -33,7 +69,7 @@ Entities:
       Parent: 1
       Children:
         []
-  - Entity: 3
+  - Entity: 6
     TagComponent:
       Tag: Grip_Ork
     TransformComponent:
@@ -44,7 +80,7 @@ Entities:
       Parent: 1
       Children:
         []
-  - Entity: 4
+  - Entity: 7
     TagComponent:
       Tag: Grip_Necron
     TransformComponent:
@@ -55,7 +91,7 @@ Entities:
       Parent: 1
       Children:
         []
-  - Entity: 5
+  - Entity: 8
     TagComponent:
       Tag: Grip_Eldar
     TransformComponent:
@@ -66,7 +102,7 @@ Entities:
       Parent: 1
       Children:
         []
-  - Entity: 6
+  - Entity: 9
     TagComponent:
       Tag: Grip_Soldier
     TransformComponent:

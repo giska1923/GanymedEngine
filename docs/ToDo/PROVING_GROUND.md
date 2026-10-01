@@ -568,10 +568,9 @@ Left open, in order of need:
 - **None of them is wired in.** No stats and no pickup. Sockets, muzzles and per-character grips
   now exist (prefabs and `Armory.ganymede`, below); the natural gameplay hook is still the existing
   weapon level (`Weapon Crate` halves `fireInterval`), swapping the carried mesh per level.
-- **Melee has no gameplay.** The knife and axe now have attack clips and grips fitted to them
-  (melee section below), but P3 is projectile-only: nothing detects a hit. A short sensor sweep in
-  front of the attacker during the swing, which `Physics.Raycast` / sensors (P0.3, P0.4) can
-  already express, is the missing piece.
+- **Nothing in the Proving Ground wields melee yet.** The knife and axe have attacks, fitted grips
+  and hit detection (`MeleeAttacker.lua`, melee section below), verified in `Armory.ganymede`;
+  no player input or enemy AI starts an attack.
 - **The LMG's bipod is deployed**, front legs and a rear leg. Carried, those legs will cross the
   player's thighs. Fine as a pickup or a display piece; for a held weapon, a re-roll with the
   bipod folded is 30 credits.
@@ -962,19 +961,88 @@ stand 1.7–5.3 cm above the floor are the lunge's push-off, identical before an
 cut (100%) and every clipping count are unchanged, as a vertical lift of the whole body must leave
 them.
 
-**In the Armory**, the knife rows play `Thrust_Slash` and the axe rows `Axe_Chop`; the pistol rows
-keep each character's own idle. Seen in Play mode, eight frames through each attack: the axe goes
-overhead, comes down with the body bending into it, and recovers head-forward with the feet on the
-floor; the knife thrusts and cuts and stays in the hand. No warnings.
+**The axe's moveset is `Axe_Chop` and `Axe_Spin_Attack`.** The three sword clips stay installed
+because the knife cuts in all of them, but they are knife-only. A grip turned for each of them alone
+tops out at 33–44% cutting, so switching grips per attack cannot rescue them, and they are
+not axe motions. Two more axe swings were generated (26 credits; balance 141 → 115) and rejected:
+`Axe_Swing` met the target flat or edge-trailing on every fast frame (0% cutting), and
+`Axe_Backhand` barely moves (peak 2–3 m/s against 12–22 m/s for a real swing). Neither was
+installed; they stay in the Meshy work folder.
+
+**The Ork's chop, fixed in its own clip.** Of the Ork's chop contacts, one was the follow-through
+passing 1.3 cm from its own left foot, and four were the recovery: the handle and ring resting 3–5 mm
+from its right thigh, because its 0.8 m arms hang the fist beside the leg. No valid grip cleared it
+without losing the cut, and holding the axe lower on the handle changed nothing. Turning the Ork's
+right arm 12° outward for the whole of its `Axe_Chop` (`abduct_arm.py`, an additive world-space
+correction on `RightArm`; the forearm and hand follow) took contacts from 9 to 1 of 38 frames and the
+closest approach from 0.4 to 1.7 cm, with the cut unchanged at 83%. The other direction made it
+worse. Only that one channel of the Ork's glb changed; the remaining frame is the follow-through
+near its foot.
+
+#### Melee hit detection (2026-10-01)
+
+`assets/scripts/MeleeAttacker.lua` goes on the character's mesh entity, the one with the
+animator. The weapon is a direct child of it, as two-hand IK already requires, and the knife and
+axe prefabs carry `Trace1`..`Trace3` down the striking edge.
+
+- **A weapon trace.** On every frame of an attack's damage window, each trace point is ray-cast from
+  where it was last frame to where it is now: the standard weapon trace (Unreal's trace sockets).
+  The ray covers the frame's whole path, so a 20 m/s blade cannot tunnel through a target, and a
+  target is hit at most once per swing.
+- **Windows come from a table**, because the engine has no animation events and no
+  `GetAnimationTime`. A script can read which clip is playing, so this one times the clip itself
+  from the frame it became current, wrapping at its length for a looping clip. Each window is the
+  striking point's fast interval (above half its peak speed), measured on all five characters.
+  They agree within 33–67 ms, except the knife's two-phase `Charged_Slash`, whose window is the union.
+- **Damage goes through PG**, the only channel between script instances: a hit adds to
+  `PG.meleeDamage[uuid]`. `Enemy.lua` drains its own entry each frame through a new `TakeDamage`,
+  now also the projectile path, so both kinds of damage share the "go and look" response and the
+  death handling.
+- **No self-hits without `GetParent`.** The attacker's collider is on its parent, which a script
+  cannot name. So a hit is discarded when the hit entity's child of our name is us.
+- **Strike lanes.** These attacks are not centred: the chop lands 40° to the attacker's left at
+  1.47 m, the thrust 45° to the right at 0.92 m (impact point at peak speed, averaged over five
+  characters). An enemy squarely in front at the Enemy collider's size would be missed by both. The
+  table carries each attack's lane, so whatever drives an attack can turn the attacker to put the
+  target in it.
+
+**Verified in Play mode.** A throwaway scene put 15 attackers (knife `Thrust_Slash`, axe
+`Axe_Chop`, axe `Axe_Spin_Attack`, × 5 characters), 4–5 m apart, each with three Enemy-sized
+static boxes: a Target in its lane, a Mirror in the opposite lane, and one directly Behind.
+15 s of play:
+
+| Attack            | Target hits     | Mirror hits     | Behind | Hit phase (window)          |
+| ----------------- | --------------- | --------------- | ------ | --------------------------- |
+| `Thrust_Slash`    | 25 (5 swings × 5) | 0             | 0      | 0.64–0.68 s (0.60–0.77)     |
+| `Axe_Chop`        | 30 (6 × 5)      | 0               | 0      | 0.79–0.83 s (0.77–0.93)     |
+| `Axe_Spin_Attack` | 30 (6 × 5)      | 30              | 0      | 0.83–0.97 s (0.80–1.17)     |
+
+No hit landed on another attacker's boxes, and nothing was logged as a warning. The spin hits its
+Mirror because a spin sweeps both sides: the offline geometry has the edge enter the Target box
+at about 0.93 s and the Mirror box at about 1.0 s, inside the window. For a spin the Mirror was
+never a valid negative control. `Armory.ganymede` now carries the script and a training target in
+each knife and axe row's lane. In 12 s of play all ten hit only their own target, once per swing.
+The Proving Ground with the edited `Enemy.lua` plays with all six enemies up and no warnings, but
+nobody fired in that run, so the projectile path through `TakeDamage` was not exercised.
+
+**In the Armory**, the knife rows play `Thrust_Slash` and the axe rows `Axe_Chop`, each with
+`MeleeAttacker` and a training target in its lane; the pistol rows keep each character's own idle.
+Seen in Play mode: the axe goes overhead, comes down with the body bending into it, and recovers
+head-forward with the feet on the floor; the knife thrusts and cuts and stays in the hand.
 
 Left open:
 
-- **A grip is fitted to its clips.** The axe's three sword clips still slap with the flat on most
-  frames (29–50%). Another attack may want another roll; `AttachToBone` updates an existing socket
-  the same frame, so a script could switch grips per attack.
-- **The Ork's chop** brushes its own body on 5 of 19 sampled frames. Look at it at full speed
-  before treating it as a defect.
-- **No hit detection** (weapon-ladder section above).
+- **Nothing starts an attack.** No player input or enemy AI plays a melee clip. The player's
+  attack needs a button, the knife or axe socketed instead of the rifle, a turn into the attack's
+  lane, and its `Properties.weapon` set.
+- **Clip time is inferred.** `SetAnimationSpeed` (no getter) drifts an attack out of its window, and
+  re-playing the current clip does not restart it. A `GetAnimationTime` binding, or animation
+  events, would replace the table. That is engine work, so it belongs on `master`, and this
+  doc does not reach there.
+- **`Thrust_Slash`'s window covers the thrust only**; its follow-up slash is under half the thrust's
+  speed.
+- **A grip is fitted to its clips**; another attack may want another grip (`AttachToBone` updates a
+  socket the same frame).
 
 #### The placeholder boxes are gone, and two things went with them
 
