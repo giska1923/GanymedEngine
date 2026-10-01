@@ -39,7 +39,9 @@ PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
 local Enemy = {
     entity = nil,
     Properties = {
-        health = 3,
+        -- On the scale the weapons are tuned to: a gun round deals 8-16 by weapon (Player.lua's
+        -- GUN_DAMAGE), a knife or axe hit 40 (MeleeAttacker.lua). The rifle takes 9 rounds.
+        health = 100,
         -- The far end of the patrol leg, in world XZ; y is ignored. The near end is wherever the
         -- enemy was authored, so a leg is two numbers in the scene rather than a route asset.
         -- Leaving it at zero is not "patrol to the origin" - a target within half a metre of home
@@ -62,7 +64,7 @@ local Enemy = {
         -- recompute this; author it to face the opening they are meant to watch.
         facing = 0.0,
     },
-    health = 3,
+    health = 100,
     patrolTo = Vec3(0, 0, 0),
     speed = 2.0,
     chargeSpeed = 4.2,
@@ -96,6 +98,7 @@ local Enemy = {
 }
 
 function Enemy:OnCreate()
+    self.maxHealth = self.health
     local p = self.entity:GetTranslation()
     self.home = p
     self.lastPos = p
@@ -430,9 +433,10 @@ function Enemy:OnCollisionEnter(other)
         return
     end
 
-    -- The damage is the player's, not the projectile's - the upgrade station raises it - and PG is
-    -- the only channel between two script instances there is.
-    self:TakeDamage(PG.damage or 1)
+    -- The damage is the player's, not the projectile's - it is set by the gun the player carries
+    -- and raised by the upgrade station - and PG is the only channel between two script instances
+    -- there is. 8 is the pistol's, the bottom of the ladder, for a scene with no Player.lua.
+    self:TakeDamage(PG.damage or 8)
 end
 
 -- One path for every source of damage: projectiles above, melee through PG.meleeDamage in OnUpdate.
@@ -459,7 +463,8 @@ function Enemy:TakeDamage(amount)
 
     self.dead = true
     PG.kills = PG.kills + 1
-    Log.Info(string.format("Enemy %s down (escapes=%d)", self.label, self.escapes))
+    Log.Info(string.format("Enemy %s down (escapes=%d, took %.0f)", self.label, self.escapes,
+        self.maxHealth - self.health))
     -- Destroys the whole subtree, not just this entity. Scene::DestroyEntity unparents children
     -- instead of destroying them, which would leave the mesh child in the scene forever.
     self.entity:Destroy()

@@ -410,6 +410,25 @@ running a HUD with a scrollable element. The editor camera was fixed by gating i
 and a locked cursor. If it proves real, gate **only** the pointer events on hover, not the whole
 call.
 
+## In Play, destroying the entity under the mouse asserts in the editor
+
+`EditorLayer` keeps the entity under the pointer in `m_HoveredEntity`, refreshed only when the
+entity-ID readback (`PollEntityID`) completes, and the Stats panel reads its name every frame
+(`EditorLayer.cpp`, `m_HoveredEntity.GetComponent<TagComponent>()`). If a script destroys that
+entity during Play, the handle dangles until the next readback lands, and the read asserts
+*"Entity does not have component!"*, taking the editor down. Found on `first-game` (2026-10-01):
+a melee test with an enemy under the screen-centre cursor crashed the moment it died. The crash
+dump's stack ends in `EditorLayer::OnImGuiRender` at the Stats read. The runtime has no hover
+readout and does not crash on the same scene.
+
+The guard is `Entity::operator bool`, which tests only `!= entt::null`, not whether the handle is
+still alive in the registry. So any `Entity` held across a frame boundary has this failure mode, and
+the hover is just the one that runs every frame. Two fixes, in order of scope: re-resolve the hovered
+entity (`Reg().valid(...)`) before reading it, which closes this crash; or make `operator bool`
+check registry validity, which closes the whole class at the cost of a sparse-set lookup per test.
+Editor and engine code, so it belongs on `master`; this entry was written on the game branch,
+which never merges back, and has to be carried over by hand.
+
 ## `DesktopShell` has only run on Windows
 
 The Content Browser's **Open in VS Code** and **Show in Explorer** go through `DesktopShell`

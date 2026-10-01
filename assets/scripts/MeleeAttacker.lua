@@ -34,7 +34,17 @@
 -- ---- Not hitting yourself ----
 --
 -- The attacker's collider is on its parent, and there is no GetParent binding to name it as the
--- ray's ignore entity. So a hit is discarded when the hit entity's child of our name is us.
+-- ray's ignore entity. So a hit is discarded when the hit entity's child of our name is us. That
+-- covers a body one level under its collider (Enemy, the Armory rows); the player's Body sits two
+-- levels down (Player/Yaw/Body), so Player.lua names its capsule through PG.meleeConfig instead.
+--
+-- ---- Driven from another script ----
+--
+-- PG.meleeConfig[uuid of this entity] = { weapon = "Knife", ignore = uuid }, when present,
+-- overrides the `weapon` property and adds an entity to never hit. It is how Player.lua switches
+-- weapons at run time without a way to write another script's fields. The windows table is
+-- published as PG.meleeWindows for whatever starts the attacks: it needs each clip's length to
+-- know when an attack is over, and its lane to turn into it.
 
 PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
 
@@ -59,17 +69,21 @@ local WINDOWS = {
     },
 }
 
+PG.meleeWindows = WINDOWS
+
 local TRACE_POINTS = 3
 
 local MeleeAttacker = {
     entity = nil,
     Properties = {
-        -- Tag of the weapon child: "Knife" or "Axe" (a key of WINDOWS).
+        -- Tag of the weapon child: "Knife" or "Axe" (a key of WINDOWS), or "None" for an
+        -- attacker whose weapon is set at run time through PG.meleeConfig.
         weapon = "Axe",
-        damage = 1.0,
+        -- Per hit, once per target per swing. Enemy.health is 100.
+        damage = 40.0,
     },
     weapon = "Axe",
-    damage = 1.0,
+    damage = 40.0,
 }
 
 function MeleeAttacker:OnCreate()
@@ -80,15 +94,17 @@ function MeleeAttacker:OnCreate()
     self.swings = 0
     self.hits = 0
     PG.meleeDamage = PG.meleeDamage or {}
-    if not WINDOWS[self.weapon] then
+    -- "None" is deliberate: an attacker armed at run time through PG.meleeConfig (the player).
+    if self.weapon ~= "None" and not WINDOWS[self.weapon] then
         Log.Warn(string.format("MeleeAttacker on %s: no damage windows for weapon '%s'",
             self.entity:GetName(), self.weapon))
     end
 end
 
-function MeleeAttacker:Traces()
-    if self.traces then return self.traces end
-    local weapon = self.entity:GetChildByName(self.weapon)
+function MeleeAttacker:Traces(weaponName)
+    if self.traces and self.tracesOf == weaponName then return self.traces end
+    self.traces, self.tracesOf = nil, nil
+    local weapon = self.entity:GetChildByName(weaponName)
     if not weapon then return nil end
     local traces = {}
     for i = 1, TRACE_POINTS do
@@ -96,12 +112,13 @@ function MeleeAttacker:Traces()
         if t then traces[#traces + 1] = t end
     end
     if #traces == 0 then return nil end
-    self.traces = traces
+    self.traces, self.tracesOf = traces, weaponName
     return traces
 end
 
 -- True when `entity` is the parent we cannot name: one of its children carries our name and is us.
-function MeleeAttacker:IsSelf(entity)
+function MeleeAttacker:IsSelf(entity, config)
+    if config and config.ignore and entity:GetUUID() == config.ignore then return true end
     local child = entity:GetChildByName(self.entity:GetName())
     return child ~= nil and child:GetUUID() == self.entity:GetUUID()
 end
@@ -110,9 +127,14 @@ function MeleeAttacker:OnUpdate(ts)
     -- A hitch frame would sweep a ray across half the swing; skip it rather than over-reach.
     if ts > 0.25 then return end
 
-    local traces = self:Traces()
-    local windows = WINDOWS[self.weapon]
-    if not traces or not windows then return end
+    local config = PG.meleeConfig and PG.meleeConfig[self.entity:GetUUID()]
+    local weaponName = (config and config.weapon) or self.weapon
+    local traces = self:Traces(weaponName)
+    local windows = WINDOWS[weaponName]
+    if not traces or not windows then
+        self.clip, self.prev = nil, {}
+        return
+    end
 
     local clip = self.entity:GetCurrentAnimation()
     if clip ~= self.clip then
@@ -150,14 +172,14 @@ function MeleeAttacker:OnUpdate(ts)
             local len = d:Length()
             if len > 1e-4 then
                 local hit = Physics.Raycast(q, d, len)
-                if hit and hit.entity and not self:IsSelf(hit.entity) then
+                if hit and hit.entity and not self:IsSelf(hit.entity, config) then
                     local id = hit.entity:GetUUID()
                     if not self.hitThisSwing[id] then
                         self.hitThisSwing[id] = true
                         self.hits = self.hits + 1
                         PG.meleeDamage[id] = (PG.meleeDamage[id] or 0) + self.damage
                         Log.Info(string.format("Melee: %s %s %s hit %s at %.2f s (trace %d, %.1f m/s)",
-                            self.entity:GetName(), self.weapon, clip, hit.entity:GetName(), phase, i, len / ts))
+                            self.entity:GetName(), weaponName, clip, hit.entity:GetName(), phase, i, len / ts))
                     end
                 end
             end

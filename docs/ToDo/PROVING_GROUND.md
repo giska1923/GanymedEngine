@@ -565,12 +565,12 @@ How they were made, and what differs from the Rifle:
 
 Left open, in order of need:
 
-- **None of them is wired in.** No stats and no pickup. Sockets, muzzles and per-character grips
-  now exist (prefabs and `Armory.ganymede`, below); the natural gameplay hook is still the existing
-  weapon level (`Weapon Crate` halves `fireInterval`), swapping the carried mesh per level.
-- **Nothing in the Proving Ground wields melee yet.** The knife and axe have attacks, fitted grips
-  and hit detection (`MeleeAttacker.lua`, melee section below), verified in `Armory.ganymede`;
-  no player input or enemy AI starts an attack.
+- **Only the rifle is carried.** The other four guns have a damage number each (`GUN_DAMAGE` in
+  `Player.lua`, "Player melee and the damage scale" below) and sockets, muzzles and per-character
+  grips (prefabs and `Armory.ganymede`), but nothing hands one to the player. The natural hook is
+  still the existing weapon level (`Weapon Crate` halves `fireInterval`), moving the player up the
+  ladder and swapping the carried mesh per level.
+- **The player wields the knife and axe; no enemy does.** Slots 2 and 3, LMB to attack (below).
 - **The LMG's bipod is deployed**, front legs and a rear leg. Carried, those legs will cross the
   player's thighs. Fine as a pickup or a display piece; for a held weapon, a re-roll with the
   bipod folded is 30 credits.
@@ -999,7 +999,9 @@ axe prefabs carry `Trace1`..`Trace3` down the striking edge.
   now also the projectile path, so both kinds of damage share the "go and look" response and the
   death handling.
 - **No self-hits without `GetParent`.** The attacker's collider is on its parent, which a script
-  cannot name. So a hit is discarded when the hit entity's child of our name is us.
+  cannot name. So a hit is discarded when the hit entity's child of our name is us. That reaches
+  one level; the player's Body is two levels under its capsule, so `Player.lua` names the capsule
+  through `PG.meleeConfig` instead (below).
 - **Strike lanes.** These attacks are not centred: the chop lands 40° to the attacker's left at
   1.47 m, the thrust 45° to the right at 0.92 m (impact point at peak speed, averaged over five
   characters). An enemy squarely in front at the Enemy collider's size would be missed by both. The
@@ -1032,9 +1034,11 @@ head-forward with the feet on the floor; the knife thrusts and cuts and stays in
 
 Left open:
 
-- **Nothing starts an attack.** No player input or enemy AI plays a melee clip. The player's
-  attack needs a button, the knife or axe socketed instead of the rifle, a turn into the attack's
-  lane, and its `Properties.weapon` set.
+- **No enemy attacks.** The player's attack is wired (next section); `Enemy.lua` still only
+  lunges for contact damage.
+- **`Physics.Raycast` takes an ignore entity** (its fourth argument), which the self test predates.
+  Passing the capsule there instead of discarding the hit would also let a trace that starts
+  inside the attacker go on to the target behind it. Not seen to matter in any run.
 - **Clip time is inferred.** `SetAnimationSpeed` (no getter) drifts an attack out of its window, and
   re-playing the current clip does not restart it. A `GetAnimationTime` binding, or animation
   events, would replace the table. That is engine work, so it belongs on `master`, and this
@@ -1043,6 +1047,119 @@ Left open:
   speed.
 - **A grip is fitted to its clips**; another attack may want another grip (`AttachToBone` updates a
   socket the same frame).
+
+#### Player melee and the damage scale (2026-10-01)
+
+**Weapon slots: `1` gun, `2` knife, `3` axe, and LMB attacks with whatever is in hand.** LMB
+already captured the cursor and fired. The alternative was a separate melee button (quick melee
+on `V`, as most shooters do it). Slots keep one attack button, as asked, at the cost of a key press
+to switch. The player's `Body` carries all three as socketed children. The knife and axe are prefab
+instances with the ArmoredHumanoid holds the Armory uses.
+
+- **Hiding by scale.** A weapon not in hand is shrunk to 0.001 of its scale, because a script
+  cannot hide an entity: there is no visibility flag, and `DetachFromBone` leaves it at the
+  `Body`'s origin. Not 0, which would make the world matrix singular for the normals and the hand
+  IK's weapon frame.
+- **A melee weapon lets go of the IK.** It sets both hand weights and `AimLock` to 0: the weapon
+  is one-handed, and its grip was fitted to the clip's own hand. The rifle has to stay the first
+  of `Body`'s socketed children, because hand IK holds the first one it finds.
+- **`MeleeAttacker.lua` on `Body` is told what to trace** through
+  `PG.meleeConfig[body uuid] = { weapon, ignore }`. The weapon is `"None"` while the gun is out.
+  `ignore` is the capsule, which is too far up for the script's own self test. The script
+  publishes its table as `PG.meleeWindows`, so the attack's length and lane have one source.
+
+**The lockout is the attack clip, then a cooldown.** An attack plays its clip once, looping off,
+for the clip's full length: 3.00 s for the thrust, 2.47 s for the chop. Then `meleeCooldown`
+(0.3 s) has to pass before LMB starts another. Holding LMB repeats at that rate. Why not a single
+fixed interval for every attack:
+
+- shorter than the clip in hand, it has to cut the swing off, and with no crossfade that is a pop;
+- longer, it leaves the shorter attack standing idle;
+- and the clip cannot simply be restarted early: `PlayAnimation` on the current clip does not
+  rewind, and `MeleeAttacker` times its window from the frame the clip changes. Ending every
+  attack on a frame of locomotion guarantees that change.
+
+A character whose attack is a different length needs a table entry, not a different cooldown.
+During an attack:
+
+- **the player is rooted:** the clips are in place, and the lane was aimed from where the attack
+  started;
+- **the body turns by the lane's yaw**, so the off-centre strike lands under the crosshair;
+- **the aim offset fades out**, because the lanes were measured without a spine twist.
+
+**The capturing click no longer attacks, with either weapon.** LMB arms only after it has been
+released since the click that captured the cursor. Until now that click also fired a round,
+against the code comment saying it should not. A click lasts several frames, so skipping only the
+capturing frame was not enough.
+
+**Damage.** The gun ladder deals 8 a round at the bottom and +2 a rung (`GUN_DAMAGE`), and a
+knife or axe hit deals 40 (`MeleeAttacker.damage`). `Player.gun` names the gun on slot 1. The
+weapon numbers are the spec; enemy health 100 is a choice made here to match the player's own
+`maxHealth`. The upgrade station now gives +2, one rung, because +1 on a 12-damage round is 8%.
+
+| Source               | Per hit | Hits to kill (100) |
+| -------------------- | ------- | ------------------ |
+| Pistol               | 8       | 13                 |
+| SMG                  | 10      | 10                 |
+| Rifle (the player's) | 12      | 9                  |
+| LMG                  | 14      | 8                  |
+| Minigun              | 16      | 7                  |
+| Knife or axe         | 40      | 3                  |
+
+**Verified in the Debug `GanymedRuntime`.** The test scene was a scratch copy of the Proving
+Ground, with every enemy pinned (`speed`, `chargeSpeed` 0) and E1 placed straight ahead of the
+player. Input was synthesized: a click to capture, `2` or `3`, then LMB held.
+
+| Weapon | E1 at | Attacks           | Hits (clip time)       | Result                  |
+| ------ | ----- | ----------------- | ---------------------- | ----------------------- |
+| Knife  | 0.8 m | 4 in 12 s, 3.3 s apart | 3 (0.64–0.67 s)   | down on the third       |
+| Axe    | 0.8 m | 4, ~2.8 s apart   | 3 (0.90–0.91 s)        | down on the third       |
+| Axe    | 1.2 m | 4                 | 3 (0.81–0.84 s)        | down on the third       |
+| Knife  | 1.2 m | 4                 | 0                      | out of reach            |
+| Rifle  | 4 m   | held 2.5 s        | 9 rounds               | down, took 108          |
+
+- **The knife is short.** Its thrust peaks about 0.9 m from the body's centre, so it misses a box
+  centred at 1.2 m. It reaches an enemy pressed in to the 0.8 m standoff, and not one backing off
+  to 2.2 m after a lunge.
+- **No trace hit the player's own capsule** in any run.
+- **The melee runs reported "took 132"**: three 40s, plus the 12 of the round the capturing click
+  fired. That is what found the capture bug above. Re-run after the fix: `fired=0` for the
+  whole run, and the enemy took exactly 120.
+- **Seen**, in runtime screenshots: the rifle gone with a melee weapon out, the axe overhead in
+  the chop, and the body turned 45° right into the thrust's lane.
+- **The first attempt ran in the editor and crashed** the moment the enemy died. The editor's Stats
+  panel read the destroyed entity under the cursor; the bug is recorded in
+  [cross-cutting.md](cross-cutting.md). The runtime has no such readout, which is why these tests
+  ran there.
+
+**The P5 gate was re-run on the new damage scale**: 180 s in the Debug `GanymedRuntime`, with
+`p5gate` on in a scratch copy of the scene. It passed every check it defines:
+
+- the heal, weapon and upgrade triggers;
+- the upgrade bought (12 → 14), and `ui-mismatch=0`;
+- `fired=192`, `despawned=192`, `live=0`;
+- `inWall=0`, the route complete, and 0 errors.
+
+The first leg banked **4 kills at 9 rounds each** (`took 108`), so score still reaches the
+upgrade cost; the old scale banked 2. One counter moved past run-to-run variance, though. Probe 1
+ended at hp 22 and **20 m from its probe point**, at (-6.9, 15.9) against (2.3, -2.0). Earlier runs
+read hp 64–82 and stood where they started. Enemies now live three times as long, so more of them
+press in at once, and the shove that "Nothing can refuse a push on a character"
+([cross-cutting.md](cross-cutting.md)) describes has longer to work. The gate does not test
+position, so it still passes; a human standing and shooting will feel it.
+
+Left open:
+
+- **Moving with a melee weapon plays the rifle clips.** Idle, walk and run are rifle-carry poses,
+  so the free hand holds an invisible rifle. Each character has a weaponless idle (the Armory's
+  pistol rows use it); the player would also need a weaponless walk and run.
+- **Attacks are long and rooted.** The 3.0 s thrust is a thrust (window 0.60–0.77 s) and a slow
+  follow-up slash. Ending it near 1.4 s needs a crossfade or a clip trimmed offline.
+- **Enemy health 100 is a tuning choice, not a spec.** It makes melee a three-hit, ~10 s fight
+  against an enemy that deals 6 a touch, and it made the P5 gate's first leg cost far more health
+  (above). Health 40 would make every melee hit a kill and the rifle take 4 rounds.
+- **No hit feedback.** Nothing plays on a melee hit: no sound, no flinch, no particles.
+- **Switching is instant.** No holster or draw clip, and the hand IK snaps on or off.
 
 #### The placeholder boxes are gone, and two things went with them
 
@@ -1912,7 +2029,7 @@ there is something to see:
 | ----------------- | ------- | ---------------------------------------------------------------------- |
 | `Heal Spot`       | heal    | permanent; heals 14/s while you stand in it, using enter/exit to count |
 | `Weapon Crate`    | weapon  | consumed on touch, destroys itself, halves the fire interval           |
-| `Upgrade Station` | upgrade | permanent; spends 2 score for +1 projectile damage, refuses if poor    |
+| `Upgrade Station` | upgrade | permanent; spends 2 score for +2 projectile damage (+1 before 2026-10-01), refuses if poor |
 
 The effect is applied by the **player**, not the pickup: contacts dispatch to both participants, so
 the player's `OnCollisionEnter` reads the tag off whatever it touched. The pickup script only

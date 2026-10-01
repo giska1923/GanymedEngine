@@ -22,6 +22,25 @@
 -- wall, so it jammed on the same corner every lap. Nothing in this script changed for the swap -
 -- SetLinearVelocity routes to either - which is the point of that API accepting both.
 
+-- Damage per round, by gun. The ladder is PROVING_GROUND.md's "weapon ladder", smallest to
+-- largest: 8 for the pistol and +2 a rung, so the rifle in the player's hands deals 12.
+local GUN_LADDER = { "Pistol", "SMG", "Rifle", "LMG", "Minigun" }
+local GUN_DAMAGE = {}
+for i, name in ipairs(GUN_LADDER) do
+    GUN_DAMAGE[name] = 8 + 2 * (i - 1)
+end
+local UPGRADE_DAMAGE = 2
+
+-- LMB's attack for each melee weapon: the clips the knife and axe grips were fitted to. Their
+-- length, damage window and lane come from MeleeAttacker.lua's table (PG.meleeWindows), so the
+-- two scripts cannot disagree about when an attack is over.
+local MELEE_ATTACK = { Knife = "Thrust_Slash", Axe = "Axe_Chop" }
+-- A weapon that is not equipped is shrunk to this fraction of its scale, because a script cannot
+-- hide an entity: there is no visibility flag, and DetachFromBone leaves it at the Body's origin.
+-- Not zero - a singular world matrix would put NaN into the weapon's normals and into the hand
+-- IK's weapon frame.
+local HIDDEN_SCALE = 0.001
+
 local Player = {
     entity = nil,
     Properties = {
@@ -58,8 +77,15 @@ local Player = {
         -- Health per second while standing in a heal spot. Faster than two enemies can take it
         -- off, or the spot is scenery.
         healRate = 14.0,
-        -- What the upgrade station charges for +1 projectile damage.
+        -- What the upgrade station charges for +2 projectile damage (one rung of GUN_DAMAGE).
         upgradeCost = 2.0,
+
+        -- The gun on slot 1, a rung of the weapon ladder; a round deals GUN_DAMAGE[gun]. It also
+        -- names the Body child shown while slot 1 is equipped.
+        gun = "Rifle",
+        -- Seconds after a melee attack's clip has played out before the next one can start. The
+        -- clip itself is always a lockout (see Player:Melee); this is the gap on top of it.
+        meleeCooldown = 0.3,
 
         -- P6. Seconds between footsteps at full speed. 0.42 is a brisk walk; the sound is
         -- retriggered rather than looped, so this is the only thing setting the cadence.
@@ -79,6 +105,8 @@ local Player = {
     damageCooldown = 1.0,
     healRate = 14.0,
     upgradeCost = 2.0,
+    gun = "Rifle",
+    meleeCooldown = 0.3,
     stepInterval = 0.42,
 
     -- Probe-route state, shared by both gate modes: they differ only in which table they walk.
@@ -129,9 +157,17 @@ local Player = {
 
     fireCooldown = 0.0,
     refused = 0,
+
+    -- Melee. "Gun", "Knife" or "Axe"; slots 1, 2, 3.
+    equipped = "Gun",
+    weapons = nil,     -- [Body child name] = { entity, scale as authored }
+    attack = nil,      -- the attack in progress: { clip, t, length, yaw }
+    meleeReady = 0.0,  -- seconds of meleeCooldown left
+    attacks = 0,
     yaw = 0.0,
     pitch = 0.0,
     looking = false,
+    lmbArmed = false,  -- LMB released since the click that captured the cursor
     yawEntity = nil,
     cameraEntity = nil,
     -- Gate diagnostics: the P1 gate is "walk for two minutes without tipping, sinking or
@@ -292,6 +328,19 @@ function Player:OnCreate()
     if not self.muzzle then Log.Warn("Player: no 'Muzzle' under Body/Rifle - no muzzle flash, fire from the chest") end
     if not self.body then Log.Warn("Player: no 'Body' child - the player will not animate") end
 
+    -- Slot 1 is the gun, 2 and 3 the knife and axe, all children of Body socketed to the rig.
+    -- Hand IK holds the first socketed child, so the gun has to stay first among them.
+    self.weapons = {}
+    for _, name in ipairs({ self.gun, "Knife", "Axe" }) do
+        local w = self.body and self.body:GetChildByName(name) or nil
+        if w then
+            self.weapons[name] = { entity = w, scale = w:GetScale() }
+        end
+    end
+    if not (self.weapons.Knife and self.weapons.Axe) then
+        Log.Warn("Player: no 'Knife' and 'Axe' under Body - slots 2 and 3 are empty")
+    end
+
     Log.Info("Player: click to look, Escape to release the cursor")
 
     local p = self.entity:GetTranslation()
@@ -303,10 +352,14 @@ function Player:OnCreate()
     -- there is no way to call into another entity's script instance; PG.score is banked here and
     -- spent at the upgrade station. Both are seeded once, by whoever gets here first.
     PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
-    PG.damage = PG.damage or 1
+    if not GUN_DAMAGE[self.gun] then
+        Log.Warn(string.format("Player: gun '%s' is not on the weapon ladder - rifle damage", self.gun))
+    end
+    PG.damage = GUN_DAMAGE[self.gun] or GUN_DAMAGE.Rifle
     PG.score = PG.score or 0
     self.health = self.maxHealth
     self:PushUI()
+    self:Equip("Gun")
 
     if self.p5gate then
         PG.freeze = false
@@ -393,7 +446,7 @@ function Player:Upgrade()
         return
     end
     PG.score = PG.score - self.upgradeCost
-    PG.damage = PG.damage + 1
+    PG.damage = PG.damage + UPGRADE_DAMAGE
     self.upgrades = self.upgrades + 1
     Log.Info(string.format("UPGRADE bought: projectile damage -> %d, score left %d",
         PG.damage, PG.score))
@@ -512,13 +565,23 @@ function Player:OnUpdate(ts)
     self.t = self.t + ts
 
     -- ---- capture ----
-    if not self.looking and Input.IsMouseButtonPressed(Mouse.ButtonLeft) then
+    -- The capturing click is not an attack, for as long as it is held: a click lasts several
+    -- frames, so skipping only the frame that captured would still fire on the next one. LMB arms
+    -- once it has been seen up.
+    local lmbDown = Input.IsMouseButtonPressed(Mouse.ButtonLeft)
+    if not self.looking and lmbDown then
         Input.SetCursorMode(Cursor.Locked)
         self.looking = true
+        self.lmbArmed = false
     elseif self.looking and Input.IsKeyPressed(Key.Escape) then
         Input.SetCursorMode(Cursor.Normal)
         self.looking = false
     end
+
+    if not lmbDown then
+        self.lmbArmed = true
+    end
+    local attackHeld = self.looking and self.lmbArmed and lmbDown
 
     -- ---- look ----
     if self.looking then
@@ -537,7 +600,9 @@ function Player:OnUpdate(ts)
 
     -- ---- fire ----
     -- The same left button captures the cursor and then fires, which is the convention every
-    -- shooter uses: the first click is "I am playing now", the rest are shots.
+    -- shooter uses: the first click is "I am playing now", the rest are shots. Until 2026-10-01
+    -- the capturing click fired too, because `looking` was already true by the time it got here;
+    -- attackHeld (above) is what keeps it out now.
     self.fireCooldown = self.fireCooldown - ts
     if self.autofire then
         -- Three phases, so one run answers all of P3's gate rather than only the easy part:
@@ -556,11 +621,21 @@ function Player:OnUpdate(ts)
         -- weapon pickup can visibly change later in the run.
         self.fireCooldown = self.fireInterval
         self:Fire()
-    elseif self.looking and Input.IsMouseButtonPressed(Mouse.ButtonLeft)
-        and self.fireCooldown <= 0.0 then
+    elseif self.equipped == "Gun" and attackHeld and self.fireCooldown <= 0.0 then
         self.fireCooldown = self.fireInterval
         self:Fire()
     end
+
+    -- ---- weapon slots and melee ----
+    -- The same button attacks with whatever is in hand. Not on the click that captures the
+    -- cursor (attackHeld), which for a melee weapon would commit the player to a three-second
+    -- swing.
+    if not self.attack then
+        if Input.IsKeyPressed(Key.D1) then self:Equip("Gun")
+        elseif Input.IsKeyPressed(Key.D2) then self:Equip("Knife")
+        elseif Input.IsKeyPressed(Key.D3) then self:Equip("Axe") end
+    end
+    self:Melee(ts, attackHeld)
 
     -- ---- turn (keyboard fallback, and the autopilot's only steering) ----
     local turn = 0.0
@@ -597,7 +672,9 @@ function Player:OnUpdate(ts)
     local v = self.entity:GetLinearVelocity()
     -- Downed is not dead: a character cannot be moved from script, so there is nowhere to
     -- respawn to. It stops instead, and gets back up where it fell.
-    local speed = self.downed and 0.0 or (self.speed * self.probeSlow)
+    -- An attack roots the player too: the attack clips are in place, so moving during one slides
+    -- the feet, and the swing's lane was aimed from where it started.
+    local speed = (self.downed or self.attack) and 0.0 or (self.speed * self.probeSlow)
     self.entity:SetLinearVelocity(Vec3(ix * speed, v.y, iz * speed))
 
     self:Tick(ts)
@@ -677,6 +754,11 @@ end
 
 function Player:Animate(ts)
     if not self.body then
+        return
+    end
+
+    if self.attack then
+        self:AnimateAttack(ts)
         return
     end
 
@@ -800,6 +882,110 @@ function Player:Animate(ts)
     self.body:SetAimOffset(self.aimPitchHeld * weight, self.aimYawHeld * weight)
 
     self.clip = clip
+end
+
+-- Show one weapon and shrink the rest, and hand MeleeAttacker (on Body) the weapon to trace.
+-- The gun keeps both hands on it through the two-hand IK; a melee weapon is one-handed and its
+-- grip is fitted to the attack clip's own right hand, so the IK lets go of both arms. AimLock goes
+-- with it, or the hidden rifle would still be turned onto the aim with nothing holding it.
+function Player:Equip(slot)
+    if slot ~= "Gun" and not (self.weapons and self.weapons[slot]) then
+        return
+    end
+    if slot == self.equipped and self.equippedOnce then
+        return
+    end
+    self.equipped, self.equippedOnce = slot, true
+
+    local shown = (slot == "Gun") and self.gun or slot
+    for name, w in pairs(self.weapons or {}) do
+        local k = (name == shown) and 1.0 or HIDDEN_SCALE
+        w.entity:SetScale(Vec3(w.scale.x * k, w.scale.y * k, w.scale.z * k))
+    end
+
+    local melee = slot ~= "Gun"
+    if self.body then
+        local hands = melee and 0.0 or 1.0
+        self.body:SetHandIKWeight(hands, hands)
+        -- 1 is what ProvingGround.ganymede authors; there is no getter to restore it from.
+        self.body:SetAimLock(hands)
+        PG.meleeConfig = PG.meleeConfig or {}
+        -- "None" has no damage windows, so MeleeAttacker traces nothing while the gun is out.
+        -- `ignore` is the capsule: the Body is two levels under it, too deep for MeleeAttacker's
+        -- own self test.
+        PG.meleeConfig[self.body:GetUUID()] = { weapon = melee and slot or "None",
+                                                ignore = self.entity:GetUUID() }
+    end
+    Log.Info(string.format("EQUIP %s", shown))
+end
+
+-- The melee attack: LMB with the knife or axe in hand.
+--
+-- The lockout is the attack clip's whole length, then meleeCooldown on top. A fixed interval
+-- alone cannot be right for every attack: the thrust is 3.0 s and the chop 2.47 s, and anything
+-- shorter than the clip in hand would have to cut the swing off mid-air - there is no crossfade,
+-- so that is a pop - while anything longer leaves the shorter attack standing idle. It also cannot
+-- simply restart the clip: PlayAnimation on the clip already current does not rewind it, and
+-- MeleeAttacker times its damage window from the frame the clip changes, so every attack has to
+-- begin with a clip change. Ending on a frame of locomotion guarantees one.
+--
+-- The lengths are the clips' own and come from MeleeAttacker's table, so a sixth character with
+-- a different-length attack needs one table entry, not a new cooldown.
+--
+-- Each attack lands off-centre (the chop 40 degrees left, the thrust 45 right), so the body turns
+-- by the lane's yaw to put the strike where the crosshair is, held for the whole attack.
+function Player:Melee(ts, want)
+    local a = self.attack
+    if a then
+        a.t = a.t + ts
+        if a.t >= a.length or self.downed then
+            self.attack = nil
+            self.meleeReady = self.meleeCooldown
+            if self.body then self.body:SetAnimationLooping(true) end
+        end
+        return
+    end
+
+    self.meleeReady = math.max(0.0, self.meleeReady - ts)
+    if not want or self.equipped == "Gun" or self.downed or self.meleeReady > 0.0 or not self.body then
+        return
+    end
+
+    local clip = MELEE_ATTACK[self.equipped]
+    local w = PG.meleeWindows and PG.meleeWindows[self.equipped] and PG.meleeWindows[self.equipped][clip]
+    if not w then
+        if not self.warnedMelee then
+            self.warnedMelee = true
+            Log.Warn(string.format("Player: no melee window for %s %s - is MeleeAttacker on Body?",
+                self.equipped, clip))
+        end
+        return
+    end
+
+    self.attack = { clip = clip, t = 0.0, length = w[3], yaw = self.yaw - math.rad(w[4]) }
+    self.attacks = self.attacks + 1
+    -- One play-through, not a loop: a frame late ending the attack would otherwise start a
+    -- second lap, and MeleeAttacker would count it as a second swing.
+    self.body:SetAnimationLooping(false)
+    Log.Info(string.format("MELEE %d: %s %s, turned %.0f deg into its lane, %.2f s + %.2f s",
+        self.attacks, self.equipped, clip, w[4], w[3], self.meleeCooldown))
+end
+
+-- The pose during an attack: the attack clip at its authored speed (MeleeAttacker's windows are in
+-- clip seconds), the legs turned into its lane, and the aim offset faded out, because the lanes
+-- were measured on the clip without a spine twist on top.
+function Player:AnimateAttack(ts)
+    local a = self.attack
+    self.meshYaw = self.meshYaw or self.yaw
+    self.meshYaw = self.meshYaw + WrapAngle(a.yaw - self.meshYaw) * math.min(1.0, ts * 20.0)
+    self.body:PlayAnimation(a.clip)
+    self.body:SetAnimationSpeed(1.0)
+    self.body:SetRotation(Vec3(0, self.meshYaw - self.yaw + math.pi, 0))
+
+    self.aimBlend = math.max(0.0, self.aimBlend - ts / AIM_BLEND_TIME)
+    local weight = self.aimBlend * self.aimBlend * (3.0 - 2.0 * self.aimBlend)
+    self.body:SetAimOffset(self.aimPitchHeld * weight, self.aimYawHeld * weight)
+    self.clip = a.clip
 end
 
 -- Footsteps.
@@ -1158,6 +1344,10 @@ function Player:Diagnose(ts)
         -- back toward zero. Both counters were bound for this line.
         Log.Info(string.format("P6b  voices=%d one-shots=%d",
             Audio.GetVoiceCount(), Audio.GetOneShotCount()))
+        if self.attacks > 0 or self.equipped ~= "Gun" then
+            Log.Info(string.format("MELEE equipped=%s attacks=%d gun=%s dmg=%d",
+                self.equipped, self.attacks, self.gun, PG.damage))
+        end
         local hits = ""
         for i = 1, #ROUTE do
             hits = hits .. string.format(" wp%d=%d", i, (self.wpHits and self.wpHits[i]) or 0)

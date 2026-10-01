@@ -131,6 +131,8 @@ Entities:
       Parent: 3000000000000000011
       Children:
         - 3000000000000000017
+        - 3000000000000000600
+        - 3000000000000000609
     StaticMeshComponent:
       Mesh: 17641149922961688873
       MaterialOverrides: [6151183210390514080]
@@ -143,6 +145,12 @@ Entities:
       Joints: [Spine02, Spine01, Spine, ""]
     TwoHandIKComponent:
       AimLock: 1
+    ScriptComponent:
+      Script: 8879838306422076321
+      Fields:
+        - Name: weapon
+          Type: String
+          Value: None
   - Entity: 3000000000000000017
     TagComponent:
       Tag: Rifle
@@ -2185,3 +2193,269 @@ Entities:
     StaticMeshComponent:
       Mesh: 16782465712033431344
       MaterialOverrides: [12848620036205009364]
+  - Entity: 3000000000000000600
+    TagComponent:
+      Tag: Knife
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000013
+      Children:
+        - 3000000000000000601
+        - 3000000000000000602
+        - 3000000000000000603
+        - 3000000000000000604
+        - 3000000000000000605
+        - 3000000000000000606
+        - 3000000000000000607
+        - 3000000000000000608
+    PrefabInstanceComponent:
+      Source: 5617610622557572512
+    PrefabMemberComponent:
+      CanonicalID: 1
+    StaticMeshComponent:
+      Mesh: 12766067934423809937
+      MaterialOverrides: [2339951690665419349]
+    BoneAttachmentComponent:
+      Joint: RightHand
+      Offset: [-0.0866638448, 0.000847119767, -0.0217498189]
+      Rotation: [0.270508102, -0.760665313, 1.30907136]
+  - Entity: 3000000000000000601
+    TagComponent:
+      Tag: Trace1
+    TransformComponent:
+      Translation: [-0.144989754, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000600
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 2
+  - Entity: 3000000000000000602
+    TagComponent:
+      Tag: Trace2
+    TransformComponent:
+      Translation: [-0.074994877, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000600
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 3
+  - Entity: 3000000000000000603
+    TagComponent:
+      Tag: Trace3
+    TransformComponent:
+      Translation: [-0.01, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000600
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 4
+  - Entity: 3000000000000000604
+    TagComponent:
+      Tag: Grip
+    TransformComponent:
+      Translation: [0.0248480782, -0.0734546552, -0.044400235]
+      Rotation: [0.6869699, 0.444509745, -1.36166996]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000600
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 5
+  - Entity: 3000000000000000605
+    TagComponent:
+      Tag: Grip_Ork
+    TransformComponent:
+      Translation: [-0.0453108443, -0.13632658, -0.0836059722]
+      Rotation: [2.88555551, 0.523415876, -2.18016666]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000600
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 6
+  - Entity: 3000000000000000606
+    TagComponent:
+      Tag: Grip_Necron
+    TransformComponent:
+      Translation: [0.0177887207, -0.0797807984, -0.0483450977]
+      Rotation: [1.55334152, 0.775819271, -1.26518353]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000600
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 7
+  - Entity: 3000000000000000607
+    TagComponent:
+      Tag: Grip_Eldar
+    TransformComponent:
+      Translation: [0.00867015092, -0.0879522757, -0.0534406755]
+      Rotation: [1.34985042, 0.637627124, -1.06584357]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000600
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 8
+  - Entity: 3000000000000000608
+    TagComponent:
+      Tag: Grip_Soldier
+    TransformComponent:
+      Translation: [0.0155315671, -0.0818035147, -0.0496064251]
+      Rotation: [2.16140691, 0.886398639, -1.55610372]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000600
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 9
+  - Entity: 3000000000000000609
+    TagComponent:
+      Tag: Axe
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000013
+      Children:
+        - 3000000000000000610
+        - 3000000000000000611
+        - 3000000000000000612
+        - 3000000000000000613
+        - 3000000000000000614
+        - 3000000000000000615
+        - 3000000000000000616
+        - 3000000000000000617
+    PrefabInstanceComponent:
+      Source: 2694415295538950866
+    PrefabMemberComponent:
+      CanonicalID: 1
+    StaticMeshComponent:
+      Mesh: 5282366377563608684
+      MaterialOverrides: [9305541366150441952]
+    BoneAttachmentComponent:
+      Joint: RightHand
+      Offset: [-0.188299649, 0.137791985, 0.0378093787]
+      Rotation: [-1.9879233, 0.34011235, 1.56255231]
+  - Entity: 3000000000000000610
+    TagComponent:
+      Tag: Trace1
+    TransformComponent:
+      Translation: [-0.107604504, 0.315358892, -0.00089944982]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000609
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 2
+  - Entity: 3000000000000000611
+    TagComponent:
+      Tag: Trace2
+    TransformComponent:
+      Translation: [-0.115838216, 0.278735714, -0.000206522437]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000609
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 3
+  - Entity: 3000000000000000612
+    TagComponent:
+      Tag: Trace3
+    TransformComponent:
+      Translation: [-0.107614826, 0.235842136, 7.24687779e-05]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000609
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 4
+  - Entity: 3000000000000000613
+    TagComponent:
+      Tag: Grip
+    TransformComponent:
+      Translation: [0.0921565552, -0.213676023, -0.0415049999]
+      Rotation: [2.78406266, -1.15085151, 1.55173337]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000609
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 5
+  - Entity: 3000000000000000614
+    TagComponent:
+      Tag: Grip_Ork
+    TransformComponent:
+      Translation: [0.145387773, -0.289660828, -0.0839901728]
+      Rotation: [0.629815974, 0.0216706531, 0.466556992]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000609
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 6
+  - Entity: 3000000000000000615
+    TagComponent:
+      Tag: Grip_Necron
+    TransformComponent:
+      Translation: [0.0975126551, -0.221321578, -0.0457798379]
+      Rotation: [1.24472702, -0.891551777, 0.783729287]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000609
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 7
+  - Entity: 3000000000000000616
+    TagComponent:
+      Tag: Grip_Eldar
+    TransformComponent:
+      Translation: [0.104431128, -0.231197339, -0.0513016447]
+      Rotation: [1.57323382, -0.95364683, 1.11321446]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000609
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 8
+  - Entity: 3000000000000000617
+    TagComponent:
+      Tag: Grip_Soldier
+    TransformComponent:
+      Translation: [0.0992252104, -0.223766162, -0.0471466713]
+      Rotation: [0.827608394, -0.598915058, 0.660846298]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000609
+      Children:
+        []
+    PrefabMemberComponent:
+      CanonicalID: 9
