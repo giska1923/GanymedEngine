@@ -385,11 +385,12 @@ Several buildings from box colliders, enterable, with interiors. Lighting.
 Game/assets/
   models/buildings/    blockhouse, warehouse - the things with interiors
   models/props/        crates, drums, barriers - cover, and what Meshy is best at
-  models/characters/   player and enemy
+  models/characters/   player and enemy; Necron, Eldar, Soldier (not wired in)
   models/weapons/      pistol, SMG, rifle, LMG, minigun; knife, axe; projectile
+  prefabs/weapons/     one per weapon: mesh, Muzzle, a Grip/Support pair per character
   materials/           .gmat sidecars the importer writes
   textures/            maps extracted out of GLBs on first import
-  scenes/  scripts/
+  scenes/  scripts/    scenes/Armory.ganymede holds every character x weapon pairing
 ```
 
 Git does not track empty directories, so these appear in a clone only once they hold a file.
@@ -579,6 +580,313 @@ Left open, in order of need:
   so it is not a free tidy-up.
 - **2048 maps on a 24 cm pistol** are generous. `MaxSize: 1024` on its sidecars is the cheap fix
   if VRAM ever matters; not done, same reasoning as the buildings above.
+
+#### Three more characters — Necron, Eldar, soldier (2026-09-27)
+
+Rigged and animated like the Ork, **imported only**: no scene, prefab or script uses them yet.
+Each also carries the player's five weapon clips, retargeted — see the weapon-clips section below.
+
+| Asset         | Height | Tris   | Clips (Meshy's names, library id)                          |
+| ------------- | ------ | ------ | ---------------------------------------------------------- |
+| `Necron.glb`  | 1.95 m | 10 359 | `Idle_3` (243), `Monster_Walk` (112), `Run_03` (15)        |
+| `Eldar.glb`   | 1.95 m | 10 393 | `Alert` (2), `Quick_Walk` (115), `run_fast_4` (532)        |
+| `Soldier.glb` | 1.80 m | 10 357 | `Idle` (0), `Casual_Walk` (30), `run_fast_4` (532)         |
+
+Same 24-joint template as the Ork and player, facing **+Z** like them (so the same pi on `Body`).
+The Necron and Eldar are fan designs of Games Workshop IP — fine for a private test game, to be
+replaced before anything is published. The prompts describe them rather than naming them.
+
+**What the prompt could and could not control** (212 credits, 386 → 174, 80 of it re-rolls):
+
+- **`pose_mode: "t-pose"` is a hint, not a guarantee.** The first Necron came back arms-down with
+  its hands beside its thighs — the exact pose that cost the player ~850 mis-weighted hip vertices.
+  Writing the pose into the prompt text as well ("T-pose, arms stretched out horizontally") is what
+  got a clean one.
+- **A negative in the prompt plants the noun.** "no skirt, no tabard, no loincloth" produced a
+  longer skirt; "Egyptian styled" produced a chibi pharaoh. Three Eldar attempts, and the first is
+  the one installed: helmeted and arms-out, with a tabard between the legs. In Play mode the
+  tabard follows the legs through `Quick_Walk` with no visible tearing from the front.
+- Picking clips from the library's `preview_url` GIFs (four frames each, free) worked again, with
+  one surprise: `Quick_Walk` is a crossover catwalk step, lighter than the GIF read.
+
+**Rig check before buying clips.** `rig_check.py` (in `D:\Projects\C++\meshy\`) flags influences
+over 0.2 on a `Left*`/`Right*` joint from the far side of the midline, and hand influences from
+more than 30 cm away. It is calibrated on the known case: the player's pre-fix glb shows **85**
+far-from-hand `RightHand` vertices, the fixed one **0**.
+
+| Rig            | Wrong-side influences                          | Hand > 30 cm              |
+| -------------- | ---------------------------------------------- | ------------------------- |
+| Necron         | 708 on the two shoulder joints, all within 15.5 cm of the midline | 0 |
+| Eldar          | 37 on the upper legs (the tabard)              | 0                         |
+| Soldier        | 0                                              | 0                         |
+| ArmoredHumanoid (installed) | 117 (108 shoulder, within 9.3 cm) | 0                   |
+
+The shoulder counts are the template's clavicle joints sitting ~4 cm off the spine, so sternum
+vertices pick them up; the player has the same pattern and looks fine.
+
+**Install** (`meshy_character_install.py`): the three refine-task maps grafted back (UV sets
+overlap 100%), embedded images stripped (~6.7 MB → ~1 MB each), material renamed `BakedMaterial`
+so the importer's sidecar path *is* the hand-authored `.gmat`, `TwoSided: false`. Per clip, the
+24 scale channels dropped — the Soldier's `Idle` carried the **1.1765 Hips scale** again — and both
+`run_fast_4` downloads detrended: **3.99 m / 3.64 m** of travel per loop and a **3.66 m / 3.34 m**
+forward offset, removed exactly as for the player. Mesh, skin, nodes and every rotation key diffed
+identical to the download. 15 handles minted by the editor's scan, 0 collisions. Verified in a
+throwaway nine-entity lineup: all nine clips resolve, and in Play mode they animate in place at
+matching sizes.
+
+Left open:
+
+- **Not wired in.** `Enemy.lua` hard-codes the Ork's clip names (`RunFast`, `Slow_Orc_Walk`,
+  `Short_Breathe_and_Look_Around`). An enemy variant needs those three names as script
+  properties, then a prefab per character — or a `Mesh`/`MaterialOverrides` swap on the one
+  prefab.
+- **The Necron reads dark.** Metallic 1 on a tarnished-silver albedo under the scene's sky light
+  comes out near-black at a distance; the green eyes carry it. Look at it in the Proving Ground's
+  lighting before touching the maps.
+- **The Ork has the player's weight defect and nobody has seen it.** `rig_check.py` on the
+  installed `Ork.glb`: **263 / 274** hand influences more than 30 cm from `LeftHand` /
+  `RightHand`, and 277 `RightUpLeg` influences past the midline. Its hands rest at 0.77 m, beside
+  the thighs — the A-pose case. Its clips never raise the arms far, which is probably why it is
+  invisible; the player's connectivity re-weight (hop limit from the forearm) is the known fix.
+
+#### Can every character hold every weapon? (2026-09-27, measured offline, nothing wired)
+
+**Mechanically, yes.** All five rigs are the same 24-joint template, same names, same order, same
+0.01 armature scale, and `BoneAttachmentComponent` / `TwoHandIKComponent` resolve joints by name
+with Meshy's names as defaults. **What does not transfer is numbers, and what blocks two-handed
+guns is clips.**
+
+Method: `equip_check.py` in `D:\Projects\C++\meshy\` models the H5 hold (weapon on `Spine`,
+`AimLock 1`, pivot on `Grip`, aim ahead) over every frame of every clip, and reproduces H5's
+engine-measured table exactly (player walk 53–54% / 74–79%, run 50–51% / 62–66%, idle clamping
+22 of 79 sampled frames = H5's 43 of 157). The new guns have no markers, so their butt, pistol grip
+and forward grip were read off metric side renders (`glb_grid.py`, ±2 cm), with the rifle's own
+wrist-to-grip offsets. Reach is |shoulder → wrist target| / arm length; over 100% cannot be held.
+
+Worst reach, player's socket numbers unchanged (drop-in), current clips:
+
+|                 | Rifle        | SMG  | LMG                      | Minigun, hip hold (best found) |
+| --------------- | ------------ | ---- | ------------------------ | ------------------------------ |
+| ArmoredHumanoid | 87% (idle 112%) | 77% | 107% backpedal, 127% idle | 83%                          |
+| Ork             | 74%          | 57%  | 85%                      | 90%                            |
+| Necron          | 87%          | 57%  | 103% in `Idle_3` only    | 80%                            |
+| Eldar           | **121%**     | 85%  | **137%**                 | **113%**                       |
+| Soldier         | **125%**     | 89%  | **138%**                 | **111%**                       |
+
+- **No placement rescues the Eldar or Soldier on their current clips.** A search over 895 butt
+  positions within 30 cm of the shoulder bottoms out at 99–111% (rifle) and 116–128% (LMG), with
+  the gun hugged to the sternum. Their arms are within 2 cm of the player's; the difference is
+  that `Alert` / `Quick_Walk` / `Idle` / `Casual_Walk` / `run_fast_4` are unarmed. The shoulders
+  swing while the lock holds the gun rigid on the aim. The player's own unarmed-style idle fails
+  the same way (106% at its best hold).
+- **The player's four shooting clips, retargeted offline onto each rig** (`retarget.py`, 1.4 cm
+  validated error), fix it: rifle and SMG drop-in with **0 frames over** on all four rigs, LMG
+  drop-in 0 over on Ork and Necron and 107–108% on Eldar and Soldier, which a per-rig hold brings
+  to 60–62%. `meshy_retarget.py install` appends retargeted clips for free.
+- **Re-applying the player's shoulder pocket relative to each rig's own shoulder is worse**, not
+  better, on four of five. A per-character hold has to be searched, as H5's was.
+- **One-handed (pistol, knife, axe on `RightHand`) needs an offset per rig family.** Measured from
+  each hand's own vertices in the hand-joint frame: the Necron, Eldar and Soldier agree on the
+  forearm axis within ~4° (one offset per weapon should nearly transfer between them). The player
+  is 43–46° off that and the Ork 24°, so they need their own. The Ork's hand is twice the size (0.24 m vs
+  ~0.12 m). Their idle/walk/run swing a hand-held weapon naturally; aiming one does not exist.
+
+Left open, in order:
+
+- **The minigun column above is wrong.** Its hip hold placed "down one upper arm, forward one
+  forearm" in the `Spine` joint's own axes, which are not up and forward. The corrected hold and
+  its numbers are in the grip-markers section below. The rifle-family columns are unaffected:
+  their pocket came from the player's own `Spine` frame, and `Spine` frames agree across rigs.
+- **What this model does not check:** interpenetration (the LMG's deployed bipod, the Eldar's
+  tabard, the minigun at the hip).
+- **`TwoHandIKComponent` takes the first attached child as the weapon.** A character carrying a
+  holstered sidearm or a knife as a second socketed child would have it chosen by child order.
+  Fine for one weapon at a time; a loadout needs an explicit weapon reference.
+- **Enemies do not shoot.** `Enemy.lua` damages by contact, so a gun on an enemy is visual until
+  it gains a fire routine.
+
+#### Weapon clips on all five characters (2026-09-30)
+
+The player's five clips — `Lower_Weapon_Look_Raise`, `Walk_Forward_While_Shooting`,
+`Run_and_Shoot`, `Walk_Backward_While_Shooting`, `Walk_Left_with_Gun` — are now on the Ork, Necron,
+Eldar and Soldier under the same names, so `Player.lua`'s clip names resolve on any of them.
+Retargeted with `meshy_retarget.py install` (free; root motion detrended, scale dropped), appended
+after each rig's own clips. Mesh, skin, nodes, materials and every pre-existing clip diffed
+byte-identical, so `Ork.glb` — the one committed, in-use asset here — changed only by gaining
+clips; its handle and the Enemy prefab's clip names are untouched. Originals kept in
+`D:\Projects\C++\meshy\work\2026-09-30-weaponclips\original\`.
+
+**Reach on the installed files** (rifle / SMG / LMG, player's socket unchanged): every moving
+clip is **0 frames over** on all four for the rifle and SMG. The LMG goes over only on the Eldar's
+and Soldier's backpedal (101–108%). The idle clamps the left hand on the Eldar and Soldier
+(up to 111–113%), exactly as it does on the player: it looks around while the lock holds the gun.
+
+**Seen in the engine**, in a throwaway five-entity scene with the player's full rifle setup copied
+onto each character (Spine socket, three markers, `TwoHandIKComponent` `AimLock 1`,
+`AimOffsetComponent`): all five walk and run with the rifle shouldered and level, right hand on
+the grip, left on the handguard. No socket or IK warning in the log. The Ork's hands are large
+enough to cover most of the rifle.
+
+**Floating clips, found and grounded.** `sole_check.py` skins the feet on the CPU and takes the
+lowest vertex per frame; its rest pose returns exactly 0.0 cm on all five rigs. Several clips never
+touched the ground:
+
+| Clip                       | Ork   | Necron | Eldar | Soldier | Player (not touched) |
+| -------------------------- | ----- | ------ | ----- | ------- | -------------------- |
+| `Lower_Weapon_Look_Raise`  | —     | +7.8   | +5.2  | +3.1    | **+6.1 to +7.9**     |
+| `Run_and_Shoot`            | +5.1  | +10.9  | +8.9  | +6.8    | **+7.7 to +15.3**    |
+| own idle / walk / run      | —     | walk **+12.1**, run +6.4 | run +9.1 | idle **+14.5**, walk +5.0, run +8.1 | — |
+
+(cm; the lowest vertex over the whole loop.) `ground_clips.py` lowered the Hips keys of each of
+those by exactly that amount. That is a rigid shift, so reach changed by 1e-13%. Every processed
+clip now bottoms out between −1.7 and +2.0 cm; slight sinks from foot roll were left alone.
+The Soldier's `Idle` was this project's own doing: dropping its 1.1765 Hips scale (above)
+shortened the legs, and nothing re-grounded the clip.
+
+Left open:
+
+- **The player's own idle and run float** (table, last column), and so do the Ork's original
+  `Short_Breathe_and_Look_Around` (+4.1) and `Slow_Orc_Walk` (+2.9). Neither was changed here:
+  both are committed and in play, and the player's H5 hold was measured on those exact clips.
+  Grounding is a rigid shift, so the hold would not move, but the in-game capsule-to-mesh offset
+  should be checked at the same time.
+- **Any future clip install that drops a scale channel should re-ground** — `ground_clips.py`
+  after `meshy_character_install.py` or `meshy_retarget.py install`.
+- **Nothing is wired.** The new characters still have no prefab.
+
+#### The retarget's arms, fixed (2026-09-30)
+
+**The defect.** `retarget.py` applies each joint's world-space change *from the source's rest pose*
+on top of the destination's rest. The player's rest is an A-pose and the T-pose rigs hold their
+arms out, so every retargeted frame carried that rest difference. Measured as shoulder-to-hand
+direction against the player's own clip, the retargeted arms were **37–70°** off on the Necron,
+Eldar and Soldier and 16–20° on the Ork, on every frame of every clip. The hands' orientation
+(hand frame, `hand_frame.py`) was 70–97° off. Two-hand IK overrides both arms, so every held
+weapon looked right. It showed wherever IK was off: arms held straight out in the idle, and any
+reload that fades the hands off. The first verification above only ran with IK on.
+
+**The fix: a retarget pose.** This is the standard alignment step (UE's IK Retargeter calls it the
+retarget pose): before the deltas are applied, the destination's rest arm chains are turned onto the
+source's. The upper arm and forearm are swung onto the source's rest bone directions, swing only;
+twist comes from the clip. The hand is turned so its measured hand frame (fingers, palm, thumb
+side) matches the source's, because a hand has no child joint to aim. Clavicles, spine and legs
+are untouched, so the shoulder joints do not move.
+
+| Shoulder → hand, vs the player's clip | Before     | After (median / worst) |
+| ------------------------------------- | ---------- | ---------------------- |
+| Ork                                   | 16–20°     | 2.0–2.8° / 4.4°        |
+| Necron                                | 68–69°     | 0.7–1.0° / 2.3°        |
+| Eldar                                 | 37–41°     | 1.3–2.1° / 4.1°        |
+| Soldier                               | 59–63°     | 1.1–2.2° / 5.3°        |
+
+The remaining ~2° is the rigs' different upper-arm-to-forearm ratios. Hand orientation matches the
+source exactly, but that is by construction, not evidence. The identity case (the player onto
+itself) is unchanged to 2e-6°.
+
+**Reinstalled from the kept originals** (`work\2026-09-30-weaponclips\original\`), then re-grounded:
+same offsets as before, since arms do not reach the feet. Against the previously installed files,
+the only change is the rotation keys of the six arm joints in the five weapon clips, on all four
+rigs. Mesh, nodes, materials, native clips, every other channel and the Hips keys are
+byte-identical. Holds re-solved: differences of at most 4e-16 (bone lengths recomputed from
+rotated joints). The re-emitted prefabs and `Armory.ganymede` are byte-identical to the ones
+already written.
+
+**Seen in the engine.** With no weapon and no IK, the retargeted idle now lowers the arms into a
+weapon-down carry, and the forward walk holds an invisible rifle the way the player does: right
+hand in at the chest, left arm forward. With IK, the rifle and LMG rows hold as before, with the
+elbows now tucked under the gun rather than flared. No warnings.
+
+#### Grip markers and holds for every weapon (2026-09-30)
+
+**What exists now:**
+
+- **`prefabs/weapons/<Weapon>.gprefab`, one per weapon** (the Rifle included). Root: the mesh at
+  its scale, its `.gmat` override, and a `BoneAttachmentComponent` holding the player's hold.
+  Children: `Muzzle` (guns; −Z down the barrel, like the Rifle's), and one grip pair per
+  character: `Grip` / `Support` for the player, `Grip_Ork` / `Support_Ork`, `_Necron`,
+  `_Eldar`, `_Soldier`. One-handed weapons have Grips only. The Rifle prefab's `Grip`, `Support`
+  and `Muzzle` are the Proving Ground's exact values.
+- **`scenes/Armory.ganymede`**: every character × weapon (35) as prefab instances whose sockets
+  carry that pairing's hold. A two-handed row has `TwoHandIKComponent` `AimLock 1` naming the
+  character's pair (`RightMarker: Grip_Soldier` …; the player's are the default names) plus
+  `AimOffsetComponent`, playing `Walk_Forward_While_Shooting`. One-handed rows have no IK and play
+  each character's own idle, since the weapon clips are rifle poses. The scene is where the holds live: Lua
+  cannot reparent and two-hand IK takes only a *child* weapon, so a spawned weapon cannot be
+  equipped at runtime and a lookup table would have nothing to feed. `ProvingGround.ganymede` is
+  untouched.
+
+**Why a grip pair per character, and the tradeoff.** The IK sets the hand joint's full rotation to
+the marker's, and hand joints are oriented differently per rig (the player's forearm axis is
+43–46° off the T-pose rigs' in joint space). One marker cannot be right for five hands, but
+`TwoHandIKComponent` already names its markers per character. The cost: adding a character means
+touching every weapon prefab. The engine-side fix, a per-rig hand correction on
+`TwoHandIKComponent` so a weapon carries one canonical grip, belongs on `master`.
+
+**Method** (`weapon_holds.py`, `hand_frame.py`, `grip_view.py` in `D:\Projects\C++\meshy\`): one measured grip,
+carried everywhere. The player's rifle `Grip` (A3) and `Support` (H5) are the only hand
+placements anyone measured; every other grip is that placement moved onto another handle, then
+re-expressed in another hand.
+
+- *Handles* are measured from the weapon's vertices inside a region box: centroid plus principal
+  axis in the weapon's XY plane (pistol grips, knife and axe handles, the LMG's foregrip), or a
+  contact point under the bore (handguards, the minigun's under-bar). Rifle grip → any handle is
+  one rigid transform; the LMG's foregrip takes the right-hand grip mirrored into a left hand. The
+  method's own bias (the rifle grip measures 1.7 cm from A3's centroid) cancels, because only the
+  rifle-to-handle difference is used.
+- *Hands* are measured from their vertices: finger axis (wrist → centroid) and palm normal (least
+  spread), signed by fingertip curl where that exceeds 1 cm, else by thumb chirality. Checked
+  against textured renders of all ten hands, and asserted left/right mirror-consistent.
+  **The player needed an override.** Its half-curled hand is thicker than it is wide, so least
+  spread found the across-palm axis. The evidence is the measured grip itself: unswapped, the
+  player's rifle grip read as palm facing down onto the gun with fingers along the barrel;
+  swapped, it reads as a textbook pistol grip (palm toward the gun's side, index-to-pinky down
+  the grip, fingers forward; left palm up into the handguard). The Ork's fist keeps least spread
+  (its curl agrees within 5°); it is the one frame not confirmed by eye.
+- **Checks:** the transfer returns the player's own rifle markers exactly (1e-17 m, 1e-6°). Every
+  grip axis sits identically in every hand: across the palm at a 39° rake, nothing along the palm
+  normal. A wrist target depends only on the finger axis, so the palm fix changed grip
+  orientations and moved no hold.
+
+**Holds.** Two-handed guns hang on `Spine`, as the player's rifle does (H5). Under the lock only the
+`Grip` pivot matters, so a hold is the pivot's position in the `Spine` frame. It is the nearest
+point to a reference at which both hands stay within **93%** reach (H5's bar) on every frame of
+the four moving shooting clips. Shouldered guns also keep the butt at least 3 cm in front of the
+shoulder joint. The reference is the player's butt pocket re-fitted to each rig; for the
+stockless minigun, the wrist at the hip. The socket rotation is the lock's orientation relative
+to `Spine` at those clips' medoid frame. One-handed weapons hang on `RightHand`, with the socket
+the inverse of that character's Grip.
+
+| Worst reach, moving clips | Rifle               | SMG | LMG        | Minigun (hip) |
+| ------------------------- | ------------------- | --- | ---------- | ------------- |
+| ArmoredHumanoid           | H5 hold, unchanged  | 61% | **100.2%** | 92%           |
+| Ork                       | 51%                 | 46% | 89%        | 93%           |
+| Necron                    | 76%                 | 52% | 93%        | 92%           |
+| Eldar                     | 86%                 | 63% | **100.3%** | 93%           |
+| Soldier                   | 86%                 | 63% | **100.1%** | 92%           |
+
+- **The LMG is at the limit of these arms.** Reach alone first "solved" it by pushing the 42 cm
+  stock 4–10 cm behind the shoulder joint, through the chest. With the butt kept in front, the
+  support arm is straight on the worst frame and the hand misses the foregrip by at most ~1.5 mm.
+  Real LMG gunners shoot near straight-armed; recorded rather than hidden.
+- **The minigun rides at the hip**, rear grip 2–4.5 cm from the reference. It still spans belly to
+  shoulder: it is 0.51 m tall with the grip at its bottom-rear corner.
+- The idle (`Lower_Weapon_Look_Raise`) clamps as it does on the player, for the same reason.
+
+**Seen in the engine:** a close-up of each weapon row, edit mode and Play. No marker, socket or IK
+warning in the log for any of the 35 pairings. Grip hands on pistol grips; support hands on the
+handguards, the LMG's foregrip and the minigun's under-bar; butts at the shoulder; on every
+character. One-handed: the pistol grip-down with its barrel forward, the knife's blade out of the
+top of the fist, the axe held near the end of its handle with the head forward.
+
+Left open:
+
+- **By-eye tuning.** Everything above is transferred and measured, not authored. The Ork's hand
+  frame is inferred, and hands without finger joints stay open on every grip. The markers are
+  plain transforms, so the editor gizmo is the right tool for the last few degrees.
+- **Adding a character** means adding a pair to seven prefabs and re-running the script (or the
+  engine-side hand correction above).
+- **Interpenetration is unchecked:** the LMG's deployed bipod, the Eldar's tabard, the minigun's
+  bulk against the chest.
 
 #### The placeholder boxes are gone, and two things went with them
 

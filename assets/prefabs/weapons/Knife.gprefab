@@ -1,0 +1,79 @@
+Prefab: Knife
+Entities:
+  - Entity: 1
+    TagComponent:
+      Tag: Knife
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+    StaticMeshComponent:
+      Mesh: 12766067934423809937
+      MaterialOverrides: [2339951690665419349]
+    BoneAttachmentComponent:
+      Joint: RightHand
+      Offset: [-0.159230432, 0.102566768, 0.000322193658]
+      Rotation: [-2.71431051, 0.254526392, 0.0989196268]
+  - Entity: 2
+    TagComponent:
+      Tag: Grip
+    TransformComponent:
+      Translation: [0.173155019, 0.0767537646, -0.000758250009]
+      Rotation: [2.682847, 0.188213958, 0.198493021]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 3
+    TagComponent:
+      Tag: Grip_Ork
+    TransformComponent:
+      Translation: [0.24059388, 0.153326074, 0.000203320797]
+      Rotation: [0.599851295, 0.707367681, 2.16731687]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 4
+    TagComponent:
+      Tag: Grip_Necron
+    TransformComponent:
+      Translation: [0.179940686, 0.084458434, -0.000661497211]
+      Rotation: [2.06611332, 0.738618165, 1.11371628]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 5
+    TagComponent:
+      Tag: Grip_Eldar
+    TransformComponent:
+      Translation: [0.188705728, 0.0944105531, -0.000536521653]
+      Rotation: [2.33658374, 0.69888346, 1.00159885]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 6
+    TagComponent:
+      Tag: Grip_Soldier
+    TransformComponent:
+      Translation: [0.182110329, 0.0869219192, -0.000630561544]
+      Rotation: [1.48674302, 0.77228318, 1.68219128]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []

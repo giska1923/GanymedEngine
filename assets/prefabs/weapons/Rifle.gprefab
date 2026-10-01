@@ -1,0 +1,151 @@
+Prefab: Rifle
+Entities:
+  - Entity: 1
+    TagComponent:
+      Tag: Rifle
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [0.45, 0.45, 0.45]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+    StaticMeshComponent:
+      Mesh: 5842540604746245028
+      MaterialOverrides: [6163099190943935964]
+    BoneAttachmentComponent:
+      Joint: Spine
+      Offset: [0.173818007, 0.000528000004, 0.397881001]
+      Rotation: [3.03998399, 0.884929001, -2.91940999]
+  - Entity: 2
+    TagComponent:
+      Tag: Muzzle
+    TransformComponent:
+      Translation: [-0.970000029, 0.189999998, 0]
+      Rotation: [0, 1.57079637, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 3
+    TagComponent:
+      Tag: Grip
+    TransformComponent:
+      Translation: [0.582781971, -0.26177001, -0.00168500002]
+      Rotation: [2.67852497, -0.176578, 0.898934007]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 4
+    TagComponent:
+      Tag: Support
+    TransformComponent:
+      Translation: [-0.248723, 0.0177890006, 0.210212007]
+      Rotation: [-2.49275589, 1.26429605, 1.20166099]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 5
+    TagComponent:
+      Tag: Grip_Ork
+    TransformComponent:
+      Translation: [0.809085716, -0.247609003, 0.000451823993]
+      Rotation: [0.882655893, 0.156089074, 1.53459642]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 6
+    TagComponent:
+      Tag: Support_Ork
+    TransformComponent:
+      Translation: [-0.203684249, -0.0541540625, 0.393818118]
+      Rotation: [-1.06015651, 0.240367135, 0.248498986]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 7
+    TagComponent:
+      Tag: Grip_Necron
+    TransformComponent:
+      Translation: [0.605552546, -0.260345136, -0.0014699938]
+      Rotation: [1.9299537, 0.015283567, 1.45682677]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 8
+    TagComponent:
+      Tag: Support_Necron
+    TransformComponent:
+      Translation: [-0.248175904, 0.0169150918, 0.212442312]
+      Rotation: [-1.97342455, 1.18049788, 0.92080623]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 9
+    TagComponent:
+      Tag: Grip_Eldar
+    TransformComponent:
+      Translation: [0.634965291, -0.258504627, -0.00119227034]
+      Rotation: [2.1314077, 0.0640446199, 1.51543301]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 10
+    TagComponent:
+      Tag: Support_Eldar
+    TransformComponent:
+      Translation: [-0.238873778, 0.00205625487, 0.250363596]
+      Rotation: [-2.12563954, 1.29061905, 0.868917763]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 11
+    TagComponent:
+      Tag: Grip_Soldier
+    TransformComponent:
+      Translation: [0.612833193, -0.259889548, -0.00140124788]
+      Rotation: [1.51061742, -0.012168366, 1.62273712]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 12
+    TagComponent:
+      Tag: Support_Soldier
+    TransformComponent:
+      Translation: [-0.245892429, 0.0132675626, 0.221751183]
+      Rotation: [-1.60264213, 0.754001391, 0.403815989]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []

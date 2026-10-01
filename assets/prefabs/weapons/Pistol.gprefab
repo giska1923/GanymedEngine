@@ -1,0 +1,91 @@
+Prefab: Pistol
+Entities:
+  - Entity: 1
+    TagComponent:
+      Tag: Pistol
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+    StaticMeshComponent:
+      Mesh: 5136407843684579051
+      MaterialOverrides: [12729594086777817366]
+    BoneAttachmentComponent:
+      Joint: RightHand
+      Offset: [-0.141403207, 0.116581626, 0.011799928]
+      Rotation: [-2.71431051, 0.254526392, 0.767076596]
+  - Entity: 2
+    TagComponent:
+      Tag: Muzzle
+    TransformComponent:
+      Translation: [-0.130139532, 0.0491964673, 0]
+      Rotation: [0, 1.57079637, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 3
+    TagComponent:
+      Tag: Grip
+    TransformComponent:
+      Translation: [0.182364183, -0.0216358611, -0.000758250009]
+      Rotation: [2.66262886, -0.122941084, 0.792528543]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 4
+    TagComponent:
+      Tag: Grip_Ork
+    TransformComponent:
+      Translation: [0.282740951, -0.00331038463, 0.000203320797]
+      Rotation: [0.867180319, 0.246763812, 1.61183197]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 5
+    TagComponent:
+      Tag: Grip_Necron
+    TransformComponent:
+      Translation: [0.192464046, -0.0197919604, -0.000661497211]
+      Rotation: [1.93290109, 0.12578824, 1.4150763]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 6
+    TagComponent:
+      Tag: Grip_Eldar
+    TransformComponent:
+      Translation: [0.205510035, -0.0174101944, -0.000536521653]
+      Rotation: [2.13864322, 0.163859902, 1.45189966]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+  - Entity: 7
+    TagComponent:
+      Tag: Grip_Soldier
+    TransformComponent:
+      Translation: [0.195693368, -0.0192023929, -0.000630561544]
+      Rotation: [1.51028373, 0.105701625, 1.62986236]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
