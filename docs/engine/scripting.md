@@ -112,7 +112,9 @@ end
 return Player
 ```
 
-All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`, `OnCollisionEnter/Exit(other)`.
+All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`, `OnCollisionEnter(other, contact)`,
+`OnCollisionExit(other)`. `contact` is `{ point, normal }`, where this entity touched `other`, on
+other's surface, with that surface's outward normal; see [physics.md](physics.md#collision-events--scripts).
 
 Collision hooks are dispatched by `PhysicsSystem::DispatchCollisionEvents`, per fixed step inside
 the accumulator loop, so native and Lua scripts see identical timing. An entity may carry a native

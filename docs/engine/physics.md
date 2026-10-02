@@ -269,10 +269,9 @@ the same length; it does not make one step longer.
 - **What it costs:** a shape cast per body per step, so it is off by default and opt-in per body.
   It is Dynamic-only: a static body never moves, and a kinematic one is wherever its transform puts
   it, so neither has anything to sweep.
-- **Where a hit is reported:** a script's `OnCollisionEnter` reads the body's transform as of the
-  start of the step that hit, with or without the flag, so a fast body is still short of the
-  surface when it hears about it. A round despawning there puts its impact in mid-air, up to a
-  step early. The event carries no contact point to place it with.
+- **Where a hit is reported:** a script reading its own transform in `OnCollisionEnter` sees where
+  the body was drawn, not where it touched, with or without the flag. Use the contact the event
+  carries instead (Collision events, below).
 - **What Jolt warns about:** the body moves only up to the first contact in the step that hits,
   so it looks briefly slower. A long, thin, fast-spinning shape can still tunnel by rotating.
   Contact-added callbacks can arrive for contacts the final step does not keep, and are removed the
@@ -286,6 +285,27 @@ Read at body creation, like the two flags above.
 `PhysicsSystem::DispatchCollisionEvents` resolves each event's UUIDs to entities and calls
 `OnCollisionEnter/OnCollisionExit(other)` on both sides' scripts. Events accumulate per fixed step
 and are cleared after dispatch.
+
+**An Enter carries the contact.** `PhysicsContactListener::OnContactAdded` copies it out of Jolt's
+manifold, which is valid only inside that callback, on whichever Jolt thread found it:
+
+- **Points:** the average of the manifold's points on each body's surface. They coincide unless
+  the shapes interpenetrate.
+- **Normal:** Jolt's manifold normal, from body A toward B.
+- **Each side hears where it touched the other:** the point on the *other* body's surface, and
+  that surface's outward normal, which faces the listener. A round hitting a wall gets the spot on
+  the wall's face, where a spark or a decal belongs.
+- **Lua only:** it arrives as a second argument, `OnCollisionEnter(other, contact)` with
+  `contact.point` and `contact.normal`. Native `ScriptableEntity` hooks keep their one-argument
+  signature: nothing native wants the point yet, and adding it is a one-line virtual when
+  something does.
+
+An Exit carries no contact: Jolt reports none when a contact ends.
+
+**Why it is needed.** A body's transform, as a script reads it in the callback, is interpolated
+between the last two steps for rendering (`SyncTransforms`), so it lags the contact. A fast body
+reads as short of the surface it hit, by up to a step's travel. Speculative contacts (continuous collision, above) report a hit the body has not reached
+yet, so it can be early as well as lagged.
 
 Both script kinds are notified, through separate views: `AccessView<RW<NativeScriptComponent>>` for
 `ScriptableEntity` instances, and `AccessView<RO<ScriptComponent>>` for Lua ones (read-only — the

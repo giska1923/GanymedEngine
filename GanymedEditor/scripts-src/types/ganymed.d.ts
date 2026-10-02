@@ -337,7 +337,11 @@ declare interface Script {
 
 	OnCreate?(): void;
 	OnUpdate?(ts: number): void;
-	OnCollisionEnter?(other: Entity): void;
+	/**
+	 * `contact` is where this entity touched `other`: a point on other's surface and that
+	 * surface's outward normal, facing this entity. World space.
+	 */
+	OnCollisionEnter?(other: Entity, contact: { point: Vec3; normal: Vec3 }): void;
 	OnCollisionExit?(other: Entity): void;
 	OnDestroy?(): void;
 }
