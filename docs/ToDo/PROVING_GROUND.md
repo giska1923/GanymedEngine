@@ -1571,6 +1571,78 @@ on z −2.57 and 0.3 m thick, so its face is at −2.42:
 A screenshot shows the sparks on the wall at the crosshair. The P5 gate passes (route complete,
 upgrade bought, 0 errors).
 
+#### The floor: one quad, a seamless slab texture (2026-10-02)
+
+The floor was 36 copies of `GroundTile1x1x01`, each stretched 8.33× to cover 16.7 m, with a 100 m
+cube ground under them. That tile is an irregular 102-triangle sculpted pad (the P2 notes above),
+so stretched and repeated its lumps became the deformed pattern, and the joints between copies
+drew the thin black line that ran up the middle of every screenshot.
+
+**Now:** one `Ground` entity, keeping the old Ground's UUID, replaces all 38.
+
+- **One quad,** `models/environment/Floor.glb`: 316.2 m a side, ten times the old 100 × 100 m area
+  (each side × √10). If you meant ten times each side, it is `HALF` in `make_floor.py`.
+- **One box collider,** whose top is exactly y = 0, where the tiles' tops were, so nothing placed
+  on the map moved.
+- **The texture repeats, the geometry does not.** The quad's UVs run in metres / 6, and texture
+  sampling already wraps by default (`Texture2D`'s sampler flags), so one 6 m texture repeats ~53
+  times a side. That needed no engine change.
+- **The cost of the whole floor:** 2 triangles, one draw call, one collider, and three 2048
+  textures. Tiles as entities would have been about 25,000 draws and colliders at 2 m a slab.
+
+**The texture is generated, not modelled:** `floor_texture.py` in the Meshy tooling folder, PIL
+only. Meshy makes 3D models, and nothing it outputs is promised to tile, which a floor needs above
+all. The generator makes:
+
+- **Slabs:** a 3×3 grid of 2 m concrete slabs per 6 m texture, each with its own shade, plus faint
+  broad mottling, aggregate grain, pits and soft stains.
+- **Joints:** 8 px of dark grout, with worn, bevelled edges.
+- **Maps:** a normal map from that height (glTF/OpenGL convention), and roughness with the grout
+  rougher.
+- **Seamless by construction:** every noisy layer, and the normal map's gradients, is computed on
+  a 3×3 wrapped copy and cropped back. The slab edges are rounded so the last joint lands on the
+  wrap: 2048 does not divide by 3, and the first version left a 2 px seam there. A 2×2 paste of
+  the texture shows no seam.
+- **Material and textures:** `materials/FloorConcrete.gmat`, and
+  `models/environment/Floor_textures/`.
+
+**Seen** in the Debug `GanymedRuntime`:
+
+- **Near:** at the normal camera distance the grain is crisp; point magnification, set
+  engine-wide for 2D sprites, does not show at 341 texels a metre.
+- **Far:** past roughly 30 m the slabs smear into horizontal bands. That is plain mipmapping at a
+  grazing angle, with no anisotropic filtering anywhere in the renderer.
+- **Size:** the floor runs to the horizon on every side.
+
+**Walked:** the autopilot circuit, three laps through the Blockhouse doorway and along the
+Warehouse wall. Every waypoint was reached, 100% grounded, standing at y 0.95, `inWall=0`.
+
+**The P5 gate needed two fixes, both found on this floor.** The Orks move more freely on one
+collider than on 36 butted boxes, whose seams bodies snag on, and that exposed two weaknesses of
+the gate's first leg:
+
+- **It could hang.** Shoved off its spot before it was within 0.35 m of it, the player never
+  "arrived", and one run fired for 165 s straight. Being hurt, or 60 s passing, now counts as
+  arriving.
+- **It banked kills by luck.** "Once hurt, stand 14 s" banked 2 kills only while enough Orks
+  crossed the line of fire in time. Two runs banked 1, and the upgrade leg was refused. The leg
+  now ends on what it is for: hurt, and the upgrade's cost banked, with a 60 s ceiling.
+
+Three runs after both fixes all passed the same way: the fight over in about 5 s with 2 kills,
+upgrade bought, route complete, 0 errors.
+
+Left open:
+
+- **Anisotropic filtering.** It is what fixes the far smear, and it is a sampler flag
+  (`BGFX_SAMPLER_MIN_ANISOTROPIC`) the material path never sets. That is engine work for
+  `master`. Point magnification for every 3D material may want revisiting with it: it is there for
+  crisp sprites.
+- **The 6 m repeat** shows from high up as a regular grid. A second, larger-scale variation layer
+  (a macro texture) is the usual fix, and it needs a shader.
+- **The old ground assets are unused:** `GroundTile1x1x01.glb`, its material and textures, and
+  `materials/Ground.gmat`. Nothing references them; they were left rather than deleted unasked.
+- **The edge of the world** is 158 m out, with nothing stopping a player walking off it.
+
 #### The placeholder boxes are gone, and two things went with them
 
 `BoxTextured.glb` was doing four unrelated jobs. All four references are out of the scene:
@@ -1589,7 +1661,8 @@ upgrade bought, 0 errors).
 - **The Ground** keeps its 100x1x100 collider and its mesh, but wears a new flat
   `materials/Ground.gmat` — no maps at all, just a matte albedo.
 
-**Why the ground is a flat colour rather than the tile texture.** `GroundTile1x1x01` cannot tile:
+**Why the ground is a flat colour rather than the tile texture.** (Overtaken 2026-10-02: the floor is
+now one quad with a seamless slab texture, in "The floor" below.) `GroundTile1x1x01` cannot tile:
 its top face spans `x[-0.62, 0.82] z[-0.18, 0.49]` out of a +-1 footprint, i.e. it is an
 irregular 15-vertex sculpted pad, and at the scale a floor needs that irregularity becomes a
 metres-wide seam pattern — tried, screenshotted, reverted. The box's own UVs are no better: they

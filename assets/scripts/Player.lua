@@ -562,8 +562,15 @@ function Player:ProbeTurn(ts)
         -- hold made the gate depend on whether an enemy happened to arrive in time: one run
         -- reached the heal spot at full health, where a heal spot proves nothing. It still has a
         -- ceiling, because a gate that can hang is not a gate.
-        if not self.losgate and self.probeWp == 1 and self.hits < 3 and self.t < 45.0 then
-            return 0.0
+        if not self.losgate and self.probeWp == 1 then
+            -- The fight ends on what it is for - hurt, and enough score banked for leg 4's
+            -- upgrade - not on a timer. "Hurt, then stand 14 s" banked 2 kills only while enough
+            -- enemies happened to cross the line of fire in time; when they moved more freely it
+            -- banked 1, and the upgrade leg was refused. 60 s is the ceiling.
+            if (self.hits < 3 or PG.score < self.upgradeCost) and self.t < 60.0 then
+                return 0.0
+            end
+            self.probeHold = 0.0
         end
         self.probeHold = self.probeHold - ts
         self.probeDrive = false
@@ -594,7 +601,13 @@ function Player:ProbeTurn(ts)
     local dx, dz = target[1] - p.x, target[2] - p.z
     local dist = math.sqrt(dx * dx + dz * dz)
 
-    if dist < 0.35 then
+    -- Leg 1 is the fight, and the fight comes to the player: charging enemies can shove it off the
+    -- spot before it is within 0.35 m, and then it never arrived and the leg never ended - one run
+    -- fired for 165 s straight. Hurt, or out of time, is what the leg is waiting for anyway, so
+    -- either counts as arriving, wherever it was shoved to.
+    local fightOver = self.p5gate and self.probeWp == 1 and (self.hits >= 3 or self.t >= 60.0)
+
+    if dist < 0.35 or fightOver then
         -- max(..., 0.001) so a zero-second hold still takes the branch above next frame rather
         -- than re-arriving, and re-logging, every frame.
         self.probeHold = math.max(target[3], 0.001)

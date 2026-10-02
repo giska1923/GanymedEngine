@@ -1,0 +1,10 @@
+Material:
+  Name: FloorConcrete
+  Albedo: [1, 1, 1, 1]
+  Metallic: 0
+  Roughness: 1
+  AlbedoMap: models/environment/Floor_textures/albedo.png
+  NormalMap: models/environment/Floor_textures/normal.png
+  MetallicRoughnessMap: models/environment/Floor_textures/metallicRoughness.png
+  TwoSided: false
+  Transparent: false
