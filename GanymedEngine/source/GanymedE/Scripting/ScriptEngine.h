@@ -85,7 +85,10 @@ namespace GanymedE {
 		// for editing a script WHILE the game runs.
 		static void PollHotReload(Timestep ts);
 
-		static void OnCollisionEnter(Entity entity, Entity other);
+		// `point` is where `entity` touched `other`, on other's surface, and `normal` that
+		// surface's outward normal; Lua receives them as the second argument, { point, normal }.
+		static void OnCollisionEnter(Entity entity, Entity other, const glm::vec3& point,
+			const glm::vec3& normal);
 		static void OnCollisionExit(Entity entity, Entity other);
 
 		// Raw lua_State*, for initialising the RmlUi Lua plugin on the shared VM.

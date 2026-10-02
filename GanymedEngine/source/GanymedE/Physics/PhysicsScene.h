@@ -19,6 +19,14 @@ namespace GanymedE {
 		UUID EntityA{ 0 };
 		UUID EntityB{ 0 };
 		bool Entered = true;
+
+		// Where the two touched, world space, on an Enter only - Jolt reports no manifold when a
+		// contact ends. The average of the manifold's points on each body's surface (they are the
+		// same point unless the shapes interpenetrate), and Jolt's manifold normal, which points
+		// from A toward B: A's surface faces along it, B's against it.
+		glm::vec3 PointOnA{ 0.0f };
+		glm::vec3 PointOnB{ 0.0f };
+		glm::vec3 Normal{ 0.0f };
 	};
 
 	struct PhysicsDebugDrawSettings
