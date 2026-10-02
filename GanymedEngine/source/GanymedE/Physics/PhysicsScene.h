@@ -93,6 +93,12 @@ namespace GanymedE {
 		glm::vec3 GetLinearVelocity(UUID entity) const;
 		void AddImpulse(UUID entity, const glm::vec3& impulse);
 		void AddForce(UUID entity, const glm::vec3& force);
+
+		// Puts a character or a body at `position` (world space) this step, the only way to move
+		// either: their transforms are written *from* the simulation every step. Velocity is left
+		// alone, so a respawn after a fall also sets it. Both interpolation poses move too, or the
+		// next SyncTransforms would draw it part-way between where it was and where it went.
+		void Teleport(UUID entity, const glm::vec3& position);
 		bool HasBody(UUID entity) const;
 
 		// True when a character controller is standing on ground it can walk on. False for a

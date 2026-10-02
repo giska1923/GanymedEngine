@@ -216,9 +216,10 @@ Rules for anything added later:
 - **Writes to tracked components always pair with `MarkChanged`.** Same rule if a binding ever
   writes `RelationshipComponent`.
 - Physics-facing bindings belong on `PhysicsScene`, not on transform writes, so kinematic and
-  dynamic bodies behave correctly. `Entity:Get/SetLinearVelocity`, `AddImpulse` and `AddForce` do
+  dynamic bodies behave correctly. `Entity:Get/SetLinearVelocity`, `AddImpulse`, `AddForce` and
+  `Teleport(position)` (respawns, checkpoints: world space, velocity kept) do
   this — reached via `Scene::Systems().Get<PhysicsSystem>()->GetPhysicsScene()`, which is null
-  outside play, so all four no-op rather than assert. **Writing a dynamic body's transform instead
+  outside play, so all of them no-op rather than assert. **Writing a dynamic body's transform instead
   does nothing visible**: `PhysicsScene::SyncTransforms` overwrites it from the simulation every
   step. `AddImpulse` is a one-shot change in momentum; `AddForce` is consumed by the next step and
   wants calling every frame while the push lasts. Each wakes the body first, because Jolt silently

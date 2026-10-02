@@ -495,6 +495,14 @@ namespace GanymedE {
 					if (PhysicsScene* physics = Physics())
 						physics->AddImpulse(e.GetUUID(), impulse);
 				},
+				// Respawns, checkpoints, teleporters. SetTranslation cannot do it for anything with
+				// a body: SyncTransforms overwrites the transform from the simulation every step.
+				// World space; velocity is untouched.
+				"Teleport", [](Entity& e, const glm::vec3& position)
+				{
+					if (PhysicsScene* physics = Physics())
+						physics->Teleport(e.GetUUID(), position);
+				},
 				// Consumed by the next step; call it every frame while the push lasts.
 				"AddForce", [](Entity& e, const glm::vec3& force)
 				{

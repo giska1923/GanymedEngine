@@ -315,9 +315,16 @@ see identical timing. See [scripting.md](scripting.md).
 
 ## Runtime body control (for scripts)
 
-`SetLinearVelocity` / `GetLinearVelocity` / `AddImpulse` / `AddForce`, keyed by entity UUID against
-the `EntityToBody` map. This is the only correct way for gameplay code to move a dynamic body:
-writing its `TransformComponent` instead is overwritten by `SyncTransforms` on the very next step.
+`SetLinearVelocity` / `GetLinearVelocity` / `AddImpulse` / `AddForce` / `Teleport`, keyed by entity
+UUID against the `EntityToBody` map. This is the only correct way for gameplay code to move a dynamic
+body: writing its `TransformComponent` instead is overwritten by `SyncTransforms` on the very next
+step.
+
+**`Teleport(entity, position)`** puts a character or a body at a world position this step: Jolt's
+`CharacterVirtual::SetPosition` (which moves the character's inner body with it) or
+`BodyInterface::SetPosition`, activating the body. Velocity is left alone, so a respawn after a fall
+sets it too. Both interpolation poses move as well: without that, the next `SyncTransforms`
+would draw the entity once part-way between where it was and where it went.
 
 Each wakes the body before acting — Jolt sleeps idle bodies and silently discards a velocity set on
 a sleeping one. All of them no-op when the entity has no body or play is not running, rather than

@@ -301,19 +301,6 @@ skips it too; that is harmless today because the type is untracked.
 
 The fix is adding it to the list. There is no runtime field to reset on copy.
 
-## A character cannot be teleported
-
-Nothing moves a character except its own velocity. Its `TransformComponent` is overwritten from the
-controller every frame by `SyncTransforms`, so writing it does nothing, and `CharacterVirtual`'s
-own `SetPosition` is not exposed through `PhysicsScene` or the script bindings.
-
-So **there is no way to respawn**. P5's player recovers where it fell, which is not a thing anyone
-would ship, and the same gap blocks checkpoints, teleporters, level transitions and cutscene
-placement. It is also the smallest item in this file: `SetPosition` already exists on the Jolt
-object and already keeps the inner body in step (`UpdateInnerBodyTransform` runs inside it) - what
-it needs is a `PhysicsScene::SetPosition` that routes to the character or the body interface, the
-same way `SetLinearVelocity` already routes to either.
-
 ## A script cannot tell whether a contact was with a sensor
 
 `OnCollisionEnter(other)` hands over the other entity and nothing else. A sensor causes no collision
