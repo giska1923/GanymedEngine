@@ -1,0 +1,10 @@
+Material:
+  Name: Shutter
+  Albedo: [1, 1, 1, 1]
+  Metallic: 0
+  Roughness: 1
+  AlbedoMap: models/buildings/textures/shutter/albedo.png
+  NormalMap: models/buildings/textures/shutter/normal.png
+  MetallicRoughnessMap: models/buildings/textures/shutter/metallicRoughness.png
+  TwoSided: false
+  Transparent: false

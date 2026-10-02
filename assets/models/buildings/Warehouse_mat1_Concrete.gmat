@@ -1,0 +1,10 @@
+Material:
+  Name: Concrete
+  Albedo: [1, 1, 1, 1]
+  Metallic: 0
+  Roughness: 1
+  AlbedoMap: models/buildings/textures/concrete/albedo.png
+  NormalMap: models/buildings/textures/concrete/normal.png
+  MetallicRoughnessMap: models/buildings/textures/concrete/metallicRoughness.png
+  TwoSided: false
+  Transparent: false

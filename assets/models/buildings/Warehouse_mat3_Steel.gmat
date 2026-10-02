@@ -1,0 +1,7 @@
+Material:
+  Name: Steel
+  Albedo: [0.0900000036, 0.100000001, 0.109999999, 1]
+  Metallic: 0.600000024
+  Roughness: 0.5
+  TwoSided: false
+  Transparent: false

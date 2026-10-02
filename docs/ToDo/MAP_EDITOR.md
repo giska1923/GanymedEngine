@@ -650,8 +650,10 @@ scale of 10, to < 3 mm:
 | Y | `[-4.229, 4.229]` | `[-4.23, 4.23]` |
 | Z | `[-5.773, 5.773]` | `[-5.775, 5.775]` |
 
-**Generate-from-mesh on `Warehouse Mesh` is the wrong rebuild for this building.** The glb is a
-hollow single-sided shell (`TwoSided` is load-bearing; see the game's P2 write-up). Seeding one
+**Generate-from-mesh on `Warehouse Mesh` is the wrong rebuild for this building.** The glb was a
+hollow single-sided shell (`TwoSided` is load-bearing; see the game's P2 write-up). Since
+2026-10-03 it is the other way round: the mesh is generated *from* this box set (`PROVING_GROUND.md`,
+_rebuilt from their colliders_), so the two agree by construction. Seeding one
 box from `Mesh::GetBounds` would fill the interior. The placement tool instantiates meshes and
 prefabs, not wall-thickness box children. Replacing a working six-box shell with a solid AABB
 would change the physics for no gain: nothing is meant to stand inside.

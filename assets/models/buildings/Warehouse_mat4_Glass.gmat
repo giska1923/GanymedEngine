@@ -1,0 +1,7 @@
+Material:
+  Name: Glass
+  Albedo: [0.0199999996, 0.0250000004, 0.0299999993, 1]
+  Metallic: 0
+  Roughness: 0.100000001
+  TwoSided: false
+  Transparent: false

@@ -1,0 +1,10 @@
+Material:
+  Name: Cladding
+  Albedo: [1, 1, 1, 1]
+  Metallic: 0
+  Roughness: 1
+  AlbedoMap: models/buildings/textures/cladding/albedo.png
+  NormalMap: models/buildings/textures/cladding/normal.png
+  MetallicRoughnessMap: models/buildings/textures/cladding/metallicRoughness.png
+  TwoSided: false
+  Transparent: false
