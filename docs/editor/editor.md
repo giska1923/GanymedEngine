@@ -965,7 +965,7 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   live preview: `Pitch`, `Yaw` and `Resolved` are `Trait::Runtime`, which `ComponentEditCommand`
   keeps at their live values for every component (see the undo table).
 - Two-hand IK: **Weapon** is a read-only line naming what the pass found (the first child with
-  a socket on this rig) and its socket joint; there is nothing to pick, because the component has
+  a socket on a joint of this rig) and its socket joint; there is nothing to pick, because the component has
   no weapon field. Per hand, under a **Right hand** / **Left hand** separator: **Upper / Lower /
   End** combos over this entity's `skeleton.JointNames`, and **Marker**, a combo over the
   weapon's direct children (disabled when there is no weapon). Each combo edits one member, and a

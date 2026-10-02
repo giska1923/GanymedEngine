@@ -282,10 +282,23 @@ aim (0 leaves it on its socket), clamped by the pass. It needs an `AimOffsetComp
 entity. Drop it with the hand weights for a lowered weapon, or the rifle stays level on the aim
 with the hands off it.
 
+`SetHandIKEnabled(enabled)` turns the pass off and on. It is for a character whose weapon in hand
+is not a two-hand one, such as a knife or a pistol socketed to the right hand. **Weight 0 is not
+the same thing.** The pass still finds the weapon and measures reach at weight 0. On a one-handed
+weapon it then warns that the weapon sits inside the right arm and has no left-hand marker, and
+since a clean solve re-arms those warnings, they come back on every switch to it. Off, the pass
+checks nothing and leaves both arms and the weapon to the clip and the socket.
+
 Timing is the same as the aim offset: `AnimationSystem` runs after both script systems, so a write
-lands on this frame's pose. **Both are no-ops without `TwoHandIKComponent`.** The chains, the
-marker names and `Enabled` are authored data. There are no getters; the readouts are the
-editor's.
+lands on this frame's pose. **All three are no-ops without `TwoHandIKComponent`.** The chains and
+the marker names are authored data. There are no getters; the readouts are the editor's.
+
+**Swapping weapons on one rig** works through the socket. The pass holds the first child socketed
+to the rig, so give the weapon in hand the only socket. `DetachFromBone` the one put away:
+it clears the joint at once and removes the component next frame, and the pass already skips a
+socket with no joint, so the detaching weapon does not get the arms for that frame. `AttachToBone`
+on a weapon with no socket adds the component next frame, so for one frame there is nothing to
+hold.
 
 ### Bone attachments
 

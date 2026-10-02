@@ -419,6 +419,15 @@ namespace GanymedE {
 					if (e.HasComponent<TwoHandIKComponent>())
 						e.GetComponent<TwoHandIKComponent>().AimLock = weight;
 				},
+				// The pass's off switch, for a character whose weapon in hand is not a two-hand
+				// one (a knife, a pistol). Weight 0 is not the same: it still finds the weapon and
+				// measures reach, and warns that a one-handed weapon has no left marker and sits
+				// in the right arm - again after every clean solve, so on every swap back.
+				"SetHandIKEnabled", [](Entity& e, bool enabled)
+				{
+					if (e.HasComponent<TwoHandIKComponent>())
+						e.GetComponent<TwoHandIKComponent>().Enabled = enabled;
+				},
 
 				// --- Bone sockets ---
 				// BoneAttachmentComponent is untracked, so these need no MarkChanged. The system

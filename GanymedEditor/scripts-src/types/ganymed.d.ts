@@ -158,6 +158,14 @@ declare interface Entity {
 	 */
 	SetAimLock(weight: number): void;
 
+	/**
+	 * Turns the two-hand IK pass on or off. Off leaves both arms exactly as the clip poses them
+	 * and the weapon on its socket, and checks nothing - for a one-handed weapon, where weight 0
+	 * would still look for a left-hand marker and warn. Lands on this frame's pose. No-op on an
+	 * entity without two-hand IK.
+	 */
+	SetHandIKEnabled(enabled: boolean): void;
+
 	HasBoneAttachment(): boolean;
 
 	/**
