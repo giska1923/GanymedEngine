@@ -1485,6 +1485,50 @@ off course, and could leave it driving straight into an obstacle until time ran 
 - no knock-down, 0 errors, `fired` equal to `despawned` (194, 202, 192);
 - every probe after the fight within 1 cm of the same spot in all three runs.
 
+#### Shooting pushed the player backwards (2026-10-02)
+
+Firing slid the player back while standing still: about 9 cm a rifle round, 1.4 m over ten pistol
+shots, and nothing with the minigun. **The cause was the engine.** `Scene.Spawn` built a fresh
+transform from its position, and the prefab layer replaced the root's whole transform with it, so
+every spawned round lost its authored 0.15 scale. Its 0.5 sphere flew at 0.5 m, a 1 m ball.
+
+A spawned round exists a frame before its velocity lands (`Player:PushPending`), and for that frame
+it sat where it spawned. Any muzzle closer than 0.85 m to the capsule's axis (0.35 + 0.5) put the
+ball inside the player, and the character controller pushed itself out of it, backwards. The figures
+fit exactly:
+
+| Gun     | Muzzle from the axis | Overlap      | Push              |
+| ------- | -------------------- | ------------ | ----------------- |
+| Rifle   | 0.75 m               | 0.10 m       | 9 cm a round      |
+| Pistol  | 0.55 m               | 0.30 m       | 1.4 m in 10       |
+| Minigun | 1.12–1.31 m          | none         | none              |
+
+No contact event ever fired, which is why nothing in the log showed it. The character's own
+overlap recovery is not a contact, and every round's logged hit was the ground 7–33 m ahead.
+
+**Fixed on `master` (`8bdbb1f`, merged here):** a spawn replaces only the root's translation and
+rotation, so the prefab's scale survives. After the merge, in the Debug `GanymedRuntime`:
+
+- **No push:** ten pistol shots and 31 rifle rounds standing still, and the player did not move.
+- **No tunnelling:** all 31 rifle rounds fired at the Blockhouse's 0.3 m wall from 3.6 m hit its
+  face, and none went through. The margin is thin: at 28 m/s a round moves 0.47 m per 60 Hz step,
+  against a 0.45 m window (the wall plus the 15 cm round).
+- **The P5 gate passes**, twice: 2 kills, upgrade bought, route complete, 0 errors.
+
+**What changed for play.** Every round was a 1 m ball from P3 until this fix, so hits registered
+up to half a metre off target. They are honest now. Kills take truer aim, and spread bites as much
+as its numbers say. The damage and spread figures were tuned against the ball and may want another
+look.
+
+Left open:
+
+- **Tunnelling is one frame-rate dip away.** The usual fix is Jolt's swept collision for fast
+  bodies (`EMotionQuality::LinearCast`) on the round, which is a `RigidBodyComponent` field and
+  so engine work for `master`.
+- **The gate's `hits` counter does not match its kills.** It read 5–6 (9–12 before this fix) where
+  two kills take 18 rifle hits. It counts `Projectile.lua`'s contacts minus sensors, so some
+  enemy hits are not reaching that script. Not chased.
+
 #### The placeholder boxes are gone, and two things went with them
 
 `BoxTextured.glb` was doing four unrelated jobs. All four references are out of the scene:
