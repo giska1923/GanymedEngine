@@ -69,6 +69,11 @@ local SPREAD_BLOOM = 1.5
 -- its 6/s cap no gap is long enough, and it blooms like the automatics.
 local SPREAD_RECOVER_DELAY = 0.25
 local SPREAD_RECOVER = 0.5
+-- The floor's half-size (make_floor.py: 50 * sqrt(10), a 316 m square). Past it there is nothing
+-- to stand on.
+local WORLD_EDGE = 158.1
+-- Seconds of falling off the world before the player dies and respawns.
+local FALL_DEATH_TIME = 3.0
 -- Where a gun that is swapped out lands: this far behind the player, as a pickup again.
 local TOSS_DISTANCE = 2.5
 
@@ -227,6 +232,9 @@ local Player = {
     lastPos = nil,
     worstStuck = 0.0,
     fell = false,
+    spawn = nil,       -- where the player started, and respawns
+    fallFor = 0.0,     -- seconds airborne off the world
+    deaths = 0,
     wp = 1,
     frames = 0,
     groundedFrames = 0,
@@ -391,6 +399,7 @@ function Player:OnCreate()
     local p = self.entity:GetTranslation()
     self.startY = p.y
     self.lastPos = p
+    self.spawn = p
     Log.Info(string.format("Player ready at (%.2f, %.2f, %.2f)", p.x, p.y, p.z))
 
     -- P5. PG.damage is what an enemy subtracts when a round lands, and it lives in PG because
@@ -405,11 +414,7 @@ function Player:OnCreate()
     PG.score = PG.score or 0
     self.health = self.maxHealth
     self:PushUI()
-    self:Equip("Knife", true)
-    local start = (self.autofire or self.autopilot or self.losgate or self.p5gate) and "Rifle" or self.startGun
-    if start ~= "" then
-        self:TakeGun(start)
-    end
+    self:StartLoadout()
 
     if self.p5gate then
         PG.freeze = false
@@ -729,6 +734,8 @@ function Player:OnUpdate(ts)
     if self.yawEntity then
         self.yawEntity:SetRotation(Vec3(0, self.yaw, 0))
     end
+
+    self:FallCheck(ts)
 
     -- ---- move ----
     -- Forward is -Z at yaw 0, matching the engine's camera convention.
@@ -1102,6 +1109,58 @@ function Player:Equip(slot, force)
                                                 ignore = self.entity:GetUUID() }
     end
     Log.Info(string.format("EQUIP %s", shown))
+end
+
+-- The knife in hand, and the start gun if there is one: what the player begins with, and what a
+-- respawn gives back. Whatever gun was carried is gone.
+function Player:StartLoadout()
+    self.gun = nil
+    PG.damage = 0
+    self:Equip("Knife", true)
+    local start = (self.autofire or self.autopilot or self.losgate or self.p5gate) and "Rifle" or self.startGun
+    if start ~= "" then
+        self:TakeGun(start)
+    end
+end
+
+-- Off the edge of the world: airborne beyond the floor, or below it. FALL_DEATH_TIME of that and
+-- the player dies. Not "below some depth": falling speed depends on where you went over, and three
+-- seconds is the same wait whatever the drop.
+function Player:FallCheck(ts)
+    local p = self.entity:GetTranslation()
+    local off = math.abs(p.x) > WORLD_EDGE or math.abs(p.z) > WORLD_EDGE or p.y < self.startY - 2.0
+    if off and not self.entity:IsGrounded() then
+        self.fallFor = self.fallFor + ts
+        if self.fallFor >= FALL_DEATH_TIME then
+            self:Die("fell off the edge of the world")
+        end
+    else
+        self.fallFor = 0.0
+    end
+end
+
+-- Death: back to the spawn point with full health and the starting loadout. The score and the
+-- upgrades bought are kept. Teleport (master 8aad1b3) is the only way to put a character
+-- anywhere; its transform is written from the controller every step. The fall's velocity goes
+-- too, or the respawned player would hit the floor at the speed it was falling.
+function Player:Die(reason)
+    local p = self.entity:GetTranslation()
+    self.deaths = self.deaths + 1
+    Log.Info(string.format("PLAYER DIED (%d): %s at (%.1f, %.1f, %.1f) - respawning at (%.1f, %.1f, %.1f)",
+        self.deaths, reason, p.x, p.y, p.z, self.spawn.x, self.spawn.y, self.spawn.z))
+
+    if self.attack and self.body then
+        self.body:SetAnimationLooping(true)
+    end
+    self.attack = nil
+    self.entity:Teleport(self.spawn)
+    self.entity:SetLinearVelocity(Vec3(0, 0, 0))
+    self.fallFor = 0.0
+    self.health = self.maxHealth
+    self.downed, self.downFor = false, 0.0
+    self.pendingHurt, self.hurtCooldown = 0, 0.0
+    self:StartLoadout()
+    self:PushUI()
 end
 
 -- Put a gun on slot 1 and in hand. Its damage is its rung of the ladder plus the upgrades bought.
@@ -1560,7 +1619,10 @@ function Player:Diagnose(ts)
     -- Falling off the world is not "sinking", it is a different failure, and it has to be said
     -- loudly: the first gate run reported a 2.13 s stick and a minY of -5229, both of which were
     -- one event - the capsule left the ground plane and never landed.
-    if p.y < -5.0 and not self.fell then
+    -- Gate modes only: in play, falling off the edge is a death and a respawn (Player:FallCheck),
+    -- not a failure.
+    local gate = self.autopilot or self.losgate or self.p5gate or self.autofire
+    if gate and p.y < -5.0 and not self.fell then
         self.fell = true
         Log.Error(string.format("GATE FAIL: left the ground plane at (%.1f, %.1f, %.1f)",
             p.x, p.y, p.z))

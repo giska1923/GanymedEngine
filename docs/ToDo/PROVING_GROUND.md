@@ -1633,15 +1633,35 @@ upgrade bought, route complete, 0 errors.
 
 Left open:
 
-- **Anisotropic filtering.** It is what fixes the far smear, and it is a sampler flag
-  (`BGFX_SAMPLER_MIN_ANISOTROPIC`) the material path never sets. That is engine work for
-  `master`. Point magnification for every 3D material may want revisiting with it: it is there for
-  crisp sprites.
 - **The 6 m repeat** shows from high up as a regular grid. A second, larger-scale variation layer
   (a macro texture) is the usual fix, and it needs a shader.
 - **The old tile mesh is unused:** `GroundTile1x1x01.glb`, its material and textures. Nothing
   references them. (`materials/Ground.gmat`, the flat ground material, was removed on 2026-10-03.)
-- **The edge of the world** is 158 m out, with nothing stopping a player walking off it.
+
+#### Falling off the world kills, and the far floor is sharp (2026-10-03)
+
+**Death by falling.** Airborne beyond the floor's edge (158.1 m out), or below the floor, for 3 s,
+and the player dies (`Player:FallCheck`, `Player:Die`).
+
+- **The respawn:** back at the spawn point, full health, the starting loadout (the knife, or
+  `startGun`). Whatever gun was carried is gone; the score and the upgrades bought are kept.
+- **It needed `master`:** a character could not be put anywhere from script, because its
+  transform is written from the controller every step. `Entity:Teleport` (`8aad1b3`, merged) does
+  it, and moves the interpolation poses so the respawn is not drawn sliding across the map. The
+  fall's velocity is zeroed with it.
+- **Gates only:** the old "GATE FAIL: left the ground plane" error now fires in the gate modes
+  alone. In play, falling off is a death, not a failure.
+
+Verified in the Debug `GanymedRuntime`: spawned 3 m from the east edge, walked off it, and died
+after 3 s at y −43 (free fall: ½·9.8·3² ≈ 44 m), then stood at the spawn point again with the
+knife. No error was logged.
+
+**Anisotropic filtering** (`master` `0867aa4`, merged). Material maps sample anisotropically now,
+and the context resets with `BGFX_RESET_MAXANISOTROPY`, without which the sampler flags do
+nothing. The same view as the floor section's screenshot: the slab grid that smeared into
+horizontal bands about 30 m out now stays sharp to the horizon. Every 3D material also lost
+point magnification, which it had inherited from the 2D renderer's default. The rest of the frame
+(the Warehouse's corrugated metal, the characters, the guns) renders as before.
 
 #### The placeholder boxes are gone, and two things went with them
 
