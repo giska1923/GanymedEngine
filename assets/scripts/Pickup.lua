@@ -3,9 +3,12 @@
 -- Every pickup in the map is this one script with a different `kind`. Three kinds, because three
 -- is what it takes to cover the shapes a trigger comes in:
 --
---   weapon    consumed on touch, and destroys itself
+--   gun       a gun on the rack, or one tossed by a swap; tagged "<Gun> Pickup". Taken only if it is
+--             not the gun the player already has - and the player decides that, and destroys it
 --   heal      permanent, and acts continuously while you stand in it
 --   upgrade   permanent, and refuses unless you can pay
+--
+-- The weapon crate that halved the fire interval was the first kind; the gun rack replaced it.
 --
 -- ---- Why these are sensors, and why that needed engine work ----
 --
@@ -32,14 +35,13 @@ PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
 local Pickup = {
     entity = nil,
     Properties = {
-        -- "weapon" | "heal" | "upgrade". Matched by the player against the tag it reads off this
+        -- "gun" | "heal" | "upgrade". Matched by the player against the tag it reads off this
         -- entity, so the tag and this have to agree; the tag is what the player can see.
         kind = "heal",
         label = "Pickup",
     },
     kind = "heal",
     label = "Pickup",
-    taken = false,
     t = 0.0,
 }
 
@@ -62,20 +64,17 @@ function Pickup:OnUpdate(ts)
 end
 
 function Pickup:OnCollisionEnter(other)
-    if self.taken or not other or other:GetName() ~= "Player" then
+    if not other or other:GetName() ~= "Player" then
         return
     end
 
     PG.triggers = (PG.triggers or 0) + 1
     Log.Info(string.format("TRIGGER enter %s (%s) t=%.1fs", self.label, self.kind, self.t))
 
-    -- Only a weapon crate is consumed. A heal spot and an upgrade station are map features: they
-    -- have to still be there on the way back, and an upgrade station that vanished the first time
-    -- you could not afford it would be the worst version of this.
-    if self.kind == "weapon" then
-        self.taken = true
-        self.entity:Destroy()
-    end
+    -- Nothing is consumed here. A heal spot and an upgrade station are map features: they have to
+    -- still be there on the way back. A gun is taken or left by the player (Player:PickUpGun),
+    -- because whether it is taken depends on the gun the player already has, which only the
+    -- player knows, and both scripts get this contact in an order nothing guarantees.
 end
 
 function Pickup:OnCollisionExit(other)

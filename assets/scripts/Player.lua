@@ -31,6 +31,22 @@ for i, name in ipairs(GUN_LADDER) do
 end
 local UPGRADE_DAMAGE = 2
 
+-- How each gun sits on this rig: scale, socket joint, offset, rotation (Euler X*Y*Z radians), and
+-- whether the left hand holds it too. The same numbers prefabs/weapons/<Gun>.gprefab carries, from
+-- the Meshy tooling's holds.json (weapon_holds.py). They live here as well because the guns on Body
+-- are authored with no socket: a socket is attached only to the gun in hand, since hand IK holds the
+-- first socketed child, and AttachToBone takes the whole socket every call, with no getter to read
+-- one back. The pistol is held in the right hand like the knife, so it takes no IK.
+local GUNS = {
+    Pistol  = { 1.0,  "RightHand", Vec3(-0.141403, 0.116582, 0.011800), Vec3(-2.714311, 0.254526, 0.767077), false },
+    SMG     = { 1.0,  "Spine", Vec3(0.059234, -0.081445, 0.252583), Vec3(3.042971, 0.887004, -2.925548), true },
+    Rifle   = { 0.45, "Spine", Vec3(0.173818, 0.000528, 0.397881),  Vec3(3.039984, 0.884929, -2.919410), true },
+    LMG     = { 1.0,  "Spine", Vec3(0.370200, 0.080711, 0.367841),  Vec3(3.042971, 0.887004, -2.925548), true },
+    Minigun = { 1.0,  "Spine", Vec3(0.283391, -0.097242, 0.617023), Vec3(3.042971, 0.887004, -2.925548), true },
+}
+-- Where a gun that is swapped out lands: this far behind the player, as a pickup again.
+local TOSS_DISTANCE = 2.5
+
 -- LMB's attack for each melee weapon: the clips the knife and axe grips were fitted to. Their
 -- length, damage window and lane come from MeleeAttacker.lua's table (PG.meleeWindows), so the
 -- two scripts cannot disagree about when an attack is over.
@@ -80,9 +96,10 @@ local Player = {
         -- What the upgrade station charges for +2 projectile damage (one rung of GUN_DAMAGE).
         upgradeCost = 2.0,
 
-        -- The gun on slot 1, a rung of the weapon ladder; a round deals GUN_DAMAGE[gun]. It also
-        -- names the Body child shown while slot 1 is equipped.
-        gun = "Rifle",
+        -- The gun the player starts with, or "" for none: the knife only, and the guns are on
+        -- the rack. The gate modes (autofire, autopilot, losgate, p5gate) always start with the
+        -- rifle, because every gate predates pickups and fires from its first second.
+        startGun = "",
         -- Seconds after a melee attack's clip has played out before the next one can start. The
         -- clip itself is always a lockout (see Player:Melee); this is the gap on top of it.
         meleeCooldown = 0.3,
@@ -105,7 +122,7 @@ local Player = {
     damageCooldown = 1.0,
     healRate = 14.0,
     upgradeCost = 2.0,
-    gun = "Rifle",
+    startGun = "",
     meleeCooldown = 0.3,
     stepInterval = 0.42,
 
@@ -122,7 +139,8 @@ local Player = {
     hits = 0,          -- times an enemy has landed a touch
     inHeal = 0,        -- how many heal-spot sensors we are standing in
     healed = 0.0,
-    weapon = 1,
+    gun = nil,         -- the gun on slot 1, picked up off the rack; nil until one is
+    gunsTaken = 0,
     upgrades = 0,
     lastKills = 0,
     downed = false,
@@ -158,8 +176,8 @@ local Player = {
     fireCooldown = 0.0,
     refused = 0,
 
-    -- Melee. "Gun", "Knife" or "Axe"; slots 1, 2, 3.
-    equipped = "Gun",
+    -- What is in hand: "Gun" (slot 1, whichever gun was picked up) or "Knife" (slot 2).
+    equipped = "Knife",
     weapons = nil,     -- [Body child name] = { entity, scale as authored }
     attack = nil,      -- the attack in progress: { clip, t, length, yaw }
     meleeReady = 0.0,  -- seconds of meleeCooldown left
@@ -292,7 +310,13 @@ local LOS_ROUTE = {
 local P5_ROUTE = {
     {   2.0,  -2.0, 14.0, "stand and fight - take contact damage, and bank kills" },
     {  -6.0,  -6.0,  8.0, "the heal spot: health must climb back" },
-    {  10.0,   2.0,  3.0, "the weapon crate: fire interval must halve, and it must be consumed" },
+    -- The rack, from its east end: line up east of it, walk west onto the minigun, then step out
+    -- north at probe speed before turning for the next leg. The rifle is tossed behind, which is
+    -- east, back along the line walked in. A first version walked straight onto the LMG in the
+    -- middle; leaving at full speed, its turn swung 2.5 m wide and took the minigun as well.
+    {   0.0, -12.0,  0.0, "line up east of the gun rack" },
+    {  -2.9, -12.0,  3.0, "the gun rack: the rifle swaps for the minigun, which leaves the rack, and the rifle is tossed" },
+    {  -2.9,  -9.5,  0.0, "step out of the rack" },
     { -14.0,   6.0,  5.0, "the upgrade station: spend score for projectile damage" },
     {   0.0,   0.0,  3.0, "back to the middle" },
 }
@@ -318,27 +342,20 @@ function Player:OnCreate()
     -- mesh parented to it cannot face where the player is aiming. Yaw is the entity the mouse
     -- drives, and it already carries the camera.
     self.body = self.yawEntity and self.yawEntity:GetChildByName("Body") or nil
-    -- The muzzle is the barrel tip, a child of the socketed Rifle: rifle-local (-0.97, 0.19, 0),
-    -- just past the bore, turned so its -Z (GetWorldForward) runs down the barrel - the rifle's
-    -- -X. +Y stays the rifle's up, so the flash still fans upward as it did under Yaw. Its local
-    -- transform says nothing about where it is drawn; Fire reads the world one.
-    local rifle = self.body and self.body:GetChildByName("Rifle") or nil
-    self.muzzle = rifle and rifle:GetChildByName("Muzzle") or nil
     if not self.footsteps then Log.Warn("Player: no 'Footsteps' child - no step sound") end
-    if not self.muzzle then Log.Warn("Player: no 'Muzzle' under Body/Rifle - no muzzle flash, fire from the chest") end
     if not self.body then Log.Warn("Player: no 'Body' child - the player will not animate") end
 
-    -- Slot 1 is the gun, 2 and 3 the knife and axe, all children of Body socketed to the rig.
-    -- Hand IK holds the first socketed child, so the gun has to stay first among them.
+    -- Every gun and the knife are children of Body. The knife keeps its socket; a gun gets one
+    -- only while it is in hand (GUNS, above). Each gun's Muzzle is the barrel tip: turned so its
+    -- -Z (GetWorldForward) runs down the barrel, the gun's -X. Fire reads its world transform.
     self.weapons = {}
-    for _, name in ipairs({ self.gun, "Knife", "Axe" }) do
+    for _, name in ipairs({ "Pistol", "SMG", "Rifle", "LMG", "Minigun", "Knife" }) do
         local w = self.body and self.body:GetChildByName(name) or nil
         if w then
-            self.weapons[name] = { entity = w, scale = w:GetScale() }
+            self.weapons[name] = { entity = w, scale = w:GetScale(), socketed = name == "Knife" }
+        elseif self.body then
+            Log.Warn(string.format("Player: no '%s' under Body - it cannot be held", name))
         end
-    end
-    if not (self.weapons.Knife and self.weapons.Axe) then
-        Log.Warn("Player: no 'Knife' and 'Axe' under Body - slots 2 and 3 are empty")
     end
 
     Log.Info("Player: click to look, Escape to release the cursor")
@@ -352,14 +369,15 @@ function Player:OnCreate()
     -- there is no way to call into another entity's script instance; PG.score is banked here and
     -- spent at the upgrade station. Both are seeded once, by whoever gets here first.
     PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
-    if not GUN_DAMAGE[self.gun] then
-        Log.Warn(string.format("Player: gun '%s' is not on the weapon ladder - rifle damage", self.gun))
-    end
-    PG.damage = GUN_DAMAGE[self.gun] or GUN_DAMAGE.Rifle
+    PG.damage = 0
     PG.score = PG.score or 0
     self.health = self.maxHealth
     self:PushUI()
-    self:Equip("Gun")
+    self:Equip("Knife", true)
+    local start = (self.autofire or self.autopilot or self.losgate or self.p5gate) and "Rifle" or self.startGun
+    if start ~= "" then
+        self:TakeGun(start)
+    end
 
     if self.p5gate then
         PG.freeze = false
@@ -386,7 +404,14 @@ function Player:OnCollisionEnter(other)
     if not other then return end
     local name = other:GetName()
 
-    if name == "Heal Spot" or name == "Weapon Crate" or name == "Upgrade Station" then
+    -- A gun on the rack, or one tossed there by a swap: "<Gun> Pickup".
+    local gun = name:match("^(%w+) Pickup$")
+    if gun and GUNS[gun] then
+        self:PickUpGun(gun, other)
+        return
+    end
+
+    if name == "Heal Spot" or name == "Upgrade Station" then
         Audio.PlayOneShot("audio/chime.wav", nil, 0.8)
     end
 
@@ -402,13 +427,6 @@ function Player:OnCollisionEnter(other)
         self.pendingHurt = math.min((self.pendingHurt or 0) + 3, 6)
     elseif name == "Heal Spot" then
         self.inHeal = self.inHeal + 1
-    elseif name == "Weapon Crate" then
-        self.weapon = self.weapon + 1
-        -- Halving the interval is the visible half of the pickup; the fired count in the gate
-        -- report is what proves it, because nothing else about the run changes.
-        self.fireInterval = self.fireInterval * 0.5
-        Log.Info(string.format("PICKUP weapon -> level %d, fireInterval %.3f",
-            self.weapon, self.fireInterval))
     elseif name == "Upgrade Station" then
         self:Upgrade()
     end
@@ -446,8 +464,8 @@ function Player:Upgrade()
         return
     end
     PG.score = PG.score - self.upgradeCost
-    PG.damage = PG.damage + UPGRADE_DAMAGE
     self.upgrades = self.upgrades + 1
+    PG.damage = (self.gun and GUN_DAMAGE[self.gun] or 0) + UPGRADE_DAMAGE * self.upgrades
     Log.Info(string.format("UPGRADE bought: projectile damage -> %d, score left %d",
         PG.damage, PG.score))
 end
@@ -621,7 +639,7 @@ function Player:OnUpdate(ts)
         -- weapon pickup can visibly change later in the run.
         self.fireCooldown = self.fireInterval
         self:Fire()
-    elseif self.equipped == "Gun" and attackHeld and self.fireCooldown <= 0.0 then
+    elseif self.equipped == "Gun" and self.gun and attackHeld and self.fireCooldown <= 0.0 then
         self.fireCooldown = self.fireInterval
         self:Fire()
     end
@@ -632,8 +650,7 @@ function Player:OnUpdate(ts)
     -- swing.
     if not self.attack then
         if Input.IsKeyPressed(Key.D1) then self:Equip("Gun")
-        elseif Input.IsKeyPressed(Key.D2) then self:Equip("Knife")
-        elseif Input.IsKeyPressed(Key.D3) then self:Equip("Axe") end
+        elseif Input.IsKeyPressed(Key.D2) then self:Equip("Knife") end
     end
     self:Melee(ts, attackHeld)
 
@@ -684,6 +701,18 @@ end
 
 -- Health, score and the HUD, once a frame.
 function Player:Tick(ts)
+    -- A gun equipped last frame has its socket now (Equip): full size.
+    if self.reveal and self.reveal.ready then
+        local sc = self.reveal.scale
+        self.reveal.entity:SetScale(Vec3(sc, sc, sc))
+        if self.body then
+            self.body:SetHandIKWeight(self.reveal.hands, self.reveal.hands)
+            self.body:SetAimLock(self.reveal.hands)
+        end
+        self.reveal = nil
+    elseif self.reveal then
+        self.reveal.ready = true
+    end
     self.hurtCooldown = math.max(0.0, self.hurtCooldown - ts)
 
     if (self.pendingHurt or 0) > 0 and self.hurtCooldown <= 0.0 and not self.downed then
@@ -869,10 +898,13 @@ function Player:Animate(ts)
     -- A1: the weapon-carry set. Names are Meshy's library entries baked into the glb, and the
     -- engine resolves clips by name off the mesh asset, so renaming means re-exporting.
     local clip, animSpeed
-    local melee = self.equipped ~= "Gun"
+    -- One-handed: the knife, and the pistol, which is held the same way.
+    local melee = self.equipped ~= "Gun" or (self.gun and not GUNS[self.gun][5])
     if melee then
         clip, animSpeed = self:MeleeLocomotion(speed)
-        self:KnifeGrip(clip == "run_fast_4" and "run" or "hold")
+        if self.equipped == "Knife" then
+            self:KnifeGrip(clip == "run_fast_4" and "run" or "hold")
+        end
     elseif speed < 0.5 then
         clip, animSpeed = "Lower_Weapon_Look_Raise", 1.0
     elseif speed < 4.0 then
@@ -939,39 +971,120 @@ function Player:Animate(ts)
     self.clip = clip
 end
 
--- Show one weapon and shrink the rest, and hand MeleeAttacker (on Body) the weapon to trace.
--- The gun keeps both hands on it through the two-hand IK; a melee weapon is one-handed and its
--- grip is fitted to the attack clip's own right hand, so the IK lets go of both arms. AimLock goes
--- with it, or the hidden rifle would still be turned onto the aim with nothing holding it.
-function Player:Equip(slot)
-    if slot ~= "Gun" and not (self.weapons and self.weapons[slot]) then
+-- Show what is in hand and shrink the rest, and hand MeleeAttacker (on Body) the weapon to trace.
+--
+-- Shrunk, because a script cannot hide an entity (HIDDEN_SCALE). And only the gun on slot 1 is
+-- socketed: hand IK holds the first socketed child of Body, so another gun that kept its socket
+-- ahead of it would get the hands. The knife keeps its socket throughout and is the last child,
+-- so it never comes before a gun. A gun swapped out is detached, and for the frame its socket is
+-- being removed the IK still finds it, with an empty joint, and warns - once per swap where the
+-- old gun comes before the new one on Body. That needs the IK to skip an empty joint
+-- (docs/ToDo/cross-cutting.md).
+--
+-- A two-handed gun takes both hands and the aim lock through the IK. The knife and the pistol are
+-- held in the right hand by the clip, so the IK lets go of both arms, and AimLock goes too - with
+-- it on, the gun would be turned onto the aim with nothing holding it.
+function Player:Equip(slot, force)
+    if slot == "Gun" and not self.gun then
         return
     end
-    if slot == self.equipped and self.equippedOnce then
+    if slot == self.equipped and not force then
         return
     end
-    self.equipped, self.equippedOnce = slot, true
+    self.equipped = slot
+    self.knifeGrip = nil
 
     local shown = (slot == "Gun") and self.gun or slot
+    self.reveal = nil
     for name, w in pairs(self.weapons or {}) do
-        local k = (name == shown) and 1.0 or HIDDEN_SCALE
-        w.entity:SetScale(Vec3(w.scale.x * k, w.scale.y * k, w.scale.z * k))
+        local inHand = name == shown
+        local gun = GUNS[name]
+        if gun then
+            -- Guns are authored shrunk, so their size comes from GUNS. Even the one going in hand
+            -- stays shrunk this frame: adding its socket is structural and lands next frame, and
+            -- until then it would be drawn at Body's origin. Player:Tick reveals it.
+            local sc = gun[1] * HIDDEN_SCALE
+            w.entity:SetScale(Vec3(sc, sc, sc))
+            if inHand then
+                w.entity:AttachToBone(self.body, gun[2], gun[3], gun[4])
+                w.socketed, self.reveal = true, { entity = w.entity, scale = gun[1] }
+            elseif name == self.gun then
+                -- The gun on slot 1 keeps its socket while the knife is out, shrunk. The IK then
+                -- finds it - a gun, with both markers - and solves cleanly at weight 0; with only
+                -- the knife socketed it warns on every switch (TwoHandIK has no off switch a
+                -- script can reach, and its warnings re-arm after any clean solve).
+            elseif w.socketed then
+                w.entity:DetachFromBone()
+                w.socketed = false
+            end
+        else
+            local k = inHand and 1.0 or HIDDEN_SCALE
+            w.entity:SetScale(Vec3(w.scale.x * k, w.scale.y * k, w.scale.z * k))
+        end
     end
 
-    local melee = slot ~= "Gun"
+    -- A gun's hands and aim lock wait for its socket (Player:Tick): set now, the IK would find the
+    -- knife as the only socketed child for a frame and try to aim it.
+    local hands = 0.0
+    if self.reveal then
+        self.reveal.hands = GUNS[self.gun][5] and 1.0 or 0.0
+    end
+    self.muzzle = nil
+    if slot == "Gun" then
+        self.muzzle = self.weapons[self.gun] and self.weapons[self.gun].entity:GetChildByName("Muzzle")
+    end
     if self.body then
-        local hands = melee and 0.0 or 1.0
         self.body:SetHandIKWeight(hands, hands)
-        -- 1 is what ProvingGround.ganymede authors; there is no getter to restore it from.
+        -- The scene authors 0: the player starts with only the knife, and an aim lock with no
+        -- gun socketed sends the IK looking for a Muzzle on the knife. Player:Tick turns it on.
         self.body:SetAimLock(hands)
         PG.meleeConfig = PG.meleeConfig or {}
-        -- "None" has no damage windows, so MeleeAttacker traces nothing while the gun is out.
+        -- "None" has no damage windows, so MeleeAttacker traces nothing while a gun is out.
         -- `ignore` is the capsule: the Body is two levels under it, too deep for MeleeAttacker's
         -- own self test.
-        PG.meleeConfig[self.body:GetUUID()] = { weapon = melee and slot or "None",
+        PG.meleeConfig[self.body:GetUUID()] = { weapon = slot == "Gun" and "None" or slot,
                                                 ignore = self.entity:GetUUID() }
     end
     Log.Info(string.format("EQUIP %s", shown))
+end
+
+-- Put a gun on slot 1 and in hand. Its damage is its rung of the ladder plus the upgrades bought.
+function Player:TakeGun(gun)
+    self.gun = gun
+    PG.damage = GUN_DAMAGE[gun] + UPGRADE_DAMAGE * self.upgrades
+    self:Equip("Gun", true)
+end
+
+-- Walking into "<Gun> Pickup". The same gun as the one on slot 1 does nothing, and the pickup stays.
+-- A different one goes on slot 1 and in hand, its pickup leaves the map, and the gun it replaces is
+-- tossed TOSS_DISTANCE behind the player as a pickup of its own, so it can be taken back.
+--
+-- The player decides and destroys the pickup itself: both scripts get the contact, in an order
+-- nothing guarantees, and only this side knows what is on slot 1.
+function Player:PickUpGun(gun, pickup)
+    if self.gun == gun then
+        return
+    end
+    local old = self.gun
+    self:TakeGun(gun)
+    pickup:Destroy()
+    self.gunsTaken = self.gunsTaken + 1
+    Audio.PlayOneShot("audio/chime.wav", nil, 0.8)
+
+    local tossed = ""
+    if old then
+        local p = self.entity:GetTranslation()
+        local yaw = self.meshYaw or self.yaw
+        -- Behind is +Z at yaw 0 (forward is -Z). The pickup's root sits 1 m over the floor, and
+        -- the capsule's centre 0.95 m over it.
+        local at = Vec3(p.x + math.sin(yaw) * TOSS_DISTANCE, p.y + 0.05, p.z + math.cos(yaw) * TOSS_DISTANCE)
+        if Scene.Spawn("prefabs/pickups/" .. old .. "Pickup.gprefab", at) then
+            tossed = string.format(", tossed %s to (%.1f, %.1f)", old, at.x, at.z)
+        else
+            Log.Warn(string.format("Player: could not toss %s - the spawn was refused", old))
+        end
+    end
+    Log.Info(string.format("PICKUP %s, %d damage a round%s", gun, PG.damage, tossed))
 end
 
 -- The melee attack: LMB with the knife or axe in hand.
@@ -1386,9 +1499,9 @@ function Player:Diagnose(ts)
             100.0 * self.groundedFrames / math.max(self.frames, 1), self.inWall, self.inBH, self.inWH,
             PG.fired, PG.fired - PG.despawned, PG.despawned, PG.hits, PG.kills, self.refused))
         Log.Info(string.format(
-            "P5   hp=%.0f/%.0f taken=%d healed=%.0f weapon=%d dmg=%d score=%d upgrades=%d "
+            "P5   hp=%.0f/%.0f taken=%d healed=%.0f gun=%s guns-taken=%d dmg=%d score=%d upgrades=%d "
             .. "triggers=%d ui-mismatch=%d",
-            self.health, self.maxHealth, self.hits, self.healed, self.weapon, PG.damage,
+            self.health, self.maxHealth, self.hits, self.healed, self.gun or "none", self.gunsTaken, PG.damage,
             PG.score, self.upgrades, PG.triggers or 0, self.uiMismatch))
         Log.Info(string.format(
             "P6   steps=%d muzzle-bursts=%d impacts=%d impacts-despawned=%d live-impacts=%d "
@@ -1401,8 +1514,7 @@ function Player:Diagnose(ts)
         Log.Info(string.format("P6b  voices=%d one-shots=%d",
             Audio.GetVoiceCount(), Audio.GetOneShotCount()))
         if self.attacks > 0 or self.equipped ~= "Gun" then
-            Log.Info(string.format("MELEE equipped=%s attacks=%d gun=%s dmg=%d",
-                self.equipped, self.attacks, self.gun, PG.damage))
+            Log.Info(string.format("MELEE equipped=%s attacks=%d", self.equipped, self.attacks))
         end
         local hits = ""
         for i = 1, #ROUTE do

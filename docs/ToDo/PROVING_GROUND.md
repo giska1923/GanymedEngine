@@ -565,12 +565,9 @@ How they were made, and what differs from the Rifle:
 
 Left open, in order of need:
 
-- **Only the rifle is carried.** The other four guns have a damage number each (`GUN_DAMAGE` in
-  `Player.lua`, "Player melee and the damage scale" below) and sockets, muzzles and per-character
-  grips (prefabs and `Armory.ganymede`), but nothing hands one to the player. The natural hook is
-  still the existing weapon level (`Weapon Crate` halves `fireInterval`), moving the player up the
-  ladder and swapping the carried mesh per level.
-- **The player wields the knife and axe; no enemy does.** Slots 2 and 3, LMB to attack (below).
+- **All five guns are on the Proving Ground's rack**; the player starts with none (the loadout
+  section below).
+- **The player wields the knife; the Orks carry axes but never swing them.**
 - **The LMG's bipod is deployed**, front legs and a rear leg. Carried, those legs will cross the
   player's thighs. Fine as a pickup or a display piece; for a held weapon, a re-roll with the
   bipod folded is 30 credits.
@@ -1050,11 +1047,11 @@ Left open:
 
 #### Player melee and the damage scale (2026-10-01)
 
-**Weapon slots: `1` gun, `2` knife, `3` axe, and LMB attacks with whatever is in hand.** LMB
-already captured the cursor and fired. The alternative was a separate melee button (quick melee
-on `V`, as most shooters do it). Slots keep one attack button, as asked, at the cost of a key press
-to switch. The player's `Body` carries all three as socketed children. The knife and axe are prefab
-instances with the ArmoredHumanoid holds the Armory uses.
+**Weapon slots: `1` gun, `2` knife, and LMB attacks with whatever is in hand.** (There was a
+`3` for an axe until the loadout change below took the axe off the player.) LMB already captured
+the cursor and fired. The alternative was a separate melee button (quick melee on `V`, as most
+shooters do it). Slots keep one attack button, as asked, at the cost of a key press to switch. The
+knife is a prefab instance with the ArmoredHumanoid hold the Armory uses.
 
 - **Hiding by scale.** A weapon not in hand is shrunk to 0.001 of its scale, because a script
   cannot hide an entity: there is no visibility flag, and `DetachFromBone` leaves it at the
@@ -1244,6 +1241,100 @@ Left open:
 - **The walk's 0.90 m/s is not measured**; the feet were not checked against the ground at walking
   speed.
 
+#### Loadout: the knife to start, axes on the Orks, a gun rack (2026-10-01)
+
+**The player starts with the knife and no gun.** Slot 1 stays empty until a gun is picked up, and
+`1` does nothing until then. `Player.startGun` (default `""`) can hand one out at the start. The gate
+modes always start with the rifle, because every gate predates pickups and fires from its first
+second.
+
+**One rack, at (−6, −12), with all five guns side by side**, 1.4 m apart along X: pistol, SMG, rifle,
+LMG, minigun. It replaces the `Weapon Crate`, which only halved the fire interval, and it sits off
+every gate route except P5's, whose leg 3 now visits it.
+
+- **The rules.** Walking into a gun you already have does nothing, and the pickup stays. A different
+  gun goes on slot 1 and in hand, its pickup leaves the map, and the gun it replaces is tossed 2.5 m
+  behind the player as a pickup of its own, which can be taken back the same way.
+- **The player decides.** Both scripts get the contact, in an order nothing guarantees, and only
+  the player knows what is on slot 1. So `Player:PickUpGun` destroys the pickup itself, and
+  `Pickup.lua`'s `gun` kind does nothing on contact.
+- **Pickups are prefabs**, `prefabs/pickups/<Gun>Pickup.gprefab`: a static sensor box, tagged
+  `"<Gun> Pickup"` (which is how the player knows what it is), with the gun floating over it. A
+  toss is `Scene.Spawn` of the same prefab.
+- **Every gun keeps its own damage** (`GUN_DAMAGE`), plus the upgrades bought. The fire interval is
+  the same 0.12 s for all five, which a minigun will want changed.
+
+**All five guns are children of the player's `Body`**, authored shrunk and with no socket. A gun is
+socketed only once it is on slot 1, from a table in `Player.lua` with the same socket numbers the
+prefabs carry. `AttachToBone` needs the whole socket on every call and has no getter. Hand IK holds
+the first socketed child, so a gun is detached when it is swapped out. A gun on slot 1 keeps its
+socket, shrunk, while the knife is out. Then the IK finds a two-handed gun and solves cleanly at
+weight 0; with only the knife socketed it warns on every switch, because its warnings re-arm after
+any clean solve.
+
+- **The pistol is held like the knife:** socketed to the right hand, on the one-handed locomotion
+  set, no IK and no aim lock. Its rounds still go to the crosshair, but the pistol itself does not
+  point there.
+- **Each gun's muzzle** carries the muzzle-flash emitter the old inline rifle had.
+
+**Every Ork carries an axe**, a prefab instance on its `Body` with the Ork's hold. `carry_check.py`,
+on every key, with the axe in hand:
+
+| Ork clip                        | Axe vs the Ork's body               | Used when armed       |
+| ------------------------------- | ----------------------------------- | --------------------- |
+| `Short_Breathe_and_Look_Around` | inside it on 79 of 79 frames        | no                    |
+| `Axe_Breathe_and_Look_Around`   | clear (0/114)                       | idle                  |
+| `Slow_Orc_Walk`                 | brushes on 7 of 166                 | walk (its own gait)   |
+| `RunFast`                       | 3 of 15, and 5 cm through the floor | no                    |
+| Soldier `run_fast_4`, retargeted | clear (0/21), axe carried up       | charge                |
+
+The run covers 5.0 m/s on the Ork's legs (the Soldier's measured 5.46, by hip height), so the
+4.2 m/s charge plays it at 0.84×. `Enemy.lua` picks this set whenever its `Body` has an `Axe` child.
+The Orks still damage by contact and lunge; nothing swings the axe.
+
+**Verified in the Debug `GanymedRuntime`**, in a scratch copy with the rifle, a second rifle and the
+LMG moved into a line ahead of the player:
+
+- start with the knife; `1` with no gun does nothing;
+- the rifle is taken, and the second rifle (same gun) does nothing and stays;
+- the LMG swaps in, and the rifle lands 2.5 m behind;
+- walking back over it swaps them again, and the LMG is tossed;
+- `1`/`2` back and forth after that is silent in the log.
+
+Screenshots show the LMG held two-handed and an Ork mid-stride with the axe up in its right hand.
+
+**The P5 gate, re-run with the rack** (180 s, Debug `GanymedRuntime`, `p5gate` on in a scratch
+copy). Its leg 3 now takes a gun off the rack instead of the crate. It passed every check it defines:
+
+- heal, gun pickup and upgrade triggers;
+- the upgrade bought (rifle 12 → 14), and `ui-mismatch=0`;
+- `fired=146`, `despawned=146`, `live=0`;
+- `inWall=0`, the route complete, and 0 errors.
+
+**The rack leg is not clean, and the route cannot make it clean.** A first route walked straight
+onto the LMG; leaving at full speed, its turn swung 2.5 m wide into the minigun and swapped twice.
+The second comes in from the east end and steps out north at probe speed, but charging Orks shoved
+the player sideways through the row: it entered the rifle and LMG sensors in the same instant,
+then swapped three times in five seconds, every swap correct by the rules. That is the shove in
+"Nothing can refuse a push on a character" ([cross-cutting.md](cross-cutting.md)), which the
+gate's enemies make worse now that they live three times as long. Each swap logged its one IK
+warning (below).
+
+Left open:
+
+- **Every gun swap logs one IK warning**, for the frame the old gun's socket is being removed. The IK
+  still finds it, with an empty joint. The fix is in the engine ([cross-cutting.md](cross-cutting.md),
+  two-hand IK). Before the first gun is taken, the knife alone logs two at start.
+- **The same fire interval for every gun**, and the pistol does not aim (above).
+- **The Orks' axes are props**: no Ork attack, so `MeleeAttacker` is not on them.
+- **Walking back the way you came swaps straight back.** The old gun lands behind you, on the path
+  you came in by, and walk-over pickup takes it. The P5 gate's first route did the same thing at the
+  rack: it took the LMG, swung into the minigun as it turned away, and swapped twice. Most
+  shooters avoid this with a hold-to-swap key instead of walk-over (CoD's "hold to swap"). That
+  needs a key and a "standing in which pickup" state, but no engine work.
+- **A toss can land in a wall**: it is a fixed 2.5 m behind, with no check.
+- **`Enemy.gprefab` is unchanged**: nothing spawns it today, and its Ork has no axe.
+
 #### The placeholder boxes are gone, and two things went with them
 
 `BoxTextured.glb` was doing four unrelated jobs. All four references are out of the scene:
@@ -1412,7 +1503,8 @@ grip.
 
 **Not done, deliberately:** the hovering rifle at the Weapon Crate is untouched. Now that the
 player always carries a rifle, that pickup wants either retiring or converting to attach-on-collect
-— a gameplay decision, not part of wiring the socket.
+— a gameplay decision, not part of wiring the socket. (Decided 2026-10-01: retired for the gun
+rack, in the loadout section.)
 
 **Known rough edge** (overtaken: the rifle left the hand in the two-hand IK section below, and the
 idle no longer lowers it): during the deepest part of `Lower_Weapon_Look_Raise` the barrel points down
@@ -2111,7 +2203,7 @@ there is something to see:
 | Tag               | Kind    | Behaviour                                                              |
 | ----------------- | ------- | ---------------------------------------------------------------------- |
 | `Heal Spot`       | heal    | permanent; heals 14/s while you stand in it, using enter/exit to count |
-| `Weapon Crate`    | weapon  | consumed on touch, destroys itself, halves the fire interval           |
+| `Weapon Crate`    | weapon  | consumed on touch, destroys itself, halves the fire interval. Replaced by the gun rack (2026-10-01) |
 | `Upgrade Station` | upgrade | permanent; spends 2 score for +2 projectile damage (+1 before 2026-10-01), refuses if poor |
 
 The effect is applied by the **player**, not the pickup: contacts dispatch to both participants, so

@@ -1,0 +1,49 @@
+Prefab: RiflePickup
+Entities:
+  - Entity: 1
+    TagComponent:
+      Tag: Rifle Pickup
+    TransformComponent:
+      Translation: [0, 1, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        - 2
+    ScriptComponent:
+      Script: 8012153513204603916
+      Fields:
+        - Name: kind
+          Type: String
+          Value: gun
+        - Name: label
+          Type: String
+          Value: Rifle Pickup
+    RigidBodyComponent:
+      Type: 0
+      Mass: 1
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: false
+      IsSensor: true
+    BoxColliderComponent:
+      HalfExtents: [0.550000012, 1, 0.600000024]
+      Offset: [0, 0, 0]
+      Friction: 0.5
+      Restitution: 0
+  - Entity: 2
+    TagComponent:
+      Tag: Body
+    TransformComponent:
+      Translation: [0, -0.200000003, 0]
+      Rotation: [0, 1.57079637, 0]
+      Scale: [0.45, 0.45, 0.45]
+    RelationshipComponent:
+      Parent: 1
+      Children:
+        []
+    StaticMeshComponent:
+      Mesh: 5842540604746245028
+      MaterialOverrides: [6163099190943935964]

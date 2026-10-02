@@ -111,6 +111,8 @@ function Enemy:OnCreate()
         Log.Error(string.format(
             "Enemy %s: no child named 'Body' - no mesh, no facing, no animation", self.label))
     end
+    -- An Ork with an axe in its hand moves on clips that keep the axe out of its body (Animate).
+    self.armed = self.body ~= nil and self.body:GetChildByName("Axe") ~= nil
 
     -- A leg shorter than half a metre is a standing order, not a patrol.
     local dx, dz = self.patrolTo.x - p.x, self.patrolTo.z - p.z
@@ -366,13 +368,34 @@ end
 --
 -- PlayAnimation every frame is the documented idiom - it restarts only on an actual clip change,
 -- so calling it from a branch like this advances time instead of pinning it at zero.
+-- The same three states with an axe in the right hand. The Ork's own idle and run were made empty-
+-- handed, and with the axe socketed (carry_check.py in the Meshy tooling, every key):
+--   Short_Breathe_and_Look_Around   axe inside the body on 79 of 79 frames
+--   RunFast                         3 of 15, and 5 cm through the floor
+--   Slow_Orc_Walk                   7 of 166 - kept: the brush is brief, and the walk is the Ork's own
+-- so the idle is the Ork's axe idle, installed with the melee set (0 of 114), and the charge is the
+-- Soldier's run_fast_4 retargeted onto the Ork (0 of 21, axe carried up). Its stride covers 5.0 m/s
+-- on these legs (the Soldier's measured 5.46, by hip height), so the 4.2 m/s charge plays it at 0.84.
+local ARMED_RUN_STRIDE = 5.0
+
+function Enemy:ArmedClip()
+    if self.state == "hunt" then
+        return "run_fast_4", math.max(0.5, self.chargeSpeed / ARMED_RUN_STRIDE)
+    elseif self.moving then
+        return "Slow_Orc_Walk", 1.0
+    end
+    return "Axe_Breathe_and_Look_Around", 1.0
+end
+
 function Enemy:Animate()
     if not self.body then
         return
     end
 
     local clip, speed
-    if self.state == "hunt" then
+    if self.armed then
+        clip, speed = self:ArmedClip()
+    elseif self.state == "hunt" then
         -- RunFast is a 0.47 s stride, roughly a third of the walk's cadence per step. At 1.0 it
         -- outruns the 4 m/s charge it is meant to sell, so it is pulled back.
         clip, speed = "RunFast", 0.8
