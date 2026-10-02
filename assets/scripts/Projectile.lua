@@ -37,7 +37,7 @@ function Projectile:OnUpdate(ts)
     end
 end
 
-function Projectile:OnCollisionEnter(other)
+function Projectile:OnCollisionEnter(other, contact)
     if other and other:GetName() == "Projectile" then
         -- Two rounds meeting in flight should not both vanish on each other; it reads as the gun
         -- jamming. Cheap to ignore, and it keeps the hit count meaning "hit something solid".
@@ -53,13 +53,15 @@ function Projectile:OnCollisionEnter(other)
     end
     PG.hits = PG.hits + 1
 
-    -- P6. Both at the point of contact, which is near enough this entity's position: a round
-    -- moving at 28 m/s covers 0.47 m in a step, so the error is smaller than the effect.
+    -- P6. Both at the point of contact - the spot on what the round hit, which the event carries.
+    -- The round's own position is the wrong place: it is the drawn transform, interpolated
+    -- between the last two physics steps, and so short of the surface. This used to be it, on
+    -- the argument that a step is small; at 28 m/s it put sparks in mid-air in front of walls.
     --
     -- Positional, unlike the shot itself. This is the one sound in the game that the 3D listener
     -- has a real job to do on - it happens somewhere other than the player, while the player is
     -- moving and turning.
-    local p = self.entity:GetTranslation()
+    local p = contact and contact.point or self.entity:GetTranslation()
     -- Quieter than the shot that fired it: the gun is at the ear and this is not.
     Audio.PlayOneShot("audio/impact.wav", p, 0.45)
     Scene.Spawn("prefabs/Impact.gprefab", p)

@@ -1522,9 +1522,6 @@ look.
 
 Left open:
 
-- **Impacts land early.** A round hears about a hit with its transform as of the start of the step
-  that hit, so it despawns, and spawns its spark, up to a step (0.47 m) short of the surface.
-  `OnCollisionEnter` carries no contact point to place it with; that is engine work for `master`.
 - **The gate's `hits` counter does not match its kills.** It read 5–6 (9–12 before this fix) where
   two kills take 18 rifle hits. It counts `Projectile.lua`'s contacts minus sensors, so some
   enemy hits are not reaching that script. Not chased.
@@ -1554,6 +1551,25 @@ live round per step, and there are rarely more than about 45 live rounds.
 **The P5 gate passes with it, twice** (route complete, upgrade bought, 0 errors). One run banked 6
 kills with 27 hits, against 2 and 5–6 before. The second banked exactly 2 and 6, so that was
 variance in the fight leg, not the flag.
+
+#### Impacts land on the surface (2026-10-02)
+
+A round's spark and impact sound were placed at the round's own position when it heard about the
+hit. That is its drawn transform, interpolated between the last two physics steps for rendering
+(`SyncTransforms`), and so short of what it hit. `master` now hands `OnCollisionEnter` the contact
+(`75809c0`, merged): the point on the other body's surface, and that surface's outward normal.
+`Projectile.lua` puts both the spark and the sound there.
+
+**Measured** with the rifle against the Blockhouse wall from 3.6 m. The wall's collider is centred
+on z −2.57 and 0.3 m thick, so its face is at −2.42:
+
+- **contact point:** z −2.420 on all 27 rounds, exactly on the face, with normal (0, 0, 1)
+  pointing back at the shooter;
+- **the round's own transform:** 0.76 m in front of the face on average. That is where every spark
+  used to land.
+
+A screenshot shows the sparks on the wall at the crosshair. The P5 gate passes (route complete,
+upgrade bought, 0 errors).
 
 #### The placeholder boxes are gone, and two things went with them
 
