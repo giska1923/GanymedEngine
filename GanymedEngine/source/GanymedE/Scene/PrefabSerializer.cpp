@@ -316,6 +316,15 @@ namespace GanymedE {
 				instanceRoot.GetComponent<TransformComponent>() = *options.RootTransform;
 				scene.MarkChanged<TransformComponent>(instanceRoot);
 			}
+			if (options.RootTranslation || options.RootRotation)
+			{
+				auto& transform = instanceRoot.GetComponent<TransformComponent>();
+				if (options.RootTranslation)
+					transform.Translation = *options.RootTranslation;
+				if (options.RootRotation)
+					transform.Rotation = *options.RootRotation;
+				scene.MarkChanged<TransformComponent>(instanceRoot);
+			}
 
 			instanceRoot.AddComponent<PrefabInstanceComponent>().Source = source;
 

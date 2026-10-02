@@ -183,6 +183,15 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 > right for deleting one hand-authored entity, wrong for a projectile going away, whose children
 > would otherwise accumulate for the session. Same next-frame timing, for the same reason.
 >
+> **A spawn keeps the prefab's own root transform**, and `position` and `rotation`, when given,
+> replace only those two fields. In particular the file's **scale always survives**. The first
+> version built a fresh transform from the two arguments, and the prefab layer replaced the root's
+> whole transform with it. So a spawn placed anywhere reset an authored root scale to 1, and with
+> it every collider the scale shrinks: the Proving Ground's round, authored at 0.15 with a 0.5
+> sphere, flew as a 1 m ball. Its first frame, before its velocity lands, overlapped the shooter's
+> capsule, and the character controller pushed itself backwards out of it, 9 cm a shot. A rotation
+> left out now keeps the file's rotation too, where it used to be zeroed.
+>
 > **Spawns are capped at 64 per frame** (`ECS::CommandQueue::MaxSpawnsPerFrame`). That is a guard
 > against `while true do Scene.Spawn(...) end`, not a design budget: the queue only drains at the
 > next flush, so an unguarded loop would queue until the machine gave out. Past the cap `Spawn`

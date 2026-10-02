@@ -6,6 +6,7 @@
 #include "GanymedE/Scene/Entity.h"
 
 #include <filesystem>
+#include <optional>
 
 // Declared, not included: the editor links this header and has no yaml-cpp include path, and a
 // reference parameter does not need the definition. Only the engine-side callers that actually
@@ -65,8 +66,15 @@ namespace GanymedE {
 
 			// Null uses the transform stored in the file (the spawn default). Revert passes the
 			// instance's current transform: everything below the root is file-owned, the root's
-			// placement is not.
+			// placement is not. Replaces the whole root transform, scale included.
 			const TransformComponent* RootTransform = nullptr;
+
+			// Placement that keeps the rest of the file's root transform: a spawn puts the root
+			// somewhere, and the prefab's own scale must survive it. Applied after RootTransform.
+			// Not RootTransform with the scale copied in, because the caller (Scene.Spawn) has no
+			// parsed file to copy from, and reading one per spawn is disk I/O per bullet.
+			std::optional<glm::vec3> RootTranslation;
+			std::optional<glm::vec3> RootRotation;
 		};
 
 		// Creates the subtree in `scene` with fresh UUIDs and tags the root with

@@ -1116,6 +1116,10 @@ optimization.
 scene. So **Apply does not write the instance's root transform into the file**, and **Revert does
 not overwrite the instance's root transform**. Everything below the root is wholly file-owned on
 Revert and wholly instance-owned on Apply. This is the Unity norm: placement is per-instance.
+Instantiation takes placement two ways (`InstantiateOptions`): `RootTransform` replaces the whole
+root transform, which is Revert keeping the instance's own; `RootTranslation` / `RootRotation`
+replace only those fields of the file's, which is a spawn putting a prefab somewhere without
+losing its authored scale.
 
 **`PrefabInstanceComponent { AssetHandle Source }`** marks the instance *root only*. Descendants are
 ordinary entities, which is what makes structural editing inside an instance free — add, remove and

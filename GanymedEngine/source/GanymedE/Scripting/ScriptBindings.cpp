@@ -845,8 +845,9 @@ namespace GanymedE {
 			//     local e = Scene.FindEntityByUUID(id)
 			//     if e then e:SetTranslation(...) end
 			//
-			// Position and rotation are optional; omitting both places the root where the
-			// `.gprefab` says, which is what a pre-placed decoration wants.
+			// Position and rotation are optional, and each replaces only its own field of the
+			// `.gprefab`'s root transform: omitting both places the root where the file says,
+			// which is what a pre-placed decoration wants, and the file's scale always survives.
 			scene["Spawn"] = [](const std::string& path, sol::optional<glm::vec3> position,
 				sol::optional<glm::vec3> rotation) -> sol::optional<int64_t>
 			{
@@ -871,13 +872,9 @@ namespace GanymedE {
 					return sol::nullopt;
 				}
 
-				TransformComponent transform;
-				const bool placed = position.has_value() || rotation.has_value();
-				if (position) transform.Translation = *position;
-				if (rotation) transform.Rotation = *rotation;
-
-				const UUID id = context->Commands().InstantiatePrefab(
-					handle, placed ? &transform : nullptr);
+				const UUID id = context->Commands().InstantiatePrefab(handle,
+					position ? std::optional<glm::vec3>(*position) : std::nullopt,
+					rotation ? std::optional<glm::vec3>(*rotation) : std::nullopt);
 
 				// Refused by the per-frame spawn cap. Nil rather than a zero id, so a script
 				// that checks its return sees the same "did not happen" it gets from a bad path;
