@@ -1639,8 +1639,8 @@ Left open:
   crisp sprites.
 - **The 6 m repeat** shows from high up as a regular grid. A second, larger-scale variation layer
   (a macro texture) is the usual fix, and it needs a shader.
-- **The old ground assets are unused:** `GroundTile1x1x01.glb`, its material and textures, and
-  `materials/Ground.gmat`. Nothing references them; they were left rather than deleted unasked.
+- **The old tile mesh is unused:** `GroundTile1x1x01.glb`, its material and textures. Nothing
+  references them. (`materials/Ground.gmat`, the flat ground material, was removed on 2026-10-03.)
 - **The edge of the world** is 158 m out, with nothing stopping a player walking off it.
 
 #### The placeholder boxes are gone, and two things went with them
