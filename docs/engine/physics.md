@@ -252,12 +252,27 @@ stops at the first thing in the way.
 tunnelling depends on speed against geometry, never on frame rate. A slow frame runs more steps of
 the same length; it does not make one step longer.
 
-- **Who wants it:** small, fast bodies. The Proving Ground's round is 15 cm across at 28 m/s, which
-  is 0.47 m per 60 Hz step against a 0.3 m wall's 0.45 m window. Without the flag it gets through
-  only by luck of where the step boundaries fall.
+- **Who wants it:** small bodies fast enough to outrun Jolt's **speculative contacts**. A discrete
+  body is not tested only where it lands: Jolt grows its pair-finding box by its velocity and adds
+  a contact for a collision it is about to have. So the step-length arithmetic (a step longer than
+  the wall plus the body is a tunnel) overstates the risk. Measured on the Proving Ground's 15 cm
+  round, 30 rounds against a 0.3 m wall from 3.6 m:
+
+  | Muzzle speed | Per 60 Hz step | Discrete: through the wall | `ContinuousCollision`: through |
+  | ------------ | -------------- | -------------------------- | ------------------------------ |
+  | 28 m/s       | 0.47 m         | 0 of 31                    | —                              |
+  | 80 m/s       | 1.33 m         | 0 of 31                    | 0 of 31                        |
+  | 300 m/s      | 5 m            | **30 of 30**               | **0 of 30**                    |
+
+  The threshold is somewhere between 80 and 300 m/s for that pair; it depends on the shapes, so a
+  body that has to be safe is safest flagged.
 - **What it costs:** a shape cast per body per step, so it is off by default and opt-in per body.
   It is Dynamic-only: a static body never moves, and a kinematic one is wherever its transform puts
   it, so neither has anything to sweep.
+- **Where a hit is reported:** a script's `OnCollisionEnter` reads the body's transform as of the
+  start of the step that hit, with or without the flag, so a fast body is still short of the
+  surface when it hears about it. A round despawning there puts its impact in mid-air, up to a
+  step early. The event carries no contact point to place it with.
 - **What Jolt warns about:** the body moves only up to the first contact in the step that hits,
   so it looks briefly slower. A long, thin, fast-spinning shape can still tunnel by rotating.
   Contact-added callbacks can arrive for contacts the final step does not keep, and are removed the
