@@ -147,6 +147,7 @@ Entities:
     AimOffsetComponent:
       Joints: [Spine02, Spine01, Spine, ""]
     TwoHandIKComponent:
+      Enabled: false
       AimLock: 0
     ScriptComponent:
       Script: 8879838306422076321

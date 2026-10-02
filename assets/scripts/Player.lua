@@ -705,9 +705,10 @@ function Player:Tick(ts)
     if self.reveal and self.reveal.ready then
         local sc = self.reveal.scale
         self.reveal.entity:SetScale(Vec3(sc, sc, sc))
-        if self.body then
-            self.body:SetHandIKWeight(self.reveal.hands, self.reveal.hands)
-            self.body:SetAimLock(self.reveal.hands)
+        if self.body and self.reveal.twoHanded then
+            self.body:SetHandIKEnabled(true)
+            self.body:SetHandIKWeight(1.0, 1.0)
+            self.body:SetAimLock(1.0)
         end
         self.reveal = nil
     elseif self.reveal then
@@ -973,17 +974,14 @@ end
 
 -- Show what is in hand and shrink the rest, and hand MeleeAttacker (on Body) the weapon to trace.
 --
--- Shrunk, because a script cannot hide an entity (HIDDEN_SCALE). And only the gun on slot 1 is
+-- Shrunk, because a script cannot hide an entity (HIDDEN_SCALE). And only the gun in hand is
 -- socketed: hand IK holds the first socketed child of Body, so another gun that kept its socket
--- ahead of it would get the hands. The knife keeps its socket throughout and is the last child,
--- so it never comes before a gun. A gun swapped out is detached, and for the frame its socket is
--- being removed the IK still finds it, with an empty joint, and warns - once per swap where the
--- old gun comes before the new one on Body. That needs the IK to skip an empty joint
--- (docs/ToDo/cross-cutting.md).
+-- ahead of it would get the hands. A gun put away is detached; the IK skips its socket from the
+-- frame DetachFromBone clears its joint. The knife keeps its socket throughout and is the last
+-- child, so it never comes before a gun.
 --
 -- A two-handed gun takes both hands and the aim lock through the IK. The knife and the pistol are
--- held in the right hand by the clip, so the IK lets go of both arms, and AimLock goes too - with
--- it on, the gun would be turned onto the aim with nothing holding it.
+-- held in the right hand by the clip, so the IK is switched off.
 function Player:Equip(slot, force)
     if slot == "Gun" and not self.gun then
         return
@@ -1008,11 +1006,6 @@ function Player:Equip(slot, force)
             if inHand then
                 w.entity:AttachToBone(self.body, gun[2], gun[3], gun[4])
                 w.socketed, self.reveal = true, { entity = w.entity, scale = gun[1] }
-            elseif name == self.gun then
-                -- The gun on slot 1 keeps its socket while the knife is out, shrunk. The IK then
-                -- finds it - a gun, with both markers - and solves cleanly at weight 0; with only
-                -- the knife socketed it warns on every switch (TwoHandIK has no off switch a
-                -- script can reach, and its warnings re-arm after any clean solve).
             elseif w.socketed then
                 w.entity:DetachFromBone()
                 w.socketed = false
@@ -1023,21 +1016,19 @@ function Player:Equip(slot, force)
         end
     end
 
-    -- A gun's hands and aim lock wait for its socket (Player:Tick): set now, the IK would find the
-    -- knife as the only socketed child for a frame and try to aim it.
-    local hands = 0.0
+    -- The IK is off unless a two-handed gun is in hand, and it comes on with that gun's socket
+    -- (Player:Tick): on now, it would find no socketed gun for a frame. Weight 0 is not off - it
+    -- still finds the weapon, and on the knife or the pistol warns that it sits in the right arm
+    -- with no left marker (SetHandIKEnabled, docs/engine/scripting.md).
     if self.reveal then
-        self.reveal.hands = GUNS[self.gun][5] and 1.0 or 0.0
+        self.reveal.twoHanded = GUNS[self.gun][5]
     end
     self.muzzle = nil
     if slot == "Gun" then
         self.muzzle = self.weapons[self.gun] and self.weapons[self.gun].entity:GetChildByName("Muzzle")
     end
     if self.body then
-        self.body:SetHandIKWeight(hands, hands)
-        -- The scene authors 0: the player starts with only the knife, and an aim lock with no
-        -- gun socketed sends the IK looking for a Muzzle on the knife. Player:Tick turns it on.
-        self.body:SetAimLock(hands)
+        self.body:SetHandIKEnabled(false)
         PG.meleeConfig = PG.meleeConfig or {}
         -- "None" has no damage windows, so MeleeAttacker traces nothing while a gun is out.
         -- `ignore` is the capsule: the Body is two levels under it, too deep for MeleeAttacker's

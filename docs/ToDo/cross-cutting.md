@@ -618,20 +618,6 @@ there are two cheaper options, both gameplay calls:
 by two-hand IK H5. `Player:BarrelPoint` runs only under mouse aim, and no gate mode drives the
 mouse, so it needs a human or a scripted aim run.
 
-**A script cannot switch the IK off, and the IK warns about a socket being removed.** Found on
-`first-game` (2026-10-01), where the player swaps between five guns and a knife on one `Body`.
-Both need engine code, so they belong on `master`:
-
-- `ApplyTwoHandIK` takes the first child with a `BoneAttachmentComponent` aimed at the rig.
-  `DetachFromBone` clears `Joint` at once and removes the component next frame, so for that one
-  frame the detaching weapon is still found. It warns that joint `''` does not resolve, and the arms
-  drop to the clip. An empty `Joint` means "being detached" and should be skipped, so the search
-  goes on to the next socket.
-- `TwoHandIKComponent::Enabled` is authored only. A rig holding only a one-handed weapon (knife,
-  pistol: socketed to `RightHand`) gets "inside the right arm" and "no `Support`" warnings even at
-  weight 0. Weight 0 still resolves and measures, and the warnings re-arm after every clean solve,
-  so they come back on every switch. A `SetHandIKEnabled` binding would let the script turn it off.
-
 **H1's rig risks were looked at, not swept.** In four captured frames:
 
 - no wrist twist showed at the Meshy rig's twist-joint-free wrists, although the lock turns the

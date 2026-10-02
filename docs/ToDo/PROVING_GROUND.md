@@ -1267,10 +1267,23 @@ every gate route except P5's, whose leg 3 now visits it.
 **All five guns are children of the player's `Body`**, authored shrunk and with no socket. A gun is
 socketed only once it is on slot 1, from a table in `Player.lua` with the same socket numbers the
 prefabs carry. `AttachToBone` needs the whole socket on every call and has no getter. Hand IK holds
-the first socketed child, so a gun is detached when it is swapped out. A gun on slot 1 keeps its
-socket, shrunk, while the knife is out. Then the IK finds a two-handed gun and solves cleanly at
-weight 0; with only the knife socketed it warns on every switch, because its warnings re-arm after
-any clean solve.
+the first socketed child, so a gun put away is detached. The IK is switched off
+(`SetHandIKEnabled`) while the knife or the pistol is in hand, and back on once a two-handed gun's
+socket exists.
+
+**Both of those needed `master` (`cf9c0d1`, merged here).** The first version logged an IK warning
+on every gun swap and on every switch to the knife:
+
+- **Swaps.** `DetachFromBone` clears the joint at once and removes the component a frame later, and
+  the pass still took the half-detached gun as the weapon for that frame. It now skips a socket with
+  no joint.
+- **Knife.** Weight 0 is not off: the pass still evaluated the knife and warned that it sits in the
+  right arm with no left marker, and a clean solve re-armed the warnings. Scripts could not reach
+  `TwoHandIKComponent::Enabled` until `SetHandIKEnabled`.
+
+The scene authors the player's IK disabled, so edit mode is quiet too. After the merge, the
+runtime swap test (take, swap twice, four knife and gun switches) and the editor logged no IK
+warning at all, where they had logged four.
 
 - **The pistol is held like the knife:** socketed to the right hand, on the one-handed locomotion
   set, no IK and no aim lock. Its rounds still go to the crosshair, but the pistol itself does not
@@ -1317,14 +1330,10 @@ The second comes in from the east end and steps out north at probe speed, but ch
 the player sideways through the row: it entered the rifle and LMG sensors in the same instant,
 then swapped three times in five seconds, every swap correct by the rules. That is the shove in
 "Nothing can refuse a push on a character" ([cross-cutting.md](cross-cutting.md)), which the
-gate's enemies make worse now that they live three times as long. Each swap logged its one IK
-warning (below).
+gate's enemies make worse now that they live three times as long.
 
 Left open:
 
-- **Every gun swap logs one IK warning**, for the frame the old gun's socket is being removed. The IK
-  still finds it, with an empty joint. The fix is in the engine ([cross-cutting.md](cross-cutting.md),
-  two-hand IK). Before the first gun is taken, the knife alone logs two at start.
 - **The same fire interval for every gun**, and the pistol does not aim (above).
 - **The Orks' axes are props**: no Ork attack, so `MeleeAttacker` is not on them.
 - **Walking back the way you came swaps straight back.** The old gun lands behind you, on the path
