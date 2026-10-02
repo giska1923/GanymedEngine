@@ -37,6 +37,7 @@ Entities:
       AngularDamping: 0.0500000007
       UseGravity: false
       LockRotation: true
+      ContinuousCollision: true
     SphereColliderComponent:
       Radius: 0.5
       Offset: [0, 0, 0]

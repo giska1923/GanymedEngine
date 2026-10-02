@@ -1511,8 +1511,8 @@ rotation, so the prefab's scale survives. After the merge, in the Debug `Ganymed
 
 - **No push:** ten pistol shots and 31 rifle rounds standing still, and the player did not move.
 - **No tunnelling:** all 31 rifle rounds fired at the Blockhouse's 0.3 m wall from 3.6 m hit its
-  face, and none went through. The margin is thin: at 28 m/s a round moves 0.47 m per 60 Hz step,
-  against a 0.45 m window (the wall plus the 15 cm round).
+  face, and none went through. (I first called the margin thin: 0.47 m a step against a 0.45 m
+  window. That arithmetic was wrong; see below.)
 - **The P5 gate passes**, twice: 2 kills, upgrade bought, route complete, 0 errors.
 
 **What changed for play.** Every round was a 1 m ball from P3 until this fix, so hits registered
@@ -1522,12 +1522,38 @@ look.
 
 Left open:
 
-- **Tunnelling is one frame-rate dip away.** The usual fix is Jolt's swept collision for fast
-  bodies (`EMotionQuality::LinearCast`) on the round, which is a `RigidBodyComponent` field and
-  so engine work for `master`.
+- **Impacts land early.** A round hears about a hit with its transform as of the start of the step
+  that hit, so it despawns, and spawns its spark, up to a step (0.47 m) short of the surface.
+  `OnCollisionEnter` carries no contact point to place it with; that is engine work for `master`.
 - **The gate's `hits` counter does not match its kills.** It read 5–6 (9–12 before this fix) where
   two kills take 18 rifle hits. It counts `Projectile.lua`'s contacts minus sensors, so some
   enemy hits are not reaching that script. Not chased.
+
+#### The round is swept: `ContinuousCollision` (2026-10-02)
+
+`master` gained `RigidBodyComponent::ContinuousCollision` (`ad851b5`, docs corrected in
+`8266c11`): Jolt's `EMotionQuality::LinearCast`, which sweeps a body along each step instead of
+testing only where it lands. `Projectile.gprefab` sets it.
+
+**It was not needed at today's speed, and the reason I gave for it was wrong.** I had worked
+from step length: 0.47 m a step against a 0.3 m wall plus a 15 cm round. A discrete Jolt body is not
+tested only where it lands, though. Its pair-finding box grows with its velocity, and a collision
+it is about to have becomes a *speculative* contact. Measured with the rifle against the Blockhouse
+wall from 3.6 m, `muzzleSpeed` raised for the test:
+
+| Muzzle speed | Per step | Discrete: through the wall | Swept: through the wall |
+| ------------ | -------- | -------------------------- | ----------------------- |
+| 28 m/s       | 0.47 m   | 0 of 31                    | —                       |
+| 80 m/s       | 1.33 m   | 0 of 31                    | 0 of 31                 |
+| 300 m/s      | 5 m      | **30 of 30**               | **0 of 30**             |
+
+**So it is insurance.** Tuning one gun's round faster, toward real muzzle speeds of 300 m/s and
+up, would start it tunnelling with nothing in the log to say so. The cost is a shape cast per
+live round per step, and there are rarely more than about 45 live rounds.
+
+**The P5 gate passes with it, twice** (route complete, upgrade bought, 0 errors). One run banked 6
+kills with 27 hits, against 2 and 5–6 before. The second banked exactly 2 and 6, so that was
+variance in the fight leg, not the flag.
 
 #### The placeholder boxes are gone, and two things went with them
 
