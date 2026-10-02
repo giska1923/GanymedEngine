@@ -240,6 +240,32 @@ plain static box is invisible to a character walking through it, and a static *s
 The flag is read at body creation, like `LockRotation`; toggling it during play does nothing until
 the body is rebuilt.
 
+### Continuous collision
+
+`RigidBodyComponent::ContinuousCollision` sets Jolt's `mMotionQuality` to
+`EMotionQuality::LinearCast`. A discrete body is tested only where each step puts it, so one that
+moves further in a step than the thickness of what it should hit, plus its own diameter, passes
+through without touching it: **tunnelling**. A linear-cast body sweeps its shape along the step and
+stops at the first thing in the way.
+
+**The step is fixed** (`PhysicsSettings::FixedTimestep`, accumulated in `PhysicsSystem`), so
+tunnelling depends on speed against geometry, never on frame rate. A slow frame runs more steps of
+the same length; it does not make one step longer.
+
+- **Who wants it:** small, fast bodies. The Proving Ground's round is 15 cm across at 28 m/s, which
+  is 0.47 m per 60 Hz step against a 0.3 m wall's 0.45 m window. Without the flag it gets through
+  only by luck of where the step boundaries fall.
+- **What it costs:** a shape cast per body per step, so it is off by default and opt-in per body.
+  It is Dynamic-only: a static body never moves, and a kinematic one is wherever its transform puts
+  it, so neither has anything to sweep.
+- **What Jolt warns about:** the body moves only up to the first contact in the step that hits,
+  so it looks briefly slower. A long, thin, fast-spinning shape can still tunnel by rotating.
+  Contact-added callbacks can arrive for contacts the final step does not keep, and are removed the
+  next frame; for a round that despawns on its first contact, that only matters if two bodies race
+  for it.
+
+Read at body creation, like the two flags above.
+
 ## Collision events → scripts
 
 `PhysicsSystem::DispatchCollisionEvents` resolves each event's UUIDs to entities and calls

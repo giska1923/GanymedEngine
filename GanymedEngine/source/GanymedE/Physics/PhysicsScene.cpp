@@ -705,6 +705,11 @@ namespace GanymedE {
 			// Only Dynamic asks: Static never integrates, and Kinematic takes its orientation
 			// from the transform each step, so restricting its DOFs would change nothing while
 			// looking like it should.
+			// Swept instead of discrete. Dynamic only: a static body never moves, and a kinematic
+			// one is wherever its transform puts it, so there is nothing for a cast to catch.
+			if (motionType == JPH::EMotionType::Dynamic && rb.ContinuousCollision)
+				settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
+
 			if (motionType == JPH::EMotionType::Dynamic && rb.LockRotation)
 			{
 				settings.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX

@@ -642,6 +642,16 @@ namespace GanymedE {
 		// different roles; ours cannot, so per-collider would be a lie.
 		bool IsSensor = false;
 
+		// Continuous collision for a fast body: Jolt's EMotionQuality::LinearCast, which sweeps
+		// the shape from where the body was to where it is going instead of testing only where
+		// it lands. Without it a body tunnels once a step carries it further than the thickness
+		// of what it should hit plus its own diameter - a 15 cm round at 28 m/s covers 0.47 m
+		// per 60 Hz step, against a 0.3 m wall's 0.45 m window.
+		//
+		// Off by default because it costs a shape cast per body per step, and only small, fast
+		// bodies need it. Dynamic only, like LockRotation. Read at body creation.
+		bool ContinuousCollision = false;
+
 		RigidBodyComponent() = default;
 		RigidBodyComponent(const RigidBodyComponent&) = default;
 	};
