@@ -398,6 +398,10 @@ function Player:OnCreate()
     -- spent at the upgrade station. Both are seeded once, by whoever gets here first.
     PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
     PG.damage = 0
+    -- Set by the P5 gate after its fight (Player:ProbeTurn). Cleared here because PG lives in the
+    -- shared Lua VM, which the editor keeps across Play and Stop: a gate run left it set, and the
+    -- next ordinary Play would have had its enemies vanish on the first frame.
+    PG.gateClear = false
     PG.score = PG.score or 0
     self.health = self.maxHealth
     self:PushUI()
@@ -571,6 +575,16 @@ function Player:ProbeTurn(ts)
                 self.probeDone = true
                 Log.Info(tag .. " route complete")
             else
+                -- The fight is leg 1 only. Every later P5 leg measures a trigger - heal, pickup,
+                -- upgrade - and none of them needs an enemy, but enemies left alive kept charging
+                -- and shoving the player off a route that has no pathfinding: one run in two ended
+                -- jammed behind an obstacle. Freezing them would not do - seven bodies standing
+                -- where the fight was are walls to the same route - so the gate removes them.
+                if self.p5gate and self.probeWp == 1 then
+                    PG.gateClear = true
+                    Log.Info(string.format("%s fight over: enemies removed for the trigger legs (kills=%d)",
+                        tag, PG.kills))
+                end
                 self.probeWp = self.probeWp + 1
             end
         end

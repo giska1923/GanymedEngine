@@ -191,6 +191,15 @@ function Enemy:OnUpdate(ts)
         return
     end
 
+    -- The P5 gate's fight is over (Player:ProbeTurn): leave without counting as a kill, so the
+    -- score the gate banked is the score it fought for.
+    if PG.gateClear then
+        self.dead = true
+        Log.Info(string.format("Enemy %s removed by the gate", self.label))
+        self.entity:Destroy()
+        return
+    end
+
     -- Melee lands through PG, the only channel between script instances (MeleeAttacker.lua).
     local melee = PG.meleeDamage and PG.meleeDamage[self.entity:GetUUID()]
     if melee then

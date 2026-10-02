@@ -1456,13 +1456,34 @@ Left open:
 - **Moving does not widen it.** Most shooters add spread for moving or jumping and take some away
   for standing still. It is one more term in the cone, wanted only if running and gunning feels
   too easy.
-- **The P5 gate is flaky** (above). The cheapest fix is in the gate, not the game: freeze the enemies
-  (`PG.freeze`, which `losgate` already uses) once leg 1 has banked its kills and damage. Every
-  later leg measures a trigger, not a fight, and frozen enemies cannot shove the player off a
-  route that has no pathfinding.
 - **Nothing shows the cone.** A crosshair that opens with bloom is the usual feedback; the HUD data
   model is two variables declared in C++ ([cross-cutting.md](cross-cutting.md)), so it would need
   a third first.
+
+#### The P5 gate clears its enemies after the fight (2026-10-02)
+
+The P5 gate was failing about one run in two (spread section above). Its route has no pathfinding.
+Enemies that live three times as long as they used to kept charging after leg 1, shoved the player
+off course, and could leave it driving straight into an obstacle until time ran out.
+
+- **The fight is leg 1 only.** Every later leg measures a trigger (heal, pickup, upgrade), and none
+  of them needs an enemy. So once leg 1 is done, `Player:ProbeTurn` sets `PG.gateClear`, and each
+  `Enemy.lua` destroys itself without counting a kill. The score the gate banked is the score it
+  fought for.
+- **Removed, not frozen.** Freezing them (`PG.freeze`, which `losgate` uses) was the first idea.
+  But seven bodies standing where the fight was are obstacles to the same route, which jams on an
+  Ork exactly as it jams on a wall.
+- **`Player:OnCreate` clears the flag.** `PG` lives in the one Lua VM the runtime keeps across Play
+  and Stop. Left set by a gate run, it would make the next ordinary Play's enemies vanish on their
+  first frame.
+
+**Three runs, Debug `GanymedRuntime`, all passed and all alike:**
+
+- 2 kills in the fight, then 5 enemies removed;
+- the heal back to 100, one swap (rifle → minigun), the upgrade bought (16 → 18);
+- route complete at about 55 s, where it had been running out the clock;
+- no knock-down, 0 errors, `fired` equal to `despawned` (194, 202, 192);
+- every probe after the fight within 1 cm of the same spot in all three runs.
 
 #### The placeholder boxes are gone, and two things went with them
 
