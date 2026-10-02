@@ -44,6 +44,17 @@ local GUNS = {
     LMG     = { 1.0,  "Spine", Vec3(0.370200, 0.080711, 0.367841),  Vec3(3.042971, 0.887004, -2.925548), true },
     Minigun = { 1.0,  "Spine", Vec3(0.283391, -0.097242, 0.617023), Vec3(3.042971, 0.887004, -2.925548), true },
 }
+-- How each gun fires: rounds a second, and whether holding LMB keeps it firing. The pistol is
+-- semi-automatic: one round per click, however long the button is held, and its rate is only a
+-- cap on how fast clicks are honoured. The rest are automatic and climb with the ladder, so a rung
+-- up is both harder-hitting and faster: rounds/s x GUN_DAMAGE is 80, 120, 168 and 240 a second.
+local GUN_FIRE = {
+    Pistol  = { rate = 6.0,  auto = false },
+    SMG     = { rate = 8.0,  auto = true },
+    Rifle   = { rate = 10.0, auto = true },
+    LMG     = { rate = 12.0, auto = true },
+    Minigun = { rate = 15.0, auto = true },
+}
 -- Where a gun that is swapped out lands: this far behind the player, as a pickup again.
 local TOSS_DISTANCE = 2.5
 
@@ -69,7 +80,6 @@ local Player = {
         -- at some speed, and nothing here does continuous collision detection, so a round fast
         -- enough to cross a 0.3 m wall in one step would pass through it.
         muzzleSpeed = 28.0,
-        fireInterval = 0.12,
         -- Gate mode: fire every frame instead of on a trigger, to put Scene.Spawn and the
         -- 64-per-frame cap under sustained load. Off for play.
         autofire = false,
@@ -112,7 +122,6 @@ local Player = {
     turnSpeed = 2.4,
     sensitivity = 0.0022,
     muzzleSpeed = 28.0,
-    fireInterval = 0.12,
     autofire = false,
     autopilot = false,
     losgate = false,
@@ -174,6 +183,8 @@ local Player = {
     muzzleBursts = 0,
 
     fireCooldown = 0.0,
+    triggerHeld = false,  -- LMB held (and armed) last frame: the semi-automatic pistol fires on a press
+    shots = nil,          -- [gun] = rounds fired by the trigger, for the 5 s report
     refused = 0,
 
     -- What is in hand: "Gun" (slot 1, whichever gun was picked up) or "Knife" (slot 2).
@@ -600,6 +611,10 @@ function Player:OnUpdate(ts)
         self.lmbArmed = true
     end
     local attackHeld = self.looking and self.lmbArmed and lmbDown
+    -- The press, for the semi-automatic pistol: tracked every frame, whatever is in hand, so a
+    -- click straight after switching to it is not mistaken for a button still held.
+    local attackPressed = attackHeld and not self.triggerHeld
+    self.triggerHeld = attackHeld
 
     -- ---- look ----
     if self.looking then
@@ -633,15 +648,17 @@ function Player:OnUpdate(ts)
         if self.t < 20.0 then shots = 1
         elseif self.t < 24.0 then shots = 80 end
         for _ = 1, shots do self:Fire() end
-    elseif self.p5gate and not self.probeDone and self.probeWp == 1 and self.fireCooldown <= 0.0 then
-        -- Only on the first leg, and on the ordinary cooldown rather than every frame: this is
-        -- meant to look like someone shooting back, and the fired count has to stay a number the
-        -- weapon pickup can visibly change later in the run.
-        self.fireCooldown = self.fireInterval
-        self:Fire()
-    elseif self.equipped == "Gun" and self.gun and attackHeld and self.fireCooldown <= 0.0 then
-        self.fireCooldown = self.fireInterval
-        self:Fire()
+    elseif self.p5gate and not self.probeDone and self.probeWp == 1 then
+        -- Only on the first leg, and at the gun's own rate rather than every frame: this is meant
+        -- to look like someone shooting back.
+        self:PullTrigger(true, false)
+    elseif self.equipped == "Gun" and self.gun then
+        self:PullTrigger(attackHeld, attackPressed)
+    end
+    -- Time spent not firing is not banked as a burst: the carry in PullTrigger is only the part
+    -- of a frame that a shot overran.
+    if self.fireCooldown < 0.0 then
+        self.fireCooldown = 0.0
     end
 
     -- ---- weapon slots and melee ----
@@ -1296,6 +1313,24 @@ function Player:BarrelPoint(p, fx, fz, aim)
     return b
 end
 
+-- One frame of the trigger. Automatic guns fire while it is held; the pistol fires once per press.
+--
+-- The cooldown carries its overrun instead of being reset to the full interval. Reset, every shot
+-- would wait for the first whole frame past its interval, and the rate would round down to the
+-- frame rate: 15 rounds/s is 4 frames at 60 fps, and a reset turns that into one shot every 5,
+-- which is 12. Carried, the shots land on the frames nearest the true schedule.
+function Player:PullTrigger(held, pressed)
+    local f = GUN_FIRE[self.gun or "Rifle"]
+    if self.fireCooldown > 0.0 or not (f.auto and held or pressed) then
+        return
+    end
+    self.fireCooldown = self.fireCooldown + 1.0 / f.rate
+    self.shots = self.shots or {}
+    local gun = self.gun or "Rifle"
+    self.shots[gun] = (self.shots[gun] or 0) + 1
+    self:Fire()
+end
+
 function Player:Fire()
     local p = self.entity:GetTranslation()
     local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
@@ -1504,6 +1539,13 @@ function Player:Diagnose(ts)
         -- back toward zero. Both counters were bound for this line.
         Log.Info(string.format("P6b  voices=%d one-shots=%d",
             Audio.GetVoiceCount(), Audio.GetOneShotCount()))
+        if self.shots then
+            local line = ""
+            for _, gun in ipairs(GUN_LADDER) do
+                if self.shots[gun] then line = line .. string.format(" %s=%d", gun, self.shots[gun]) end
+            end
+            Log.Info("SHOTS" .. line)
+        end
         if self.attacks > 0 or self.equipped ~= "Gun" then
             Log.Info(string.format("MELEE equipped=%s attacks=%d", self.equipped, self.attacks))
         end

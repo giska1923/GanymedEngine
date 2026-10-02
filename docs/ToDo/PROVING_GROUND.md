@@ -1261,8 +1261,8 @@ every gate route except P5's, whose leg 3 now visits it.
 - **Pickups are prefabs**, `prefabs/pickups/<Gun>Pickup.gprefab`: a static sensor box, tagged
   `"<Gun> Pickup"` (which is how the player knows what it is), with the gun floating over it. A
   toss is `Scene.Spawn` of the same prefab.
-- **Every gun keeps its own damage** (`GUN_DAMAGE`), plus the upgrades bought. The fire interval is
-  the same 0.12 s for all five, which a minigun will want changed.
+- **Every gun keeps its own damage** (`GUN_DAMAGE`), plus the upgrades bought, and its own fire
+  mode and rate (next section).
 
 **All five guns are children of the player's `Body`**, authored shrunk and with no socket. A gun is
 socketed only once it is on slot 1, from a table in `Player.lua` with the same socket numbers the
@@ -1334,7 +1334,7 @@ gate's enemies make worse now that they live three times as long.
 
 Left open:
 
-- **The same fire interval for every gun**, and the pistol does not aim (above).
+- **The pistol does not aim** (above).
 - **The Orks' axes are props**: no Ork attack, so `MeleeAttacker` is not on them.
 - **Walking back the way you came swaps straight back.** The old gun lands behind you, on the path
   you came in by, and walk-over pickup takes it. The P5 gate's first route did the same thing at the
@@ -1343,6 +1343,53 @@ Left open:
   needs a key and a "standing in which pickup" state, but no engine work.
 - **A toss can land in a wall**: it is a fixed 2.5 m behind, with no check.
 - **`Enemy.gprefab` is unchanged**: nothing spawns it today, and its Ork has no axe.
+
+#### Fire modes and rates (2026-10-02)
+
+Every gun fired every 0.12 s (8.3 rounds/s). Now each has its own, in `GUN_FIRE` in `Player.lua`:
+
+| Gun     | Mode       | Rounds/s              | Damage | Per second while firing |
+| ------- | ---------- | --------------------- | ------ | ----------------------- |
+| Pistol  | semi-auto  | one per click, ≤ 6    | 8      | as fast as you click    |
+| SMG     | automatic  | 8                     | 10     | 80                      |
+| Rifle   | automatic  | 10                    | 12     | 120                     |
+| LMG     | automatic  | 12                    | 14     | 168                     |
+| Minigun | automatic  | 15                    | 16     | 240                     |
+
+- **Semi-automatic** fires on the press only, so a held button is one round. The press is tracked
+  every frame, whatever is in hand, so the first click after switching to the pistol is not
+  mistaken for a held button. The rate is only a cap on how fast clicks are honoured.
+- **The cooldown carries its overrun.** It used to reset to the full interval on each shot, so every
+  shot waited for the first whole frame past its interval and the rate rounded down to the frame
+  rate. At 60 fps, 15 rounds/s is a shot every 4 frames; a reset makes that every 5, which is 12.
+  Carried, shots land on the frames nearest the true schedule. Time spent not firing is not banked.
+- **`fireInterval` is gone**, as a property and as the weapon crate's halving. The P5 gate's first
+  leg fires at the rifle's rate.
+- **`SHOTS`** joins the 5 s report: rounds fired by the trigger, per gun.
+
+**Measured** in the Debug `GanymedRuntime`, one run per gun with `startGun` set and LMB held for
+2 s by synthesized input:
+
+| Gun     | Expected | Fired          |
+| ------- | -------- | -------------- |
+| Pistol  | 1 held + 5 clicks | 6     |
+| SMG     | ~17      | 17             |
+| Rifle   | ~21      | 21             |
+| LMG     | ~25      | 25             |
+| Minigun | ~31      | 30             |
+
+**The P5 gate passes at the new rate:** 180 s, Debug `GanymedRuntime`, with every check it defines
+met (`fired=201`, `despawned=201`, the upgrade bought, `ui-mismatch=0`, `inWall=0`, route complete,
+0 errors). The first leg fired 201 rounds, against 146 at 8.3 rounds/s, and `SHOTS Rifle=201`
+agrees with `fired`. It also walked back over its own tossed rifle and swapped again (see "Walking
+back the way you came", in the loadout section).
+
+Left open:
+
+- **Only the rate differs.** Every round flies at 28 m/s from the muzzle with no spread and no
+  recoil, so the guns differ in rate and damage only. Spread growing with sustained fire, and the
+  minigun spinning up before it fires, are the usual next steps.
+- **No ammunition.** Every gun fires forever.
 
 #### The placeholder boxes are gone, and two things went with them
 
