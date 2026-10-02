@@ -1386,10 +1386,83 @@ back the way you came", in the loadout section).
 
 Left open:
 
-- **Only the rate differs.** Every round flies at 28 m/s from the muzzle with no spread and no
-  recoil, so the guns differ in rate and damage only. Spread growing with sustained fire, and the
-  minigun spinning up before it fires, are the usual next steps.
+- **No minigun spin-up**, and no recoil. Spread is in (next section). Spin-up needs a winding sound
+  and the barrel cluster split into its own part to read as anything but input lag: the minigun is
+  one Meshy mesh, and the project has no spin sound.
 - **No ammunition.** Every gun fires forever.
+
+#### Spread and bloom (2026-10-02)
+
+Every round used to fly exactly at the crosshair. Now each leaves inside a cone around the aim, and
+the cone widens with sustained fire:
+
+| Gun     | First shot | Full bloom |
+| ------- | ---------- | ---------- |
+| Pistol  | 0.5°       | 1.5°       |
+| SMG     | 1.5°       | 6°         |
+| Rifle   | 0.5°       | 3°         |
+| LMG     | 1°         | 4°         |
+| Minigun | 2°         | 7°         |
+
+The figures are the cone's half-angle, the most a round can stray. At 20 m, 2° is 0.7 m, the width
+of an Ork's box.
+
+- **Bloom is heat.** A round uses the cone the heat gives before it, so a first shot always gets the
+  first-shot cone. Each round then adds `1 / (rate × 1.5 s)`, so every gun reaches full bloom after
+  1.5 s of sustained fire at its own rate.
+- **Cooling waits.** Heat starts to cool 0.25 s after the last round and falls from full to none
+  in 0.5 s. The wait is what lets bloom build at all: cooling every frame would outrun it. It also
+  sets the pistol's rhythm: paced clicks cool it between shots, and spamming at its 6/s cap does not.
+- **Uniform over the cone's area.** The direction is drawn with `cos θ` uniform between
+  `cos(cone)` and 1, not `θ` uniform: there is far less solid angle near the axis than near the
+  rim, so a uniform `θ` would crowd rounds into the centre. It is applied in `Player:Fire`, after
+  the muzzle-to-crosshair direction, so spread is around where you aim, not around the barrel.
+- **The gate modes fire with none.** Their hit and kill counts are measurements, and spread would
+  make them vary from run to run. `math.random` is Lua's, seeded per run.
+- **`SPREAD`** joins the 5 s report, per gun: the cones used, how far rounds actually strayed
+  (mean and worst), and how many landed outside their own cone, which must stay 0.
+
+**Measured** in the Debug `GanymedRuntime`, one run per gun, with the same 2 s hold. The pistol
+took 6 clicks 0.44 s apart, then 12 about 0.16 s apart:
+
+| Gun     | Cone used    | Strayed: mean / worst | Outside |
+| ------- | ------------ | --------------------- | ------- |
+| Pistol  | 0.50..1.44°  | 0.51 / 1.19°          | 0 of 17 |
+| SMG     | 1.50..6.00°  | 3.09 / 5.54°          | 0 of 17 |
+| Rifle   | 0.50..3.00°  | 1.41 / 2.72°          | 0 of 20 |
+| LMG     | 1.00..4.00°  | 1.97 / 3.74°          | 0 of 24 |
+| Minigun | 2.00..7.00°  | 3.23 / 6.57°          | 0 of 30 |
+
+The automatics bloom from their first-shot cone to exactly the full one inside the hold. The pistol's
+5 s snapshot during the slow clicks read `cone 0.50..0.50`: paced clicks stay at the first-shot
+cone, and only the fast run bloomed it, to 1.44° of its 1.5°.
+
+**The P5 gate, run twice on this change**, fires with no spread (no `SPREAD` line in either log):
+
+- **Run 1 failed.** Charging Orks shoved the player past the rack's step-out point and knocked it
+  down twice. It ended east of an obstacle at (8.0, 0.5) and stood there for the last 110 s,
+  driving straight at its next waypoint, which a velocity-driven capsule cannot slide off. The
+  route never reached the upgrade station.
+- **Run 2 passed every check:** the upgrade bought (minigun 16 → 18), `fired=189` and
+  `despawned=189`, `ui-mismatch=0`, `inWall=0`, route complete, 0 errors. It too was knocked down
+  twice and swapped three times at the rack.
+
+So the gate fails about one run in two, and not because of spread. Its route has no pathfinding,
+and enemies with 100 health spend longer pressing in and shoving. That needs fixing in the gate
+(Left open).
+
+Left open:
+
+- **Moving does not widen it.** Most shooters add spread for moving or jumping and take some away
+  for standing still. It is one more term in the cone, wanted only if running and gunning feels
+  too easy.
+- **The P5 gate is flaky** (above). The cheapest fix is in the gate, not the game: freeze the enemies
+  (`PG.freeze`, which `losgate` already uses) once leg 1 has banked its kills and damage. Every
+  later leg measures a trigger, not a fight, and frozen enemies cannot shove the player off a
+  route that has no pathfinding.
+- **Nothing shows the cone.** A crosshair that opens with bloom is the usual feedback; the HUD data
+  model is two variables declared in C++ ([cross-cutting.md](cross-cutting.md)), so it would need
+  a third first.
 
 #### The placeholder boxes are gone, and two things went with them
 

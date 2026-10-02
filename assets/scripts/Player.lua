@@ -48,13 +48,27 @@ local GUNS = {
 -- semi-automatic: one round per click, however long the button is held, and its rate is only a
 -- cap on how fast clicks are honoured. The rest are automatic and climb with the ladder, so a rung
 -- up is both harder-hitting and faster: rounds/s x GUN_DAMAGE is 80, 120, 168 and 240 a second.
+--
+-- `spread` is the cone a round can leave in, as the most it can stray from the aim (the cone's
+-- half-angle, degrees): the first, careful shot, and the cone after a long burst. Sustained fire
+-- widens it (bloom), stopping narrows it again - so short bursts stay accurate and holding the
+-- trigger sprays, the trade every shooter is built on. SPREAD_BLOOM and SPREAD_RECOVER set how.
 local GUN_FIRE = {
-    Pistol  = { rate = 6.0,  auto = false },
-    SMG     = { rate = 8.0,  auto = true },
-    Rifle   = { rate = 10.0, auto = true },
-    LMG     = { rate = 12.0, auto = true },
-    Minigun = { rate = 15.0, auto = true },
+    Pistol  = { rate = 6.0,  auto = false, spread = { 0.5, 1.5 } },
+    SMG     = { rate = 8.0,  auto = true,  spread = { 1.5, 6.0 } },
+    Rifle   = { rate = 10.0, auto = true,  spread = { 0.5, 3.0 } },
+    LMG     = { rate = 12.0, auto = true,  spread = { 1.0, 4.0 } },
+    Minigun = { rate = 15.0, auto = true,  spread = { 2.0, 7.0 } },
 }
+-- Seconds of sustained fire, at the gun's own rate, to bloom from the first-shot cone to the full
+-- one. Each round adds 1 / (rate * SPREAD_BLOOM) of "heat", so every gun takes the same time.
+local SPREAD_BLOOM = 1.5
+-- Heat starts to cool this long after the last round, and cools from full in SPREAD_RECOVER. The
+-- delay is what lets bloom build at all: cooling every frame would outrun a 1.5 s bloom. It also
+-- sets the pistol's rhythm - clicked at ~3/s the gaps cool it and it stays at 0.5 deg; spammed at
+-- its 6/s cap no gap is long enough, and it blooms like the automatics.
+local SPREAD_RECOVER_DELAY = 0.25
+local SPREAD_RECOVER = 0.5
 -- Where a gun that is swapped out lands: this far behind the player, as a pickup again.
 local TOSS_DISTANCE = 2.5
 
@@ -183,6 +197,9 @@ local Player = {
     muzzleBursts = 0,
 
     fireCooldown = 0.0,
+    heat = 0.0,           -- spread bloom, 0 (first-shot cone) to 1 (full cone)
+    sinceShot = 0.0,
+    spreadStats = nil,    -- [gun] = cones used and deviations measured, for the 5 s report
     triggerHeld = false,  -- LMB held (and armed) last frame: the semi-automatic pistol fires on a press
     shots = nil,          -- [gun] = rounds fired by the trigger, for the 5 s report
     refused = 0,
@@ -637,6 +654,10 @@ function Player:OnUpdate(ts)
     -- the capturing click fired too, because `looking` was already true by the time it got here;
     -- attackHeld (above) is what keeps it out now.
     self.fireCooldown = self.fireCooldown - ts
+    self.sinceShot = self.sinceShot + ts
+    if self.sinceShot > SPREAD_RECOVER_DELAY then
+        self.heat = math.max(0.0, self.heat - ts / SPREAD_RECOVER)
+    end
     if self.autofire then
         -- Three phases, so one run answers all of P3's gate rather than only the easy part:
         --   < 50 s  one round a frame - sustained fire, which is what a leak would show up in
@@ -1059,6 +1080,7 @@ end
 -- Put a gun on slot 1 and in hand. Its damage is its rung of the ladder plus the upgrades bought.
 function Player:TakeGun(gun)
     self.gun = gun
+    self.heat = 0.0
     PG.damage = GUN_DAMAGE[gun] + UPGRADE_DAMAGE * self.upgrades
     self:Equip("Gun", true)
 end
@@ -1328,10 +1350,34 @@ function Player:PullTrigger(held, pressed)
     self.shots = self.shots or {}
     local gun = self.gun or "Rifle"
     self.shots[gun] = (self.shots[gun] or 0) + 1
-    self:Fire()
+
+    -- This round's cone is the heat before it, so a first shot gets the first-shot cone. The gate
+    -- modes fire with none: their hit and kill counts are measurements, and spread would make
+    -- them vary from run to run.
+    local gate = self.autopilot or self.losgate or self.p5gate
+    local cone = gate and 0.0 or (f.spread[1] + (f.spread[2] - f.spread[1]) * self.heat)
+    self.heat = math.min(1.0, self.heat + 1.0 / (f.rate * SPREAD_BLOOM))
+    self.sinceShot = 0.0
+    self:Fire(cone, gun)
 end
 
-function Player:Fire()
+-- A direction inside a cone of half-angle `deg` around `dir`, uniform over the cone's area. Picking
+-- the angle off the axis uniformly instead would crowd rounds toward the centre: there is far less
+-- solid angle near the axis than near the rim. Uniform area is cos(theta) uniform in [cos deg, 1].
+local function Scatter(dir, deg)
+    if deg <= 0.0 then
+        return dir
+    end
+    local c = 1.0 - math.random() * (1.0 - math.cos(math.rad(deg)))
+    local r = math.sqrt(math.max(0.0, 1.0 - c * c))
+    local phi = 2.0 * math.pi * math.random()
+    local helper = math.abs(dir.y) < 0.99 and Vec3(0, 1, 0) or Vec3(1, 0, 0)
+    local u = dir:Cross(helper):Normalized()
+    local v = dir:Cross(u)
+    return dir * c + u * (r * math.cos(phi)) + v * (r * math.sin(phi))
+end
+
+function Player:Fire(cone, gun)
     local p = self.entity:GetTranslation()
     local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
     local fx, fz = -sinY, -cosY
@@ -1354,6 +1400,21 @@ function Player:Fire()
         end
     end
     self.aimHold = AIM_HOLD
+
+    if cone and cone > 0.0 then
+        local aimed = dir
+        dir = Scatter(dir, cone)
+        local off = math.deg(math.acos(math.max(-1.0, math.min(1.0, aimed:Dot(dir)))))
+        self.spreadStats = self.spreadStats or {}
+        local st = self.spreadStats[gun]
+        if not st then
+            st = { first = cone, lo = cone, hi = cone, worst = 0.0, sum = 0.0, n = 0, outside = 0 }
+            self.spreadStats[gun] = st
+        end
+        st.lo, st.hi = math.min(st.lo, cone), math.max(st.hi, cone)
+        st.worst, st.sum, st.n = math.max(st.worst, off), st.sum + off, st.n + 1
+        if off > cone + 1e-3 then st.outside = st.outside + 1 end
+    end
 
     local id = Scene.Spawn("prefabs/Projectile.gprefab", muzzle)
     if not id then
@@ -1545,6 +1606,15 @@ function Player:Diagnose(ts)
                 if self.shots[gun] then line = line .. string.format(" %s=%d", gun, self.shots[gun]) end
             end
             Log.Info("SHOTS" .. line)
+        end
+        -- Cone: the first-shot and widest cone used. Off: how far rounds actually strayed, mean and
+        -- worst; `outside` counts rounds past their own cone, which must stay 0.
+        for _, gun in ipairs(GUN_LADDER) do
+            local st = self.spreadStats and self.spreadStats[gun]
+            if st then
+                Log.Info(string.format("SPREAD %s cone %.2f..%.2f deg, off mean %.2f worst %.2f, outside %d of %d",
+                    gun, st.lo, st.hi, st.sum / st.n, st.worst, st.outside, st.n))
+            end
         end
         if self.attacks > 0 or self.equipped ~= "Gun" then
             Log.Info(string.format("MELEE equipped=%s attacks=%d", self.equipped, self.attacks))
