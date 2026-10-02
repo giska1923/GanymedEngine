@@ -450,6 +450,16 @@ present: dropping either alone leaves a Y-up-corrected character rendering on it
   `Bind()` uploads the scalars and binds the maps to slots 0–2 (white fallback). A material can
   come from a mesh's own import *or* from a `.gmat` asset — see
   [assets.md](assets.md#materials-gmat); the renderer does not care which.
+
+  **Material maps sample anisotropically**, minification and magnification both
+  (`BGFX_SAMPLER_MIN_ANISOTROPIC | MAG_ANISOTROPIC`), overriding `Texture2D`'s own sampler
+  flags. Without it, a surface seen at a grazing angle picks its mip by its steepest screen
+  derivative and smears. The Proving Ground's floor turned to horizontal bands about 30 m out. The
+  texture's default, point magnification, stays for the 2D renderer, which wants crisp sprites;
+  3D maps had been inheriting it by accident. Wrap stays repeat (no U/V bits), which is what lets
+  a mesh whose UVs run past 1 tile its texture. It only works because `BgfxContext` resets with
+  `BGFX_RESET_MAXANISOTROPY` ([platform.md](platform.md)): without that flag every backend but
+  Metal clamps max anisotropy to 1, and the sampler flags silently do nothing.
 - [`Mesh`](../../GanymedEngine/source/GanymedE/Renderer/Mesh.h) — interleaved
   `MeshVertex{Position, Normal, Tangent, TexCoord}` + 32-bit indices + `Submesh` table
   (base vertex/index, count, material index, local transform, name, local AABB, `IsSkinned`) +

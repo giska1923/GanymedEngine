@@ -35,6 +35,7 @@ namespace GanymedE {
 
 	private:
 		void Reset();
+		uint32_t ResetFlags() const;
 
 	private:
 		GLFWwindow* m_WindowHandle;
