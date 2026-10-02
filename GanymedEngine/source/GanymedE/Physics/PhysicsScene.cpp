@@ -1299,6 +1299,33 @@ namespace GanymedE {
 		bodyInterface.SetLinearVelocity(it->second, JPH::Vec3(velocity.x, velocity.y, velocity.z));
 	}
 
+	void PhysicsScene::Teleport(UUID entity, const glm::vec3& position)
+	{
+		if (!m_Active || !m_Impl)
+			return;
+
+		const JPH::RVec3 p(position.x, position.y, position.z);
+		if (auto ch = m_Impl->EntityToCharacter.find(entity); ch != m_Impl->EntityToCharacter.end())
+		{
+			// SetPosition also moves the character's inner body (UpdateInnerBodyTransform), so
+			// the broadphase presence goes with it.
+			ch->second->SetPosition(p);
+		}
+		else
+		{
+			auto it = m_Impl->EntityToBody.find(entity);
+			if (it == m_Impl->EntityToBody.end())
+				return;
+			m_Impl->System.GetBodyInterface().SetPosition(it->second, p, JPH::EActivation::Activate);
+		}
+
+		for (auto* poses : { &m_PreviousPoses, &m_CurrentPoses })
+		{
+			if (auto pose = poses->find(entity); pose != poses->end())
+				pose->second.Position = position;
+		}
+	}
+
 	glm::vec3 PhysicsScene::GetLinearVelocity(UUID entity) const
 	{
 		if (!m_Active || !m_Impl)

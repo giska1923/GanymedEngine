@@ -87,7 +87,11 @@ the backbuffer swapchain:
   (async readback polls against it). It is the only caller of `bgfx::frame()` in the engine.
 - The destructor lowers `Renderer::SetGpuAlive(false)` **before** `bgfx::shutdown()` — the flag
   every GPU-resource destructor checks so statics outliving `main()` don't call into dead bgfx.
-- `Resize`/`SetVSync` funnel into one `Reset()` (`bgfx::reset` + backbuffer view rect).
+- `Resize`/`SetVSync` funnel into one `Reset()` (`bgfx::reset` + backbuffer view rect). Init and
+  every reset take their flags from one `ResetFlags()`: VSync when it is on, and always
+  `BGFX_RESET_MAXANISOTROPY`, which is what lets an anisotropic sampler be one. Without it the
+  D3D11/12, Vulkan and GL backends clamp max anisotropy to 1 ([rendering.md](rendering.md)). A
+  flag that had to be repeated in two places is one a resize would eventually drop.
 
 Deliberately **not** a virtual `GraphicsContext`: with bgfx there is exactly one backend
 implementation, so the old interface (and `OpenGLContext`) was deleted with it.

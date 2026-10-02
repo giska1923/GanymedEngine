@@ -41,25 +41,37 @@ namespace GanymedE {
 		m_Shader->SetFloat("u_Metallic", m_Metallic);
 		m_Shader->SetFloat("u_Roughness", m_Roughness);
 
+		// A material's maps sample anisotropically, minification and magnification both. Without
+		// it a surface at a grazing angle - a floor running to the horizon - picks its mip from
+		// the steepest direction and smears into bands a few metres out. Texture2D's own default
+		// (point magnification) stays for the 2D renderer, which wants crisp sprites; 3D maps were
+		// only inheriting it. Wrap stays repeat (no U/V bits), which is what lets a material tile.
+		static constexpr uint32_t kMapSampler = BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC;
+		const auto bind = [this](const char* name, uint8_t slot, const Ref<Texture2D>& map)
+		{
+			if (map && map->IsValid())
+				m_Shader->SetTexture(name, slot, map->GetHandle(), kMapSampler);
+		};
+
 		bool useAlbedoMap = m_AlbedoMap != nullptr;
 		m_Shader->SetInt("u_UseAlbedoMap", useAlbedoMap ? 1 : 0);
 		if (useAlbedoMap)
 		{
-			m_Shader->SetTexture("u_AlbedoMap", 0, m_AlbedoMap);
+			bind("u_AlbedoMap", 0, m_AlbedoMap);
 		}
 
 		bool useNormalMap = m_NormalMap != nullptr;
 		m_Shader->SetInt("u_UseNormalMap", useNormalMap ? 1 : 0);
 		if (useNormalMap)
 		{
-			m_Shader->SetTexture("u_NormalMap", 1, m_NormalMap);
+			bind("u_NormalMap", 1, m_NormalMap);
 		}
 
 		bool useMRMap = m_MetallicRoughnessMap != nullptr;
 		m_Shader->SetInt("u_UseMetallicRoughnessMap", useMRMap ? 1 : 0);
 		if (useMRMap)
 		{
-			m_Shader->SetTexture("u_MetallicRoughnessMap", 2, m_MetallicRoughnessMap);
+			bind("u_MetallicRoughnessMap", 2, m_MetallicRoughnessMap);
 		}
 	}
 

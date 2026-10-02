@@ -214,6 +214,11 @@ declare interface Entity {
 	SetLinearVelocity(velocity: Vec3): void;
 	/** A one-shot change in momentum. */
 	AddImpulse(impulse: Vec3): void;
+	/**
+	 * Moves a character controller or a rigid body to `position` (world space) this step. The only
+	 * way to place either: SetTranslation is overwritten from the simulation. Velocity is kept.
+	 */
+	Teleport(position: Vec3): void;
 	/** Consumed by the next step — call it every frame while the push lasts. */
 	AddForce(force: Vec3): void;
 
