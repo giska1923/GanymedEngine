@@ -335,8 +335,8 @@ namespace GanymedE {
 	// palette - the clip drives the body and legs, the arms follow the weapon.
 	//
 	// The weapon is the first child of this entity that has a BoneAttachmentComponent aimed at
-	// this rig. Its socket IS the weapon pose, placed with the socket gizmo, and on a chest
-	// joint both hands can reach it. Each hand's target is a direct child of the weapon found
+	// this rig, with a joint (an empty one is no socket, or one being detached). Its socket IS
+	// the weapon pose, placed with the socket gizmo, and on a chest joint both hands can reach it. Each hand's target is a direct child of the weapon found
 	// by name, whose local transform is a wrist frame in the weapon's space: "the hand joint goes
 	// here, rotated like this". A wrist, not a palm, so a new rig needs no measured hand offset.
 	//
@@ -381,7 +381,7 @@ namespace GanymedE {
 		{
 			NotEvaluated = 0, // no pass ran: no animator, mesh not loaded, pose not sampled
 			Disabled,
-			NoWeapon,         // no child has a BoneAttachmentComponent on this rig
+			NoWeapon,         // no child is socketed to a joint of this rig
 			NoWeaponFrame,    // the socket joint does not resolve, or the skin cannot be inverted
 			NoJoint,          // a chain joint is not on this mesh
 			NoMarker,         // the weapon has no child with the marker's name

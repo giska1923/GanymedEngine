@@ -137,8 +137,11 @@ copyable, no behavior beyond small helpers.
   still carries, scale included.
 - **`TwoHandIKComponent`** — solves both arms onto the weapon this rig holds. The weapon is the
   **first child with a `BoneAttachmentComponent` aimed at this rig** (`Target` zero, or this
-  entity's UUID). There is no weapon field: one weapon per character, as a child, is the only case
-  so far.
+  entity's UUID) **and a joint**. An empty `Joint` is no socket: `BoneAttachmentSystem` leaves such
+  an entity at its parent, and `DetachFromBone` clears the joint a frame before it removes the
+  component. Without the skip, a script swapping weapons would hand the arms to the one it just
+  put away for that frame. There is no weapon field: a character carrying several weapons
+  socketing only the one in hand is how the choice is made (scripting.md, "Two-hand IK").
 
   **Fields:**
   - Six joint names: `RightUpper` / `RightLower` / `RightEnd` (defaults `RightArm` /
