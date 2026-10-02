@@ -257,8 +257,10 @@ precedent.
   here because there is nothing to choose. See [physics.md](physics.md#character-controllers).
 - **`RigidBodyComponent`** — `Static | Dynamic | Kinematic`, mass, linear/angular damping,
   `UseGravity`, `LockRotation` (forbids rotation while keeping translation — what an upright
-  walking capsule needs; see [physics.md](physics.md#locked-rotation)), and `IsSensor` (a trigger
-  volume: reports contacts, causes none — see [physics.md](physics.md#sensors-trigger-volumes)).
+  walking capsule needs; see [physics.md](physics.md#locked-rotation)), `IsSensor` (a trigger
+  volume: reports contacts, causes none — see [physics.md](physics.md#sensors-trigger-volumes)),
+  and `ContinuousCollision` (swept collision for a fast body, so it cannot tunnel — see
+  [physics.md](physics.md#continuous-collision)).
 - **`BoxColliderComponent`** (half extents), **`SphereColliderComponent`** (radius),
   **`CapsuleColliderComponent`** (radius + half height) — each with a local `Offset` and a
   `PhysicsMaterial { Friction, Restitution }`.
