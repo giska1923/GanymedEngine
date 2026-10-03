@@ -492,6 +492,12 @@ delta is in **pixels moved last frame**, not a rate, so it must not be multiplie
 movement is already an amount rather than a speed, and scaling it by frame time makes sensitivity
 depend on framerate. See [platform.md](platform.md#cursor-mode-and-mouse-delta).
 
+Every `Input` read is the **game-focus** view. In the runtime that is plain hardware state. In the
+editor's Play mode, a script sees no keys, no buttons and no mouse motion until the viewport has been
+clicked, and sees them again after Ctrl+Alt hands input back to the editor. A cursor locked in
+`OnCreate` therefore stays free until that click. Locking on `OnCreate` is safe now, because Ctrl+Alt
+is always a way out. See [platform.md](platform.md#game-focus).
+
 ### Characters
 
 `Entity:SetLinearVelocity`, `GetLinearVelocity` and the rest accept a character controller as well

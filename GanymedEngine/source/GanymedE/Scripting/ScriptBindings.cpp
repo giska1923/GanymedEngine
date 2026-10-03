@@ -662,8 +662,10 @@ namespace GanymedE {
 		void RegisterInput(sol::state& lua)
 		{
 			sol::table input = lua.create_named_table("Input");
-			input["IsKeyPressed"]         = [](int key) { return Input::IsKeyPressed(static_cast<KeyCode>(key)); };
-			input["IsMouseButtonPressed"] = [](int button) { return Input::IsMouseButtonPressed(static_cast<MouseCode>(button)); };
+			// The game-focus view, not the raw one: in the editor a script must not see keys typed
+			// into a panel or the click on the Stop button. Outside the editor it is the same thing.
+			input["IsKeyPressed"]         = [](int key) { return Input::IsGameKeyPressed(static_cast<KeyCode>(key)); };
+			input["IsMouseButtonPressed"] = [](int button) { return Input::IsGameMouseButtonPressed(static_cast<MouseCode>(button)); };
 			// Two returns rather than a Vec3: mouse position is 2D, and TSTL models this as
 			// LuaMultiReturn<[number, number]>.
 			input["GetMousePosition"]     = []() { const glm::vec2 p = Input::GetMousePosition(); return std::make_tuple(p.x, p.y); };
@@ -671,7 +673,7 @@ namespace GanymedE {
 			// How far the mouse moved last frame, in pixels. This - not GetMousePosition - is
 			// what mouse-look reads: with the cursor locked the absolute position is an
 			// unbounded virtual coordinate that means nothing on its own.
-			input["GetMouseDelta"]        = []() { const glm::vec2 d = Input::GetMouseDelta(); return std::make_tuple(d.x, d.y); };
+			input["GetMouseDelta"]        = []() { const glm::vec2 d = Input::GetGameMouseDelta(); return std::make_tuple(d.x, d.y); };
 
 			// Cursor.Normal / Cursor.Hidden / Cursor.Locked. Locked is mouse-look: hidden, held
 			// to the window, raw motion where the platform has it.
