@@ -109,7 +109,8 @@ implementation, so the old interface (and `OpenGLContext`) was deleted with it.
 
 ### Cursor mode and mouse delta
 
-`Input::SetCursorMode` takes `CursorMode::Normal | Hidden | Locked`:
+`Input::SetCursorMode` takes `CursorMode::Normal | Hidden | Locked`. It reaches GLFW only while the
+game has focus ([below](#game-focus)):
 
 | Mode | GLFW | For |
 |---|---|---|
@@ -135,6 +136,37 @@ Measured end to end by driving 200 synthetic `(+6, +3)` relative moves into a lo
 accumulated delta moved by `(732, 366)` over the clean interval — the 2:1 ratio that was driven —
 two `GetMouseDelta()` calls in one frame returned identical values, and the frame the lock landed
 on reported `(0, 0)`.
+
+### Game focus
+
+The editor runs the game inside a viewport in the same window as its own panels, so "is W
+pressed" has two answers: the hardware's, and whether the game should hear it.
+`Input::SetGameFocus(bool)` holds the second. It defaults to **true**, which is the runtime's answer,
+and the runtime never touches it; the editor sets it false on attach and hands it over on a viewport
+click in Play (see [editor.md](../editor/editor.md#play--stop-toolbar)).
+
+| Reader | Calls | Without focus |
+|---|---|---|
+| Gameplay (the Lua `Input` table) | `IsGameKeyPressed`, `IsGameMouseButtonPressed`, `GetGameMouseDelta` | Nothing pressed, zero delta |
+| Editor code, `EditorCamera` | `IsKeyPressed`, `IsMouseButtonPressed`, `GetMouseDelta` | Unchanged, always raw |
+
+The alternative was gating the raw queries themselves. It fails because the editor reads them too,
+for Ctrl/Shift/Alt modifiers and the fly camera. Two named views keep the hardware truth available to
+the one reader that needs it. `GetMousePosition` is not gated: a position is not an action.
+
+**`SetCursorMode` is a request.** `Requested` is what gameplay asked for, and `Mode` is what GLFW
+has. They differ only while the game is without focus, when the cursor is held at `Normal` so the
+user can reach the editor. Focus coming back re-applies the request. `GetCursorMode` returns the
+request, so a script's idea of its own cursor never changes without the script doing it. This
+matches Unity's Game view, where `Cursor.lockState` survives losing focus and comes back with it.
+
+**The focusing click.** When focus arrives while the request is `Locked`, every mouse button
+already held is masked from gameplay until it is seen released (`s_MaskedButtons`, cleared in
+`NewFrame`). That click only meant "give the game the mouse back"; the cursor was locked, so it was
+not aimed at anything the game drew. Passing it through made a shooter fire on re-entry. With a
+`Normal` or `Hidden` request the click *is* passed through, because it lands at a pointer position
+the game can see. That case includes the first entry, where a click-to-capture script
+needs to see the press.
 - `Platform/<OS>/<OS>PlatformUtils.cpp` implements
   [`FileDialogs::OpenFile/SaveFile`](../../GanymedEngine/source/GanymedE/Utils/PlatformUtils.h)
   (Win32 common dialogs on Windows; zenity/osascript-style equivalents elsewhere). Filter strings

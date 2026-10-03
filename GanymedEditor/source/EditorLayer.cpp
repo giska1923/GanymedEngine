@@ -654,6 +654,10 @@ namespace GanymedE {
 
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 
+		// Input::SetGameFocus defaults to true, which is the runtime's answer. In the editor the
+		// game gets input only after a click on the viewport in Play.
+		SetGameFocus(false);
+
 		m_SceneRenderer = CreateRef<SceneRenderer>(1280, 720);
 		AssetPreview::Init();
 
@@ -705,6 +709,16 @@ namespace GanymedE {
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		GE_PROFILE_FUNCTION();
+
+		// Ctrl+Alt is the way out of the game, VM-style. Polled raw, because while the game has
+		// focus ImGui sees no keys, and before the scene updates, so scripts do not get one more
+		// frame of input.
+		if (Input::HasGameFocus()
+			&& (Input::IsKeyPressed(Key::LeftControl) || Input::IsKeyPressed(Key::RightControl))
+			&& (Input::IsKeyPressed(Key::LeftAlt) || Input::IsKeyPressed(Key::RightAlt)))
+		{
+			SetGameFocus(false);
+		}
 
 		// Status-bar FPS. Skip dt >= 1 s so a debugger pause does not pull the
 		// average to 1; skip tiny dt so a hitch-recovery spike cannot mint 10k FPS.
@@ -781,8 +795,10 @@ namespace GanymedE {
 			}
 			case SceneState::Play:
 			{
-				// Fall back to the editor camera when the scene has no primary Camera
-				m_EditorCamera.OnUpdate(ts);
+				// Fall back to the editor camera when the scene has no primary Camera. It reads
+				// raw input, so it must not also fly on the game's RMB + WASD.
+				if (!Input::HasGameFocus())
+					m_EditorCamera.OnUpdate(ts);
 
 				PhysicsSettings& physicsSettings = m_ActiveScene->GetSingleton<PhysicsSettings>();
 				PushEditorVisualizers();
@@ -1199,7 +1215,9 @@ namespace GanymedE {
 
 	void EditorLayer::HandleShortcuts()
 	{
-		if (ImGui::GetIO().WantTextInput)
+		// While the game has the keyboard, Ctrl+S is the game's. ImGuiConfigFlags_NoKeyboard
+		// already empties the chords; the explicit check does not depend on that.
+		if (ImGui::GetIO().WantTextInput || Input::HasGameFocus())
 			return;
 
 		// File shortcuts live here too. They used to be in OnKeyPressed and dead-zoned over
@@ -1541,7 +1559,8 @@ namespace GanymedE {
 
 		const bool playing = m_SceneState == SceneState::Play;
 		const char* playIcon = playing ? ICON_LC_PLAY : ICON_LC_PENCIL;
-		const char* playText = playing ? "Play" : "Edit";
+		const char* playText = !playing ? "Edit"
+			: Input::HasGameFocus() ? "Play  (Ctrl+Alt releases input)" : "Play";
 		const ImU32 playColour = playing ? theme.Success : theme.TextDim;
 
 		const float gap = ImGui::GetStyle().ItemSpacing.x;
@@ -2065,6 +2084,23 @@ namespace GanymedE {
 		m_ViewportHovered = ImGui::IsItemHovered();
 		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
 
+		// A left click on the image is the only way into the game. The click itself reaches the
+		// game too, unless the game was holding a locked cursor - see Input::SetGameFocus.
+		if (m_SceneState == SceneState::Play && !Input::HasGameFocus())
+		{
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+			{
+				SetGameFocus(true);
+			}
+			else
+			{
+				ImDrawList* draw = ImGui::GetWindowDrawList();
+				const ImVec2 pos = ImVec2(m_ViewportBounds[0].x + 10.0f, m_ViewportBounds[0].y + 10.0f);
+				draw->AddText(pos, EditorUI::Theme().AccentText,
+					"Click to give the game input  (Ctrl+Alt releases it)");
+			}
+		}
+
 		if (auto drop = EditorUI::AcceptAssetDrop({ AssetType::Scene, AssetType::StaticMesh, AssetType::Prefab }))
 		{
 			std::filesystem::path fullPath = GetAssetRoot() / drop.Path;
@@ -2393,12 +2429,15 @@ namespace GanymedE {
 		if (m_SceneState == SceneState::Edit && m_ViewportCamera == UUID{ 0 } && m_ViewportHovered)
 			m_EditorCamera.OnEvent(e);
 
-		// Game UI gets first refusal, but only while playing and only when the
-		// viewport actually owns the pointer - otherwise clicking a panel would be
-		// routed at a HUD sitting underneath it. UIEngine marks the event Handled
-		// when RmlUi consumed it, so the editor shortcuts below then skip it.
-		if (m_SceneState == SceneState::Play && (m_ViewportHovered || m_ViewportFocused))
-			UIEngine::OnEvent(e);
+		// Game UI is game input: it gets events only while the game has focus, which only a
+		// viewport click in Play grants. Then every event is the game's - the editor shortcuts
+		// below would otherwise turn a W pressed to walk into the translate gizmo.
+		if (Input::HasGameFocus())
+		{
+			if (m_SceneState == SceneState::Play)
+				UIEngine::OnEvent(e);
+			return;
+		}
 
 		if (e.IsHandled())
 			return;
@@ -2682,6 +2721,10 @@ namespace GanymedE {
 
 	void EditorLayer::OnSceneStop()
 	{
+		// Drop the game's cursor request too, so the next Play does not start out locked.
+		SetGameFocus(false);
+		Input::SetCursorMode(CursorMode::Normal);
+
 		UIEngine::CloseAllDocuments();
 
 		m_ActiveScene->OnRuntimeStop();
@@ -2693,6 +2736,27 @@ namespace GanymedE {
 		// play, so every UUID it records still resolves.
 		RetargetPanels();
 		m_SceneHierarchyPanel.SetSelectedEntity({});
+	}
+
+	// ImGui is switched off wholesale rather than gated per widget. A locked cursor still feeds
+	// ImGui a virtual position, so a shot "lands" on whatever panel sits under it; and a free
+	// cursor would let a click on a panel take focus from the viewport while every key still
+	// went to the game. With NoMouse | NoKeyboard the only way back to the editor is Ctrl+Alt,
+	// polled raw in OnUpdate.
+	//
+	// NoMouseCursorChange is for Cursor.Hidden: the GLFW backend otherwise re-sets
+	// GLFW_CURSOR_NORMAL every frame for any cursor that is not disabled.
+	void EditorLayer::SetGameFocus(bool focused)
+	{
+		Input::SetGameFocus(focused);
+
+		ImGuiIO& io = ImGui::GetIO();
+		const ImGuiConfigFlags flags = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard
+			| ImGuiConfigFlags_NoMouseCursorChange;
+		if (focused)
+			io.ConfigFlags |= flags;
+		else
+			io.ConfigFlags &= ~flags;
 	}
 
 	bool EditorLayer::SnapActive() const
