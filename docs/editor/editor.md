@@ -599,7 +599,7 @@ Pressing Play does **not** give the game the keyboard and mouse. A **left click 
 in Play does that (`SetGameFocus(true)`), and **Ctrl+Alt** takes them back. Stop and every scene
 switch take them back too, and Stop also resets the game's cursor request to `Normal`, so the next
 Play does not start locked. Before the click, the viewport shows "Click to give the game input"
-in the top-left corner. While the game has focus, the status-bar play chip reads
+in the bottom-left corner. The top-left is where the RmlUi Debugger puts its menu. While the game has focus, the status-bar play chip reads
 "Play (Ctrl+Alt releases input)". The engine half is `Input::SetGameFocus` and the gated
 `IsGame*` queries the Lua `Input` table reads ([platform.md](../engine/platform.md#game-focus)).
 
@@ -628,6 +628,14 @@ Windows as Ctrl+RightAlt, so it releases input too.**
 event in that state belongs to the game, so the gizmo and selection shortcuts never see it. Without
 focus, the HUD gets nothing, the same as scripts. Mouse coordinates are translated by
 `m_ViewportBounds[0]`, the same origin picking uses.
+
+**The RmlUi Debugger is the one exception.** It is editor tooling drawn inside the game's context.
+While it is open in Play and the pointer is over the viewport image, **mouse** events go to
+`UIEngine` without game focus. Keys never do, so no game input leaks this way. A viewport click
+grants focus only if `UIEngine::IsPointerOverDebugger()` is false. So the Debugger's buttons and
+panels are clickable, and a click anywhere else in the viewport still enters the game. Before this,
+a click on the Debugger menu granted focus, and Player.lua then locked the cursor. One side effect:
+with the Debugger open, the HUD also sees pointer hover and clicks before the game has focus.
 
 The runtime scene is a disposable UUID-keyed deep copy — physics and scripts can do anything to
 it, and Stop restores the authored scene untouched. Scene switching (`OpenScene`) stops play

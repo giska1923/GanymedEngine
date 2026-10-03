@@ -772,13 +772,12 @@ anyway.
 
 ### What is registered
 
-41 types, 168 members (the boot log prints both — a count far below that is the cheapest signal that a
-registration block was dropped by the linker). Measured at editor boot after `TwoHandIKComponent`:
+41 types, 169 members (the boot log prints both — a count far below that is the cheapest signal that a
+registration block was dropped by the linker). Measured at editor boot after `CharacterControllerComponent`
+joined `ComponentList`:
 
-- The **30 components** — all 27 `ComponentList` entries, plus `IDComponent` and `TagComponent`
-  (entity identity, excluded from the list, registered so prefab diffing can skip them), plus
-  `CharacterControllerComponent`, which is reflected and serialized but still missing from
-  `ComponentList` ([ToDo](../ToDo/cross-cutting.md)).
+- The **30 components** — all 28 `ComponentList` entries, plus `IDComponent` and `TagComponent`
+  (entity identity, excluded from the list, registered so prefab diffing can skip them).
 - **5 supporting types** — `RangeF`; `PhysicsMaterial`; `SceneCamera`, whose seven private fields are
   registered through entt's setter/getter `.data` overload; and `FloatCurve` / `ColorGradient` with
   **zero members**. A reflected type with no members is the deliberate signal "opaque — a bespoke
@@ -795,7 +794,13 @@ format; consumers identify them by `type_info` comparison instead, which needs n
 
 `Reflection::Validate()` runs from `Init()` in Debug and logs every problem rather than stopping at the
 first (a registration mistake is usually a repeated copy-paste). It checks that every `ComponentList`
-entry is registered *and* went through `GE_REFLECT_COMPONENT`, that no field was left nameless, that
+entry is registered *and* went through `GE_REFLECT_COMPONENT`, and the reverse: that every type
+registered with `GE_REFLECT_COMPONENT` is in `ComponentList`, apart from `IDComponent` and
+`TagComponent`. The reverse check exists because a component can be reflected and serialized but
+missing from the list, and every generic copy then drops it silently. That copy happens in Play,
+duplicate, prefabs and undo. `CharacterControllerComponent` shipped that way, and editor Play created
+no characters at all while the runtime, which loads through the serializer, was fine. It also checks
+that no field was left nameless, that
 `SerializeByName` is only on an enum, that a `Flatten` field's type is itself reflected, and that
 valued/flag attributes match the type they were put on — `Color` on a vec3/vec4, `Radians` on a
 float/vec3, an asset slot on an `AssetHandle` or an `AssetRef<T>`. That last one is the load-bearing

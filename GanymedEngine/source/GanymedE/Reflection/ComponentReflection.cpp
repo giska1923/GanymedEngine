@@ -713,7 +713,7 @@ namespace GanymedE::Reflection {
 		//
 		// Two honest limits. Padding: a bool dropped into existing padding does not move sizeof -
 		// AudioSourceComponent has three spare bytes right now, so a fifth flag there would slip
-		// through. And these cover 18 of the 27 ComponentList entries - every one with NO
+		// through. And these cover 19 of the 28 ComponentList entries - every one with NO
 		// standard-library container member. sizeof(std::string) is 40 with MSVC's STL and 32 with
 		// libstdc++, and sizeof(std::vector) and sizeof(std::unordered_map) differ likewise, so a
 		// sentinel on TagComponent, RelationshipComponent, StaticMeshComponent, AnimatorComponent,
@@ -739,6 +739,7 @@ namespace GanymedE::Reflection {
 		static_assert(sizeof(AudioSourceComponent) == 24, "AudioSourceComponent changed - reflect the new field");
 		static_assert(sizeof(AudioListenerComponent) == 1, "AudioListenerComponent changed - reflect the new field");
 		static_assert(sizeof(RigidBodyComponent) == 20, "RigidBodyComponent changed - reflect the new field");
+		static_assert(sizeof(CharacterControllerComponent) == 16, "CharacterControllerComponent changed - reflect the new field");
 		static_assert(sizeof(BoxColliderComponent) == 32, "BoxColliderComponent changed - reflect the new field");
 		static_assert(sizeof(SphereColliderComponent) == 24, "SphereColliderComponent changed - reflect the new field");
 		static_assert(sizeof(CapsuleColliderComponent) == 28, "CapsuleColliderComponent changed - reflect the new field");
@@ -930,10 +931,28 @@ namespace GanymedE::Reflection {
 			}
 		});
 
+		// The other direction: a registered component missing from ComponentList serializes
+		// fine, because the serializer names it explicitly, and is then silently dropped by every
+		// generic copy - Scene::Copy, duplicate, prefabs, undo snapshots. CharacterControllerComponent
+		// shipped that way, and editor Play had no characters at all.
+		std::unordered_set<entt::id_type> listed;
+		ForEachType(ComponentList{}, [&listed](auto tag)
+		{
+			listed.insert(entt::type_id<typename decltype(tag)::Type>().hash());
+		});
+		listed.insert(entt::type_id<IDComponent>().hash());
+		listed.insert(entt::type_id<TagComponent>().hash());
+
 		for (const auto [id, type] : entt::resolve())
 		{
 			if (!IsReflected(type))
 				continue;
+
+			if (Has(type, Trait::Component) && listed.find(type.info().hash()) == listed.end())
+			{
+				GE_CORE_ERROR("Reflection: {0} is a component but is not in ComponentList", type.name());
+				ok = false;
+			}
 
 			if (Has(type, Trait::SerializeByName) && !type.is_enum())
 			{
