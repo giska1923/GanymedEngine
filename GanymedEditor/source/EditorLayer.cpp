@@ -2088,14 +2088,17 @@ namespace GanymedE {
 		// game too, unless the game was holding a locked cursor - see Input::SetGameFocus.
 		if (m_SceneState == SceneState::Play && !Input::HasGameFocus())
 		{
-			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+			// A click on the RmlUi Debugger is a click on editor tooling, not on the game.
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !UIEngine::IsPointerOverDebugger())
 			{
 				SetGameFocus(true);
 			}
 			else
 			{
+				// Bottom-left: the top-left corner is where the RmlUi Debugger puts its menu.
 				ImDrawList* draw = ImGui::GetWindowDrawList();
-				const ImVec2 pos = ImVec2(m_ViewportBounds[0].x + 10.0f, m_ViewportBounds[0].y + 10.0f);
+				const ImVec2 pos = ImVec2(m_ViewportBounds[0].x + 10.0f,
+					m_ViewportBounds[1].y - 10.0f - ImGui::GetFontSize());
 				draw->AddText(pos, EditorUI::Theme().AccentText,
 					"Click to give the game input  (Ctrl+Alt releases it)");
 			}
@@ -2437,6 +2440,15 @@ namespace GanymedE {
 			if (m_SceneState == SceneState::Play)
 				UIEngine::OnEvent(e);
 			return;
+		}
+
+		// The one exception: the RmlUi Debugger is editor tooling drawn inside the game's
+		// context, so with it open the pointer reaches RmlUi over the viewport without game
+		// focus. Mouse only - no game key can leak through this way.
+		if (m_SceneState == SceneState::Play && UIEngine::IsDebuggerVisible()
+			&& m_ViewportHovered && e.IsInCategory(EventCategoryMouse))
+		{
+			UIEngine::OnEvent(e);
 		}
 
 		if (e.IsHandled())

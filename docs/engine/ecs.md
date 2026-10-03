@@ -62,7 +62,9 @@ using ComponentList = TypeList<TransformComponent, WorldTransformComponent, Rela
    [`ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp)
    with `GE_REFLECT_COMPONENT`, and add a `sizeof` sentinel there if the struct has no
    standard-library container member. `Reflection::Validate()` asserts at boot that every
-   `ComponentList` entry is registered — see [scene.md](scene.md#member-reflection).
+   `ComponentList` entry is registered, and that every registered component is in `ComponentList`.
+   Skipping step 2 therefore fails at boot instead of silently dropping the component from Play
+   copies — see [scene.md](scene.md#member-reflection).
 5. Add serialization in `SceneSerializer.cpp` and editor UI in `SceneHierarchyPanel.cpp` (these two
    are still per-component by hand — collapsing them onto the reflection data is R2–R4 of
    [REFLECTION_ROADMAP.md](../history/REFLECTION_ROADMAP.md)).
