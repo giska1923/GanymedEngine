@@ -89,6 +89,13 @@ a named version and documents only the engine's side: which calls exist, what th
 complete on, and what happens when they fail. A copied schema drifts silently. A link that goes
 stale at least fails visibly.
 
+Versions published so far, as git tags on the backend repo:
+
+| Tag | Adds | Engine phase that reads it |
+|---|---|---|
+| [`api-v0.1`](https://github.com/giska1923/GanymedServer/blob/api-v0.1/docs/api/openapi.yaml) | device login, refresh rotation, `/v1/me`, the problem types | O2 |
+| [`api-v0.2`](https://github.com/giska1923/GanymedServer/blob/api-v0.2/docs/api/openapi.yaml) | profiles, leaderboards, `Idempotency-Key`, integer score rules | O3 |
+
 **The session token is opaque to the engine.** The backend issues a JWT; the client stores it and
 sends it as `Authorization: Bearer …` and never decodes it. That keeps a JWT library out of the
 engine, and it is also correct: a client that reads its own token's claims starts trusting them.
@@ -257,7 +264,13 @@ Three hops. Each one exists for a reason:
    `OnUpdate` does ([scripting.md](../engine/scripting.md#errors)).
 6. Timeouts on every request: `connectTimeout` and `transferTimeout` from `HttpRequestArgs`.
    Values are chosen in O1 from measurement, not guessed here.
-7. JSON: parse with **yaml-cpp**, emit with a small hand-written writer. See Decisions.
+7. JSON: parse with **yaml-cpp**, emit with a small hand-written writer. See Decisions. **The
+   writer must emit whole numbers as integers** (`1234`, never `1234.0` or `1.234e3`). Every Lua
+   number reaching it is a double, and the backend's integer fields (scores, from `api-v0.2`)
+   decode into `int64`, which refuses a fractional literal with a 400. So an integral double is
+   written with no fraction. A value above 2^53−1 cannot be represented exactly as a double, and
+   the backend refuses it anyway, so the writer refuses it as well rather than sending a rounded
+   number.
 8. Instrument: `GE_PROFILE_SCOPE` on the drain, plus counters for sent, completed, failed,
    cancelled and dropped-late.
 
@@ -324,6 +337,7 @@ and `/edge` (a payload with `é`, `null`, a 2^53+1 integer and a nested array):
 | **Frame cost** | frame time with 20 requests in flight against `/delay/2` is indistinguishable from none, from the Instrumentor trace |
 | Exit with a request in flight | exit time measured and recorded; if it exceeds the timeout, a Risk becomes a ToDo entry |
 | `/edge` payload | every field round-trips through the parser and the writer |
+| Whole-number doubles | the writer emits `1234` for the Lua value `1234` (a double), and refuses 2^53 |
 | Ownerless call | refused with a named error, and nothing is sent |
 
 ---
@@ -395,13 +409,28 @@ and the top five on its HUD.
    ```lua
    Backend.SubmitScore(self.entity, "proving-ground", score, function(ok, result) end)
    Backend.GetLeaderboard(self.entity, "proving-ground", 5, function(ok, entries) end)
+   Backend.GetMyStanding(self.entity, "proving-ground", function(ok, result) end)
    ```
-   `result` is `{ rank, best }`; `entries` is an array of `{ name, score }`. Plain Lua tables,
-   built by the binding. Scripts never see JSON.
-2. Every `SubmitScore` carries an **idempotency key** (a fresh UUID per call) in a header. The
-   backend (B2) records it, so a retried submission does not count twice. The engine does not
-   retry today (see [What it deliberately is not](#what-it-deliberately-is-not)); the key costs a
-   header now, and it is what makes adding retries safe later.
+   `result` is `{ rank, best }`; `entries` is an array of `{ rank, name, score }`. Plain Lua
+   tables, built by the binding. Scripts never see JSON. Three mapping rules the binding owns,
+   against `api-v0.2`:
+   - The API's field is **`display_name`**; the binding exposes it as `name`.
+   - `GetMyStanding` for a player with no score yet gets `rank` and `best` as JSON **`null`**,
+     with a 200, not an error. The binding passes `ok == true` with both fields `nil`, so "no
+     score yet" and "request failed" stay distinguishable.
+   - On failure, `ok == false` and the second argument is the problem's `type` URN (for example
+     `urn:ganymed:problem:not-found` for an unknown board), never the free-text `title`.
+   `GetMyStanding` exists so the HUD can show the player's best at start-up, before any
+   submission.
+2. Every `SubmitScore` carries an **`Idempotency-Key`** header holding a UUID. The key identifies
+   one **logical submission**, not one HTTP request: generate it once when the script calls
+   `SubmitScore`, and **send the same key on every retry of that submission**. A fresh key per
+   retry would make each retry a new score, which is exactly what the key exists to prevent. The
+   backend (B2) remembers keys for at least 24 hours, answers a repeat with the original response
+   (`Idempotent-Replayed: true`), and refuses a key reused for a different score with 422. The
+   engine does not retry today (see [What it deliberately is not](#what-it-deliberately-is-not)).
+   The key costs a header now, and it is what makes adding retries safe later, provided the retry
+   path reuses it.
 3. On `first-game`, **not master**: `Player.lua` submits on death, or on the gate route's end, and
    the HUD data model gains a leaderboard block.
 
@@ -418,7 +447,8 @@ exists as more than plumbing.
 |---|---|
 | Death submits | a row in Postgres with that score; the log shows the rank returned |
 | HUD | the top five render after one round trip, and update after a new best |
-| Duplicate submit (probe: resend the same idempotency key) | one row, not two |
+| Duplicate submit (probe: resend the same idempotency key) | one row, not two; the second response carries `Idempotent-Replayed: true` |
+| No score yet | `GetMyStanding` calls back with `ok == true` and `nil` rank and best; the HUD shows a placeholder |
 | Backend down | the HUD shows a placeholder; the game plays |
 | Stop play before the response lands (editor) | no callback, and no HUD write into a torn-down document |
 
