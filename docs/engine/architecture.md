@@ -62,7 +62,8 @@ Application::Run loop
 ├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized);
 │                                          backend responses and pushes land here and are queued
 │                                          into their scene's script mailbox (online.md)
-├─ Online::OnUpdate                        the push socket's reconnect timer
+├─ Online::OnUpdate                        the push socket's reconnect timer, and the
+│                                          non-blocking receive of a match join's UDP reply
 ├─ AssetManager::Update                    poll assets/ for edits, then apply parses that
 │                                          finished on workers, within a 4 ms budget (the only
 │                                          place the async asset path creates GPU resources)

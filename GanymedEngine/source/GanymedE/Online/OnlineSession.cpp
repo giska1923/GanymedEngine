@@ -65,6 +65,17 @@ namespace GanymedE {
 			std::chrono::steady_clock::time_point LastSignInFailure{};
 
 			std::unordered_map<RequestId, LogicalRequest> Requests;
+
+			// JoinMatch operations: one id for the whole ticket-read / HELLO / retry sequence, from the
+			// same id space as requests, so Cancel works on either.
+			struct JoinOperation
+			{
+				OnlineCompletion Completion;
+				int Attempt = 0;
+				RequestId TicketRead = 0;                    // the GET in flight, or 0
+				OnlineTransport::ExchangeId Hello = 0;       // the datagram awaiting a reply, or 0
+			};
+			std::unordered_map<RequestId, JoinOperation> Joins;
 			std::vector<RequestId> Waiting;   // authenticated requests waiting for a session
 			RequestId NextId = 1;
 			Online::Stats Stats;
@@ -86,6 +97,7 @@ namespace GanymedE {
 
 		void Dispatch(RequestId id);
 		void ConnectPush();
+		void StartJoinAttempt(RequestId id);
 		void BeginSignIn();
 
 		// ---- Command line and identity ---------------------------------------------------------
@@ -563,6 +575,11 @@ namespace GanymedE {
 					push.Id = id->String;
 				if (const JsonValue* payload = envelope->Find("payload"))
 					push.Payload = *payload;
+				// match.ready carries the connect token. It is a credential, so it stays in here:
+				// JoinMatch reads a fresh one from the ticket, and no handler ever sees this one.
+				auto& members = push.Payload.Members;
+				members.erase(std::remove_if(members.begin(), members.end(),
+					[](const auto& m) { return m.first == "connect_token"; }), members.end());
 				DeliverPush(push, /*counted=*/true);
 			};
 
@@ -633,9 +650,151 @@ namespace GanymedE {
 		}
 	}
 
+	namespace {
+
+		constexpr int kJoinAttempts = 3;
+		constexpr std::chrono::milliseconds kJoinWait{ 1000 };
+
+		void FinishJoin(RequestId id, const OnlineResponse& response)
+		{
+			auto it = s_Data->Joins.find(id);
+			if (it == s_Data->Joins.end())
+				return;
+			OnlineCompletion completion = std::move(it->second.Completion);
+			s_Data->Joins.erase(it);
+			if (response.IsSuccess())
+				s_Data->Stats.Joined++;
+			completion(response);
+		}
+
+		void FailJoin(RequestId id, std::string reason)
+		{
+			OnlineResponse response;
+			response.TransportError = std::move(reason);
+			FinishJoin(id, response);
+		}
+
+		void OnHelloReply(RequestId id, bool answered, const std::string& text, const std::string& address)
+		{
+			auto it = s_Data->Joins.find(id);
+			if (it == s_Data->Joins.end())
+				return;
+			it->second.Hello = 0;
+
+			if (!answered)
+			{
+				if (it->second.Attempt < kJoinAttempts)
+				{
+					GE_CORE_INFO("Online: join attempt {0} got {1}; trying again with a fresh token",
+						it->second.Attempt, text);
+					StartJoinAttempt(id);
+				}
+				else
+					FailJoin(id, text + " after " + std::to_string(kJoinAttempts) + " attempts");
+				return;
+			}
+
+			// The reply's reason is for logs, never parsed beyond its first word (server-lifecycle.md).
+			if (text.rfind("WELCOME ", 0) == 0)
+			{
+				GE_CORE_INFO("Online: joined the game server at {0} (attempt {1})", address, it->second.Attempt);
+				JsonValue body = JsonValue::MakeObject();
+				body.Members.emplace_back("account_id", JsonValue::MakeString(text.substr(8)));
+				OnlineResponse response;
+				response.Status = 200;
+				WriteJson(body, response.Body);
+				FinishJoin(id, response);
+				return;
+			}
+
+			const std::string reason = text.rfind("DENIED ", 0) == 0 ? text.substr(7) : "an unexpected reply";
+			GE_CORE_WARN("Online: the game server at {0} refused the join: {1}", address, reason);
+			FailJoin(id, "denied: " + reason);
+		}
+
+		void OnJoinTicket(RequestId id, const OnlineResponse& response)
+		{
+			auto it = s_Data->Joins.find(id);
+			if (it == s_Data->Joins.end())
+				return;
+			it->second.TicketRead = 0;
+
+			if (!response.IsSuccess())
+			{
+				FinishJoin(id, response);   // the read's own failure, as any request reports it
+				return;
+			}
+
+			std::optional<JsonValue> body = ParseJson(response.Body);
+			const JsonValue* ticket = body ? body->Find("ticket") : nullptr;
+			const JsonValue* state = ticket ? ticket->Find("state") : nullptr;
+			const JsonValue* server = ticket ? ticket->Find("server") : nullptr;
+			const JsonValue* address = server ? server->Find("address") : nullptr;
+			const JsonValue* token = server ? server->Find("connect_token") : nullptr;
+			if (!ticket || ticket->Kind == JsonValue::Type::Null)
+			{
+				FailJoin(id, "no ticket: queue first");
+				return;
+			}
+			if (!state || state->Kind != JsonValue::Type::String || state->String != "ready"
+				|| !address || address->Kind != JsonValue::Type::String || !token || token->Kind != JsonValue::Type::String)
+			{
+				FailJoin(id, "no ready match to join (the ticket is " + (state && state->Kind == JsonValue::Type::String
+					? state->String : std::string("unreadable")) + ")");
+				return;
+			}
+
+			it->second.Attempt++;
+			s_Data->Stats.JoinAttempts++;
+			const std::string where = address->String;
+			it->second.Hello = OnlineTransport::Exchange(where, "HELLO " + token->String, kJoinWait,
+				[id, where](bool answered, const std::string& text)
+				{
+					if (s_Data)
+						OnHelloReply(id, answered, text, where);
+				});
+		}
+
+		void StartJoinAttempt(RequestId id)
+		{
+			OnlineRequest read;
+			read.Path = "/v1/matchmaking/ticket";
+			const RequestId ticketRead = Online::Send(std::move(read), [id](const OnlineResponse& response)
+			{
+				if (s_Data)
+					OnJoinTicket(id, response);
+			});
+			auto it = s_Data->Joins.find(id);
+			if (it != s_Data->Joins.end())
+				it->second.TicketRead = ticketRead;
+		}
+	}
+
+	RequestId Online::JoinMatch(OnlineCompletion completion)
+	{
+		GE_CORE_ASSERT(JobSystem::IsMainThread(), "Online::JoinMatch is main-thread only");
+		if (!s_Data)
+		{
+			OnlineTransport::Start({}, {}, std::move(completion));   // fails it, uninitialised
+			return 0;
+		}
+
+		const RequestId id = s_Data->NextId++;
+		s_Data->Joins[id].Completion = std::move(completion);
+		s_Data->Stats.Joins++;
+		StartJoinAttempt(id);
+		return id;
+	}
+
 	void Online::OnUpdate()
 	{
-		if (!s_Data || !s_Data->ReconnectPending || std::chrono::steady_clock::now() < s_Data->ReconnectAt)
+		if (!s_Data)
+			return;
+
+		// Waiting for a game server's reply is a non-blocking receive here, once a frame.
+		OnlineTransport::PollExchanges();
+
+		if (!s_Data->ReconnectPending || std::chrono::steady_clock::now() < s_Data->ReconnectAt)
 			return;
 
 		s_Data->ReconnectPending = false;
@@ -695,9 +854,9 @@ namespace GanymedE {
 		const size_t abandoned = OnlineTransport::Shutdown();
 		GE_CORE_INFO("Online shut down: {0} sent, {1} succeeded, {2} failed, {3} cancelled, {4} retried, "
 			"{5} sign-ins, {6} refreshes, {7} dropped late, {8} abandoned in flight; push: {9} connects, {10} messages, "
-			"{11} with no subscriber", stats.Sent, stats.Succeeded, stats.Failed, stats.Cancelled, stats.Retried,
-			stats.SignIns, stats.Refreshes, stats.DroppedLate, abandoned, stats.PushConnects, stats.Pushes,
-			stats.PushesUndelivered);
+			"{11} with no subscriber; joins: {12} ({13} HELLOs), {14} joined", stats.Sent, stats.Succeeded, stats.Failed,
+			stats.Cancelled, stats.Retried, stats.SignIns, stats.Refreshes, stats.DroppedLate, abandoned,
+			stats.PushConnects, stats.Pushes, stats.PushesUndelivered, stats.Joins, stats.JoinAttempts, stats.Joined);
 
 		delete s_Data;
 		s_Data = nullptr;
@@ -738,6 +897,15 @@ namespace GanymedE {
 	{
 		if (!s_Data)
 			return;
+
+		if (auto join = s_Data->Joins.find(id); join != s_Data->Joins.end())
+		{
+			const RequestId ticketRead = join->second.TicketRead;
+			OnlineTransport::AbortExchange(join->second.Hello);
+			s_Data->Joins.erase(join);
+			Cancel(ticketRead);   // a no-op for 0; counted as a cancelled request if it was pending
+			return;
+		}
 
 		auto it = s_Data->Requests.find(id);
 		if (it == s_Data->Requests.end())

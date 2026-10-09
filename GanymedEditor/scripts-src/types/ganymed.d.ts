@@ -571,7 +571,10 @@ declare interface BackendSubmission extends BackendStanding {
 	replayed: boolean;
 }
 
-/** A push, as the backend's realtime.md writes it: payload keys are wire names (party_id, display_name). */
+/**
+ * A push, as the backend's realtime.md writes it: payload keys are wire names (party_id, display_name).
+ * match.ready's connect_token is removed before a script sees it; Backend.JoinMatch reads its own.
+ */
 declare interface BackendPush {
 	type: string;
 	/** Empty for the engine's own "connected" event. */
@@ -597,6 +600,25 @@ declare interface BackendPartyInvite {
 	partyId: string;
 	from: { accountId: string; name: string };
 	expiresAt: string;
+}
+
+/**
+ * A matchmaking ticket. `state` is "queued", "matched", "allocating", "ready", "finished",
+ * "cancelled" or "failed" today; treat any other as still waiting, because states get added.
+ * `match`, `server`, `result` and `failureReason` are undefined until they apply.
+ */
+declare interface BackendTicket {
+	id: string;
+	mode: string;
+	state: string;
+	/** Account IDs on this ticket: the player, or their whole party. */
+	players: string[];
+	/** "timeout", "no_server", "allocation_failed" or "server_lost", when failed. */
+	failureReason?: string;
+	match?: { id: string; players: string[] };
+	/** Where the game server is. No connect token: Backend.JoinMatch uses one without showing it. */
+	server?: { address: string };
+	result?: { outcome: string; ratingChange: number };
 }
 
 /** One row of Backend.GetLeaderboard, best first. Tied scores share a rank (1, 2, 2, 4). */
@@ -659,6 +681,24 @@ declare namespace Backend {
 	function LeaveParty(owner: Entity, callback: (ok: boolean, result: undefined | string) => void): void;
 	/** Leader only. */
 	function KickFromParty(owner: Entity, accountId: string, callback: (ok: boolean, result: undefined | string) => void): void;
+
+	/**
+	 * Queues the player for `mode` (a-z, 0-9 and -), or their whole party if they lead one. Fails with
+	 * ...:not-party-leader for a member, and ...:already-queued while a ticket is queued or its match
+	 * has not finished.
+	 */
+	function Queue(owner: Entity, mode: string, callback: (ok: boolean, result: BackendTicket | string) => void): void;
+	/** The latest ticket in any state, or undefined (with ok true) if there has never been one. */
+	function GetTicket(owner: Entity, callback: (ok: boolean, result: BackendTicket | undefined | string) => void): void;
+	/** Only while queued; after that ...:ticket-not-queued. */
+	function CancelTicket(owner: Entity, ticketId: string, callback: (ok: boolean, result: BackendTicket | string) => void): void;
+	/**
+	 * Joins the ready match's game server: callback(true, accountId) once it admits the player, or
+	 * callback(false, reason): "no ticket: queue first", "no ready match to join (the ticket is ...)",
+	 * "denied: ...", "no answer from <address> after 3 attempts", "nothing is listening at <address>
+	 * after 3 attempts". Fine to call long after match.ready: it fetches a fresh token each attempt.
+	 */
+	function JoinMatch(owner: Entity, callback: (ok: boolean, result: string) => void): void;
 }
 
 // ---------------------------------------------------------------------------

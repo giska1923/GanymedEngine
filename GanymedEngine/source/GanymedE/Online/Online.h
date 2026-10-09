@@ -70,6 +70,7 @@ namespace GanymedE {
 	// One message from the push socket, in the contract's envelope ({ type, id, payload }; the
 	// backend's realtime.md), plus one the engine raises itself: "connected", on every (re)connect,
 	// with an empty id and a null payload. Pushes are nudges, delivered at most once.
+	// A connect_token in the payload (match.ready's) is removed before any handler sees it.
 	struct OnlinePush
 	{
 		std::string Type;
@@ -112,6 +113,16 @@ namespace GanymedE {
 		// Never blocks. The completion runs on the main thread a frame or more later. An
 		// authenticated request made with no session waits for a sign-in started on its behalf.
 		static RequestId Send(OnlineRequest request, OnlineCompletion completion);
+
+		// Joins the game server of the player's ready match (the backend's connect-token.md and
+		// server-lifecycle.md): reads the ticket - every read mints a fresh connect token - sends
+		// "HELLO <token>" in one UDP datagram to its server address, and waits up to 1 s for one reply.
+		// "WELCOME <account>" completes with 200 and {"account_id": ...}; "DENIED <reason>", or no
+		// ready match, completes with a TransportError saying so. Silence starts again from the ticket
+		// read, up to 3 attempts: a lost WELCOME must not turn the retry into a replay of the same
+		// token, which the server would refuse. The token never leaves this call and is never logged.
+		// Cancellable like any request.
+		static RequestId JoinMatch(OnlineCompletion completion);
 
 		// Guarantees the completion never runs, and stops the transport waiting: a request still
 		// queued is never sent, and one in flight returns at the network thread's next
@@ -166,6 +177,10 @@ namespace GanymedE {
 			uint64_t PushConnects = 0;   // push socket opens
 			uint64_t Pushes = 0;         // messages received on it
 			uint64_t PushesUndelivered = 0;   // ...that no script was subscribed to
+			// JoinMatch is not a request, and is not in the counts above (its ticket reads are).
+			uint64_t Joins = 0;          // JoinMatch calls
+			uint64_t JoinAttempts = 0;   // HELLOs sent
+			uint64_t Joined = 0;         // ...answered WELCOME
 		};
 		static Stats GetStats();
 

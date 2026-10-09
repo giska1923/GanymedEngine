@@ -400,6 +400,17 @@ namespace GanymedE {
 	void SendScriptRequest(const char* binding, const sol::object& owner, OnlineRequest request,
 		const sol::object& callback, ScriptResponseReader read)
 	{
+		StartScriptOperation(binding, owner,
+			[request = std::move(request)](OnlineCompletion completion) mutable
+			{
+				return Online::Send(std::move(request), std::move(completion));
+			},
+			callback, std::move(read));
+	}
+
+	void StartScriptOperation(const char* binding, const sol::object& owner, OnlineOperation start,
+		const sol::object& callback, ScriptResponseReader read)
+	{
 		ScriptEngineData::SceneInstances* scene = nullptr;
 		const UUID ownerId = ResolveOwner(binding, owner, scene);
 
@@ -417,8 +428,7 @@ namespace GanymedE {
 		// Recorded before Send, so the completion always finds it - Send never calls back inline,
 		// but a request it cannot queue still completes, and must still reach the script.
 		ScriptRequest& stored = scene->Requests.emplace(id, std::move(pending)).first->second;
-		stored.Transport = Online::Send(std::move(request),
-			[sceneKey, id](const OnlineResponse& response) { OnScriptResponse(sceneKey, id, response); });
+		stored.Transport = start([sceneKey, id](const OnlineResponse& response) { OnScriptResponse(sceneKey, id, response); });
 	}
 
 	void SubscribeScript(const char* binding, const sol::object& owner, const std::string& type,

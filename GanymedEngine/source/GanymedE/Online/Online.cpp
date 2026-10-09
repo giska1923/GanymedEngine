@@ -8,6 +8,7 @@
 // the rest of whatever TU includes it. See docs/engine/build-and-tooling.md, IXWebSocket.
 #include <ixwebsocket/IXHttpClient.h>
 #include <ixwebsocket/IXNetSystem.h>
+#include <ixwebsocket/IXUdpSocket.h>
 #include <ixwebsocket/IXWebSocket.h>
 
 namespace GanymedE::OnlineTransport {
@@ -45,6 +46,17 @@ namespace GanymedE::OnlineTransport {
 			std::unique_ptr<ix::WebSocket> Socket;
 			uint64_t SocketGeneration = 0;
 			SocketEvents Events;
+
+			// UDP exchanges in flight, polled by PollExchanges.
+			struct PendingExchange
+			{
+				std::unique_ptr<ix::UdpSocket> Socket;
+				std::string Address;
+				std::chrono::steady_clock::time_point Deadline;
+				std::function<void(bool, const std::string&)> Completion;
+			};
+			std::unordered_map<ExchangeId, PendingExchange> Exchanges;
+			ExchangeId NextExchangeId = 1;
 		};
 
 		TransportData* s_Data = nullptr;
@@ -154,6 +166,7 @@ namespace GanymedE::OnlineTransport {
 			return 0;
 
 		CloseSocket();
+		s_Data->Exchanges.clear();   // abandoned: their completions never run
 
 		// Joins the network threads, and does not wait out a transfer to do it: ix::HttpClient's
 		// destructor sets _stop, which the request's cancellation check reads during the connect
@@ -331,6 +344,86 @@ namespace GanymedE::OnlineTransport {
 
 		socket->start();
 		s_Data->Socket = std::move(socket);
+	}
+
+	ExchangeId Exchange(const std::string& address, const std::string& payload, std::chrono::milliseconds timeout,
+		std::function<void(bool ok, const std::string& text)> completion)
+	{
+		GE_CORE_ASSERT(JobSystem::IsMainThread(), "OnlineTransport::Exchange is main-thread only");
+
+		auto fail = [&completion](std::string why)
+		{
+			JobSystem::SubmitToMainThread([completion = std::move(completion), why]() { completion(false, why); });
+			return ExchangeId{ 0 };
+		};
+		if (!s_Data)
+			return fail("online is not initialised");
+
+		const size_t colon = address.rfind(':');
+		const int port = colon == std::string::npos ? 0 : std::atoi(address.c_str() + colon + 1);
+		if (colon == std::string::npos || port <= 0 || port > 65535)
+			return fail("'" + address + "' is not host:port");
+
+		// Non-blocking (UdpSocket::init sets it), which is what lets one poll a frame do the waiting.
+		auto socket = std::make_unique<ix::UdpSocket>();
+		std::string error;
+		if (!socket->init(address.substr(0, colon), port, error))
+			return fail("cannot reach " + address + ": " + error);
+		if (socket->sendto(payload) < 0)
+			return fail("cannot send to " + address);
+
+		const ExchangeId id = s_Data->NextExchangeId++;
+		auto& pending = s_Data->Exchanges[id];
+		pending.Socket = std::move(socket);
+		pending.Address = address;
+		pending.Deadline = std::chrono::steady_clock::now() + timeout;
+		pending.Completion = std::move(completion);
+		return id;
+	}
+
+	void AbortExchange(ExchangeId id)
+	{
+		if (s_Data)
+			s_Data->Exchanges.erase(id);
+	}
+
+	void PollExchanges()
+	{
+		if (!s_Data || s_Data->Exchanges.empty())
+			return;
+
+		const auto now = std::chrono::steady_clock::now();
+		std::vector<std::pair<std::function<void(bool, const std::string&)>, std::pair<bool, std::string>>> done;
+		for (auto it = s_Data->Exchanges.begin(); it != s_Data->Exchanges.end();)
+		{
+			auto& pending = it->second;
+			char buffer[512];
+			const auto received = pending.Socket->recvfrom(buffer, sizeof(buffer));
+			bool finished = true;
+			std::pair<bool, std::string> outcome;
+			if (received >= 0)
+				outcome = { true, std::string(buffer, static_cast<size_t>(received)) };
+			else if (!ix::UdpSocket::isWaitNeeded())
+				// Windows reports an ICMP port-unreachable for an earlier send as a failed receive
+				// (WSAECONNRESET): nothing is listening on that port. Elsewhere, any receive error.
+				outcome = { false, "nothing is listening at " + pending.Address };
+			else if (now >= pending.Deadline)
+				outcome = { false, "no answer from " + pending.Address };
+			else
+				finished = false;
+
+			if (!finished)
+			{
+				++it;
+				continue;
+			}
+			done.emplace_back(std::move(pending.Completion), std::move(outcome));
+			it = s_Data->Exchanges.erase(it);
+		}
+
+		// Called after the loop, so a completion that starts another exchange sees a stable map.
+		for (auto& [completion, outcome] : done)
+			completion(outcome.first, outcome.second);
 	}
 
 	void CloseSocket()

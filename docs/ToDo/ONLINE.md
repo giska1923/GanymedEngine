@@ -1,8 +1,7 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: O0–O4 done (2026-10-09); O5a next.** The backend is complete (B1–B5, `api-v0.5`), so
-O1–O4 and O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
-been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
+**Status: O0–O4 and O5a done (2026-10-09).** The backend is complete (B1–B5, `api-v0.5`). O5b, the
+last phase, waits on a dedicated-server milestone that has not been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
 The engine half of a game backend: an HTTP and WebSocket client that never blocks the frame, a
 device identity and session, typed Lua bindings for leaderboards and push notifications, and,
@@ -130,7 +129,7 @@ prerequisite for anything here.
 | **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth. **Done** | master | **B1** (device auth) | under a day |
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores. **Done** | master + `first-game` | **B2** (leaderboards) | about a day |
 | **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings. **Done** | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
-| **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
+| **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP. **Done** | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
 | **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result | master | **B5** + the dedicated-server milestone | blocked, unsized |
 
 These are estimates, not measurements. O1 is the phase that matters. Everything after it is a
@@ -932,6 +931,66 @@ Against the backend's own fleet: `fleetagent -pool 2 -- bin/stubserver.exe -matc
 | Reconnect during allocation | drop the socket right after queueing: after reconnect, the re-fetch alone shows `ready` |
 | Queue while in a match | `…:already-queued` until `finished` |
 | The token stays out of Lua | no binding returns it; the engine log never prints it |
+
+#### Execution notes
+
+2026-10-09, on `online-o4`, continuing from O4. Live behaviour is in
+[online.md](../engine/online.md#matches).
+
+The checks ran on the Windows x64 Debug runtime against both Compose replicas, with the backend's own
+fleet (`fleetagent -pool 2 -- stubserver`) and a `gscli` profile as the other player. A throwaway test
+script and four scenes (not committed) chose a role from the entity's name: solo, slow, gone, and
+party member.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Two players queue | **pass** | `queued` → `match.found` 10 s later → `match.ready`, each reaching the subscribed script inside its scene update |
+| Join | **pass** | `WELCOME` on attempt 1, 0.03 s after asking; `stubserver` logged the join |
+| Party queue | **pass** | the member's own `Queue` → `…:not-party-leader`; the leader queued both, and the member joined |
+| Slow client | **pass** | joined 40 s after `ready`, with a fresh token read inside the call |
+| Server gone | **pass**, better than planned (below) | stub killed before the join: attempts 1 and 2 got no answer; attempt 3's ticket read found `failed` and stopped there. `server_lost` came 4 s after the kill |
+| No fleet | **pass** | `no_server` 31 s after `match.found` |
+| Finished | **pass** | `match.finished`, `victory`, `ratingChange` 16; `GetTicket` showed `result` |
+| Reconnect during allocation | **pass** | the engine's replica stopped right after queueing, for 19 s; `match.found` and `match.ready` were never delivered, and the `connected` re-fetch alone showed `ready` |
+| Queue while in a match | **pass** | `…:already-queued`, when sent on `match.found` |
+| The token stays out of Lua | **pass**, after a fix (below) | no binding returns it; no `match.ready` payload carries it; the engine log never contains it |
+| Linux (WSL2, gcc 11.4) | **pass** | builds and links; with the fleet also in WSL, the runtime joined on attempt 1 |
+
+**Where the plan was wrong or incomplete, kept visible:**
+
+- **The token leaked through the push.** The plan closed the ticket path and missed the other one:
+  `match.ready` carries the token, and O4 hands push payloads to Lua as received. The first
+  verification run's script printed it. The engine now removes `connect_token` where the push is
+  parsed, before any handler. The ticket path had a test and the push path did not, which is how it
+  was missed.
+- **The wait is polled on the main thread, not run off it.** The plan said the exchange "runs off the
+  main thread like all network I/O". The send and a non-blocking `recvfrom` are each one system call
+  that never waits, so `Online::OnUpdate` polls once a frame. That is cheaper than a thread or a
+  sleeping job, and precise to a frame against a 1 s timeout. IXWebSocket's `ix::UdpSocket` was enough,
+  so raw sockets were not needed.
+- **The socket is not handed over.** The plan wanted it reusable by the netcode milestone. It is
+  closed after `WELCOME`, because what a handover looks like depends on a protocol that does not
+  exist yet.
+- **"Server gone" was not three timeouts.** Each retry re-reads the ticket first, so once the backend
+  marked it `failed`, the join stopped with "no ready match (the ticket is failed)" instead of
+  sending a third `HELLO`. When the whole fleet was killed instead, Windows reported each `HELLO`'s
+  ICMP port-unreachable as a receive error ("nothing is listening"), and three attempts took 0.07 s.
+- **Linux sees silence where Windows sees an error.** An unconnected UDP socket on Linux gets no ICMP
+  errors. The first Linux run showed it by accident: WSL in NAT mode cannot reach a stub on the Windows
+  loopback (only Docker's published TCP ports are forwarded into WSL), so the `HELLO` went to WSL's
+  own `127.0.0.1:7001`, where nothing listened, and all three attempts timed out. The real Linux run
+  put the fleet in WSL too, with `fleetagent` and `stubserver` cross-compiled with `GOOS=linux`.
+- **Joins were first counted as requests.** That made the shutdown line read "6 sent, 7 succeeded".
+  Joins now have their own counters (joins, `HELLO`s, joined). Their ticket reads are counted as the
+  requests they are.
+- **A script must act on the re-fetch, not only on the push.** The test script joined only on
+  `match.ready`, so in the reconnect check it saw `ready` and never joined. That is a script choice
+  and is correct engine behaviour, but it is the mistake a game would make, so online.md says so.
+- **Found in passing:** a server that `fleetagent` respawns on the same port does not read its socket
+  until it is allocated, so a `HELLO` to it is silence, not a `DENIED`. That is fine for the contract
+  and is noted here only because it shaped the "server gone" result.
+- **Not exercised:** a `DENIED` (a fresh token leaves `stubserver` nothing to refuse), and a join
+  cancelled mid-flight by its script going away.
 
 ### O5b — `GanymedDedicated` hooks (blocked)
 

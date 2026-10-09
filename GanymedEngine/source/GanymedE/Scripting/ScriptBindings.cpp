@@ -1238,6 +1238,66 @@ namespace GanymedE {
 			return sol::lua_nil;
 		}
 
+		sol::table StringArray(sol::state_view lua, const JsonValue& array)
+		{
+			sol::table out = lua.create_table(static_cast<int>(array.Items.size()), 0);
+			for (size_t i = 0; i < array.Items.size(); i++)
+			{
+				if (array.Items[i].Kind != JsonValue::Type::String)
+					throw std::runtime_error("expected an array of strings");
+				out[i + 1] = array.Items[i].String;
+			}
+			return out;
+		}
+
+		// The API's Ticket -> { id, mode, state, players, failureReason, match = { id, players },
+		// server = { address }, result = { outcome, ratingChange } }; match, server, result and
+		// failureReason are nil until they apply. The state is passed through as the backend writes
+		// it: a script treats one it does not know as "still waiting", because states get added.
+		//
+		// **server.connect_token is deliberately not copied.** It is a credential, with the session
+		// token's rule: the engine holds it for the one call that needs it (Backend.JoinMatch).
+		sol::object TicketToLua(sol::state_view lua, const JsonValue& ticket)
+		{
+			sol::table result = lua.create_table();
+			result["id"] = Field(ticket, "ticket_id", JsonValue::Type::String).String;
+			result["mode"] = Field(ticket, "mode", JsonValue::Type::String).String;
+			result["state"] = Field(ticket, "state", JsonValue::Type::String).String;
+			result["players"] = StringArray(lua, Field(ticket, "players", JsonValue::Type::Array));
+			if (const JsonValue* reason = ticket.Find("failure_reason"); reason && reason->Kind == JsonValue::Type::String)
+				result["failureReason"] = reason->String;
+			if (const JsonValue* match = ticket.Find("match"); match && match->Kind == JsonValue::Type::Object)
+			{
+				sol::table m = lua.create_table();
+				m["id"] = Field(*match, "match_id", JsonValue::Type::String).String;
+				m["players"] = StringArray(lua, Field(*match, "players", JsonValue::Type::Array));
+				result["match"] = m;
+			}
+			if (const JsonValue* server = ticket.Find("server"); server && server->Kind == JsonValue::Type::Object)
+			{
+				sol::table sv = lua.create_table();
+				sv["address"] = Field(*server, "address", JsonValue::Type::String).String;
+				result["server"] = sv;
+			}
+			if (const JsonValue* outcome = ticket.Find("result"); outcome && outcome->Kind == JsonValue::Type::Object)
+			{
+				sol::table r = lua.create_table();
+				r["outcome"] = Field(*outcome, "outcome", JsonValue::Type::String).String;
+				r["ratingChange"] = Field(*outcome, "rating_change", JsonValue::Type::Integer).Integer;
+				result["result"] = r;
+			}
+			return result;
+		}
+
+		sol::object ReadTicket(sol::state_view lua, const OnlineResponse& response)
+		{
+			std::string error;
+			std::optional<JsonValue> ticket = ParseJson(response.Body, &error);
+			if (!ticket)
+				throw std::runtime_error(error);
+			return TicketToLua(lua, *ticket);
+		}
+
 		OnlineRequest PartyPost(std::string path, const std::string* targetAccount = nullptr)
 		{
 			OnlineRequest request;
@@ -1488,6 +1548,75 @@ namespace GanymedE {
 			backend["LeaveParty"] = [](sol::object owner, sol::object callback)
 			{
 				SendScriptRequest("Backend.LeaveParty", owner, PartyPost("/v1/party/leave"), callback, ReadNothing);
+			};
+
+			// ---- Matchmaking (O5a) ----------------------------------------------------------------
+
+			// POST /v1/matchmaking/tickets -> the ticket. Alone, or the whole party if the caller leads
+			// one (a member gets urn:ganymed:problem:not-party-leader). A player already on an active
+			// ticket - queued, or in a match not yet finished - gets ...:already-queued.
+			backend["Queue"] = [](sol::object owner, const std::string& mode, sol::object callback)
+			{
+				const bool ok = !mode.empty() && mode.size() <= 32 && std::all_of(mode.begin(), mode.end(),
+					[](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
+				if (!ok)
+					throw sol::error("Backend.Queue: '" + mode + "' is not a mode name (a-z, 0-9 and -)");
+
+				JsonValue body = JsonValue::MakeObject();
+				body.Members.emplace_back("mode", JsonValue::MakeString(mode));
+				OnlineRequest request;
+				request.Method = "POST";
+				request.Path = "/v1/matchmaking/tickets";
+				WriteJson(body, request.Body);
+				SendScriptRequest("Backend.Queue", owner, std::move(request), callback, ReadTicket);
+			};
+
+			// GET /v1/matchmaking/ticket -> the latest ticket in any state, or nil. The state of record:
+			// what a script reads on "connected", since a match.* push sent while it was down is lost.
+			backend["GetTicket"] = [](sol::object owner, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Path = "/v1/matchmaking/ticket";
+				SendScriptRequest("Backend.GetTicket", owner, std::move(request), callback,
+					[](sol::state_view lua, const OnlineResponse& response) -> sol::object
+					{
+						std::string error;
+						std::optional<JsonValue> body = ParseJson(response.Body, &error);
+						if (!body)
+							throw std::runtime_error(error);
+						const JsonValue* ticket = body->Find("ticket");
+						if (!ticket)
+							throw std::runtime_error("expected ticket");
+						return ticket->Kind == JsonValue::Type::Null ? sol::object(sol::lua_nil) : TicketToLua(lua, *ticket);
+					});
+			};
+
+			// DELETE /v1/matchmaking/tickets/<id> -> the cancelled ticket. Only while queued; after that
+			// it is urn:ganymed:problem:ticket-not-queued.
+			backend["CancelTicket"] = [](sol::object owner, const std::string& ticketId, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Method = "DELETE";
+				request.Path = "/v1/matchmaking/tickets/" + RequireUuid("Backend.CancelTicket", "a ticket ID", ticketId);
+				SendScriptRequest("Backend.CancelTicket", owner, std::move(request), callback, ReadTicket);
+			};
+
+			// Joins the ready match's game server over UDP: callback(true, accountId) on WELCOME, or
+			// (false, reason) - "denied: ...", "no ready match to join ...", "no answer from ... after 3
+			// attempts". The connect token never reaches Lua. See Online::JoinMatch.
+			backend["JoinMatch"] = [](sol::object owner, sol::object callback)
+			{
+				StartScriptOperation("Backend.JoinMatch", owner,
+					[](OnlineCompletion completion) { return Online::JoinMatch(std::move(completion)); },
+					callback,
+					[](sol::state_view lua, const OnlineResponse& response) -> sol::object
+					{
+						std::string error;
+						std::optional<JsonValue> body = ParseJson(response.Body, &error);
+						if (!body)
+							throw std::runtime_error(error);
+						return sol::make_object(lua, Field(*body, "account_id", JsonValue::Type::String).String);
+					});
 			};
 
 			// POST /v1/party/kick (leader only). The kicked player gets party.removed.

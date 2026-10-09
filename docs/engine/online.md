@@ -4,14 +4,15 @@
 backend ([GanymedServer](https://github.com/giska1923/GanymedServer), a separate Go repository). It
 holds the player's identity and session, issues requests without ever blocking a frame, and hands
 responses to Lua inside the owning scene's script update. A response can never reach a destroyed
-scene or a destroyed script instance. The milestone that builds it, and what comes next
-(leaderboards, the push socket, matches), is [ONLINE.md](../ToDo/ONLINE.md).
+scene or a destroyed script instance. It also keeps the push socket open, and joins a match's game
+server. The milestone that builds it, and what comes next (the game server's side), is
+[ONLINE.md](../ToDo/ONLINE.md).
 
 | File | Holds |
 |---|---|
 | [Online.h](../../GanymedEngine/source/GanymedE/Online/Online.h) | The public facade: `Send`, `Cancel`, status, identity, stats |
-| [OnlineSession.cpp](../../GanymedEngine/source/GanymedE/Online/OnlineSession.cpp) | `Online`'s implementation: `--backend=` and `--profile=`, the device ID, sign-in, the session, 401 recovery and the one retry |
-| [OnlineTransport.h](../../GanymedEngine/source/GanymedE/Online/OnlineTransport.h) / [Online.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | Private: single HTTP attempts over a pool of four clients, and the push socket. **Online.cpp is the only engine TU that includes IXWebSocket** |
+| [OnlineSession.cpp](../../GanymedEngine/source/GanymedE/Online/OnlineSession.cpp) | `Online`'s implementation: `--backend=` and `--profile=`, the device ID, sign-in, the session, 401 recovery and the one retry, the push channel, `JoinMatch` |
+| [OnlineTransport.h](../../GanymedEngine/source/GanymedE/Online/OnlineTransport.h) / [Online.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | Private: single HTTP attempts over a pool of four clients, the push socket, and one-datagram UDP exchanges. **Online.cpp is the only engine TU that includes IXWebSocket** |
 | [Json.h](../../GanymedEngine/source/GanymedE/Online/Json.h) / [.cpp](../../GanymedEngine/source/GanymedE/Online/Json.cpp) | `JsonValue`, `ParseJson` (over yaml-cpp), `WriteJson` |
 | [ScriptEngine.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptEngine.cpp) | Who owns each request, per-scene mailboxes, cancellation, delivery to Lua |
 | [ScriptBindings.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptBindings.cpp) | The `Backend` table, JSON ↔ Lua |
@@ -286,7 +287,8 @@ Backend.GetPushStatus()   -- "disconnected", "connecting", "connected" or "repla
   (no scene context there), and delivered in `DeliverResponses`, before `OnUpdate`. A callback that
   errors disables its script.
 - `msg` is the **wire envelope**, `{ type, id, payload }`, with the payload's keys as the contract writes
-  them (`party_id`, `display_name`). A push is a nudge; the typed bindings that fetch the state are
+  them (`party_id`, `display_name`). The one exception is `match.ready`'s `connect_token`, which is
+  removed before any handler sees it ([the token stays in the engine](#the-connect-token-stays-in-the-engine)). A push is a nudge; the typed bindings that fetch the state are
   where names are mapped (`display_name` → `name`).
 - **A push nobody subscribes to is dropped and counted**, logged at trace level. Not a warning: the
   contract adds types without a version bump, so an unknown type is normal.
@@ -295,7 +297,8 @@ Backend.GetPushStatus()   -- "disconnected", "connecting", "connected" or "repla
   shows. A script fetches in `OnCreate` too: in the editor, Play starts long after the socket opened.
 
 The plan had the engine re-fetch the party and invites itself on every reconnect. It announces
-`connected` instead, because the engine does not know what a game shows (O5a adds the match ticket).
+`connected` instead, because the engine does not know what a game shows (the party, the invites, the
+match ticket).
 The guarantee is the same: a script that fetches on `connected` is correct whether or not any push
 arrives, and pushes only make it prompt.
 
@@ -398,6 +401,7 @@ The bindings so far:
 | `Backend.GetPartyInvites(self.entity, cb)` | `GET /v1/party/invites` → array of `{ partyId, from = { accountId, name }, expiresAt }` |
 | `Backend.AcceptPartyInvite(self.entity, partyId, cb)` / `DeclinePartyInvite` | `POST /v1/party/invites/<id>/accept` → the party / `.../decline` |
 | `Backend.LeaveParty(self.entity, cb)` / `KickFromParty(self.entity, accountId, cb)` | `POST /v1/party/leave` / `POST /v1/party/kick` (leader only) |
+| `Backend.Queue`, `GetTicket`, `CancelTicket`, `JoinMatch` | matches: see [Matches](#matches) |
 
 Every request binding is typed per endpoint, and maps the API's names to script-style ones
 (`display_name` → `name`). There is no generic request.
@@ -442,6 +446,149 @@ a fresh profile):
 hook, registered only under an environment variable and deleted once the checks were done
 ([ONLINE.md](../ToDo/ONLINE.md), O1's execution notes). The TypeScript declarations are in
 `GanymedEditor/scripts-src/types/ganymed.d.ts`.
+
+## Matches
+
+A script queues the player, follows the ticket, and asks the engine to join the server the backend
+allocated. Joining is one UDP exchange: `HELLO <connect token>` out, then `WELCOME <account>` or
+`DENIED <reason>` back ([connect-token.md](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/connect-token.md),
+[server-lifecycle.md](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/server-lifecycle.md)).
+There is no netcode yet, so being admitted is the last step today.
+
+**How others do it.** In GameLift FlexMatch, the client starts matchmaking, gets a ticket, and
+follows it by polling or through events. A completed ticket carries the session's IP and port and one
+`PlayerSessionId` per player. The client gives that ID to the game server, which asks GameLift
+(`AcceptPlayerSession`) whether to admit the player, so every admission costs a backend round trip.
+Open Match is not client-facing at all: the game's own frontend creates the ticket and streams the
+assignment, a connection string, back to the client. netcode.io's connect token is the closest model to
+this one. The web backend issues it, the dedicated server verifies it with a key shared with the
+backend, and the token is encrypted, so the client carries it without being able to read it.
+Ganymed's token is signed with Ed25519, not encrypted. The game server verifies it offline with the
+backend's public key, so there is no round trip like GameLift's. The client can decode the claims but
+cannot forge a token. The engine still treats the token as a credential: whoever holds it can be
+admitted as that player for its 30 seconds.
+
+### The bindings
+
+| Binding | Does |
+|---|---|
+| `Backend.Queue(self.entity, mode, cb)` | `POST /v1/matchmaking/tickets` → the ticket. Queues the player alone, or their whole party if they lead one |
+| `Backend.GetTicket(self.entity, cb)` | `GET /v1/matchmaking/ticket` → the latest ticket in any state, or `nil` |
+| `Backend.CancelTicket(self.entity, ticketId, cb)` | `DELETE /v1/matchmaking/tickets/<id>` → the cancelled ticket. Only while `queued` |
+| `Backend.JoinMatch(self.entity, cb)` | joins the ready match's game server → `cb(true, accountId)`, or `cb(false, reason)` |
+
+A ticket is `{ id, mode, state, players, failureReason, match = { id, players }, server = { address },
+result = { outcome, ratingChange } }`. `match`, `server`, `result` and `failureReason` are `nil` until
+they apply.
+
+The state is passed through exactly as the backend writes it: `queued`, `matched`, `allocating`,
+`ready`, `finished`, `cancelled` or `failed`. A script treats a state it does not know as "still
+waiting", because the backend adds states. `matched` stopped being final in `api-v0.5`.
+
+Failures are problem types, as everywhere:
+
+- `…:not-party-leader` is a party member trying to queue.
+- `…:already-queued` is a player whose ticket is queued, **or whose match has not finished**.
+
+A mode name is held to `a-z`, `0-9` and `-`, and a ticket ID must be a UUID, before anything is sent.
+
+The ticket is the state of record. The pushes (`ticket.updated`, `match.found`, `match.ready`,
+`match.finished`, `ticket.failed`) are only nudges. A script that shows a match fetches the ticket on
+`connected` and **acts on what it finds**, `ready` included, not only on `match.ready`. A push sent
+while the socket was down is lost.
+
+### The connect token stays in the engine
+
+The token is a credential, so it gets the session token's rule: nothing outside `Online` holds it.
+
+- **No binding returns it.** The ticket's `server` table has `address` and nothing else.
+- **`match.ready` carries one, and it is removed** where the push is parsed, before any handler sees it.
+  A subscribed script gets `{ ticket_id, match_id, server_addr }`. This was a real leak until O5a's
+  first verification run showed `connect_token` in a script's `msg.payload`: the ticket path had been
+  closed, but the push path had not.
+- **It is never logged.** The engine logs where it joined and how many attempts it took, never the
+  datagram.
+
+### `JoinMatch`: a fresh token per attempt
+
+`Online::JoinMatch(completion)` returns a `RequestId` from the same id space as `Send`, so `Cancel`
+and script ownership work on it unchanged. In the script layer, `StartScriptOperation` is the entry
+point for an operation that is more than one request. One attempt is:
+
+1. `GET /v1/matchmaking/ticket`, through `Send`, so it gets the session's 401 recovery like any
+   request. **Every read mints a fresh token.** With no ticket, the join fails at once with "no
+   ticket: queue first". A ticket that is not `ready` fails with "no ready match to join (the ticket
+   is …)".
+2. `HELLO <token>` in one datagram to `server.address`, then a wait of up to **1 s** for one reply.
+3. `WELCOME …` → `ok`, with the account ID. `DENIED <reason>` → `"denied: <reason>"`, logged as a
+   warning. The reason is for logs; the contract says not to parse it.
+4. Silence → **back to step 1**, up to 3 attempts.
+
+**Why a fresh token and not a resend.**
+
+- **A lost reply.** UDP loses datagrams in both directions. If the server got the `HELLO` and its
+  `WELCOME` was lost, sending the same token again is a replay, and the server refuses it
+  (connect-token.md, rule 8). A fresh token has a fresh nonce, and a server admits an already-admitted
+  player again.
+- **A slow client.** The token in `match.ready` expires after 30 s, and `JoinMatch` never uses it.
+- **A dead match.** Re-reading the ticket notices that the match is gone, which a resend would not.
+
+**Two kinds of failure, which look different by platform.**
+
+- "No answer from `<address>`" means a full second of silence.
+- "Nothing is listening at `<address>`" is a receive error. On Windows, an ICMP port-unreachable from
+  the server's host is reported on the next `recvfrom` of the socket that sent to that port, so a dead
+  port fails within milliseconds.
+- On Linux, an unconnected UDP socket is not told about ICMP errors, so the same dead port is silence.
+
+Either way, `JoinMatch` failing means only that this attempt did not work. Whether the match is gone
+is the ticket's to say. When the server really died, `ticket.failed` (`server_lost`) follows within
+seconds.
+
+### The socket
+
+`OnlineTransport::Exchange(address, payload, timeout, completion)` lives in `Online.cpp`, the one
+IXWebSocket TU. It uses IXWebSocket's `ix::UdpSocket`, after the same `initNetSystem`.
+
+- **Each exchange opens its own non-blocking socket** and sends the datagram.
+- **The wait is a non-blocking `recvfrom` per pending exchange, polled from `Online::OnUpdate` once
+  a frame.** That runs on the main thread, with no thread of its own. Like the reconnect timer, it
+  costs nothing when nothing is pending, and one system call per pending exchange per frame
+  otherwise.
+- **Why polling.** A blocking receive on a worker would need its own thread, or a job that sleeps.
+  Both cost more than polling one socket for at most a second. Polling is precise to a frame, which
+  is fine against a 1 s timeout.
+- **The socket is closed** when the exchange completes, when it is aborted (`Cancel`), or at
+  `Shutdown`.
+
+The plan wanted the netcode milestone to take this socket over, not open a new one. It does not: the
+socket is closed after `WELCOME`. What a handover looks like depends on the protocol that continues
+after it, and that protocol does not exist yet.
+
+**Stats:** joins (`JoinMatch` calls), `HELLO`s sent, and joins that succeeded. They go in the shutdown
+line, after the push counts. A join is not a request, so it is not in the request counts, but its
+ticket reads are.
+
+### Measured (O5a, 2026-10-09, Windows x64 Debug runtime, both Compose replicas, `fleetagent -pool 2 -- stubserver`, `gscli` as the other player)
+
+| Check | Result |
+|---|---|
+| Queue, match, join, finish | `queued` → `match.found` 10 s later → `match.ready` → `JoinMatch` got `WELCOME` on attempt 1, 0.03 s after asking → `match.finished` 30 s later, `victory`, `ratingChange` 16. `GetTicket` then showed `finished`, with `result` |
+| Queue while in a match | `…:already-queued`, when sent on `match.found` |
+| Slow client | joined 40 s after `match.ready`, 10 s after that push's token expired: `WELCOME` on attempt 1 |
+| Server killed before the join (the agent respawned one on the same port) | attempts 1 and 2 got no answer, because a server still waiting for an allocation does not read its socket. Attempt 3's ticket read found `failed`, so `JoinMatch` failed with "no ready match to join (the ticket is failed)", 2.1 s after asking. `ticket.failed` `server_lost` came 4 s after the kill |
+| Whole fleet killed before the join | "nothing is listening at 127.0.0.1:7002" three times, 0.07 s in all. `ticket.failed` `server_lost` came 4 s later |
+| No fleet | `ticket.failed` `no_server`, 31 s after `match.found` |
+| Party member | accepted a `gscli` leader's invite. Its own `Queue` → `…:not-party-leader`. `JoinMatch` before any ticket existed → "no ticket: queue first". The leader queued both players, and the member joined on attempt 1 |
+| Socket down while the match became ready (the engine's replica was stopped right after queueing, for 19 s) | `match.found` and `match.ready` never arrived. The `connected` re-fetch alone showed `ready`, with the server's address |
+| The token stays out of Lua | ticket keys: `id, match, mode, players, server, state`. Server keys: `address`. `match.ready` payload keys: `match_id, server_addr, ticket_id`. No `HELLO `, `connect_token` or `eyJ` anywhere in the engine log |
+| Linux (WSL2, gcc 11.4, Debug) | builds and links. The runtime joined on attempt 1, 0.04 s after asking, and the stub logged the `WELCOME`; the fleet ran in WSL too (agent and stub cross-compiled with `GOOS=linux`). A stub on the Windows loopback cannot be reached from WSL in NAT mode, because only Docker's published TCP ports are forwarded. The first run tried exactly that, and it is the Linux evidence for silence: nothing was listening, and all 3 attempts timed out (3.2 s), with no receive error |
+
+Not exercised:
+
+- **A `DENIED`.** The engine always presents a fresh token, so `stubserver` has nothing to refuse.
+- **A `JoinMatch` cancelled mid-flight** because its script went away. The cancel path is O1's, plus
+  closing the exchange's socket.
 
 ## JSON
 
