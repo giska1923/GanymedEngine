@@ -99,6 +99,7 @@ namespace GanymedE {
 		AudioSourceComponent,
 		AudioListenerComponent,
 		RigidBodyComponent,
+		CharacterControllerComponent,
 		BoxColliderComponent,
 		SphereColliderComponent,
 		CapsuleColliderComponent,

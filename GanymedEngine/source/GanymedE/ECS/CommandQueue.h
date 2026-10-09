@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -106,9 +107,13 @@ namespace GanymedE::ECS {
 		//
 		// **The subtree appears next frame**, like every other structural change made from inside
 		// an update. See the note at the top of this header.
-		// `rootTransform` null places the root where the `.gprefab` says, which is what a
-		// pre-placed decoration wants; a caller that has somewhere to put it passes one.
-		UUID InstantiatePrefab(AssetHandle source, const TransformComponent* rootTransform = nullptr);
+		// The root starts with the `.gprefab`'s own transform. `translation` and `rotation`, when
+		// given, replace only those two fields - the prefab's scale always survives. The first
+		// version took a whole TransformComponent and replaced the root's with it, so a spawn
+		// placed anywhere reset an authored root scale to 1: the Proving Ground's 0.15-scaled
+		// round spawned with a 1 m collision sphere and shoved its own shooter backwards.
+		UUID InstantiatePrefab(AssetHandle source, std::optional<glm::vec3> translation = {},
+			std::optional<glm::vec3> rotation = {});
 
 		void DestroyEntity(Entity entity);
 

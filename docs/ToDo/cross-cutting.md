@@ -291,29 +291,6 @@ Jolt reports persisting contacts through `ContactListener::OnContactPersisted`, 
 the way to scripts; the question worth thinking about first is whether gameplay wants a per-frame
 event at all, or a queryable "who am I touching" set, which is what most engines settle on.
 
-## `CharacterControllerComponent` is not in `ComponentList`
-
-Found while adding `BoneAttachmentComponent` to that list. The controller is reflected, has a
-hand-written serializer block, and is a real component on entities, but `Scene::Copy` and
-`DuplicateEntity` iterate `ComponentList` — so a character in the editor scene loses the controller
-on play, and a duplicated character is not a character. The constructor's change-buffer hookup
-skips it too; that is harmless today because the type is untracked.
-
-The fix is adding it to the list. There is no runtime field to reset on copy.
-
-## A character cannot be teleported
-
-Nothing moves a character except its own velocity. Its `TransformComponent` is overwritten from the
-controller every frame by `SyncTransforms`, so writing it does nothing, and `CharacterVirtual`'s
-own `SetPosition` is not exposed through `PhysicsScene` or the script bindings.
-
-So **there is no way to respawn**. P5's player recovers where it fell, which is not a thing anyone
-would ship, and the same gap blocks checkpoints, teleporters, level transitions and cutscene
-placement. It is also the smallest item in this file: `SetPosition` already exists on the Jolt
-object and already keeps the inner body in step (`UpdateInnerBodyTransform` runs inside it) - what
-it needs is a `PhysicsScene::SetPosition` that routes to the character or the body interface, the
-same way `SetLinearVelocity` already routes to either.
-
 ## A script cannot tell whether a contact was with a sensor
 
 `OnCollisionEnter(other)` hands over the other entity and nothing else. A sensor causes no collision

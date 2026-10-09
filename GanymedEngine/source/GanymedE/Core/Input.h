@@ -43,8 +43,30 @@ namespace GanymedE {
 		// position is a virtual coordinate that means nothing on its own.
 		static glm::vec2 GetMouseDelta();
 
+		// The mode gameplay *asked for*. It only reaches the OS while the game has focus (below);
+		// without focus the cursor is Normal, and the request is re-applied when focus returns.
+		// GetCursorMode reads back the request, so a script's view of its own cursor never flips
+		// under it.
 		static void SetCursorMode(CursorMode mode);
 		static CursorMode GetCursorMode();
+
+		// ---- Game focus ----
+		//
+		// Whether gameplay owns the keyboard and mouse. The runtime never touches it, so there it
+		// is true for the life of the process. The editor shares one window between its panels and
+		// the game in its viewport, so it hands focus over on a viewport click and takes it back.
+		//
+		// Focus arriving while the game wants a Locked cursor masks the mouse buttons already held:
+		// that click was the editor's "give it back", not a shot. With a Normal cursor the click
+		// is passed through, because there it lands on something the game can see.
+		static void SetGameFocus(bool focused);
+		static bool HasGameFocus();
+
+		// What gameplay reads: the raw answer while the game has focus, nothing pressed and no
+		// motion while it does not. Editor code keeps the raw queries above.
+		static bool IsGameKeyPressed(KeyCode key);
+		static bool IsGameMouseButtonPressed(MouseCode button);
+		static glm::vec2 GetGameMouseDelta();
 
 		// Called by Application::Run, once, before the layers update. Not for gameplay.
 		static void NewFrame();

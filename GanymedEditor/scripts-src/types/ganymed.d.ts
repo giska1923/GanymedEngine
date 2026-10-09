@@ -158,6 +158,14 @@ declare interface Entity {
 	 */
 	SetAimLock(weight: number): void;
 
+	/**
+	 * Turns the two-hand IK pass on or off. Off leaves both arms exactly as the clip poses them
+	 * and the weapon on its socket, and checks nothing - for a one-handed weapon, where weight 0
+	 * would still look for a left-hand marker and warn. Lands on this frame's pose. No-op on an
+	 * entity without two-hand IK.
+	 */
+	SetHandIKEnabled(enabled: boolean): void;
+
 	HasBoneAttachment(): boolean;
 
 	/**
@@ -206,6 +214,11 @@ declare interface Entity {
 	SetLinearVelocity(velocity: Vec3): void;
 	/** A one-shot change in momentum. */
 	AddImpulse(impulse: Vec3): void;
+	/**
+	 * Moves a character controller or a rigid body to `position` (world space) this step. The only
+	 * way to place either: SetTranslation is overwritten from the simulation. Velocity is kept.
+	 */
+	Teleport(position: Vec3): void;
 	/** Consumed by the next step — call it every frame while the push lasts. */
 	AddForce(force: Vec3): void;
 
@@ -329,7 +342,11 @@ declare interface Script {
 
 	OnCreate?(): void;
 	OnUpdate?(ts: number): void;
-	OnCollisionEnter?(other: Entity): void;
+	/**
+	 * `contact` is where this entity touched `other`: a point on other's surface and that
+	 * surface's outward normal, facing this entity. World space.
+	 */
+	OnCollisionEnter?(other: Entity, contact: { point: Vec3; normal: Vec3 }): void;
 	OnCollisionExit?(other: Entity): void;
 	OnDestroy?(): void;
 }

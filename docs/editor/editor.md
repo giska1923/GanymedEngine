@@ -191,6 +191,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
 
 ### Per-frame (`OnUpdate`)
 
+0. If the game has input focus and Ctrl+Alt is held, take focus back
+   ([Play / Stop](#play--stop-toolbar)). This runs first so scripts get no input this frame.
 1. Resize the scene renderer / editor camera / scene cameras when the viewport panel size changed.
 2. `SceneRenderer::BeginFrame` (bind + clear HDR target, entity IDs to −1).
 3. Update the scene. In Edit: surface-raycast, write the placement preview transform, and tick the
@@ -201,7 +203,8 @@ Owns the `SceneRenderer` (HDR target + post stack), the active/editor `Scene` pa
    `ShowAllSkeletons` / `SkeletonXRay`), and the Map-panel `EditorBoundsOverlay` (audit boxes
    plus the scatter brush sphere) are pushed on this branch too. In Play:
    `OnUpdateRuntime(ts, &editorCamera)` (the editor camera is the fallback when the scene
-   has no primary `CameraComponent`; the physics-debug toggles, **`ShowColliderGizmos`** and
+   has no primary `CameraComponent`. It reads raw input, so it is updated only while the game
+   does **not** have focus. Otherwise RMB+WASD would fly it and walk the player at once. The physics-debug toggles, **`ShowColliderGizmos`** and
    **`ShowSkeletons`** (Visualizers) and **`ShowMarkers`** (Icons) are pushed into the scene's
    `PhysicsSettings` each frame). Those gizmo flags are engine-default **false** so a non-editor
    front-end draws no collider wireframes, marker spheres, or skeletons — the editor opts in, and
@@ -385,6 +388,8 @@ The Stats `Surface:` line is the live probe. It does not replace GPU hover for c
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Alt+LMB drag / MMB drag / scroll        | Orbit / pan / zoom the editor camera. Scroll only while the pointer is over the viewport image. In Top (Ortho): Alt+LMB yaws only, scroll changes `OrthoHeight`, RMB fly is off |
 | Viewport combo → Top (Ortho)            | Pitch-locked orthographic plan view. Metres-per-pixel readout appears beside Free Aspect                             |
+| LMB in viewport during Play             | Give the game keyboard and mouse input ([game input focus](#game-input-focus)). Until then scripts and the HUD see nothing |
+| Ctrl+Alt while the game has input       | Give input back to the editor and free the cursor. While the game has input, this is the only editor key that works |
 | LMB in viewport                         | Select hovered entity (ignored over the gizmo, with Alt held, while placing, or while the scatter brush is armed). While Skeletons is on, a bone within 12 px wins and does not change the entity |
 | Esc while assigning a socket joint      | Cancel viewport joint pick                                                                                                                                               |
 | LMB while placing                       | Commit the preview (`AddEntitiesCommand` after the transform is final). Shift+LMB chains; Alt+LMB places unsnapped                           |
@@ -588,11 +593,49 @@ Game UI (RmlUi) is loaded on Play and closed on Stop, and renders _inside_ the v
 rather than over the whole editor — `RenderPass::UI` composites into the same LDR target the
 viewport displays. The document path is hard-coded for now. Details: [ui.md](../engine/ui.md).
 
-While playing, `OnEvent` forwards input to `UIEngine` **before** the editor's own handlers, but
-only when the viewport is hovered or focused — otherwise clicking a panel would be routed at a HUD
-sitting underneath it. If the UI claims the event (pointer over an actual widget, or a focused UI
-element taking a key), `EditorLayer::OnEvent` returns early and the gizmo/selection shortcuts never
-see it. Mouse coordinates are translated by `m_ViewportBounds[0]`, the same origin picking uses.
+#### Game input focus
+
+Pressing Play does **not** give the game the keyboard and mouse. A **left click on the viewport image**
+in Play does that (`SetGameFocus(true)`), and **Ctrl+Alt** takes them back. Stop and every scene
+switch take them back too, and Stop also resets the game's cursor request to `Normal`, so the next
+Play does not start locked. Before the click, the viewport shows "Click to give the game input"
+in the bottom-left corner. The top-left is where the RmlUi Debugger puts its menu. While the game has focus, the status-bar play chip reads
+"Play (Ctrl+Alt releases input)". The engine half is `Input::SetGameFocus` and the gated
+`IsGame*` queries the Lua `Input` table reads ([platform.md](../engine/platform.md#game-focus)).
+
+Before this, every key and click anywhere in the editor reached the scripts. W typed into the
+inspector walked the player, and the click on Stop captured the cursor. Release is a chord rather
+than Escape because Escape belongs to the game (Player.lua uses it to free the cursor). Ctrl+Alt is
+the key combination VM hosts use for the same job. Unreal's equivalent is Shift+F1.
+
+`EditorLayer::SetGameFocus` also sets
+`ImGuiConfigFlags_NoMouse | NoKeyboard | NoMouseCursorChange` while the game has focus. Turning ImGui
+off as a whole is deliberate, rather than gating widget by widget:
+
+- **A locked cursor still feeds ImGui a virtual position.** A shot would click whatever panel sat
+  under it.
+- **A free cursor (a script that pressed Escape) could click a panel.** That would move ImGui focus
+  away from the viewport while every key still went to the game.
+- **`NoMouseCursorChange` lets `Cursor.Hidden` stick.** The GLFW backend otherwise re-sets
+  `GLFW_CURSOR_NORMAL` every frame for any cursor that is not disabled.
+
+So Ctrl+Alt is the only way back to the editor, and it is polled raw with `Input::IsKeyPressed`
+because ImGui sees no keys at that point. `HandleShortcuts` also returns early while the game has
+focus, so Ctrl+S in a game cannot save the scene. **AltGr on a European layout is reported by
+Windows as Ctrl+RightAlt, so it releases input too.**
+
+`OnEvent` forwards events to `UIEngine` **only while the game has focus**, and then returns. Every
+event in that state belongs to the game, so the gizmo and selection shortcuts never see it. Without
+focus, the HUD gets nothing, the same as scripts. Mouse coordinates are translated by
+`m_ViewportBounds[0]`, the same origin picking uses.
+
+**The RmlUi Debugger is the one exception.** It is editor tooling drawn inside the game's context.
+While it is open in Play and the pointer is over the viewport image, **mouse** events go to
+`UIEngine` without game focus. Keys never do, so no game input leaks this way. A viewport click
+grants focus only if `UIEngine::IsPointerOverDebugger()` is false. So the Debugger's buttons and
+panels are clickable, and a click anywhere else in the viewport still enters the game. Before this,
+a click on the Debugger menu granted focus, and Player.lua then locked the cursor. One side effect:
+with the Debugger open, the HUD also sees pointer hover and clicks before the game has focus.
 
 The runtime scene is a disposable UUID-keyed deep copy — physics and scripts can do anything to
 it, and Stop restores the authored scene untouched. Scene switching (`OpenScene`) stops play
@@ -620,7 +663,8 @@ Left, middot-separated:
 Right, live counters: entity count (`m_ActiveScene` `IDComponent` storage — the play copy while
 playing), `Renderer3D::GetStats().DrawCalls`, an exponential moving average of `1/ts` (raw
 frame time flickers; debugger pauses ≥ 1 s are ignored so they do not pull the average to 1),
-and play state (`Success` + `Play` while playing, `TextDim` + `Edit` otherwise).
+and play state (`Success` + `Play` while playing, `TextDim` + `Edit` otherwise). While the game has
+input focus, the chip reads `Play  (Ctrl+Alt releases input)`.
 
 There is no engine-version chip. Nothing in the repo is a version string, and a hard-coded one
 would rot. BlankEngine's `Default` / `mainline` / `game` chips have no Ganymed source either and
@@ -965,7 +1009,7 @@ name>)`; dropping a `.gmat` on a row overrides that slot, and **Clear** removes 
   live preview: `Pitch`, `Yaw` and `Resolved` are `Trait::Runtime`, which `ComponentEditCommand`
   keeps at their live values for every component (see the undo table).
 - Two-hand IK: **Weapon** is a read-only line naming what the pass found (the first child with
-  a socket on this rig) and its socket joint; there is nothing to pick, because the component has
+  a socket on a joint of this rig) and its socket joint; there is nothing to pick, because the component has
   no weapon field. Per hand, under a **Right hand** / **Left hand** separator: **Upper / Lower /
   End** combos over this entity's `skeleton.JointNames`, and **Marker**, a combo over the
   weapon's direct children (disabled when there is no weapon). Each combo edits one member, and a

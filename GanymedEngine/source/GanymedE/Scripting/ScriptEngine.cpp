@@ -551,13 +551,22 @@ namespace GanymedE {
 			CallMethod(*instance, "OnUpdate", ts.GetSeconds());
 	}
 
-	void ScriptEngine::OnCollisionEnter(Entity entity, Entity other)
+	// A table rather than two more arguments, for the reason Physics.Raycast returns one: named
+	// fields read at the call site, and a handler written for one argument still works, because
+	// Lua drops arguments a function does not declare.
+	void ScriptEngine::OnCollisionEnter(Entity entity, Entity other, const glm::vec3& point,
+		const glm::vec3& normal)
 	{
 		if (!s_Data)
 			return;
 
 		if (ScriptInstance* instance = FindInstance(static_cast<entt::entity>(entity)))
-			CallMethod(*instance, "OnCollisionEnter", other);
+		{
+			sol::table contact = s_Data->Lua.create_table();
+			contact["point"] = point;
+			contact["normal"] = normal;
+			CallMethod(*instance, "OnCollisionEnter", other, contact);
+		}
 	}
 
 	void ScriptEngine::OnCollisionExit(Entity entity, Entity other)

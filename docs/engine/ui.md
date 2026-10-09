@@ -109,6 +109,13 @@ Debugger** or **Ctrl+U**. Debug builds only; the Debugger sources are not compil
 When a document renders nothing, that inspector is usually the fastest way to find out why —
 `display: inline` and a zero-width box look identical to "not loaded" from the outside.
 
+The Debugger is editor tooling, but it lives in the game's context, inside the viewport.
+`UIEngine::IsPointerOverDebugger()` lets the editor tell a click on it from a click on the game. It
+checks whether RmlUi's current hover element belongs to a document whose id starts with
+`rmlui-debug-`, the same prefix test as below. Hover is only as fresh as the last mouse move RmlUi was
+given, so the editor forwards pointer events to the context whenever the Debugger is open
+([editor.md](../editor/editor.md#game-input-focus)).
+
 **`CloseAllDocuments` skips the debugger's own documents, by id prefix.** It used to call
 `Context::UnloadAllDocuments()`, which destroyed the six documents `Rml::Debugger` owns along with
 the game's. The plugin reacts by logging an error and nulling its element pointers while staying

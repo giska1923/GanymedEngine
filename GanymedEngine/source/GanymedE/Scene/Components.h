@@ -335,8 +335,8 @@ namespace GanymedE {
 	// palette - the clip drives the body and legs, the arms follow the weapon.
 	//
 	// The weapon is the first child of this entity that has a BoneAttachmentComponent aimed at
-	// this rig. Its socket IS the weapon pose, placed with the socket gizmo, and on a chest
-	// joint both hands can reach it. Each hand's target is a direct child of the weapon found
+	// this rig, with a joint (an empty one is no socket, or one being detached). Its socket IS
+	// the weapon pose, placed with the socket gizmo, and on a chest joint both hands can reach it. Each hand's target is a direct child of the weapon found
 	// by name, whose local transform is a wrist frame in the weapon's space: "the hand joint goes
 	// here, rotated like this". A wrist, not a palm, so a new rig needs no measured hand offset.
 	//
@@ -381,7 +381,7 @@ namespace GanymedE {
 		{
 			NotEvaluated = 0, // no pass ran: no animator, mesh not loaded, pose not sampled
 			Disabled,
-			NoWeapon,         // no child has a BoneAttachmentComponent on this rig
+			NoWeapon,         // no child is socketed to a joint of this rig
 			NoWeaponFrame,    // the socket joint does not resolve, or the skin cannot be inverted
 			NoJoint,          // a chain joint is not on this mesh
 			NoMarker,         // the weapon has no child with the marker's name
@@ -641,6 +641,16 @@ namespace GanymedE {
 		// `isTrigger` on the collider because a Unity body can own several colliders with
 		// different roles; ours cannot, so per-collider would be a lie.
 		bool IsSensor = false;
+
+		// Continuous collision for a fast body: Jolt's EMotionQuality::LinearCast, which sweeps
+		// the shape from where the body was to where it is going instead of testing only where
+		// it lands. Discrete bodies already get Jolt's speculative contacts, which caught a
+		// 15 cm round against a 0.3 m wall at 28 and 80 m/s; at 300 m/s every round went
+		// through, and with this flag none did (docs/engine/physics.md).
+		//
+		// Off by default because it costs a shape cast per body per step, and only small, fast
+		// bodies need it. Dynamic only, like LockRotation. Read at body creation.
+		bool ContinuousCollision = false;
 
 		RigidBodyComponent() = default;
 		RigidBodyComponent(const RigidBodyComponent&) = default;

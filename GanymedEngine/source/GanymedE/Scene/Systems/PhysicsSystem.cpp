@@ -41,7 +41,12 @@ namespace GanymedE {
 			if (!a || !b)
 				continue;
 
-			auto notify = [&](Entity self, Entity other)
+			// Each side hears where it touched the *other*: the point on the other body's
+			// surface, and that surface's outward normal, which faces the listener. A round
+			// hitting a wall gets the spot on the wall to put its spark, the wall gets the spot
+			// on the round. Jolt's normal points from A toward B, so B's surface faces -Normal
+			// and A's faces +Normal.
+			auto notify = [&](Entity self, Entity other, const glm::vec3& point, const glm::vec3& normal)
 			{
 				// Native and Lua scripts are independent: an entity may carry either,
 				// both, or neither, and both hear about the same collision.
@@ -57,14 +62,14 @@ namespace GanymedE {
 				if (luaScripts.Has(self))
 				{
 					if (event.Entered)
-						ScriptEngine::OnCollisionEnter(self, other);
+						ScriptEngine::OnCollisionEnter(self, other, point, normal);
 					else
 						ScriptEngine::OnCollisionExit(self, other);
 				}
 			};
 
-			notify(a, b);
-			notify(b, a);
+			notify(a, b, event.PointOnB, -event.Normal);
+			notify(b, a, event.PointOnA, event.Normal);
 		}
 
 		m_PhysicsScene->ClearCollisionEvents();

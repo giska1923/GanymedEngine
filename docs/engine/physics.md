@@ -240,11 +240,72 @@ plain static box is invisible to a character walking through it, and a static *s
 The flag is read at body creation, like `LockRotation`; toggling it during play does nothing until
 the body is rebuilt.
 
+### Continuous collision
+
+`RigidBodyComponent::ContinuousCollision` sets Jolt's `mMotionQuality` to
+`EMotionQuality::LinearCast`. A discrete body is tested only where each step puts it, so one that
+moves further in a step than the thickness of what it should hit, plus its own diameter, passes
+through without touching it: **tunnelling**. A linear-cast body sweeps its shape along the step and
+stops at the first thing in the way.
+
+**The step is fixed** (`PhysicsSettings::FixedTimestep`, accumulated in `PhysicsSystem`), so
+tunnelling depends on speed against geometry, never on frame rate. A slow frame runs more steps of
+the same length; it does not make one step longer.
+
+- **Who wants it:** small bodies fast enough to outrun Jolt's **speculative contacts**. A discrete
+  body is not tested only where it lands: Jolt grows its pair-finding box by its velocity and adds
+  a contact for a collision it is about to have. So the step-length arithmetic (a step longer than
+  the wall plus the body is a tunnel) overstates the risk. Measured on the Proving Ground's 15 cm
+  round, 30 rounds against a 0.3 m wall from 3.6 m:
+
+  | Muzzle speed | Per 60 Hz step | Discrete: through the wall | `ContinuousCollision`: through |
+  | ------------ | -------------- | -------------------------- | ------------------------------ |
+  | 28 m/s       | 0.47 m         | 0 of 31                    | —                              |
+  | 80 m/s       | 1.33 m         | 0 of 31                    | 0 of 31                        |
+  | 300 m/s      | 5 m            | **30 of 30**               | **0 of 30**                    |
+
+  The threshold is somewhere between 80 and 300 m/s for that pair; it depends on the shapes, so a
+  body that has to be safe is safest flagged.
+- **What it costs:** a shape cast per body per step, so it is off by default and opt-in per body.
+  It is Dynamic-only: a static body never moves, and a kinematic one is wherever its transform puts
+  it, so neither has anything to sweep.
+- **Where a hit is reported:** a script reading its own transform in `OnCollisionEnter` sees where
+  the body was drawn, not where it touched, with or without the flag. Use the contact the event
+  carries instead (Collision events, below).
+- **What Jolt warns about:** the body moves only up to the first contact in the step that hits,
+  so it looks briefly slower. A long, thin, fast-spinning shape can still tunnel by rotating.
+  Contact-added callbacks can arrive for contacts the final step does not keep, and are removed the
+  next frame; for a round that despawns on its first contact, that only matters if two bodies race
+  for it.
+
+Read at body creation, like the two flags above.
+
 ## Collision events → scripts
 
 `PhysicsSystem::DispatchCollisionEvents` resolves each event's UUIDs to entities and calls
 `OnCollisionEnter/OnCollisionExit(other)` on both sides' scripts. Events accumulate per fixed step
 and are cleared after dispatch.
+
+**An Enter carries the contact.** `PhysicsContactListener::OnContactAdded` copies it out of Jolt's
+manifold, which is valid only inside that callback, on whichever Jolt thread found it:
+
+- **Points:** the average of the manifold's points on each body's surface. They coincide unless
+  the shapes interpenetrate.
+- **Normal:** Jolt's manifold normal, from body A toward B.
+- **Each side hears where it touched the other:** the point on the *other* body's surface, and
+  that surface's outward normal, which faces the listener. A round hitting a wall gets the spot on
+  the wall's face, where a spark or a decal belongs.
+- **Lua only:** it arrives as a second argument, `OnCollisionEnter(other, contact)` with
+  `contact.point` and `contact.normal`. Native `ScriptableEntity` hooks keep their one-argument
+  signature: nothing native wants the point yet, and adding it is a one-line virtual when
+  something does.
+
+An Exit carries no contact: Jolt reports none when a contact ends.
+
+**Why it is needed.** A body's transform, as a script reads it in the callback, is interpolated
+between the last two steps for rendering (`SyncTransforms`), so it lags the contact. A fast body
+reads as short of the surface it hit, by up to a step's travel. Speculative contacts (continuous collision, above) report a hit the body has not reached
+yet, so it can be early as well as lagged.
 
 Both script kinds are notified, through separate views: `AccessView<RW<NativeScriptComponent>>` for
 `ScriptableEntity` instances, and `AccessView<RO<ScriptComponent>>` for Lua ones (read-only — the
@@ -254,9 +315,16 @@ see identical timing. See [scripting.md](scripting.md).
 
 ## Runtime body control (for scripts)
 
-`SetLinearVelocity` / `GetLinearVelocity` / `AddImpulse` / `AddForce`, keyed by entity UUID against
-the `EntityToBody` map. This is the only correct way for gameplay code to move a dynamic body:
-writing its `TransformComponent` instead is overwritten by `SyncTransforms` on the very next step.
+`SetLinearVelocity` / `GetLinearVelocity` / `AddImpulse` / `AddForce` / `Teleport`, keyed by entity
+UUID against the `EntityToBody` map. This is the only correct way for gameplay code to move a dynamic
+body: writing its `TransformComponent` instead is overwritten by `SyncTransforms` on the very next
+step.
+
+**`Teleport(entity, position)`** puts a character or a body at a world position this step: Jolt's
+`CharacterVirtual::SetPosition` (which moves the character's inner body with it) or
+`BodyInterface::SetPosition`, activating the body. Velocity is left alone, so a respawn after a fall
+sets it too. Both interpolation poses move as well: without that, the next `SyncTransforms`
+would draw the entity once part-way between where it was and where it went.
 
 Each wakes the body before acting — Jolt sleeps idle bodies and silently discards a velocity set on
 a sleeping one. All of them no-op when the entity has no body or play is not running, rather than

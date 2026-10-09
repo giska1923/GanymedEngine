@@ -419,6 +419,15 @@ namespace GanymedE {
 					if (e.HasComponent<TwoHandIKComponent>())
 						e.GetComponent<TwoHandIKComponent>().AimLock = weight;
 				},
+				// The pass's off switch, for a character whose weapon in hand is not a two-hand
+				// one (a knife, a pistol). Weight 0 is not the same: it still finds the weapon and
+				// measures reach, and warns that a one-handed weapon has no left marker and sits
+				// in the right arm - again after every clean solve, so on every swap back.
+				"SetHandIKEnabled", [](Entity& e, bool enabled)
+				{
+					if (e.HasComponent<TwoHandIKComponent>())
+						e.GetComponent<TwoHandIKComponent>().Enabled = enabled;
+				},
 
 				// --- Bone sockets ---
 				// BoneAttachmentComponent is untracked, so these need no MarkChanged. The system
@@ -485,6 +494,14 @@ namespace GanymedE {
 				{
 					if (PhysicsScene* physics = Physics())
 						physics->AddImpulse(e.GetUUID(), impulse);
+				},
+				// Respawns, checkpoints, teleporters. SetTranslation cannot do it for anything with
+				// a body: SyncTransforms overwrites the transform from the simulation every step.
+				// World space; velocity is untouched.
+				"Teleport", [](Entity& e, const glm::vec3& position)
+				{
+					if (PhysicsScene* physics = Physics())
+						physics->Teleport(e.GetUUID(), position);
 				},
 				// Consumed by the next step; call it every frame while the push lasts.
 				"AddForce", [](Entity& e, const glm::vec3& force)
@@ -645,8 +662,10 @@ namespace GanymedE {
 		void RegisterInput(sol::state& lua)
 		{
 			sol::table input = lua.create_named_table("Input");
-			input["IsKeyPressed"]         = [](int key) { return Input::IsKeyPressed(static_cast<KeyCode>(key)); };
-			input["IsMouseButtonPressed"] = [](int button) { return Input::IsMouseButtonPressed(static_cast<MouseCode>(button)); };
+			// The game-focus view, not the raw one: in the editor a script must not see keys typed
+			// into a panel or the click on the Stop button. Outside the editor it is the same thing.
+			input["IsKeyPressed"]         = [](int key) { return Input::IsGameKeyPressed(static_cast<KeyCode>(key)); };
+			input["IsMouseButtonPressed"] = [](int button) { return Input::IsGameMouseButtonPressed(static_cast<MouseCode>(button)); };
 			// Two returns rather than a Vec3: mouse position is 2D, and TSTL models this as
 			// LuaMultiReturn<[number, number]>.
 			input["GetMousePosition"]     = []() { const glm::vec2 p = Input::GetMousePosition(); return std::make_tuple(p.x, p.y); };
@@ -654,7 +673,7 @@ namespace GanymedE {
 			// How far the mouse moved last frame, in pixels. This - not GetMousePosition - is
 			// what mouse-look reads: with the cursor locked the absolute position is an
 			// unbounded virtual coordinate that means nothing on its own.
-			input["GetMouseDelta"]        = []() { const glm::vec2 d = Input::GetMouseDelta(); return std::make_tuple(d.x, d.y); };
+			input["GetMouseDelta"]        = []() { const glm::vec2 d = Input::GetGameMouseDelta(); return std::make_tuple(d.x, d.y); };
 
 			// Cursor.Normal / Cursor.Hidden / Cursor.Locked. Locked is mouse-look: hidden, held
 			// to the window, raw motion where the platform has it.
@@ -836,8 +855,9 @@ namespace GanymedE {
 			//     local e = Scene.FindEntityByUUID(id)
 			//     if e then e:SetTranslation(...) end
 			//
-			// Position and rotation are optional; omitting both places the root where the
-			// `.gprefab` says, which is what a pre-placed decoration wants.
+			// Position and rotation are optional, and each replaces only its own field of the
+			// `.gprefab`'s root transform: omitting both places the root where the file says,
+			// which is what a pre-placed decoration wants, and the file's scale always survives.
 			scene["Spawn"] = [](const std::string& path, sol::optional<glm::vec3> position,
 				sol::optional<glm::vec3> rotation) -> sol::optional<int64_t>
 			{
@@ -862,13 +882,9 @@ namespace GanymedE {
 					return sol::nullopt;
 				}
 
-				TransformComponent transform;
-				const bool placed = position.has_value() || rotation.has_value();
-				if (position) transform.Translation = *position;
-				if (rotation) transform.Rotation = *rotation;
-
-				const UUID id = context->Commands().InstantiatePrefab(
-					handle, placed ? &transform : nullptr);
+				const UUID id = context->Commands().InstantiatePrefab(handle,
+					position ? std::optional<glm::vec3>(*position) : std::nullopt,
+					rotation ? std::optional<glm::vec3>(*rotation) : std::nullopt);
 
 				// Refused by the per-frame spawn cap. Nil rather than a zero id, so a script
 				// that checks its return sees the same "did not happen" it gets from a bad path;

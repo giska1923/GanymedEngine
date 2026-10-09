@@ -53,7 +53,8 @@ namespace GanymedE::ECS {
 		});
 	}
 
-	UUID CommandQueue::InstantiatePrefab(AssetHandle source, const TransformComponent* rootTransform)
+	UUID CommandQueue::InstantiatePrefab(AssetHandle source, std::optional<glm::vec3> translation,
+		std::optional<glm::vec3> rotation)
 	{
 		if (m_SpawnsThisFrame >= MaxSpawnsPerFrame)
 		{
@@ -68,17 +69,13 @@ namespace GanymedE::ECS {
 		const UUID rootID;
 
 		// Captured **by value**: the op runs next frame, long after the caller's locals are gone
-		// - the same rule AddComponent's arguments follow, and the reason this is an optional
-		// rather than the pointer the parameter arrives as.
-		std::optional<TransformComponent> transform;
-		if (rootTransform)
-			transform = *rootTransform;
-
-		m_CreateOps.emplace_back([source, rootID, transform](Scene& scene)
+		// - the same rule AddComponent's arguments follow.
+		m_CreateOps.emplace_back([source, rootID, translation, rotation](Scene& scene)
 		{
 			PrefabSerializer::InstantiateOptions options;
 			options.RootUUID = rootID;
-			options.RootTransform = transform ? &(*transform) : nullptr;
+			options.RootTranslation = translation;
+			options.RootRotation = rotation;
 
 			// Legal here and nowhere else on this path: the flush runs from FrameBegin with
 			// IsUpdating false, so Instantiate's immediate Entity API is allowed. Called from a

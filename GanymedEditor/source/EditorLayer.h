@@ -54,6 +54,10 @@ namespace GanymedE {
 		void OnScenePlay();
 		void OnSceneStop();
 
+		// Hands the keyboard and mouse to the game in the viewport, or takes them back. While the
+		// game has them, ImGui takes no input at all - see the definition.
+		void SetGameFocus(bool focused);
+
 		// Seeds a fresh scene with a default sun + sky so meshes are lit immediately
 		void SetupDefaultEnvironment(const Ref<Scene>& scene);
 

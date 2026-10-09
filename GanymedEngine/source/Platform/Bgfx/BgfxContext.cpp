@@ -371,7 +371,7 @@ namespace GanymedE {
 		init.platformData.ndt = NativeDisplayHandle();
 		init.resolution.width = m_Width;
 		init.resolution.height = m_Height;
-		init.resolution.reset = m_VSync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE;
+		init.resolution.reset = ResetFlags();
 
 		if (!bgfx::init(init))
 		{
@@ -483,13 +483,21 @@ namespace GanymedE {
 			Reset();
 	}
 
+	// One place for both init and every resize. BGFX_RESET_MAXANISOTROPY is what lets a sampler's
+	// ANISOTROPIC flags mean anything: without it the D3D11, D3D12, Vulkan and GL backends clamp
+	// max anisotropy to 1, so an anisotropic sampler silently samples trilinear. It costs nothing
+	// for a sampler that does not ask for it.
+	uint32_t BgfxContext::ResetFlags() const
+	{
+		return (m_VSync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE) | BGFX_RESET_MAXANISOTROPY;
+	}
+
 	void BgfxContext::Reset()
 	{
 		if (!m_Initialized)
 			return;
 
-		const uint32_t flags = m_VSync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE;
-		bgfx::reset(m_Width, m_Height, flags);
+		bgfx::reset(m_Width, m_Height, ResetFlags());
 		bgfx::setViewRect(RenderPass::Backbuffer, 0, 0, uint16_t(m_Width), uint16_t(m_Height));
 	}
 

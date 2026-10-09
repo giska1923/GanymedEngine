@@ -410,5 +410,18 @@ namespace GanymedE {
 		return s_Data && s_Data->DebuggerVisible;
 	}
 
+	bool UIEngine::IsPointerOverDebugger()
+	{
+		if (!IsDebuggerVisible())
+			return false;
+
+		Rml::Element* hover = s_Data->Context->GetHoverElement();
+		Rml::ElementDocument* document = hover ? hover->GetOwnerDocument() : nullptr;
+
+		// RmlUi's own test for "this element belongs to the Debugger" (Debugger/ElementInfo.cpp):
+		// every Debugger document id starts with this prefix.
+		return document && document->GetId().rfind("rmlui-debug-", 0) == 0;
+	}
+
 
 }

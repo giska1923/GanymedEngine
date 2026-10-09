@@ -112,7 +112,9 @@ end
 return Player
 ```
 
-All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`, `OnCollisionEnter/Exit(other)`.
+All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`, `OnCollisionEnter(other, contact)`,
+`OnCollisionExit(other)`. `contact` is `{ point, normal }`, where this entity touched `other`, on
+other's surface, with that surface's outward normal; see [physics.md](physics.md#collision-events--scripts).
 
 Collision hooks are dispatched by `PhysicsSystem::DispatchCollisionEvents`, per fixed step inside
 the accumulator loop, so native and Lua scripts see identical timing. An entity may carry a native
@@ -183,6 +185,15 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 > right for deleting one hand-authored entity, wrong for a projectile going away, whose children
 > would otherwise accumulate for the session. Same next-frame timing, for the same reason.
 >
+> **A spawn keeps the prefab's own root transform**, and `position` and `rotation`, when given,
+> replace only those two fields. In particular the file's **scale always survives**. The first
+> version built a fresh transform from the two arguments, and the prefab layer replaced the root's
+> whole transform with it. So a spawn placed anywhere reset an authored root scale to 1, and with
+> it every collider the scale shrinks: the Proving Ground's round, authored at 0.15 with a 0.5
+> sphere, flew as a 1 m ball. Its first frame, before its velocity lands, overlapped the shooter's
+> capsule, and the character controller pushed itself backwards out of it, 9 cm a shot. A rotation
+> left out now keeps the file's rotation too, where it used to be zeroed.
+>
 > **Spawns are capped at 64 per frame** (`ECS::CommandQueue::MaxSpawnsPerFrame`). That is a guard
 > against `while true do Scene.Spawn(...) end`, not a design budget: the queue only drains at the
 > next flush, so an unguarded loop would queue until the machine gave out. Past the cap `Spawn`
@@ -205,9 +216,10 @@ Rules for anything added later:
 - **Writes to tracked components always pair with `MarkChanged`.** Same rule if a binding ever
   writes `RelationshipComponent`.
 - Physics-facing bindings belong on `PhysicsScene`, not on transform writes, so kinematic and
-  dynamic bodies behave correctly. `Entity:Get/SetLinearVelocity`, `AddImpulse` and `AddForce` do
+  dynamic bodies behave correctly. `Entity:Get/SetLinearVelocity`, `AddImpulse`, `AddForce` and
+  `Teleport(position)` (respawns, checkpoints: world space, velocity kept) do
   this — reached via `Scene::Systems().Get<PhysicsSystem>()->GetPhysicsScene()`, which is null
-  outside play, so all four no-op rather than assert. **Writing a dynamic body's transform instead
+  outside play, so all of them no-op rather than assert. **Writing a dynamic body's transform instead
   does nothing visible**: `PhysicsScene::SyncTransforms` overwrites it from the simulation every
   step. `AddImpulse` is a one-shot change in momentum; `AddForce` is consumed by the next step and
   wants calling every frame while the push lasts. Each wakes the body first, because Jolt silently
@@ -282,10 +294,23 @@ aim (0 leaves it on its socket), clamped by the pass. It needs an `AimOffsetComp
 entity. Drop it with the hand weights for a lowered weapon, or the rifle stays level on the aim
 with the hands off it.
 
+`SetHandIKEnabled(enabled)` turns the pass off and on. It is for a character whose weapon in hand
+is not a two-hand one, such as a knife or a pistol socketed to the right hand. **Weight 0 is not
+the same thing.** The pass still finds the weapon and measures reach at weight 0. On a one-handed
+weapon it then warns that the weapon sits inside the right arm and has no left-hand marker, and
+since a clean solve re-arms those warnings, they come back on every switch to it. Off, the pass
+checks nothing and leaves both arms and the weapon to the clip and the socket.
+
 Timing is the same as the aim offset: `AnimationSystem` runs after both script systems, so a write
-lands on this frame's pose. **Both are no-ops without `TwoHandIKComponent`.** The chains, the
-marker names and `Enabled` are authored data. There are no getters; the readouts are the
-editor's.
+lands on this frame's pose. **All three are no-ops without `TwoHandIKComponent`.** The chains and
+the marker names are authored data. There are no getters; the readouts are the editor's.
+
+**Swapping weapons on one rig** works through the socket. The pass holds the first child socketed
+to the rig, so give the weapon in hand the only socket. `DetachFromBone` the one put away:
+it clears the joint at once and removes the component next frame, and the pass already skips a
+socket with no joint, so the detaching weapon does not get the arms for that frame. `AttachToBone`
+on a weapon with no socket adds the component next frame, so for one frame there is nothing to
+hold.
 
 ### Bone attachments
 
@@ -466,6 +491,12 @@ end
 delta is in **pixels moved last frame**, not a rate, so it must not be multiplied by `ts` - mouse
 movement is already an amount rather than a speed, and scaling it by frame time makes sensitivity
 depend on framerate. See [platform.md](platform.md#cursor-mode-and-mouse-delta).
+
+Every `Input` read is the **game-focus** view. In the runtime that is plain hardware state. In the
+editor's Play mode, a script sees no keys, no buttons and no mouse motion until the viewport has been
+clicked, and sees them again after Ctrl+Alt hands input back to the editor. A cursor locked in
+`OnCreate` therefore stays free until that click. Locking on `OnCreate` is safe now, because Ctrl+Alt
+is always a way out. See [platform.md](platform.md#game-focus).
 
 ### Characters
 

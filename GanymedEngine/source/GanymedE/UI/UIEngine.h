@@ -74,5 +74,10 @@ namespace GanymedE {
 		// Debug builds only - RmlUi's Debugger sources are not compiled otherwise.
 		static void SetDebuggerVisible(bool visible);
 		static bool IsDebuggerVisible();
+
+		// Whether the last mouse position RmlUi saw is over one of the Debugger's own panels.
+		// The Debugger is editor tooling that happens to live in the game's context, so the
+		// editor needs to tell a click on it apart from a click on the game.
+		static bool IsPointerOverDebugger();
 	};
 }

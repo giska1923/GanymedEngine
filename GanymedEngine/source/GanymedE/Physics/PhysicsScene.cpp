@@ -187,6 +187,9 @@ namespace GanymedE {
 		JPH::BodyID Body1;
 		JPH::BodyID Body2;
 		bool Entered = true;
+		glm::vec3 PointOn1{ 0.0f };
+		glm::vec3 PointOn2{ 0.0f };
+		glm::vec3 Normal{ 0.0f };   // from body 1 toward body 2
 	};
 
 	class PhysicsContactListener : public JPH::ContactListener
@@ -198,11 +201,33 @@ namespace GanymedE {
 			return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
 		}
 
+		// The manifold is only valid inside this callback, so the contact is copied out here, on
+		// whichever Jolt thread found it, and travels with the pair to the main thread.
 		void OnContactAdded(const JPH::Body& inBody1, const JPH::Body& inBody2,
-			const JPH::ContactManifold&, JPH::ContactSettings&) override
+			const JPH::ContactManifold& inManifold, JPH::ContactSettings&) override
 		{
+			PendingBodyPair pair{ inBody1.GetID(), inBody2.GetID(), true };
+
+			const JPH::uint count = (JPH::uint)inManifold.mRelativeContactPointsOn1.size();
+			if (count > 0)
+			{
+				JPH::RVec3 on1 = JPH::RVec3::sZero();
+				JPH::RVec3 on2 = JPH::RVec3::sZero();
+				for (JPH::uint i = 0; i < count; ++i)
+				{
+					on1 += inManifold.GetWorldSpaceContactPointOn1(i);
+					on2 += inManifold.GetWorldSpaceContactPointOn2(i);
+				}
+				on1 /= (JPH::Real)count;
+				on2 /= (JPH::Real)count;
+				pair.PointOn1 = { (float)on1.GetX(), (float)on1.GetY(), (float)on1.GetZ() };
+				pair.PointOn2 = { (float)on2.GetX(), (float)on2.GetY(), (float)on2.GetZ() };
+			}
+			const JPH::Vec3 n = inManifold.mWorldSpaceNormal;
+			pair.Normal = { n.GetX(), n.GetY(), n.GetZ() };
+
 			std::lock_guard lock(m_Mutex);
-			m_Pending.push_back({ inBody1.GetID(), inBody2.GetID(), true });
+			m_Pending.push_back(pair);
 		}
 
 		void OnContactRemoved(const JPH::SubShapeIDPair& inSubShapePair) override
@@ -705,6 +730,11 @@ namespace GanymedE {
 			// Only Dynamic asks: Static never integrates, and Kinematic takes its orientation
 			// from the transform each step, so restricting its DOFs would change nothing while
 			// looking like it should.
+			// Swept instead of discrete. Dynamic only: a static body never moves, and a kinematic
+			// one is wherever its transform puts it, so there is nothing for a cast to catch.
+			if (motionType == JPH::EMotionType::Dynamic && rb.ContinuousCollision)
+				settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
+
 			if (motionType == JPH::EMotionType::Dynamic && rb.LockRotation)
 			{
 				settings.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX
@@ -1056,6 +1086,9 @@ namespace GanymedE {
 			e.EntityA = it1->second;
 			e.EntityB = it2->second;
 			e.Entered = pair.Entered;
+			e.PointOnA = pair.PointOn1;
+			e.PointOnB = pair.PointOn2;
+			e.Normal = pair.Normal;
 			m_CollisionEvents.push_back(e);
 		}
 	}
@@ -1264,6 +1297,33 @@ namespace GanymedE {
 		// Activate first: setting a velocity on a sleeping body is silently dropped.
 		bodyInterface.ActivateBody(it->second);
 		bodyInterface.SetLinearVelocity(it->second, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+	}
+
+	void PhysicsScene::Teleport(UUID entity, const glm::vec3& position)
+	{
+		if (!m_Active || !m_Impl)
+			return;
+
+		const JPH::RVec3 p(position.x, position.y, position.z);
+		if (auto ch = m_Impl->EntityToCharacter.find(entity); ch != m_Impl->EntityToCharacter.end())
+		{
+			// SetPosition also moves the character's inner body (UpdateInnerBodyTransform), so
+			// the broadphase presence goes with it.
+			ch->second->SetPosition(p);
+		}
+		else
+		{
+			auto it = m_Impl->EntityToBody.find(entity);
+			if (it == m_Impl->EntityToBody.end())
+				return;
+			m_Impl->System.GetBodyInterface().SetPosition(it->second, p, JPH::EActivation::Activate);
+		}
+
+		for (auto* poses : { &m_PreviousPoses, &m_CurrentPoses })
+		{
+			if (auto pose = poses->find(entity); pose != poses->end())
+				pose->second.Position = position;
+		}
 	}
 
 	glm::vec3 PhysicsScene::GetLinearVelocity(UUID entity) const

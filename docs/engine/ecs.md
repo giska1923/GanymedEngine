@@ -62,7 +62,9 @@ using ComponentList = TypeList<TransformComponent, WorldTransformComponent, Rela
    [`ComponentReflection.cpp`](../../GanymedEngine/source/GanymedE/Reflection/ComponentReflection.cpp)
    with `GE_REFLECT_COMPONENT`, and add a `sizeof` sentinel there if the struct has no
    standard-library container member. `Reflection::Validate()` asserts at boot that every
-   `ComponentList` entry is registered — see [scene.md](scene.md#member-reflection).
+   `ComponentList` entry is registered, and that every registered component is in `ComponentList`.
+   Skipping step 2 therefore fails at boot instead of silently dropping the component from Play
+   copies — see [scene.md](scene.md#member-reflection).
 5. Add serialization in `SceneSerializer.cpp` and editor UI in `SceneHierarchyPanel.cpp` (these two
    are still per-component by hand — collapsing them onto the reflection data is R2–R4 of
    [REFLECTION_ROADMAP.md](../history/REFLECTION_ROADMAP.md)).
@@ -302,8 +304,11 @@ InstantiateFromAsset` during the creation phase — legal there and nowhere else
 the flush runs with `IsUpdating` false and the immediate `Entity` API is allowed. It hands the
 caller the **root's UUID at the call**, minted up front and pinned through
 `InstantiateOptions::RootUUID`, because the entity does not exist yet and a `PendingEntity` is
-meaningful only inside the frame it was made in. This is what `Scene.Spawn` is built on — see
-[scripting.md](scripting.md). It is capped at `MaxSpawnsPerFrame` (64) and refuses past that with
+meaningful only inside the frame it was made in. Placement is an optional translation and rotation
+(`InstantiateOptions::RootTranslation` / `RootRotation`), each replacing only that field of the
+file's root transform, so the prefab's scale survives a spawn. `InstantiateOptions::RootTransform`
+still exists and replaces the whole transform; that is Revert's, which restores an instance's own
+placement. This is what `Scene.Spawn` is built on — see [scripting.md](scripting.md). It is capped at `MaxSpawnsPerFrame` (64) and refuses past that with
 one warning per frame, because the queue only drains at the next flush and an unguarded script loop
 would otherwise queue without bound.
 

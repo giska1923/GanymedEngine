@@ -137,8 +137,11 @@ copyable, no behavior beyond small helpers.
   still carries, scale included.
 - **`TwoHandIKComponent`** — solves both arms onto the weapon this rig holds. The weapon is the
   **first child with a `BoneAttachmentComponent` aimed at this rig** (`Target` zero, or this
-  entity's UUID). There is no weapon field: one weapon per character, as a child, is the only case
-  so far.
+  entity's UUID) **and a joint**. An empty `Joint` is no socket: `BoneAttachmentSystem` leaves such
+  an entity at its parent, and `DetachFromBone` clears the joint a frame before it removes the
+  component. Without the skip, a script swapping weapons would hand the arms to the one it just
+  put away for that frame. There is no weapon field: a character carrying several weapons
+  socketing only the one in hand is how the choice is made (scripting.md, "Two-hand IK").
 
   **Fields:**
   - Six joint names: `RightUpper` / `RightLower` / `RightEnd` (defaults `RightArm` /
@@ -254,8 +257,10 @@ precedent.
   here because there is nothing to choose. See [physics.md](physics.md#character-controllers).
 - **`RigidBodyComponent`** — `Static | Dynamic | Kinematic`, mass, linear/angular damping,
   `UseGravity`, `LockRotation` (forbids rotation while keeping translation — what an upright
-  walking capsule needs; see [physics.md](physics.md#locked-rotation)), and `IsSensor` (a trigger
-  volume: reports contacts, causes none — see [physics.md](physics.md#sensors-trigger-volumes)).
+  walking capsule needs; see [physics.md](physics.md#locked-rotation)), `IsSensor` (a trigger
+  volume: reports contacts, causes none — see [physics.md](physics.md#sensors-trigger-volumes)),
+  and `ContinuousCollision` (swept collision for a fast body, so it cannot tunnel — see
+  [physics.md](physics.md#continuous-collision)).
 - **`BoxColliderComponent`** (half extents), **`SphereColliderComponent`** (radius),
   **`CapsuleColliderComponent`** (radius + half height) — each with a local `Offset` and a
   `PhysicsMaterial { Friction, Restitution }`.
@@ -767,13 +772,12 @@ anyway.
 
 ### What is registered
 
-41 types, 168 members (the boot log prints both — a count far below that is the cheapest signal that a
-registration block was dropped by the linker). Measured at editor boot after `TwoHandIKComponent`:
+41 types, 169 members (the boot log prints both — a count far below that is the cheapest signal that a
+registration block was dropped by the linker). Measured at editor boot after `CharacterControllerComponent`
+joined `ComponentList`:
 
-- The **30 components** — all 27 `ComponentList` entries, plus `IDComponent` and `TagComponent`
-  (entity identity, excluded from the list, registered so prefab diffing can skip them), plus
-  `CharacterControllerComponent`, which is reflected and serialized but still missing from
-  `ComponentList` ([ToDo](../ToDo/cross-cutting.md)).
+- The **30 components** — all 28 `ComponentList` entries, plus `IDComponent` and `TagComponent`
+  (entity identity, excluded from the list, registered so prefab diffing can skip them).
 - **5 supporting types** — `RangeF`; `PhysicsMaterial`; `SceneCamera`, whose seven private fields are
   registered through entt's setter/getter `.data` overload; and `FloatCurve` / `ColorGradient` with
   **zero members**. A reflected type with no members is the deliberate signal "opaque — a bespoke
@@ -790,7 +794,13 @@ format; consumers identify them by `type_info` comparison instead, which needs n
 
 `Reflection::Validate()` runs from `Init()` in Debug and logs every problem rather than stopping at the
 first (a registration mistake is usually a repeated copy-paste). It checks that every `ComponentList`
-entry is registered *and* went through `GE_REFLECT_COMPONENT`, that no field was left nameless, that
+entry is registered *and* went through `GE_REFLECT_COMPONENT`, and the reverse: that every type
+registered with `GE_REFLECT_COMPONENT` is in `ComponentList`, apart from `IDComponent` and
+`TagComponent`. The reverse check exists because a component can be reflected and serialized but
+missing from the list, and every generic copy then drops it silently. That copy happens in Play,
+duplicate, prefabs and undo. `CharacterControllerComponent` shipped that way, and editor Play created
+no characters at all while the runtime, which loads through the serializer, was fine. It also checks
+that no field was left nameless, that
 `SerializeByName` is only on an enum, that a `Flatten` field's type is itself reflected, and that
 valued/flag attributes match the type they were put on — `Color` on a vec3/vec4, `Radians` on a
 float/vec3, an asset slot on an `AssetHandle` or an `AssetRef<T>`. That last one is the load-bearing
@@ -1113,6 +1123,10 @@ optimization.
 scene. So **Apply does not write the instance's root transform into the file**, and **Revert does
 not overwrite the instance's root transform**. Everything below the root is wholly file-owned on
 Revert and wholly instance-owned on Apply. This is the Unity norm: placement is per-instance.
+Instantiation takes placement two ways (`InstantiateOptions`): `RootTransform` replaces the whole
+root transform, which is Revert keeping the instance's own; `RootTranslation` / `RootRotation`
+replace only those fields of the file's, which is a spawn putting a prefab somewhere without
+losing its authored scale.
 
 **`PrefabInstanceComponent { AssetHandle Source }`** marks the instance *root only*. Descendants are
 ordinary entities, which is what makes structural editing inside an instance free — add, remove and

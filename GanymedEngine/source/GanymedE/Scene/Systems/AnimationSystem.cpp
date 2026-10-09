@@ -1285,7 +1285,10 @@ namespace GanymedE {
 		auto access = View<WeaponAccess>();
 
 		// The weapon: the first child whose socket is aimed at this rig. Target zero means the
-		// socket's parent, which for a child is this entity.
+		// socket's parent, which for a child is this entity. A socket with no joint is no socket:
+		// BoneAttachmentSystem leaves such an entity at its parent, and DetachFromBone clears the
+		// joint a frame before the component goes - a script swapping weapons would otherwise hand
+		// the arms, for that frame, to the weapon it just put away.
 		Entity weapon;
 		const BoneAttachmentComponent* socket = nullptr;
 		if (auto relationship = access.FindOne<RelationshipComponent>(self))
@@ -1297,7 +1300,8 @@ namespace GanymedE {
 					continue;
 
 				auto attachment = access.FindOne<BoneAttachmentComponent>(child);
-				if (!attachment || (attachment->Target != UUID{ 0 } && attachment->Target != self.GetUUID()))
+				if (!attachment || attachment->Joint.empty()
+					|| (attachment->Target != UUID{ 0 } && attachment->Target != self.GetUUID()))
 					continue;
 
 				weapon = child;
@@ -1308,8 +1312,8 @@ namespace GanymedE {
 		if (!weapon || !socket)
 		{
 			Both(HandStatus::NoWeapon);
-			WarnHandIK(entity, Where() + " finds no weapon: no child has a BoneAttachmentComponent "
-				"on this rig - leaving the arms on the clip");
+			WarnHandIK(entity, Where() + " finds no weapon: no child is socketed to a joint "
+				"of this rig - leaving the arms on the clip");
 			return;
 		}
 
