@@ -1,6 +1,6 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: O0 and O1 done (2026-10-09); O2 next.** The backend is complete (B1–B5, `api-v0.5`), so
+**Status: O0–O2 done (2026-10-09); O3 next.** The backend is complete (B1–B5, `api-v0.5`), so
 O1–O4 and O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
 been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
@@ -127,7 +127,7 @@ prerequisite for anything here.
 |---|---|---|---|---|
 | **O0** | Vendor IXWebSocket, a premake project, and a build on Windows and Linux. **Done** | master | nothing | took under a day |
 | **O1** | `Online/` request layer: threading, ownership, cancellation, timeouts. **Done** | master | nothing (a Python stub) | about a day |
-| **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth | master | **B1** (device auth) | 1–2 days |
+| **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth. **Done** | master | **B1** (device auth) | under a day |
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores | master + `first-game` | **B2** (leaderboards) | 1–2 days |
 | **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
 | **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
@@ -463,7 +463,7 @@ an HTTP/1.1 Python stub. The scenes, the script and the stub are not committed.
 
 ---
 
-## Phase O2 — identity
+## Phase O2 — identity — **DONE**
 
 ### Goal
 
@@ -514,6 +514,58 @@ every Proving Ground gate run happens without it.
 | `--profile=b` beside the default | two different player ids; the backend shows two accounts |
 | Backend down at boot | boot time unchanged; status `Offline`; one warning, not one per frame |
 | Backend restarted mid-session (token invalid) | the next call refreshes and succeeds, visible in the log |
+
+### Execution notes
+
+2026-10-09, on `hello-online`. Live behaviour is in
+[online.md](../engine/online.md#identity-and-the-session) and
+[platform.md](../engine/platform.md#per-user-data). Verified on the Windows x64 Debug runtime against
+the **real backend**: the GanymedServer binary on the host, on 8081, sharing the Compose Postgres and
+Redis, with `GS_ACCESS_TOKEN_TTL=2s` so expiry happens inside a run. A throwaway test scene and
+script (not committed) polled the status and called `Backend.GetProfile`.
+
+| Check | Result | Evidence |
+|---|---|---|
+| First run | **pass** | `profiles/o2a/device_id` created under `%LOCALAPPDATA%\GanymedEngine`; "signed in as account 941855b7-… (profile 'o2a')", then "playing as 'Player-941855'" |
+| Second run | **pass** | the same account ID |
+| `--profile=b` beside the default | **pass** | `o2b` signed in as a different account; the backend logged two `account created` |
+| Backend down at boot | **pass** | boot finished in the same second as with the backend up; offline; 9 failed calls over 11 s caused 2 sign-ins and 2 warnings, not one per call |
+| Backend restarted mid-session | **pass**, as a sign-in rather than a refresh (below) | restarted with a new JWT secret: the next call got `unauthorized`, the engine signed in again and the retry succeeded; 14 of 14 calls in the run succeeded |
+| Concurrent 401s share one refresh (added) | **pass** | five `GetProfile`s at once on an expired token: one refresh, five successes; the backend logged no refresh-token reuse in any run |
+| Sign-in never gates boot (added) | **pass** | `OnCreate` saw `signedIn=false`; "Boot complete" logged before "signed in" |
+| Invalid profile (added) | **pass** | `--profile=../evil`: refused at init, no directory created, every call fails with the reason |
+| Linux (WSL2, gcc 11.4) | **pass** | builds with no warnings outside `extern/`; `~/.local/share/GanymedEngine/profiles/o2lin/device_id`, mode 600; two runs, same account, against the Compose backend |
+
+**Where the plan was wrong or incomplete, kept visible:**
+
+- **"On a 401, refresh once" is only right for an expired token.** The contract has two 401s:
+  `token-expired` (refresh) and `unauthorized` (sign in again). A backend restarted with a new
+  secret answers `unauthorized`, and refreshing then would only waste a round trip on a session
+  that is fine on the backend's side but whose token it can no longer read. So the plan's row
+  "the next call refreshes" passed as "the next call signs in again".
+- **Sharing one refresh is not enough; a request needs to know which token it used.** A request
+  answered 401 after another request already recovered the session would otherwise start a second
+  recovery. Each request records the session generation it was sent with, and a stale 401 just
+  retries. With rotating refresh tokens, a second concurrent refresh is reuse and revokes the session.
+- **The refresh token is dropped the moment it is sent.** Not in the plan: if the network fails
+  mid-refresh, the backend may already have spent it, and presenting it again would be reuse. The
+  next recovery signs in instead.
+- **"No automatic retries" needed a companion rule.** With no retry loop, a backend that is down at
+  boot leaves the game offline for good unless something signs in later. An authenticated request
+  now waits for a sign-in started on its behalf, and a 5-second backoff after a failed sign-in stops
+  a per-frame caller from turning that into a sign-in, and a warning, every frame.
+- **O2 needed a request to verify against**, and the plan named only local reads
+  (`IsSignedIn`, `GetPlayerName`). `Backend.GetProfile` was added: typed, and something scripts
+  need anyway.
+- **The session got its own layer.** `OnlineSession.cpp` implements `Online`'s API over a private
+  `OnlineTransport` (single HTTP attempts, still the only TU with IXWebSocket), so the token and
+  retry rules are not tangled with the network code.
+- **An invalid `--profile=` is an error, not a fallback to `default`.** Two test instances quietly
+  sharing a player is the bug `--profile=` exists to prevent.
+- **Not done: refreshing before expiry.** `expires_in` is ignored; the first 401 after expiry
+  costs one extra round trip (40–100 ms on localhost). Recorded in online.md.
+- **Not tested:** the `$XDG_DATA_HOME`-set branch on Linux (the fallback was), and two *editor*
+  instances (two runtimes were). macOS's directory is written but unbuilt.
 
 ---
 

@@ -149,7 +149,8 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 `Key`, `Mouse`, `Log`
 (routed to the **client** logger — script output is game output),
 `Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.FindMarkers` / `Scene.Spawn`, `Entity:Destroy`,
-`Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
+`Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)), `Backend` (the online backend:
+`IsSignedIn`, `GetPlayerName`, `GetProfile` — see [online.md](online.md#what-a-script-sees)).
 
 > **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
 > `int64_t`, and sol2 with `SOL_ALL_SAFETIES_ON` **throws** rather than truncating when asked to

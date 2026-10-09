@@ -2,14 +2,16 @@
 
 [`GanymedE/Online/`](../../GanymedEngine/source/GanymedE/Online) is the engine's HTTP client to the
 backend ([GanymedServer](https://github.com/giska1923/GanymedServer), a separate Go repository). It
-issues requests without ever blocking a frame, and hands responses to Lua inside the owning scene's
-script update. A response can never reach a destroyed scene or a destroyed script instance. The
-milestone that builds it, and what comes next (identity, leaderboards, the push socket, matches), is
-[ONLINE.md](../ToDo/ONLINE.md).
+holds the player's identity and session, issues requests without ever blocking a frame, and hands
+responses to Lua inside the owning scene's script update. A response can never reach a destroyed
+scene or a destroyed script instance. The milestone that builds it, and what comes next
+(leaderboards, the push socket, matches), is [ONLINE.md](../ToDo/ONLINE.md).
 
 | File | Holds |
 |---|---|
-| [Online.h](../../GanymedEngine/source/GanymedE/Online/Online.h) / [.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | The transport facade: `Send`, `Cancel`, stats, `--backend=`. **The only engine TU that includes IXWebSocket** |
+| [Online.h](../../GanymedEngine/source/GanymedE/Online/Online.h) | The public facade: `Send`, `Cancel`, status, identity, stats |
+| [OnlineSession.cpp](../../GanymedEngine/source/GanymedE/Online/OnlineSession.cpp) | `Online`'s implementation: `--backend=` and `--profile=`, the device ID, sign-in, the session, 401 recovery and the one retry |
+| [OnlineTransport.h](../../GanymedEngine/source/GanymedE/Online/OnlineTransport.h) / [Online.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | Private: single HTTP attempts over a pool of four clients. **Online.cpp is the only engine TU that includes IXWebSocket** |
 | [Json.h](../../GanymedEngine/source/GanymedE/Online/Json.h) / [.cpp](../../GanymedEngine/source/GanymedE/Online/Json.cpp) | `JsonValue`, `ParseJson` (over yaml-cpp), `WriteJson` |
 | [ScriptEngine.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptEngine.cpp) | Who owns each request, per-scene mailboxes, cancellation, delivery to Lua |
 | [ScriptBindings.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptBindings.cpp) | The `Backend` table, JSON ↔ Lua |
@@ -38,14 +40,16 @@ Ganymed's layer is stricter about lifetime, because every caller is a script wit
 ```
 Lua: Backend.X(self.entity, ..., function(ok, result) end)
   └─ SendScriptRequest            checks the owner, records (owner UUID, callback, reader)
-       └─ Online::Send            picks the least-loaded of 4 clients, never blocks
-            └─ ix::HttpClient (async) ── its own thread ── network ──┐
+       └─ Online::Send            no session yet? wait for a sign-in (started if none is running)
+            └─ OnlineTransport::Start   access token attached; least-loaded of 4 clients
+                 └─ ix::HttpClient (async) ── its own thread ── network ──┐
                                                                      ▼
                                network thread: copy status + body, nothing else
                                └─ JobSystem::SubmitToMainThread
 Application::Run ─ JobSystem::OnUpdate (top of the next frame)
-  └─ Online: cancelled? ── yes ─▶ dropped, counted as dropped late
-              └─ no ─▶ completion ─▶ that scene's mailbox (ScriptEngine)
+  └─ transport: cancelled? ── yes ─▶ dropped, counted as dropped late
+                 └─ no ─▶ session: a 401 on the first try? ── yes ─▶ recover the session, send once more
+                                    └─ no ─▶ completion ─▶ that scene's mailbox (ScriptEngine)
 Scene update ─ LuaScriptSystem::OnUpdate, scene context set
   └─ ScriptEngine::DeliverResponses, after the reactive drain and before any OnUpdate:
        owner instance still there and alive? ── no ─▶ skipped
@@ -65,11 +69,13 @@ There are three hops, and each one is needed:
    `DeliverResponses` skips one whose owner is gone or disabled. Both checks run on the main thread,
    where destruction happens.
 
-## `Online`: the transport
+## The transport
 
 `Online` is a static facade with `Init`/`Shutdown` owned by `Application`, like `AudioEngine`. It
 knows nothing of scenes, scripts or owners. `Send(OnlineRequest, completion)` returns an id, and
-`Cancel(id)` aborts the transfer and guarantees the completion never runs. Every entry point is safe
+`Cancel(id)` guarantees the completion never runs and stops the transport waiting on the request
+([what cancel does and does not do](#what-cancel-does-and-does-not-do)). Under it, `OnlineTransport`
+runs single HTTP attempts; the session layer above it decides what to send and with which token. Every entry point is safe
 before `Init` and after `Shutdown`: `Send` then fails through the same completion path a network
 failure takes.
 
@@ -79,8 +85,9 @@ failure takes.
   about 2.1 s, because both `::1` and `127.0.0.1` are tried. A request names only a path, so nothing
   can aim one at another host.
 - **Every request** sends `Accept: application/json`, and `Content-Type: application/json` when it
-  has a body. **Redirects are not followed.** The backend never sends one, and from O2 on a request
-  carries a bearer token, which a redirect would forward to wherever `Location` points.
+  has a body, and `Authorization: Bearer <access token>` when it is authenticated (every route but
+  sign-in and refresh). **Redirects are not followed.** The backend never sends one, and a redirect
+  would forward that token to wherever `Location` points.
 - **Timeouts:** 5 s to connect and 10 s for the transfer, overridable per request. IXWebSocket's own
   default transfer timeout is 1,800 s. 5 s clears a refused connect on Windows (about 2 s), and
   10 s is long for any call the backend answers today; a long-poll overrides it.
@@ -96,8 +103,91 @@ failure takes.
   `Online.h` names no IXWebSocket or sol2 type.
 
 **Stats** are kept by `Online` and logged at shutdown: sent, succeeded (2xx), failed (anything
-else), cancelled (`Cancel` reached a pending request), dropped late (a response came back for a
-cancelled request), and in flight.
+else), cancelled (`Cancel` reached a pending request), retried (sent a second time after a 401),
+sign-ins, refreshes, dropped late (a response came back for a cancelled request), and in flight.
+
+## Identity and the session
+
+### Profiles and the device ID
+
+The backend's only credential is a **device ID**: random data generated once per install and kept
+private (`POST /v1/auth/device`, the backend's `openapi.yaml`). The engine keeps one per **profile**:
+
+- `--profile=<name>` picks it, default `default`. **Two instances on one machine are two players
+  only if they are two profiles**; that is how every networked game is first tested, and without it
+  both would sign in as the same account. A name is 1–32 of `A-Z a-z 0-9 - _`, because it names a
+  directory. Anything else (`--profile=../evil`) is an error and the instance stays offline, rather
+  than quietly becoming `default`: two test instances sharing a player by accident is a confusing bug.
+- The file is `profiles/<name>/device_id` under the per-user data directory
+  ([platform.md](platform.md#per-user-data)): `%LOCALAPPDATA%\GanymedEngine` on Windows,
+  `~/.local/share/GanymedEngine` on Linux. Never beside the executable, whose directory a shipped
+  game cannot write to.
+- **Created on first use** as a random version-4 UUID, from `std::random_device` (the OS CSPRNG on
+  both building platforms). It is written to a temporary file and renamed into place, so a crash
+  cannot leave half an ID, and made owner-only where the OS has permission bits. **An existing file
+  that does not hold a usable ID is never overwritten**: it may be the only copy of a real player's
+  credential. The instance stays offline and says which file.
+- **The device ID and the tokens are never logged.** The account ID and the profile name are.
+
+### Signing in, and what "signed in" means
+
+`Online::Init` reads the profile, loads the device ID, and **starts** a sign-in. It never waits for
+it: boot does not depend on the backend. Status moves `Offline` → `SigningIn` → `SignedIn`, and a
+script polls it with `Backend.IsSignedIn()`. Once signed in, the engine reads `/v1/me/profile` for the
+player's display name (`Backend.GetPlayerName()`).
+
+**The session lives in memory only**: the access token (15 minutes on the backend's default) and the
+refresh token. Persisting the refresh token would save one localhost round trip per launch and put a
+credential on disk; sign-in is cheap enough that it is not worth it.
+
+An authenticated request made with no session **waits for a sign-in**, started on its behalf if none
+is running. So a backend that was down at boot is picked up by the next call, with no retry loop
+running in the background. A failed sign-in fails every waiting request with
+`not signed in: <reason>` and logs **one** warning. For **5 seconds** after it, requests that need a
+sign-in fail at once instead of each starting another: without that, a script calling every frame
+against a dead backend would start a sign-in, and log a warning, sixty times a second.
+
+### A 401, and the one retry
+
+Every authenticated request gets **one** recovery and **one** retry on a 401:
+
+- **`token-expired`** → refresh (`POST /v1/auth/refresh`), then send again with the new token.
+- **Anything else** (`unauthorized`: a token signed with another secret, a revoked session) → sign in
+  again, then send again.
+- **A second 401** is the request's failure, delivered like any other.
+
+Two rules come from the backend's **rotating refresh tokens**. Every refresh consumes the token and
+returns a new one, and presenting a consumed token revokes the whole session:
+
+- **Only one recovery runs at a time.** Every request that hits a 401 while one is running waits for
+  it. Each request also remembers the session **generation** it was sent with. A 401 for a token that
+  has already been replaced (a slow request, answered after another request's recovery finished) is
+  retried with the current token, with no second recovery. This is the standard fix for the refresh
+  race, and with rotation it is mandatory, not an optimisation: two concurrent refreshes count as
+  reuse.
+- **The refresh token is dropped from memory the moment it is sent.** If the network fails mid-refresh
+  the backend may already have spent it, and presenting it again would be reuse. The next recovery
+  then signs in instead. A refresh the backend refuses (`invalid-refresh-token`) is followed by a
+  sign-in at once.
+
+**Not done: refreshing before expiry.** The session's `expires_in` is ignored, and expiry is found
+by the first 401 after it. That costs one extra round trip on that call (40–100 ms measured, on
+localhost), against a timer per session and a rule for when it should fire. Worth revisiting if a
+call ever cannot afford the round trip.
+
+### Measured (O2, 2026-10-09, Windows x64 Debug runtime, against the real backend)
+
+Host backend on 8081 with `GS_ACCESS_TOKEN_TTL=2s`, so expiry happens inside a run.
+
+| Check | Result |
+|---|---|
+| First run, new profile | `device_id` created (36 characters + newline); signed in; `OnCreate` saw `signedIn=false`, and boot completed before the sign-in did |
+| Second run, same profile | the same account ID |
+| `--profile=o2b` beside it | a different account; the backend logged two `account created` |
+| Five requests at once, token expired | **one** refresh, five successes, each 0.08–0.10 s after sending; the backend logged no refresh reuse |
+| Backend restarted with a new JWT secret mid-session | the next call got `unauthorized`, the engine signed in again and the retry succeeded; 14 of 14 calls in that run succeeded |
+| Backend down at boot | boot unchanged; offline; 9 failed calls over 11 s caused 2 sign-in attempts and 2 warnings |
+| `--profile=../evil` | refused at init, no directory created, offline with the reason |
 
 ### Init order and shutdown
 
@@ -176,9 +266,19 @@ Backend.X(self.entity, ..., function(ok, result) end)
 - Callbacks run **before** the instance's `OnUpdate` that frame. A request sent in `OnCreate` was
   delivered in the scene's first update, with `self.entity:GetName()` working inside the callback.
 
-`Backend` has no endpoint bindings yet; identity (O2) and leaderboards (O3) add the first ones.
-O1 was verified through a temporary generic hook, registered only under an environment variable,
-and deleted once the checks were done ([ONLINE.md](../ToDo/ONLINE.md), O1's execution notes).
+The bindings so far:
+
+| Binding | Does |
+|---|---|
+| `Backend.IsSignedIn()` | `true` once a session exists. Local, no request |
+| `Backend.GetPlayerName()` | the display name, or `nil` until it is known. Local, no request |
+| `Backend.GetProfile(self.entity, cb)` | `GET /v1/me/profile` → `{ accountId, name, rating }`; `rating` is a Lua integer, `name` is the API's `display_name` |
+
+Every request binding is typed per endpoint, and maps the API's names to script-style ones
+(`display_name` → `name`). There is no generic request. O1 was verified through a temporary generic
+hook, registered only under an environment variable and deleted once the checks were done
+([ONLINE.md](../ToDo/ONLINE.md), O1's execution notes). The TypeScript declarations are in
+`GanymedEditor/scripts-src/types/ganymed.d.ts`.
 
 ## JSON
 

@@ -553,6 +553,31 @@ declare namespace UI {
 	function GetScore(): number;
 }
 
+/** What Backend.GetProfile delivers on success. `rating` is a Lua integer. */
+declare interface BackendProfile {
+	accountId: string;
+	name: string;
+	rating: number;
+}
+
+/**
+ * The online backend (docs/engine/online.md). Requests take their owner first -
+ * always `this.entity` - and a callback last: `callback(true, result)` on a 2xx, or
+ * `callback(false, reason)`, where `reason` is a problem type URN
+ * ("urn:ganymed:problem:not-found"), "HTTP <status>", or why no response arrived.
+ * The callback runs before OnUpdate in a later frame, and never if the script or
+ * its scene has gone. Sign-in happens on its own; a request made before it
+ * finishes waits for it.
+ */
+declare namespace Backend {
+	/** True once a session exists. Poll it; nothing is pushed yet. */
+	function IsSignedIn(): boolean;
+	/** The signed-in player's display name, or undefined until it is known. */
+	function GetPlayerName(): string | undefined;
+	/** GET /v1/me/profile. */
+	function GetProfile(owner: Entity, callback: (ok: boolean, result: BackendProfile | string) => void): void;
+}
+
 // ---------------------------------------------------------------------------
 // RmlUi's own Lua API, available because the UI plugin shares this VM.
 //

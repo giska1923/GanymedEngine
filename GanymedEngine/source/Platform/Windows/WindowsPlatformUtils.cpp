@@ -113,3 +113,23 @@ namespace GanymedE {
 }
 
 #endif
+
+#ifdef GE_PLATFORM_WINDOWS
+
+namespace GanymedE {
+
+	std::filesystem::path UserData::GetDirectory()
+	{
+		// Local, not Roaming: the device ID identifies this machine's install, and a roaming
+		// profile would carry it to another machine, making two installs one player.
+		PWSTR folder = nullptr;
+		std::filesystem::path result;
+		if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &folder)))
+			result = std::filesystem::path(folder) / "GanymedEngine";
+		CoTaskMemFree(folder);
+		return result;
+	}
+
+}
+
+#endif

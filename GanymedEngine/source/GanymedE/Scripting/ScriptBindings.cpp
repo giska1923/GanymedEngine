@@ -1130,12 +1130,49 @@ namespace GanymedE {
 			}
 		}
 
-		// Empty until O2 adds identity: every binding here is typed per endpoint, and there is no
-		// generic request (docs/engine/online.md). The table exists now so the ownership and
-		// delivery machinery has its one home in Lua.
+		// The online client (docs/engine/online.md). Every request binding is typed per endpoint,
+		// takes its owner first (self.entity) and its callback last, and maps the API's field names
+		// to script-style ones (display_name -> name). There is no generic request.
 		void RegisterBackend(sol::state& lua)
 		{
-			lua.create_named_table("Backend");
+			sol::table backend = lua.create_named_table("Backend");
+
+			// Local reads of the session, no request. Polled rather than pushed: a script that
+			// wants to know when sign-in finishes checks in OnUpdate (push arrives with O4).
+			backend["IsSignedIn"] = []() { return Online::GetStatus() == Online::Status::SignedIn; };
+			backend["GetPlayerName"] = []() -> sol::optional<std::string>
+			{
+				const std::string& name = Online::GetPlayerName();
+				return name.empty() ? sol::optional<std::string>() : sol::optional<std::string>(name);
+			};
+
+			// GET /v1/me/profile -> { accountId, name, rating }. Signs in first if needed.
+			backend["GetProfile"] = [](sol::object owner, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Path = "/v1/me/profile";
+				SendScriptRequest("Backend.GetProfile", owner, std::move(request), callback,
+					[](sol::state_view lua, const OnlineResponse& response) -> sol::object
+					{
+						std::string error;
+						std::optional<JsonValue> profile = ParseJson(response.Body, &error);
+						if (!profile)
+							throw std::runtime_error(error);
+						const JsonValue* account = profile->Find("account_id");
+						const JsonValue* name = profile->Find("display_name");
+						const JsonValue* rating = profile->Find("rating");
+						if (!account || account->Kind != JsonValue::Type::String
+							|| !name || name->Kind != JsonValue::Type::String
+							|| !rating || rating->Kind != JsonValue::Type::Integer)
+							throw std::runtime_error("expected account_id, display_name and an integer rating");
+
+						sol::table result = lua.create_table();
+						result["accountId"] = account->String;
+						result["name"] = name->String;
+						result["rating"] = rating->Integer;
+						return result;
+					});
+			};
 		}
 	}
 
