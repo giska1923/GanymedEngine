@@ -1,6 +1,6 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: O0–O2 done; O3's bindings done, its Proving Ground half (on `first-game`) open (2026-10-09).** The backend is complete (B1–B5, `api-v0.5`), so
+**Status: O0–O3 done (2026-10-09); O4 next.** The backend is complete (B1–B5, `api-v0.5`), so
 O1–O4 and O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
 been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
@@ -128,7 +128,7 @@ prerequisite for anything here.
 | **O0** | Vendor IXWebSocket, a premake project, and a build on Windows and Linux. **Done** | master | nothing | took under a day |
 | **O1** | `Online/` request layer: threading, ownership, cancellation, timeouts. **Done** | master | nothing (a Python stub) | about a day |
 | **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth. **Done** | master | **B1** (device auth) | under a day |
-| **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores | master + `first-game` | **B2** (leaderboards) | 1–2 days |
+| **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores. **Done** | master + `first-game` | **B2** (leaderboards) | about a day |
 | **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
 | **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
 | **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result | master | **B5** + the dedicated-server milestone | blocked, unsized |
@@ -569,7 +569,7 @@ script (not committed) polled the status and called `Backend.GetProfile`.
 
 ---
 
-## Phase O3 — leaderboards, and the Proving Ground uses them — **bindings done; game half open**
+## Phase O3 — leaderboards, and the Proving Ground uses them — **DONE**
 
 ### Goal
 
@@ -642,7 +642,7 @@ test scene and a temporary probe that re-sent one submission verbatim; both are 
 | Top N (added) | **pass** | 4 rows, ties 1, 2, 2, 4, integer scores, `isMe` on the player's row |
 | Bad arguments refused, nothing sent (added) | **pass** | fraction, negative, 2^53, a string score, `"../../auth/device"` as a board, limits 0 and 101 |
 | Unknown board | **pass** | `ok == false`, `urn:ganymed:problem:not-found` |
-| Death submits, HUD, backend down, stop play | **open** | step 3, the game half, on `first-game` |
+| Death submits, HUD, backend down, stop play | **pass**, on `first-game` (below) | recorded as P8 in `first-game`'s PROVING_GROUND.md |
 
 **Where the plan was wrong or incomplete, kept visible:**
 
@@ -661,6 +661,35 @@ test scene and a temporary probe that re-sent one submission verbatim; both are 
   schedule into one update, so four sequential steps ran concurrently. It turned the duplicate check
   into a concurrent one, which the backend handled as B2 designed; and it showed that two
   submissions in flight report standings in whatever order the backend processed them.
+
+### Execution notes — step 3, the game half
+
+2026-10-09, on `first-game`, after merging master into it (the branch policy's
+`git diff --stat master.. -- GanymedEngine/source GanymedEditor/source GanymedRuntime/source` was
+empty, and stayed empty: the game half changed only `Player.lua`, `hud.rml` and `hud.rcss`). The
+full record, with its evidence, is **P8 in `first-game`'s `docs/ToDo/PROVING_GROUND.md`**, which
+exists only on that branch. In short:
+
+| Check | Result |
+|---|---|
+| Death submits | the P5 gate, with `contactDamage = 34` in a temporary scene copy, went down at three hits with one kill: submitted, best 1, rank 5, one row in `score_submissions` |
+| HUD | "loading..." → the top four → re-fetched after the submission with the player at #5, highlighted, and "your best 1 (#5)" |
+| No score yet | "your best: none yet" until the first life ended |
+| Backend down | "offline" on the HUD; the life's submission failed with its reason, logged once; the game played on |
+| Stop play before the response lands | covered by O1's editor check (no callback after Stop); the HUD write also checks the element still exists |
+
+**Where step 3 was wrong, kept visible:**
+
+- **"Submits on death" did not say what to submit**, and the obvious candidate is wrong: the
+  Proving Ground's score is a currency the upgrade station spends, so ranking it ranks thrift. The
+  board ranks **kills in one life**, submitted when the life ends (going down or dying). There is no
+  "submit when play stops": a request sent from `OnDestroy` is cancelled with the instance.
+- **"The HUD data model gains a leaderboard block" would have been an engine change.** The model's
+  two variables are declared in C++ (`docs/ToDo/cross-cutting.md`), and the game branch changes no
+  engine source. The block is written from Lua through RmlUi's own API (`inner_rml` on a
+  `#leaderboard` element) instead, which needed nothing from master.
+- **"Or on the gate route's end" was dropped as a separate trigger.** Gate runs end lives like play
+  does, so they submit through the same path, and that is how the game half was verified.
 
 ---
 
