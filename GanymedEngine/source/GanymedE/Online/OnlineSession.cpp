@@ -9,6 +9,7 @@
 
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <random>
@@ -67,11 +68,24 @@ namespace GanymedE {
 			std::vector<RequestId> Waiting;   // authenticated requests waiting for a session
 			RequestId NextId = 1;
 			Online::Stats Stats;
+
+			// The push socket (realtime.md). Opened after every successful sign-in, and reopened by
+			// close code; ReconnectAt is checked by Online::OnUpdate.
+			Online::PushStatus Push = Online::PushStatus::Disconnected;
+			OnlinePushHandler PushHandler;
+			int ReconnectAttempts = 0;        // since the last successful open; drives the backoff
+			int Upgrade401s = 0;              // refused upgrades in a row (see OnFailed)
+			bool Replaced = false;            // a 4001 within the last minute (see OnClose)
+			std::chrono::steady_clock::time_point ReplacedAt{};
+			bool ReconnectPending = false;
+			std::chrono::steady_clock::time_point ReconnectAt{};
+			std::mt19937 Jitter{ std::random_device{}() };
 		};
 
 		SessionData* s_Data = nullptr;
 
 		void Dispatch(RequestId id);
+		void ConnectPush();
 		void BeginSignIn();
 
 		// ---- Command line and identity ---------------------------------------------------------
@@ -432,6 +446,7 @@ namespace GanymedE {
 					GE_CORE_INFO("Online: signed in as account {0} (profile '{1}')", s_Data->AccountId, s_Data->Profile);
 					FetchPlayerName();
 					ResumeWaiting();
+					ConnectPush();   // no-op if it is already open, connecting, or was replaced
 					return;
 				}
 
@@ -449,6 +464,196 @@ namespace GanymedE {
 				FailWaiting("not signed in: " + reason);
 			});
 		}
+
+		// ---- The push socket -------------------------------------------------------------------
+
+		void DeliverPush(const OnlinePush& push, bool counted)
+		{
+			if (counted)
+				s_Data->Stats.Pushes++;
+			const size_t queued = s_Data->PushHandler ? s_Data->PushHandler(push) : 0;
+			if (queued == 0 && counted)
+			{
+				// Not a warning: an unknown type, or a known one nobody listens to in this scene, is
+				// normal - the contract adds types without a version bump.
+				s_Data->Stats.PushesUndelivered++;
+				GE_CORE_TRACE("Online: push '{0}' ({1}) had no subscriber; dropped", push.Type, push.Id);
+			}
+		}
+
+		// Exponential backoff with jitter: 0.25 s doubling to a 30 s cap, each delay drawn from its
+		// upper half. Jitter is not optional: when a backend restarts, every client loses its socket
+		// in the same instant, and reconnecting on a fixed schedule brings them all back in the same
+		// instant too. `immediate` is for 1001 (the replica is going; another one is up).
+		void ScheduleReconnect(const std::string& why, bool immediate)
+		{
+			double delay;
+			if (immediate)
+				delay = std::uniform_real_distribution<double>(0.0, 0.25)(s_Data->Jitter);
+			else
+			{
+				const double ceiling = std::min(30.0, 0.25 * std::pow(2.0, s_Data->ReconnectAttempts));
+				delay = std::uniform_real_distribution<double>(ceiling / 2.0, ceiling)(s_Data->Jitter);
+				s_Data->ReconnectAttempts++;
+			}
+
+			s_Data->ReconnectPending = true;
+			s_Data->ReconnectAt = std::chrono::steady_clock::now()
+				+ std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(delay));
+			GE_CORE_INFO("Online: push channel {0}; reconnecting in {1:.2f} s", why, delay);
+		}
+
+		// Reconnects once the session is good. An authenticated call recovers it the way every request
+		// does (refresh, or sign in again), so the socket never needs its own token logic.
+		void RecoverThenConnect(const std::string& why)
+		{
+			OnlineRequest probe;
+			probe.Path = "/v1/me";
+			Online::Send(std::move(probe), [why](const OnlineResponse& response)
+			{
+				if (!s_Data)
+					return;
+				if (response.IsSuccess())
+					ConnectPush();
+				else
+					ScheduleReconnect(why + "; the session could not be recovered (" + DescribeFailure(response) + ")", false);
+			});
+		}
+
+		void ConnectPush()
+		{
+			using PS = Online::PushStatus;
+			if (!s_Data || s_Data->Push != PS::Disconnected || s_Data->Status != Online::Status::SignedIn)
+				return;
+
+			s_Data->ReconnectPending = false;
+			s_Data->Push = PS::Connecting;
+
+			OnlineTransport::SocketEvents events;
+			events.OnOpen = []()
+			{
+				s_Data->Push = PS::Connected;
+				s_Data->ReconnectAttempts = 0;
+				s_Data->Upgrade401s = 0;
+				s_Data->Stats.PushConnects++;
+				GE_CORE_INFO("Online: push channel connected");
+
+				// Pushes sent while the socket was down are gone, never replayed: whoever shows state
+				// re-fetches it now (realtime.md, "the one rule").
+				OnlinePush connected;
+				connected.Type = "connected";
+				DeliverPush(connected, /*counted=*/false);
+			};
+
+			events.OnText = [](const std::string& text)
+			{
+				std::string error;
+				std::optional<JsonValue> envelope = ParseJson(text, &error);
+				const JsonValue* type = envelope ? envelope->Find("type") : nullptr;
+				if (!type || type->Kind != JsonValue::Type::String)
+				{
+					GE_CORE_WARN("Online: ignored a push that is not a {{type, id, payload}} envelope ({0})",
+						envelope ? "no type" : error);
+					return;
+				}
+
+				OnlinePush push;
+				push.Type = type->String;
+				if (const JsonValue* id = envelope->Find("id"); id && id->Kind == JsonValue::Type::String)
+					push.Id = id->String;
+				if (const JsonValue* payload = envelope->Find("payload"))
+					push.Payload = *payload;
+				DeliverPush(push, /*counted=*/true);
+			};
+
+			events.OnClose = [](int code, const std::string& reason, bool remote)
+			{
+				s_Data->Push = PS::Disconnected;
+				switch (code)
+				{
+					case 4001:
+					{
+						// Reconnecting on every 4001 would replace the newer session, which would replace
+						// this one, forever. Never reconnecting is not right either: a newer connection
+						// is not always a live session. One was seen that was an upgrade request replayed
+						// after its client had given up (most likely by Docker Desktop's port forwarder,
+						// while a replica restarted), and it cost a live player its push channel - and,
+						// 35 s later, its party seat. So: one more try after ~5 s, inside the 30 s
+						// presence grace; a second 4001 within a minute is final. Two real sessions swap
+						// once and settle.
+						const auto now = std::chrono::steady_clock::now();
+						if (s_Data->Replaced && now - s_Data->ReplacedAt < std::chrono::minutes(1))
+						{
+							s_Data->Push = PS::Replaced;
+							GE_CORE_WARN("Online: push channel replaced again by a newer connection for this account "
+								"(another session of profile '{0}' is active); not reconnecting", s_Data->Profile);
+							return;
+						}
+						s_Data->Replaced = true;
+						s_Data->ReplacedAt = now;
+						s_Data->ReconnectPending = true;
+						s_Data->ReconnectAt = now + std::chrono::milliseconds(
+							std::uniform_int_distribution<int>(4500, 5500)(s_Data->Jitter));
+						GE_CORE_WARN("Online: push channel replaced by a newer connection for this account; "
+							"trying once more in ~5 s in case that was not a live session");
+						return;
+					}
+					case 1001:
+						ScheduleReconnect("closed 1001 (that replica is shutting down)", /*immediate=*/true);
+						return;
+					case 1008:
+						GE_CORE_ERROR("Online: push channel closed 1008 (policy violation: the engine sent a data "
+							"message, or fell too far behind). This is an engine bug");
+						ScheduleReconnect("closed 1008", false);
+						return;
+					default:
+						ScheduleReconnect(code == 1006 || code == 0 ? std::string("dropped")
+							: "closed " + std::to_string(code) + (reason.empty() ? "" : " (" + reason + ")")
+								+ (remote ? "" : " locally"), false);
+				}
+			};
+
+			events.OnFailed = [](int status, const std::string& reason)
+			{
+				s_Data->Push = PS::Disconnected;
+				// The upgrade's 401 body never reaches us (IXWebSocket reports only the status), so
+				// token-expired and unauthorized look the same here. One authenticated call tells them
+				// apart and fixes either; a second 401 in a row means it was not the token, and backs off.
+				if (status == 401 && s_Data->Upgrade401s++ == 0)
+				{
+					GE_CORE_INFO("Online: push upgrade refused (401); recovering the session, then reconnecting");
+					RecoverThenConnect("upgrade refused (401)");
+					return;
+				}
+				ScheduleReconnect(status ? "upgrade refused (HTTP " + std::to_string(status) + ")"
+					: "could not connect (" + reason + ")", false);
+			};
+
+			OnlineTransport::OpenSocket("/v1/realtime", s_Data->AccessToken, std::move(events));
+		}
+	}
+
+	void Online::OnUpdate()
+	{
+		if (!s_Data || !s_Data->ReconnectPending || std::chrono::steady_clock::now() < s_Data->ReconnectAt)
+			return;
+
+		s_Data->ReconnectPending = false;
+		if (s_Data->Status == Status::SignedIn && !s_Data->Recovering)
+			ConnectPush();
+		else
+			RecoverThenConnect("waiting for a session");   // signs in on its behalf, with its backoff
+	}
+
+	Online::PushStatus Online::GetPushStatus()
+	{
+		return s_Data ? s_Data->Push : PushStatus::Disconnected;
+	}
+
+	void Online::SetPushHandler(OnlinePushHandler handler)
+	{
+		if (s_Data)
+			s_Data->PushHandler = std::move(handler);
 	}
 
 	void Online::Init()
@@ -489,8 +694,10 @@ namespace GanymedE {
 		const Stats stats = GetStats();   // before the transport goes: it holds the dropped-late count
 		const size_t abandoned = OnlineTransport::Shutdown();
 		GE_CORE_INFO("Online shut down: {0} sent, {1} succeeded, {2} failed, {3} cancelled, {4} retried, "
-			"{5} sign-ins, {6} refreshes, {7} dropped late, {8} abandoned in flight", stats.Sent, stats.Succeeded,
-			stats.Failed, stats.Cancelled, stats.Retried, stats.SignIns, stats.Refreshes, stats.DroppedLate, abandoned);
+			"{5} sign-ins, {6} refreshes, {7} dropped late, {8} abandoned in flight; push: {9} connects, {10} messages, "
+			"{11} with no subscriber", stats.Sent, stats.Succeeded, stats.Failed, stats.Cancelled, stats.Retried,
+			stats.SignIns, stats.Refreshes, stats.DroppedLate, abandoned, stats.PushConnects, stats.Pushes,
+			stats.PushesUndelivered);
 
 		delete s_Data;
 		s_Data = nullptr;

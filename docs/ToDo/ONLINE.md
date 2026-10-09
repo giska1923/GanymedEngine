@@ -1,6 +1,6 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: O0–O3 done (2026-10-09); O4 next.** The backend is complete (B1–B5, `api-v0.5`), so
+**Status: O0–O4 done (2026-10-09); O5a next.** The backend is complete (B1–B5, `api-v0.5`), so
 O1–O4 and O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
 been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
@@ -129,7 +129,7 @@ prerequisite for anything here.
 | **O1** | `Online/` request layer: threading, ownership, cancellation, timeouts. **Done** | master | nothing (a Python stub) | about a day |
 | **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth. **Done** | master | **B1** (device auth) | under a day |
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores. **Done** | master + `first-game` | **B2** (leaderboards) | about a day |
-| **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
+| **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings. **Done** | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
 | **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
 | **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result | master | **B5** + the dedicated-server milestone | blocked, unsized |
 
@@ -693,7 +693,7 @@ exists only on that branch. In short:
 
 ---
 
-## Phase O4 — the push channel
+## Phase O4 — the push channel — **DONE**
 
 ### Goal
 
@@ -789,6 +789,57 @@ down.
 | No subscriber | the message is counted as dropped, with no error spam |
 | Unknown message type (`docker compose exec redis redis-cli PUBLISH user:<account> '{"type":"x.new","id":"1"}'`) | ignored, logged at debug, no error |
 | Stop play | subscriptions for that scene are gone; the socket stays up (it belongs to the application, not the scene) |
+
+### Execution notes
+
+2026-10-09, on `online-o4` (branched from master: `hello-online` was squash-merged, so building on
+it would have carried its history twice). Live behaviour is in
+[online.md](../engine/online.md#the-push-channel). Verified on the Windows x64 Debug runtime against
+both Compose replicas, with the engine on replica b and `gscli` players on replica a, so every push
+crossed replicas through Redis; a throwaway test scene and script (not committed) subscribed to
+`connected` and the party pushes. Linux: see the last row.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Push arrives | **pass** | a leader's `party.invite` reached the subscribed script inside its scene update; it accepted, and `party.updated` followed |
+| Backend restart | **pass**, including re-authentication | host backend with a 2 s token, killed and restarted: dropped → backoff → upgrade refused 401 → `GET /v1/me` refreshed the session → connected, in the same second |
+| Replica shutdown | **pass** | `docker compose stop backend-b`: `1001` → reconnect in 0.12 s → backoff with jitter while it was down → connected 0.4 s after it came back; the leader saw the player `online` throughout |
+| Same profile twice | **pass**, after a design change (below) | a `gscli` session with the engine's device ID: first `4001` → one retry ~5 s later; second → `"replaced"`, stayed off, no ping-pong |
+| Re-fetch on reconnect | **pass** | an invite sent while the socket was down appeared in the `connected` re-fetch, no push involved |
+| No subscriber | **pass** | counted, trace log only |
+| Unknown message type | **pass** | `PUBLISH user:<account> {"type":"x.new"}`: dropped, counted, no error |
+| Stop play | **not run** | needs the editor. Subscriptions live in the scene's record, which stopping play erases along with its instances and requests (O1's editor check exercised that erase) |
+| Linux (WSL2, gcc 11.4) | **pass** | builds with no warnings outside `extern/`; the runtime in WSL on replica b connected, got a `gscli` leader's `party.invite` from replica a, accepted, and saw `party.updated` |
+
+**Where the plan was wrong or incomplete, kept visible:**
+
+- **"`4001`: do not reconnect" left a live player without pushes.** In the first replica-restart run
+  the backend logged an extra upgrade for the player's account 1.7 s after the replica came back, at
+  a moment the engine sent nothing; it upgraded in 4 ms on a connection already dead and closed the
+  player's live socket `4001`. The likeliest source is Docker Desktop's port forwarder delivering an
+  upgrade the engine had already abandoned while the replica was down; it did not reproduce on demand.
+  Under the plan's rule that player would have stayed off, and lost their party seat 35 s later. Now:
+  one retry ~5 s later, inside the presence grace, and a second `4001` within a minute is final. Two
+  real sessions swap once and settle; a ghost costs 5 s. The backend could stop ghosts at the source
+  by replacing an account's socket only once the new one proves alive; that is a backend item.
+- **The upgrade's 401 body is not visible.** The plan said "`token-expired` means refresh,
+  `unauthorized` means sign in". IXWebSocket reports only the status of a failed upgrade, so the
+  engine makes one authenticated `GET /v1/me`, whose 401 handling (O2) tells the two apart.
+- **The engine does not re-fetch the party itself.** The plan had it fetch `/v1/party` and
+  `/v1/party/invites` on every reconnect. It raises a `connected` event instead, and the script
+  re-fetches what it shows: the engine does not know what a game shows, and O5a adds the ticket.
+- **A per-frame tick was needed.** The reconnect timer runs from `Online::OnUpdate`, which
+  `Application::Run` now calls after `JobSystem::OnUpdate`. Because a timer that finds no session starts
+  a sign-in, the push channel is also what brings a game that was offline at boot back online.
+- **Push payloads keep their wire names.** `msg` is the envelope `{ type, id, payload }` as the
+  contract writes it; the typed GET bindings are where names are mapped.
+- **The test needed the other players to hold sockets.** A `gscli` leader that never `listen`ed was
+  offline to the backend, and its party was swept within seconds, before the invite. Not an engine
+  issue, but the first run's 404 was this.
+- **Found in passing, fixed:** the backend's `realtime.md` had a malformed `ticket.failed` row
+  (duplicated text and an unescaped `|` that broke the table), most likely from B5's edit.
+- **Not exercised:** a `1008` (the engine never sends a data message, and the backend's slow-client
+  close was not provoked).
 
 ---
 

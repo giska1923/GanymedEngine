@@ -36,4 +36,27 @@ namespace GanymedE::OnlineTransport {
 	// Responses that came back for aborted attempts, and attempts not yet completed.
 	uint64_t DroppedLate();
 	uint32_t InFlight();
+
+	// ---- The push socket (one at a time) ---------------------------------------------------
+
+	// Every event runs on the main thread, from JobSystem::OnUpdate, and only for the socket that
+	// is current: events still queued from a socket that has since been closed or replaced are
+	// dropped. After a close or a failure the socket is finished; opening again is the caller's
+	// decision (the session reconnects by close code).
+	struct SocketEvents
+	{
+		std::function<void()> OnOpen;
+		std::function<void(const std::string& text)> OnText;
+		std::function<void(int code, const std::string& reason, bool remote)> OnClose;
+		// The connect or the upgrade failed. httpStatus is the upgrade's status (401 for a refused
+		// token), or 0 when no HTTP response arrived. The response body is not available.
+		std::function<void(int httpStatus, const std::string& reason)> OnFailed;
+	};
+
+	// Opens a WebSocket to the base URL (http -> ws) + `path`, sending `bearer` at the upgrade.
+	// Closes any socket already open first.
+	void OpenSocket(const std::string& path, const std::string& bearer, SocketEvents events);
+
+	// Closes the socket, if any; none of its events run after this returns.
+	void CloseSocket();
 }

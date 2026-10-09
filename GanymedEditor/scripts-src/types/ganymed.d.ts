@@ -571,6 +571,34 @@ declare interface BackendSubmission extends BackendStanding {
 	replayed: boolean;
 }
 
+/** A push, as the backend's realtime.md writes it: payload keys are wire names (party_id, display_name). */
+declare interface BackendPush {
+	type: string;
+	/** Empty for the engine's own "connected" event. */
+	id: string;
+	payload?: { [key: string]: any };
+}
+
+declare interface BackendPartyMember {
+	accountId: string;
+	name: string;
+	/** "online", "away" (the 30 s reconnection grace) or "offline". */
+	status: string;
+	leader: boolean;
+}
+
+declare interface BackendParty {
+	id: string;
+	leaderId: string;
+	members: BackendPartyMember[];
+}
+
+declare interface BackendPartyInvite {
+	partyId: string;
+	from: { accountId: string; name: string };
+	expiresAt: string;
+}
+
 /** One row of Backend.GetLeaderboard, best first. Tied scores share a rank (1, 2, 2, 4). */
 declare interface BackendLeaderboardEntry {
 	rank: number;
@@ -610,6 +638,27 @@ declare namespace Backend {
 	/** The first `limit` rows (1-100; undefined for the backend's default, 10). */
 	function GetLeaderboard(owner: Entity, board: string, limit: number | undefined,
 		callback: (ok: boolean, result: BackendLeaderboardEntry[] | string) => void): void;
+
+	/**
+	 * Pushes of `type` while the owner lives, inside its scene's update; one per (owner, type).
+	 * "connected" is the engine's own, on every (re)connect: re-fetch what you show then.
+	 */
+	function Subscribe(owner: Entity, type: string, callback: (message: BackendPush) => void): void;
+	function Unsubscribe(owner: Entity, type: string): void;
+	/** "disconnected", "connecting", "connected", or "replaced" (another session of this account took over). */
+	function GetPushStatus(): string;
+
+	/** The party, or undefined (with ok true) when in none. */
+	function GetParty(owner: Entity, callback: (ok: boolean, result: BackendParty | undefined | string) => void): void;
+	function CreateParty(owner: Entity, callback: (ok: boolean, result: BackendParty | string) => void): void;
+	/** Leader only. */
+	function InviteToParty(owner: Entity, accountId: string, callback: (ok: boolean, result: undefined | string) => void): void;
+	function GetPartyInvites(owner: Entity, callback: (ok: boolean, result: BackendPartyInvite[] | string) => void): void;
+	function AcceptPartyInvite(owner: Entity, partyId: string, callback: (ok: boolean, result: BackendParty | string) => void): void;
+	function DeclinePartyInvite(owner: Entity, partyId: string, callback: (ok: boolean, result: undefined | string) => void): void;
+	function LeaveParty(owner: Entity, callback: (ok: boolean, result: undefined | string) => void): void;
+	/** Leader only. */
+	function KickFromParty(owner: Entity, accountId: string, callback: (ok: boolean, result: undefined | string) => void): void;
 }
 
 // ---------------------------------------------------------------------------

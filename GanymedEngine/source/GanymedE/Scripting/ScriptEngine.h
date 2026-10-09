@@ -13,6 +13,7 @@ namespace GanymedE {
 
 	class Entity;
 	class Scene;
+	struct OnlinePush;
 
 	// Owner of the one Lua VM the whole runtime shares.
 	//
@@ -64,6 +65,11 @@ namespace GanymedE {
 		// scene's instances, with the scene context set. LuaScriptSystem calls it once per update,
 		// before any OnUpdate - see docs/engine/online.md for the three hops a response takes.
 		static void DeliverResponses();
+
+		// Online's push handler (Application wires it): queues `push` for every scene with a script
+		// subscribed to its type, and returns how many scenes that was. Main thread, outside any scene
+		// update; the subscribers' callbacks run in their scene's next DeliverResponses.
+		static size_t QueuePush(const OnlinePush& push);
 
 		// One tunable declared by a script, with the default it declared.
 		//

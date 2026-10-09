@@ -1173,6 +1173,85 @@ namespace GanymedE {
 			return result;
 		}
 
+		// A party ID becomes part of a URL path and an account ID part of a body, so both are held to
+		// the shape the backend issues: a UUID, 8-4-4-4-12 hex.
+		const std::string& RequireUuid(const char* binding, const char* what, const std::string& text)
+		{
+			bool ok = text.size() == 36;
+			for (size_t i = 0; ok && i < text.size(); i++)
+			{
+				const char c = text[i];
+				ok = (i == 8 || i == 13 || i == 18 || i == 23) ? c == '-' : std::isxdigit(static_cast<unsigned char>(c)) != 0;
+			}
+			if (!ok)
+				throw sol::error(std::string(binding) + ": '" + text + "' is not " + what + " (a UUID)");
+			return text;
+		}
+
+		const JsonValue& Field(const JsonValue& object, const char* key, JsonValue::Type kind)
+		{
+			const JsonValue* value = object.Find(key);
+			if (!value || value->Kind != kind)
+				throw std::runtime_error(std::string("expected ") + key);
+			return *value;
+		}
+
+		// { party_id, leader_id, members: [{ account_id, display_name, status, leader }] }
+		//   -> { id, leaderId, members = { { accountId, name, status, leader }, ... } }
+		sol::object PartyToLua(sol::state_view lua, const JsonValue& party)
+		{
+			sol::table result = lua.create_table();
+			result["id"] = Field(party, "party_id", JsonValue::Type::String).String;
+			result["leaderId"] = Field(party, "leader_id", JsonValue::Type::String).String;
+			const JsonValue& members = Field(party, "members", JsonValue::Type::Array);
+			sol::table list = lua.create_table(static_cast<int>(members.Items.size()), 0);
+			for (size_t i = 0; i < members.Items.size(); i++)
+			{
+				const JsonValue& m = members.Items[i];
+				sol::table member = lua.create_table();
+				member["accountId"] = Field(m, "account_id", JsonValue::Type::String).String;
+				member["name"] = Field(m, "display_name", JsonValue::Type::String).String;
+				member["status"] = Field(m, "status", JsonValue::Type::String).String;
+				member["leader"] = Field(m, "leader", JsonValue::Type::Bool).Bool;
+				list[i + 1] = member;
+			}
+			result["members"] = list;
+			return result;
+		}
+
+		// { "party": {...} | null } -> the party, or nil when the player is in none (ok is still true).
+		sol::object ReadParty(sol::state_view lua, const OnlineResponse& response)
+		{
+			std::string error;
+			std::optional<JsonValue> body = ParseJson(response.Body, &error);
+			if (!body)
+				throw std::runtime_error(error);
+			const JsonValue* party = body->Find("party");
+			if (!party)
+				throw std::runtime_error("expected party");
+			return party->Kind == JsonValue::Type::Null ? sol::object(sol::lua_nil) : PartyToLua(lua, *party);
+		}
+
+		// A 204: nothing to read. The callback gets (true, nil).
+		sol::object ReadNothing(sol::state_view, const OnlineResponse&)
+		{
+			return sol::lua_nil;
+		}
+
+		OnlineRequest PartyPost(std::string path, const std::string* targetAccount = nullptr)
+		{
+			OnlineRequest request;
+			request.Method = "POST";
+			request.Path = std::move(path);
+			if (targetAccount)
+			{
+				JsonValue body = JsonValue::MakeObject();
+				body.Members.emplace_back("account_id", JsonValue::MakeString(*targetAccount));
+				WriteJson(body, request.Body);
+			}
+			return request;
+		}
+
 		// The online client (docs/engine/online.md). Every request binding is typed per endpoint,
 		// takes its owner first (self.entity) and its callback last, and maps the API's field names
 		// to script-style ones (display_name -> name). There is no generic request.
@@ -1303,6 +1382,119 @@ namespace GanymedE {
 						}
 						return result;
 					});
+			};
+
+			// ---- The push channel (realtime.md) --------------------------------------------------
+
+			// callback(message) for each push of `type`, with message = { type, id, payload }: the
+			// contract's envelope, payload keys as the wire writes them. Plus "connected", which the
+			// engine raises on every (re)connect: pushes sent while it was down are lost, so that is
+			// the moment to re-fetch what the script shows.
+			backend["Subscribe"] = [](sol::object owner, const std::string& type, sol::object callback)
+			{
+				SubscribeScript("Backend.Subscribe", owner, type, callback);
+			};
+			backend["Unsubscribe"] = [](sol::object owner, const std::string& type)
+			{
+				UnsubscribeScript("Backend.Unsubscribe", owner, type);
+			};
+
+			// "disconnected", "connecting", "connected", or "replaced": closed 4001 by a newer session
+			// of this account, and not reconnecting.
+			backend["GetPushStatus"] = []() -> std::string
+			{
+				switch (Online::GetPushStatus())
+				{
+					case Online::PushStatus::Connecting: return "connecting";
+					case Online::PushStatus::Connected:  return "connected";
+					case Online::PushStatus::Replaced:   return "replaced";
+					default:                             return "disconnected";
+				}
+			};
+
+			// ---- Parties: thin wrappers over the routes, each the state of record for a push -----
+
+			// GET /v1/party -> the party, or nil when in none.
+			backend["GetParty"] = [](sol::object owner, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Path = "/v1/party";
+				SendScriptRequest("Backend.GetParty", owner, std::move(request), callback, ReadParty);
+			};
+
+			// POST /v1/party -> the new party, led by the caller.
+			backend["CreateParty"] = [](sol::object owner, sol::object callback)
+			{
+				SendScriptRequest("Backend.CreateParty", owner, PartyPost("/v1/party"), callback, ReadParty);
+			};
+
+			// POST /v1/party/invites (leader only). The invitee gets party.invite.
+			backend["InviteToParty"] = [](sol::object owner, const std::string& accountId, sol::object callback)
+			{
+				const std::string& target = RequireUuid("Backend.InviteToParty", "an account ID", accountId);
+				SendScriptRequest("Backend.InviteToParty", owner, PartyPost("/v1/party/invites", &target), callback, ReadNothing);
+			};
+
+			// GET /v1/party/invites -> { { partyId, from = { accountId, name }, expiresAt }, ... },
+			// soonest-expiring first; empty when there are none.
+			backend["GetPartyInvites"] = [](sol::object owner, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Path = "/v1/party/invites";
+				SendScriptRequest("Backend.GetPartyInvites", owner, std::move(request), callback,
+					[](sol::state_view lua, const OnlineResponse& response) -> sol::object
+					{
+						std::string error;
+						std::optional<JsonValue> body = ParseJson(response.Body, &error);
+						if (!body)
+							throw std::runtime_error(error);
+						const JsonValue& invites = Field(*body, "invites", JsonValue::Type::Array);
+						sol::table result = lua.create_table(static_cast<int>(invites.Items.size()), 0);
+						for (size_t i = 0; i < invites.Items.size(); i++)
+						{
+							const JsonValue& invite = invites.Items[i];
+							const JsonValue& from = Field(invite, "from", JsonValue::Type::Object);
+							sol::table sender = lua.create_table();
+							sender["accountId"] = Field(from, "account_id", JsonValue::Type::String).String;
+							sender["name"] = Field(from, "display_name", JsonValue::Type::String).String;
+
+							sol::table row = lua.create_table();
+							row["partyId"] = Field(invite, "party_id", JsonValue::Type::String).String;
+							row["from"] = sender;
+							row["expiresAt"] = Field(invite, "expires_at", JsonValue::Type::String).String;
+							result[i + 1] = row;
+						}
+						return result;
+					});
+			};
+
+			// POST /v1/party/invites/<partyId>/accept -> the party joined.
+			backend["AcceptPartyInvite"] = [](sol::object owner, const std::string& partyId, sol::object callback)
+			{
+				const std::string& id = RequireUuid("Backend.AcceptPartyInvite", "a party ID", partyId);
+				SendScriptRequest("Backend.AcceptPartyInvite", owner, PartyPost("/v1/party/invites/" + id + "/accept"),
+					callback, ReadParty);
+			};
+
+			// POST /v1/party/invites/<partyId>/decline. Succeeds for an invite that no longer exists.
+			backend["DeclinePartyInvite"] = [](sol::object owner, const std::string& partyId, sol::object callback)
+			{
+				const std::string& id = RequireUuid("Backend.DeclinePartyInvite", "a party ID", partyId);
+				SendScriptRequest("Backend.DeclinePartyInvite", owner, PartyPost("/v1/party/invites/" + id + "/decline"),
+					callback, ReadNothing);
+			};
+
+			// POST /v1/party/leave.
+			backend["LeaveParty"] = [](sol::object owner, sol::object callback)
+			{
+				SendScriptRequest("Backend.LeaveParty", owner, PartyPost("/v1/party/leave"), callback, ReadNothing);
+			};
+
+			// POST /v1/party/kick (leader only). The kicked player gets party.removed.
+			backend["KickFromParty"] = [](sol::object owner, const std::string& accountId, sol::object callback)
+			{
+				const std::string& target = RequireUuid("Backend.KickFromParty", "an account ID", accountId);
+				SendScriptRequest("Backend.KickFromParty", owner, PartyPost("/v1/party/kick", &target), callback, ReadNothing);
 			};
 		}
 	}

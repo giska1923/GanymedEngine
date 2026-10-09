@@ -72,6 +72,7 @@ namespace GanymedE {
 		// callbacks waiting on them are sol2 references into ScriptEngine's state. Needs nothing
 		// else - it reads --backend= and starts its network threads.
 		Online::Init();
+		Online::SetPushHandler(&ScriptEngine::QueuePush);
 
 		// After both: it needs a live bgfx with compiled shaders, and it shares
 		// ScriptEngine's lua_State. Sized to the window; the editor re-sizes it to
@@ -221,6 +222,10 @@ namespace GanymedE {
 				GE_PROFILE_SCOPE("JobSystem::OnUpdate");
 				JobSystem::OnUpdate();
 			}
+
+			// After the drain, which delivers what the network threads finished: the push socket's
+			// reconnect timer. Cheap when nothing is due (one clock read).
+			Online::OnUpdate();
 
 			// Immediately after, and for the same reason: a parse that finished on a worker
 			// becomes a usable GPU resource here, in time for the systems that draw with it this

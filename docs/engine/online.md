@@ -11,7 +11,7 @@ scene or a destroyed script instance. The milestone that builds it, and what com
 |---|---|
 | [Online.h](../../GanymedEngine/source/GanymedE/Online/Online.h) | The public facade: `Send`, `Cancel`, status, identity, stats |
 | [OnlineSession.cpp](../../GanymedEngine/source/GanymedE/Online/OnlineSession.cpp) | `Online`'s implementation: `--backend=` and `--profile=`, the device ID, sign-in, the session, 401 recovery and the one retry |
-| [OnlineTransport.h](../../GanymedEngine/source/GanymedE/Online/OnlineTransport.h) / [Online.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | Private: single HTTP attempts over a pool of four clients. **Online.cpp is the only engine TU that includes IXWebSocket** |
+| [OnlineTransport.h](../../GanymedEngine/source/GanymedE/Online/OnlineTransport.h) / [Online.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | Private: single HTTP attempts over a pool of four clients, and the push socket. **Online.cpp is the only engine TU that includes IXWebSocket** |
 | [Json.h](../../GanymedEngine/source/GanymedE/Online/Json.h) / [.cpp](../../GanymedEngine/source/GanymedE/Online/Json.cpp) | `JsonValue`, `ParseJson` (over yaml-cpp), `WriteJson` |
 | [ScriptEngine.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptEngine.cpp) | Who owns each request, per-scene mailboxes, cancellation, delivery to Lua |
 | [ScriptBindings.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptBindings.cpp) | The `Backend` table, JSON ↔ Lua |
@@ -205,6 +205,118 @@ Measured on the runtime: closing it with a 10-second request in flight took 0.62
 0.64–0.71 s with nothing in flight. (The plan expected the opposite and planned an explicit abort;
 removing that abort changed nothing measurable, so it is gone.)
 
+## The push channel
+
+One WebSocket per signed-in client carries server-initiated messages (the backend's `realtime.md`:
+party invites and changes, and from O5a the match lifecycle). The rule it is built around is the
+contract's: **pushes are nudges, delivered at most once.** Anything sent while the socket is down is
+lost, never replayed, so the state of record is always the HTTP API, and a push only says "fetch
+again".
+
+### The socket
+
+`OnlineTransport` owns one `ix::WebSocket` at `ws://<backend>/v1/realtime`, opened with the session's
+access token as `Authorization: Bearer`. The token is checked once, at the upgrade: an open socket
+outlives the token's expiry, and refreshing needs no reconnect.
+
+- **IXWebSocket's own reconnection is off.** The session decides by close code (below), and one code
+  must not reconnect on reflex. Off also avoids a `stop()` hang upstream fixed after our pin (#609),
+  which needs that loop to race.
+- **Compression is never negotiated** (`disablePerMessageDeflate`): IXWebSocket is built without
+  zlib, so a compressed frame could not be read.
+- **The handshake times out after 5 s** (IXWebSocket's default is 60).
+- **The engine sends nothing on it.** A data message would get it closed `1008`. IXWebSocket answers
+  the server's pings itself.
+- Socket events reach the main thread through `JobSystem`, tagged with the socket's generation, so
+  an event still queued from a socket since closed or replaced is dropped.
+
+### Connecting and reconnecting
+
+The session opens the socket after every successful sign-in. What happens when it closes depends on
+the close code, as the contract asks:
+
+| Close | Meaning | The engine |
+|---|---|---|
+| `1001` | that replica is shutting down | reconnects at once (0–0.25 s jitter): another replica is up |
+| `1008` | policy violation (a data message, or too slow to keep up) | logs an **error** (it is an engine bug), then backs off |
+| `1006`, a refused connect, any other | the connection dropped | exponential backoff with jitter: 0.25 s doubling to a 30 s cap, each delay drawn from its upper half |
+| `4001` | replaced by a newer connection for this account | **one** more try ~5 s later; a second `4001` within a minute is final (status `"replaced"`) |
+| an upgrade refused with **401** | the token is no good | one authenticated `GET /v1/me`, which recovers the session the way every request does (refresh, or sign in again), then reconnects at once; a second 401 in a row backs off |
+
+**Jitter is not optional.** When a backend restarts, every client loses its socket in the same
+instant, and a fixed schedule brings them all back in the same instant too. **The first attempts are
+fast** because presence has a 30 s grace: a player who reconnects inside it keeps their party seat
+with nothing sent to anyone.
+
+**Why the upgrade's 401 needs a probe.** The contract sends a problem body with that 401
+(`token-expired` or `unauthorized`), but IXWebSocket reports only the status. One authenticated call
+tells the two apart and fixes either, through O2's recovery; the socket needs no token logic of its
+own.
+
+**Why `4001` gets one more try**, against the contract's "do not reconnect". Reconnecting on every
+`4001` would make two live sessions of one account replace each other forever, which is the
+contract's point. But a newer connection is not always a live session. In one replica-restart test the
+backend logged an upgrade for the player's account arriving 1.7 s after the replica came back, at a
+moment the engine sent nothing. It upgraded in 4 ms on a connection that was already dead, and it
+closed the player's live socket `4001`. The likeliest source is Docker Desktop's port forwarder
+delivering an upgrade request the engine had already given up on, while the replica was down. It did
+not reproduce on demand. Never reconnecting would have left that player without pushes for the rest of
+the session, and their party seat would have gone after the 35 s grace. One retry inside the grace
+recovers from a ghost, and two real sessions swap once and settle.
+
+**The reconnect timer** is `Online::OnUpdate`, called once per frame from `Application::Run` right
+after `JobSystem::OnUpdate`: one clock read when nothing is due. When it fires with no session (the
+backend was down at boot, say), it starts a sign-in through the same `GET /v1/me` probe. That makes the
+push channel the one thing that keeps trying in the background, at its backoff, and so it is also what
+brings an offline game back online.
+
+### Subscriptions, and the `connected` event
+
+```lua
+Backend.Subscribe(self.entity, "party.invite", function(msg) end)
+Backend.Unsubscribe(self.entity, "party.invite")
+Backend.GetPushStatus()   -- "disconnected", "connecting", "connected" or "replaced"
+```
+
+- A subscription is **owned** like a request: by `self.entity`'s script instance, and removed when
+  the instance or its scene goes. Stopping play removes a scene's subscriptions; the socket belongs to
+  the application and stays up. One subscription per (owner, type); subscribing again replaces the
+  callback.
+- A push reaches a scene through **the same mailbox as responses**: queued from `JobSystem::OnUpdate`
+  (no scene context there), and delivered in `DeliverResponses`, before `OnUpdate`. A callback that
+  errors disables its script.
+- `msg` is the **wire envelope**, `{ type, id, payload }`, with the payload's keys as the contract writes
+  them (`party_id`, `display_name`). A push is a nudge; the typed bindings that fetch the state are
+  where names are mapped (`display_name` → `name`).
+- **A push nobody subscribes to is dropped and counted**, logged at trace level. Not a warning: the
+  contract adds types without a version bump, so an unknown type is normal.
+- **`connected`** is raised by the engine on every (re)connect, with an empty id and a nil payload.
+  Pushes sent while the socket was down are gone, so this is the moment to re-fetch whatever the script
+  shows. A script fetches in `OnCreate` too: in the editor, Play starts long after the socket opened.
+
+The plan had the engine re-fetch the party and invites itself on every reconnect. It announces
+`connected` instead, because the engine does not know what a game shows (O5a adds the match ticket).
+The guarantee is the same: a script that fetches on `connected` is correct whether or not any push
+arrives, and pushes only make it prompt.
+
+### Measured (O4, 2026-10-09, Windows x64 Debug runtime, against both Compose replicas)
+
+The engine on replica b (8082); `gscli` players on replica a (8080), so every push crossed replicas
+through Redis.
+
+| Check | Result |
+|---|---|
+| Push arrives | a `party.invite` from a leader on the other replica reached the subscribed script inside its scene update; it accepted, and `party.updated` followed |
+| Unknown type (`PUBLISH user:<account> {"type":"x.new"}`) | dropped and counted, trace log only |
+| Replica shutdown (`docker compose stop backend-b`) | `1001` → reconnect in 0.12 s → backoff with jitter while it was down → connected 0.4 s after it came back; the leader saw the player `online` throughout, seat kept |
+| Re-fetch on reconnect | an invite sent while the socket was down appeared in the `connected` re-fetch, with no push |
+| Same account twice (a `gscli` session with the engine's device ID) | first `4001` → one retry ~5 s later (the other session got the `4001`); second `4001` → `"replaced"`, stayed off |
+| Backend restarted after the token expired | dropped → backoff → upgrade refused 401 → `GET /v1/me` refreshed the session → connected, in the same second |
+
+Not exercised: a `1008` (the engine never sends a data message, and the backend's slow-client close
+was not provoked), and stopping play in the editor (the subscriptions go with the scene's record, the
+same way its instances and requests do).
+
 ## Ownership, mailboxes and cancellation
 
 `ScriptEngine` keeps, per scene (inside the same per-scene record as the instances, see
@@ -278,6 +390,14 @@ The bindings so far:
 | `Backend.SubmitScore(self.entity, board, score, cb)` | `POST /v1/leaderboards/<board>/scores` → `{ rank, best, replayed }` |
 | `Backend.GetMyStanding(self.entity, board, cb)` | `GET /v1/leaderboards/<board>/me` → `{ rank, best }`, both `nil` with no score yet |
 | `Backend.GetLeaderboard(self.entity, board, limit, cb)` | `GET /v1/leaderboards/<board>?limit=` → array of `{ rank, name, score, accountId, isMe }`, best first; `limit` 1–100 or `nil` (the backend's 10) |
+| `Backend.Subscribe(self.entity, type, fn)` / `Unsubscribe(self.entity, type)` | pushes of `type` → `fn({ type, id, payload })`; see [the push channel](#subscriptions-and-the-connected-event) |
+| `Backend.GetPushStatus()` | `"disconnected"`, `"connecting"`, `"connected"` or `"replaced"`. Local |
+| `Backend.GetParty(self.entity, cb)` | `GET /v1/party` → `{ id, leaderId, members = { { accountId, name, status, leader } } }`, or `nil` when in none |
+| `Backend.CreateParty(self.entity, cb)` | `POST /v1/party` → the party |
+| `Backend.InviteToParty(self.entity, accountId, cb)` | `POST /v1/party/invites` (leader only) |
+| `Backend.GetPartyInvites(self.entity, cb)` | `GET /v1/party/invites` → array of `{ partyId, from = { accountId, name }, expiresAt }` |
+| `Backend.AcceptPartyInvite(self.entity, partyId, cb)` / `DeclinePartyInvite` | `POST /v1/party/invites/<id>/accept` → the party / `.../decline` |
+| `Backend.LeaveParty(self.entity, cb)` / `KickFromParty(self.entity, accountId, cb)` | `POST /v1/party/leave` / `POST /v1/party/kick` (leader only) |
 
 Every request binding is typed per endpoint, and maps the API's names to script-style ones
 (`display_name` → `name`). There is no generic request.
@@ -292,6 +412,8 @@ like a missing owner:
   fraction, a negative, a string or anything past 2^53 − 1 is refused at the call, rather than
   truncated quietly or refused by the backend a frame later.
 - A limit is a whole number from 1 to 100, or `nil`.
+- **A party ID goes into the URL path and an account ID into a body**, so both must be UUIDs
+  (8-4-4-4-12 hex).
 
 **A score is applied once, however often it arrives.** Each `SubmitScore` call generates one
 `Idempotency-Key` (`Online::NewUuid`) and carries it in the request. The only time the engine sends a

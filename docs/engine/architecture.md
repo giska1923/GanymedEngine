@@ -60,8 +60,9 @@ Application::Run loop
 ├─ compute Timestep from glfwGetTime()
 │
 ├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized);
-│                                          backend responses land here and are queued into
-│                                          their scene's script mailbox (online.md)
+│                                          backend responses and pushes land here and are queued
+│                                          into their scene's script mailbox (online.md)
+├─ Online::OnUpdate                        the push socket's reconnect timer
 ├─ AssetManager::Update                    poll assets/ for edits, then apply parses that
 │                                          finished on workers, within a 4 ms budget (the only
 │                                          place the async asset path creates GPU resources)
@@ -126,8 +127,10 @@ Two ordering facts worth internalizing:
   `Init()`/`Shutdown()` by `Application`; because that shutdown runs in the destructor *body*, before
   the LayerStack unwinds, every one of its calls no-ops once shut down — the `IsGpuAlive` pattern
   again (see [audio.md](audio.md)).
-- `Online` owns the network threads (four `ix::HttpClient`s) and the requests in flight. It is
-  static-lifetime, `Init()` after `ScriptEngine` and `Shutdown()` before it. It knows nothing of
+- `Online` owns the network threads (four `ix::HttpClient`s and the push `ix::WebSocket`), the
+  session and the requests in flight. It is static-lifetime, `Init()` after `ScriptEngine` and
+  `Shutdown()` before it. The push socket belongs to it, not to a scene: stopping play does not
+  close it. It knows nothing of
   owners: `ScriptEngine` records which script instance owns each request and cancels them when the
   instance or its scene goes ([online.md](online.md)).
 - Renderer subsystems (`Renderer2D`, `Renderer3D`, `ParticleRenderer`, `PostProcess`, `MeshShader`) are static-lifetime

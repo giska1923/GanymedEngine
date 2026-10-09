@@ -1,5 +1,7 @@
 #pragma once
 
+#include "GanymedE/Online/Json.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -65,6 +67,20 @@ namespace GanymedE {
 	// thread and never inside a scene update. Not called at all for a cancelled request.
 	using OnlineCompletion = std::function<void(const OnlineResponse&)>;
 
+	// One message from the push socket, in the contract's envelope ({ type, id, payload }; the
+	// backend's realtime.md), plus one the engine raises itself: "connected", on every (re)connect,
+	// with an empty id and a null payload. Pushes are nudges, delivered at most once.
+	struct OnlinePush
+	{
+		std::string Type;
+		std::string Id;
+		JsonValue Payload;
+	};
+
+	// Called on the main thread, from JobSystem::OnUpdate, for every push. Returns how many
+	// listeners it was queued for; 0 counts the push as undelivered.
+	using OnlinePushHandler = std::function<size_t(const OnlinePush&)>;
+
 	// The engine's client to the backend (docs/engine/online.md): HTTP that never blocks a frame,
 	// and the player's identity and session.
 	//
@@ -83,9 +99,12 @@ namespace GanymedE {
 		// waits for the network: boot does not depend on the backend.
 		static void Init();
 
-		// Abandons every request in flight and joins the network threads. Completions for those
-		// requests are never called.
+		// Abandons every request in flight, closes the push socket, and joins the network threads.
+		// Completions for those requests are never called.
 		static void Shutdown();
+
+		// Once per frame from Application::Run: the push socket's reconnect timer.
+		static void OnUpdate();
 
 		static bool IsInitialized();
 		static const std::string& GetBackendUrl();
@@ -118,6 +137,20 @@ namespace GanymedE {
 		static const std::string& GetAccountId();
 		static const std::string& GetPlayerName();
 
+		// ---- The push socket ----------------------------------------------------------------
+
+		enum class PushStatus
+		{
+			Disconnected,   // not open yet, or closed and waiting to reconnect
+			Connecting,
+			Connected,
+			Replaced        // closed 4001: a newer session of this account took over; not reconnecting
+		};
+		static PushStatus GetPushStatus();
+
+		// Where pushes go. Set once by Application; ScriptEngine queues them per scene.
+		static void SetPushHandler(OnlinePushHandler handler);
+
 		struct Stats
 		{
 			uint64_t Sent = 0;           // requests made through Send, including the engine's own profile
@@ -130,6 +163,9 @@ namespace GanymedE {
 			uint64_t Refreshes = 0;      // refresh calls made
 			uint64_t DroppedLate = 0;    // a response came back for a cancelled request
 			uint32_t InFlight = 0;       // requests not yet completed, including those waiting to sign in
+			uint64_t PushConnects = 0;   // push socket opens
+			uint64_t Pushes = 0;         // messages received on it
+			uint64_t PushesUndelivered = 0;   // ...that no script was subscribed to
 		};
 		static Stats GetStats();
 

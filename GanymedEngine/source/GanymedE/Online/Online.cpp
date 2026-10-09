@@ -8,6 +8,7 @@
 // the rest of whatever TU includes it. See docs/engine/build-and-tooling.md, IXWebSocket.
 #include <ixwebsocket/IXHttpClient.h>
 #include <ixwebsocket/IXNetSystem.h>
+#include <ixwebsocket/IXWebSocket.h>
 
 namespace GanymedE::OnlineTransport {
 
@@ -38,6 +39,12 @@ namespace GanymedE::OnlineTransport {
 			std::unordered_map<AttemptId, PendingAttempt> Pending;
 			AttemptId NextId = 1;
 			uint64_t DroppedLate = 0;
+
+			// The push socket. Its events carry the generation they were raised under, and the
+			// main thread drops any whose generation is not the current one.
+			std::unique_ptr<ix::WebSocket> Socket;
+			uint64_t SocketGeneration = 0;
+			SocketEvents Events;
 		};
 
 		TransportData* s_Data = nullptr;
@@ -105,6 +112,17 @@ namespace GanymedE::OnlineTransport {
 			pending.Completion(response);
 		}
 
+		// Network thread -> main thread, for the socket raised under `generation` only.
+		template<typename Fn>
+		void PostSocketEvent(uint64_t generation, Fn&& fn)
+		{
+			JobSystem::SubmitToMainThread([generation, fn = std::forward<Fn>(fn)]()
+			{
+				if (s_Data && s_Data->SocketGeneration == generation)
+					fn(s_Data->Events);
+			});
+		}
+
 		void FailWithoutSending(std::function<void(const OnlineResponse&)> completion, std::string reason)
 		{
 			OnlineResponse response;
@@ -134,6 +152,8 @@ namespace GanymedE::OnlineTransport {
 	{
 		if (!s_Data)
 			return 0;
+
+		CloseSocket();
 
 		// Joins the network threads, and does not wait out a transfer to do it: ix::HttpClient's
 		// destructor sets _stop, which the request's cancellation check reads during the connect
@@ -242,5 +262,87 @@ namespace GanymedE::OnlineTransport {
 	uint32_t InFlight()
 	{
 		return s_Data ? static_cast<uint32_t>(s_Data->Pending.size()) : 0;
+	}
+
+	void OpenSocket(const std::string& path, const std::string& bearer, SocketEvents events)
+	{
+		GE_CORE_ASSERT(JobSystem::IsMainThread(), "OnlineTransport::OpenSocket is main-thread only");
+		if (!s_Data)
+			return;
+
+		CloseSocket();
+		const uint64_t generation = ++s_Data->SocketGeneration;
+		s_Data->Events = std::move(events);
+
+		std::string url = s_Data->BaseUrl;
+		if (url.rfind("https://", 0) == 0)
+			url.replace(0, 5, "wss");
+		else if (url.rfind("http://", 0) == 0)
+			url.replace(0, 4, "ws");
+
+		auto socket = std::make_unique<ix::WebSocket>();
+		socket->setUrl(url + path);
+		ix::WebSocketHttpHeaders headers;
+		headers["Authorization"] = "Bearer " + bearer;
+		socket->setExtraHeaders(headers);
+		// The session reconnects by close code (4001 must not reconnect at all), so IXWebSocket's
+		// own loop is off. That also avoids a stop() hang that upstream fixed after v12.0.1 (#609),
+		// which needs automatic reconnection to race.
+		socket->disableAutomaticReconnection();
+		// Built without zlib, so compression must never be negotiated: frames the server
+		// compressed could not be read.
+		socket->disablePerMessageDeflate();
+		socket->setHandshakeTimeout(5);   // IXWebSocket's default is 60 s
+
+		// Network thread. Copies what it needs and posts it; nothing here touches s_Data.
+		socket->setOnMessageCallback([generation](const ix::WebSocketMessagePtr& message)
+		{
+			switch (message->type)
+			{
+				case ix::WebSocketMessageType::Open:
+					PostSocketEvent(generation, [](SocketEvents& e) { if (e.OnOpen) e.OnOpen(); });
+					break;
+				case ix::WebSocketMessageType::Message:
+					if (!message->binary)
+					{
+						PostSocketEvent(generation, [text = message->str](SocketEvents& e)
+						{
+							if (e.OnText) e.OnText(text);
+						});
+					}
+					break;
+				case ix::WebSocketMessageType::Close:
+					PostSocketEvent(generation, [code = int(message->closeInfo.code), reason = message->closeInfo.reason,
+						remote = message->closeInfo.remote](SocketEvents& e)
+					{
+						if (e.OnClose) e.OnClose(code, reason, remote);
+					});
+					break;
+				case ix::WebSocketMessageType::Error:
+					PostSocketEvent(generation, [status = message->errorInfo.http_status, reason = message->errorInfo.reason](SocketEvents& e)
+					{
+						if (e.OnFailed) e.OnFailed(status, reason);
+					});
+					break;
+				default:
+					break;   // ping/pong are answered by IXWebSocket itself; fragments are reassembled
+			}
+		});
+
+		socket->start();
+		s_Data->Socket = std::move(socket);
+	}
+
+	void CloseSocket()
+	{
+		if (!s_Data || !s_Data->Socket)
+			return;
+
+		// Bumped first, so nothing this socket raises - including the close below - reaches the
+		// caller's events.
+		s_Data->SocketGeneration++;
+		s_Data->Socket->stop();   // sends a close frame and joins the socket's thread
+		s_Data->Socket.reset();
+		s_Data->Events = {};
 	}
 }
