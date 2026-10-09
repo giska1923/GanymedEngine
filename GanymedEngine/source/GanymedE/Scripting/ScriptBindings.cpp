@@ -1009,6 +1009,141 @@ namespace GanymedE {
 		}
 	}
 
+	sol::object JsonToLua(sol::state_view lua, const JsonValue& value)
+	{
+		switch (value.Kind)
+		{
+			case JsonValue::Type::Null:    return sol::lua_nil;
+			case JsonValue::Type::Bool:    return sol::make_object(lua, value.Bool);
+			// A Lua integer, not a float: Lua 5.4 has the subtype, and an id or a score read back
+			// as 1516 rather than 1516.0 is what a script comparing or printing it expects.
+			case JsonValue::Type::Integer: return sol::make_object(lua, value.Integer);
+			case JsonValue::Type::Number:  return sol::make_object(lua, value.Number);
+			case JsonValue::Type::String:  return sol::make_object(lua, value.String);
+			case JsonValue::Type::Array:
+			{
+				sol::table table = lua.create_table(static_cast<int>(value.Items.size()), 0);
+				for (size_t i = 0; i < value.Items.size(); i++)
+					table[i + 1] = JsonToLua(lua, value.Items[i]);
+				return table;
+			}
+			case JsonValue::Type::Object:
+			{
+				sol::table table = lua.create_table(0, static_cast<int>(value.Members.size()));
+				for (const auto& [key, member] : value.Members)
+					table[key] = JsonToLua(lua, member);
+				return table;
+			}
+		}
+		return sol::lua_nil;
+	}
+
+	namespace {
+
+		JsonValue LuaToJsonAt(const sol::object& value, int depth)
+		{
+			if (depth > 64)
+				throw sol::error("Backend: a table nested more than 64 deep (a cycle?) cannot be sent as JSON");
+
+			switch (value.get_type())
+			{
+				case sol::type::lua_nil:
+				case sol::type::none:
+					return JsonValue::MakeNull();
+
+				case sol::type::boolean:
+					return JsonValue::MakeBool(value.as<bool>());
+
+				case sol::type::number:
+				{
+					// The subtype decides: a Lua integer is written exactly, whatever its size; a
+					// float goes through the writer's whole-number rule. sol2 hides the subtype, so
+					// the raw API answers it.
+					lua_State* L = value.lua_state();
+					value.push(L);
+					const bool isInteger = lua_isinteger(L, -1);
+					const lua_Integer integer = isInteger ? lua_tointeger(L, -1) : 0;
+					const lua_Number number = lua_tonumber(L, -1);
+					lua_pop(L, 1);
+					return isInteger ? JsonValue::MakeInteger(integer) : JsonValue::MakeNumber(number);
+				}
+
+				case sol::type::string:
+					return JsonValue::MakeString(value.as<std::string>());
+
+				case sol::type::table:
+				{
+					// Array or object, decided by the keys: 1..n with no gaps is an array, all
+					// strings is an object, anything else is refused rather than guessed. An empty
+					// table is written as {} - Lua cannot say which one it meant.
+					sol::table table = value.as<sol::table>();
+					size_t count = 0;
+					bool allIndices = true, allStrings = true;
+					lua_Integer maxIndex = 0;
+					for (const auto& [key, item] : table)
+					{
+						(void)item;
+						count++;
+						if (key.get_type() == sol::type::string)
+							allIndices = false;
+						else if (key.get_type() == sol::type::number)
+						{
+							allStrings = false;
+							lua_State* L = key.lua_state();
+							key.push(L);
+							const bool integral = lua_isinteger(L, -1);
+							const lua_Integer index = integral ? lua_tointeger(L, -1) : 0;
+							lua_pop(L, 1);
+							if (!integral || index < 1)
+								allIndices = false;
+							else
+								maxIndex = std::max(maxIndex, index);
+						}
+						else
+							allIndices = allStrings = false;
+					}
+
+					if (count == 0 || (allStrings && !allIndices))
+					{
+						JsonValue object = JsonValue::MakeObject();
+						for (const auto& [key, item] : table)
+							object.Members.emplace_back(key.as<std::string>(), LuaToJsonAt(item, depth + 1));
+						// Lua's iteration order is unspecified; sorted, two runs send the same bytes.
+						std::sort(object.Members.begin(), object.Members.end(),
+							[](const auto& a, const auto& b) { return a.first < b.first; });
+						return object;
+					}
+					if (allIndices && static_cast<size_t>(maxIndex) == count)
+					{
+						JsonValue array = JsonValue::MakeArray();
+						for (lua_Integer i = 1; i <= maxIndex; i++)
+							array.Items.push_back(LuaToJsonAt(table[i], depth + 1));
+						return array;
+					}
+					throw sol::error("Backend: a table with mixed or sparse keys cannot be sent as JSON "
+						"(use 1..n for an array, or only string keys for an object)");
+				}
+
+				default:
+					throw sol::error(std::string("Backend: a ") + sol::type_name(value.lua_state(), value.get_type())
+						+ " cannot be sent as JSON");
+			}
+		}
+
+		// Empty until O2 adds identity: every binding here is typed per endpoint, and there is no
+		// generic request (docs/engine/online.md). The table exists now so the ownership and
+		// delivery machinery has its one home in Lua.
+		void RegisterBackend(sol::state& lua)
+		{
+			lua.create_named_table("Backend");
+		}
+	}
+
+	JsonValue LuaToJson(const sol::object& value)
+	{
+		return LuaToJsonAt(value, 0);
+	}
+
 	void RegisterScriptGlobals(sol::state& lua)
 	{
 		RegisterInput(lua);
@@ -1019,6 +1154,7 @@ namespace GanymedE {
 		RegisterPhysics(lua);
 		RegisterAudio(lua);
 		RegisterUI(lua);
+		RegisterBackend(lua);
 	}
 
 	void RegisterScriptBindings(sol::state& lua)

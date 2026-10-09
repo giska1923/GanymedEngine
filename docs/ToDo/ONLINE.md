@@ -1,6 +1,6 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: O0 done (2026-10-09); O1 next.** The backend is complete (B1–B5, `api-v0.5`), so
+**Status: O0 and O1 done (2026-10-09); O2 next.** The backend is complete (B1–B5, `api-v0.5`), so
 O1–O4 and O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
 been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
@@ -126,7 +126,7 @@ prerequisite for anything here.
 | Phase | What | Branch | Needs from the backend | Rough size |
 |---|---|---|---|---|
 | **O0** | Vendor IXWebSocket, a premake project, and a build on Windows and Linux. **Done** | master | nothing | took under a day |
-| **O1** | `Online/` request layer: threading, ownership, cancellation, timeouts | master | nothing (a Python stub) | 2–3 days |
+| **O1** | `Online/` request layer: threading, ownership, cancellation, timeouts. **Done** | master | nothing (a Python stub) | about a day |
 | **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth | master | **B1** (device auth) | 1–2 days |
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores | master + `first-game` | **B2** (leaderboards) | 1–2 days |
 | **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
@@ -249,7 +249,7 @@ What it does now is in [build-and-tooling.md](../engine/build-and-tooling.md#dep
 
 ---
 
-## Phase O1 — the request layer
+## Phase O1 — the request layer — **DONE**
 
 ### Goal
 
@@ -392,6 +392,74 @@ the `HTTP/1.0` that `http.server` sends by default (found in O0).
 | `/edge` payload | every field round-trips through the parser and the writer |
 | Whole-number doubles | the writer emits `1234` for the Lua value `1234` (a double), and refuses 2^53 |
 | Ownerless call | refused with a named error, and nothing is sent |
+
+### Execution notes
+
+2026-10-09, on `hello-online`. Live behaviour is in [online.md](../engine/online.md). Verified on
+the Windows x64 Debug **runtime**, booted on throwaway test scenes with
+`GE_ONLINE_TEST=1 GanymedRuntime scenes/O1Test.ganymede --backend=http://127.0.0.1:8781`, against
+an HTTP/1.1 Python stub. The scenes, the script and the stub are not committed.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Callback timing | **pass** | a request from `OnCreate` was delivered in the scene's first update, inside `LuaScriptSystem`; `self.entity:GetName()` worked in the callback |
+| **Stop play mid-request** (editor) | **pass**, on the second attempt (below) | Stop at 14.5 s into a `/delay/30`: `OnDestroy` saw `inFlight=1`, the heartbeat stopped, no callback, closing stats `1 cancelled, 1 dropped late, 0 abandoned`. The stub still slept 30 s and answered into an open connection, closed only at editor exit |
+| Entity destroyed mid-request | **pass** | victim sent `/delay/3`, destroyed 0.5 s later: `cancelled=1 droppedLate=1`, nothing in flight, its callback never ran; the driver's requests kept completing |
+| Backend down | **pass** | `ok=false`, "cannot connect to http://127.0.0.1:8799/ok", about 2 s in, game still running |
+| Frame cost | **pass**, from script-side frame times rather than an Instrumentor trace | 287 frames each: idle mean 6.98 ms (max 10.01), 20 in flight mean 6.96 ms (max 12.53) |
+| Exit with a request in flight | **pass** | 10 s request in flight: exit 0.62–0.75 s; nothing in flight: 0.64–0.71 s |
+| `/edge` payload | **pass** | both `\u00e9` and raw `é`, `null` → nil, 2^53+1 exact as a Lua integer, nested array, quoted literals stayed strings; written back, the stub found it equal to the original (nulls aside) |
+| Whole-number doubles | **pass** | `1234.0` → `1234`, `3 * 1.0` → `3`, int64 `9007199254740993` exact; `2.0^53` refused, sent count unchanged |
+| Ownerless call | **pass** | nil owner, an entity with no script, a non-function callback: each a named Lua error, sent count unchanged |
+| Head-of-line (added) | **pass** | `/ok` behind two `/delay/2`: delivered the next frame |
+| Failure reasons (added) | **pass** | 404 problem+json → `urn:ganymed:problem:not-found`; plain 503 → `HTTP 503` |
+| Linux (WSL2, gcc 11.4) | **pass** | the engine and runtime build with the O1 code, no warnings outside `extern/`. The same test scene: T1–T6 identical results; the victim's callback never ran and the final stats read `cancelled=1 droppedLate=1`. WSL's software GL runs at ~44 ms a frame, so its frame-cost numbers (43.7 vs 46.8 ms) measure the renderer, not this code, and exit was not timed there |
+
+**Where the plan was wrong or incomplete, kept visible:**
+
+- **"Shutdown can block" was wrong, and the measurement caught it.** I read IXWebSocket's
+  `HttpClient::request` as checking only the request's own `cancel` flag during a transfer, and
+  wrote an explicit abort into `Online::Shutdown`. Removing that abort (a deliberate mutation)
+  still exited in 0.74 s with a 10 s request in flight. The cancellation check is a lambda that
+  ORs in the client's `_stop` and captures its timeout object by reference, so it applies to the
+  transfer as well. The abort is gone, and the comment says why.
+- **Head-of-line blocking was real, and is answered by reading, not guessing.** The async client is
+  one thread popping one queue (`HttpClient::run`). `Online` keeps four clients and sends each
+  request to the least loaded. That bounds the problem rather than removing it: 20 two-second
+  requests take five rounds, and 4 had landed after 2.5 s.
+- **Cancel stops the waiting, not the connection.** The plan did not know whether IXWebSocket
+  could abort a transfer. `HttpRequestArgs::cancel` is checked between socket waits, so a cancelled
+  request frees its network thread within 0.6 s and its late response is counted, never delivered.
+  **First written here as "the connection is closed (the stub logged the abort)", which was wrong:**
+  that stub line came from the exit test. The editor check showed the stub sleeping its full 30 s
+  and answering into a connection that stayed open until exit. It is harmless: IXWebSocket opens a
+  new socket per request, so no later request can read the stale response, and at most four idle
+  sockets linger ([online.md](../engine/online.md#what-cancel-does-and-does-not-do)).
+- **The first stop-play attempt proved nothing, because the check was badly built.** Its request was
+  `/delay/10`, equal to the default 10 s transfer timeout, so it timed out by itself while play was
+  still running, and nothing logged when Stop was pressed. The second attempt used `/delay/30` with a
+  60 s timeout, a heartbeat line per second and a line from `OnDestroy`. A third instruction bug on
+  the way: the editor resolves a command-line scene against the working directory, unlike the
+  runtime ([cross-cutting.md](cross-cutting.md#the-editor-and-the-runtime-read-a-command-line-scene-path-differently)).
+- **"Every Lua number reaching the writer is a double" is false for Lua 5.4**, which has an integer
+  subtype. The writer writes Lua integers exactly and applies the whole-number and 2^53 rule only
+  to floats. That is also what makes the `/edge` round trip possible: 2^53+1 is a Lua integer and
+  is written back exactly, where the plan's rule would have refused its own probe.
+- **Owner bookkeeping lives in `ScriptEngine`, not `Online`.** The plan's diagram had `Online`
+  checking whether the owner was alive. `Online` knows nothing of scenes; `ScriptEngine` keeps a
+  per-scene map of requests and a mailbox, and cancels on `DestroyInstance` and
+  `DestroySceneInstances`. `Online` stays a transport, and the dependency points one way.
+- **O1 needed a Lua surface the plan did not name.** Its checks call arbitrary stub paths, and the
+  permanent bindings are typed per endpoint. A temporary `Backend.__Request` (and `__Stats`) was
+  registered only under `GE_ONLINE_TEST`, and was deleted, with the test scenes, script and stub,
+  once every check had passed. `Backend` is an empty table until O2.
+- **Frame cost came from script-side `ts`, not the Instrumentor.** Turning `GE_PROFILE` on
+  recompiles the engine. With frame time unchanged in mean and nothing new on the main thread
+  but a map lookup per response, a trace was not worth that build.
+- **Two things noticed in passing:** sol2 prints `[sol2] An exception occurred` to stderr for
+  errors a script catches with `pcall`, which is noise, not a failure. And a script summing `ts` sees
+  the engine's known over-a-second first frame ([cross-cutting.md](cross-cutting.md#the-first-frames-timestep-is-over-a-second)),
+  which inflated the "backend down" time to 4.7 s in script terms against about 2 s of play.
 
 ---
 
@@ -788,7 +856,7 @@ drained, servers ready, `WELCOME:4`, finished with results.
 | Phase | Doc |
 |---|---|
 | O0 | [build-and-tooling.md](../engine/build-and-tooling.md): dependency table, `extern/IXWebSocket.lua`, the defines it had to supply |
-| O1 | **new** `docs/engine/online.md`, indexed from [docs/README.md](../README.md); [architecture.md](../engine/architecture.md): module layout, the frame diagram, ownership; [scripting.md](../engine/scripting.md): the mailbox drain in `LuaScriptSystem` |
+| O1 | **new** `docs/engine/online.md`, indexed from [docs/README.md](../README.md); [architecture.md](../engine/architecture.md): module layout, the frame diagram, ownership; [scripting.md](../engine/scripting.md): the mailbox drain in `LuaScriptSystem`. **Done** |
 | O2 | `online.md`; [platform.md](../engine/platform.md): the user-data directory; [runtime.md](../runtime/runtime.md) and [editor.md](../editor/editor.md): `--backend=` and `--profile=` |
 | O3 | [scripting.md](../engine/scripting.md): `Backend.*` bindings. Game-branch HUD changes are recorded in `first-game`'s Proving Ground doc |
 | O4 | `online.md` (reconnect rules by close code); [scripting.md](../engine/scripting.md): `Backend.Subscribe` and the party bindings |

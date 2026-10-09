@@ -60,6 +60,11 @@ namespace GanymedE {
 
 		static void Update(entt::entity entity, Timestep ts);
 
+		// Runs the callbacks of backend requests whose responses have arrived, for the current
+		// scene's instances, with the scene context set. LuaScriptSystem calls it once per update,
+		// before any OnUpdate - see docs/engine/online.md for the three hops a response takes.
+		static void DeliverResponses();
+
 		// One tunable declared by a script, with the default it declared.
 		//
 		// The type is carried by the variant rather than named separately: a script writes

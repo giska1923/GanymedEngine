@@ -106,6 +106,17 @@ accepts and GCC does not" family of [build-and-tooling.md](../engine/build-and-t
 The fix is small, but it needs the Linux build to verify, and it belongs with the code that
 introduced it rather than with the online work that found it.
 
+## The editor and the runtime read a command-line scene path differently
+
+`GanymedRuntime scenes/X.ganymede` resolves the path against the asset root
+([runtime.md](../runtime/runtime.md)), so it finds `assets/scenes/X.ganymede`.
+`GanymedEditor scenes/X.ganymede` resolves it against the working directory
+(`EditorLayer::OnAttach`), so the same argument is "not found", and the editor opens its default
+scene with only a warning in the log. Found during ONLINE.md's O1 editor check, where it made a
+script that should have run silently never load. The runtime's rule is the one to keep, with an
+existing working-directory path still honoured; the editor's open-scene path then shares one
+helper with `RuntimeConfig::ApplyCommandLine`.
+
 ## A frame profiler (Tracy) is still worth considering
 
 The frame loop **is** instrumented now, and the `Instrumentor` behind it was rewritten to afford it
