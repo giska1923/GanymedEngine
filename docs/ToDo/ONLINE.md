@@ -1,7 +1,7 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: planned, not started.** The backend is complete (B1–B5, `api-v0.5`), so O0–O4 and
-O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
+**Status: O0 done (2026-10-09); O1 next.** The backend is complete (B1–B5, `api-v0.5`), so
+O1–O4 and O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
 been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
 The engine half of a game backend: an HTTP and WebSocket client that never blocks the frame, a
@@ -125,7 +125,7 @@ prerequisite for anything here.
 
 | Phase | What | Branch | Needs from the backend | Rough size |
 |---|---|---|---|---|
-| **O0** | Vendor IXWebSocket, a premake project, and a build on Windows and Linux | master | nothing | 1–2 days. Porting a CMake build to premake is the unknown |
+| **O0** | Vendor IXWebSocket, a premake project, and a build on Windows and Linux. **Done** | master | nothing | took under a day |
 | **O1** | `Online/` request layer: threading, ownership, cancellation, timeouts | master | nothing (a Python stub) | 2–3 days |
 | **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth | master | **B1** (device auth) | 1–2 days |
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores | master + `first-game` | **B2** (leaderboards) | 1–2 days |
@@ -139,7 +139,7 @@ scene stop a week later.
 
 ---
 
-## Phase O0 — vendor the transport
+## Phase O0 — vendor the transport — **DONE**
 
 ### Goal
 
@@ -210,6 +210,42 @@ unused, keeps OpenSSL headers from ever being required on a clean clone.
 | Linux (WSL2) Debug | same |
 | Submodule clean after a build | `git status` in `extern/IXWebSocket` shows nothing |
 | Probe: one sync `GET` to `python -m http.server` | status 200 and the body length logged. Probe deleted afterwards |
+
+### Execution notes
+
+2026-10-09, on `hello-online` after merging `master` into it. IXWebSocket pinned to **`v12.0.1`**.
+What it does now is in [build-and-tooling.md](../engine/build-and-tooling.md#dependencies-vendored-under-ganymedengineextern).
+
+| Check | Result | Evidence |
+|---|---|---|
+| Windows x64 Debug, Release, Dist | **pass** | engine, editor and runtime linked in all three; the runtime held the probe, so its link really pulled IXWebSocket and Winsock in. No new warnings (the one `LNK4006`, `psapi` over `gdi32`, predates this) |
+| Linux (WSL2, Ubuntu 22.04, gcc 11.4) Debug | **pass for the engine and runtime**; the editor does not compile, for reasons unrelated to this phase | `libIXWebSocket.a` built clean, the engine and runtime linked with it after the engine and before `pthread`. The editor fails in `EditorPicking` and `EditorUndo` code from `master` ([cross-cutting.md](cross-cutting.md#the-editor-does-not-compile-on-linux-gcc)) |
+| Submodule clean after a build | **pass** | `git status` in `extern/IXWebSocket` is empty after Windows and Linux builds |
+| Probe | **pass**, against an HTTP/1.1 server (below) | Windows Debug, Release, Dist: `GET` → 200 with the full body, also against the real backend's `/healthz`. Linux: 200, 15 of 15 bytes. Probe (`Online/NetProbe.cpp`, called from the runtime's `CreateApplication` under `GE_NET_PROBE`) deleted, and its stale objects removed from both platforms' archives |
+
+**Where the plan was wrong or incomplete, kept visible:**
+
+- **"Minus anything that pulls in zlib" was unnecessary.** Every zlib and TLS use is behind
+  `IXWEBSOCKET_USE_ZLIB` / `IXWEBSOCKET_USE_TLS` inside the sources. The script compiles every
+  source except the three TLS backends, which is exactly CMake's list with both options off (the
+  lists were diffed, 36 files each). No define was needed beyond `_CRT_SECURE_NO_WARNINGS`.
+- **CMake's Windows links were too many.** It links `ws2_32`, `wsock32` and `shlwapi`. `shlwapi`
+  is used only by the OpenSSL backend, and nothing includes the Winsock 1 header. Since a
+  `StaticLib`'s links are merged into the `.lib` on MSVC, `wsock32` over `ws2_32` produced about
+  60 `LNK4006` warnings. Only `ws2_32` is linked.
+- **The `winsock2.h`-after-`windows.h` risk did not materialise.** `gepch.h` does include
+  `<Windows.h>` without `WIN32_LEAN_AND_MEAN`, but the probe, compiled with the PCH, built clean on
+  Windows SDK 10.0.26100. That was observed, not traced, so O1 keeps the one-TU rule regardless,
+  for the errno macros that `IXNetSystem.h` redefines for its includer.
+- **`python -m http.server` fails the probe.** IXWebSocket's HTTP client parses the status line with
+  `sscanf(line, "HTTP/1.1 %d")` and rejects Python's default `HTTP/1.0` reply ("Cannot parse
+  response code from status line"). An HTTP/1.1 Python server passed. The backend (Go) answers
+  1.1, so this only matters for test servers: see O1's verification.
+- **Two fixes landed upstream after `v12.0.1`** and are not in the pin. #609 fixes a hang in
+  `stop()` when an automatic reconnect races it (the thread join never returns). #597 replaces
+  `ssize_t` with `std::ptrdiff_t` to avoid a typedef clash on MSVC; at the pin, `IXSocket.h`
+  still has `typedef SSIZE_T ssize_t` on Windows. Both are O1 risks below. A later bump to a tag
+  that contains them is cheap: re-diff the source list and rebuild.
 
 ---
 
@@ -321,17 +357,29 @@ The risk below is the trigger.
   concurrently or queues them on one thread. If it queues them, one slow request delays every
   request behind it. Measure with two requests to a delay endpoint and a fast one. If it matters,
   the fix is a small client pool, not a different library.
-- **Connection-refused on Windows is slow.** I believe a connect to a closed localhost port on
-  Windows takes on the order of a second or two, because the stack retries after the RST, where
-  Linux fails in microseconds. It is async, so it costs no frame time. But it decides how fast
-  the "backend is down" failure arrives. Measure it and record the number.
+- **Connection-refused on Windows is slow. Measured in O0:** the probe's whole process ran in
+  132 ms against an open port, about **2.1 s against a closed port on `127.0.0.1`**, and about
+  **4.1 s on `localhost`**, which resolves to `::1` and `127.0.0.1` and pays for both. On Linux
+  the same run took 0.17–0.21 s: refused at once. It is async, so it costs no frame time, but it is
+  how long "backend is down" takes to arrive on Windows. Keep the `--backend=` default on
+  `127.0.0.1`, never `localhost`. Windows also reports that refusal as `Connect error: No error`
+  (an errno mapping upstream fixed after `v12.0.1`), so a "readable reason" will need the engine's
+  own wording.
+- **`stop()` can hang** with IXWebSocket's automatic reconnection on (fixed upstream after the pin,
+  #609). O4 reconnects by close code itself, so it must call `disableAutomaticReconnection()`,
+  which avoids the race as well.
+- **`ssize_t` on MSVC.** `IXSocket.h` typedefs it on Windows, which clashes with any other
+  library's `ssize_t` typedef in the same TU (replaced upstream after the pin, #597). It can only surface in `Online.cpp`, the one
+  TU that includes IXWebSocket, and it will surface at compile time if it does.
 - **yaml-cpp and JSON edge cases.** `\u` escapes, very large integers, `null`. The probe payloads
   below include each.
 
 ### Verification
 
 Against a throwaway Python stub, not committed, with endpoints `/ok`, `/delay/<s>`, `/status/<code>`
-and `/edge` (a payload with `é`, `null`, a 2^53+1 integer and a nested array):
+and `/edge` (a payload with `é`, `null`, a 2^53+1 integer and a nested array). **The stub must
+answer HTTP/1.1** (`protocol_version = "HTTP/1.1"` on its handler): IXWebSocket's client rejects
+the `HTTP/1.0` that `http.server` sends by default (found in O0).
 
 | Check | Pass when |
 |---|---|
@@ -621,9 +669,11 @@ the UDP path all work, with the engine as the client.
      dead, and a new read is the fix.
 
    `DENIED` reasons are for the log. The contract says not to parse them.
-6. The UDP socket lives in `Online.cpp`, beside IXWebSocket. IXWebSocket does not do UDP, so
-   this is raw Winsock (`socket`/`sendto`/`recvfrom`) behind the same one-TU firewall as O0, and
-   after the same `initNetSystem`. The netcode milestone owns what happens after `WELCOME`
+6. The UDP socket lives in `Online.cpp`, beside IXWebSocket, behind the same one-TU firewall and
+   after the same `initNetSystem`. IXWebSocket ships a minimal `ix::UdpSocket` (`init(host,
+   port)`, `sendto`, `recvfrom`, no timeout of its own), which may be enough for one datagram and
+   a wait; raw Winsock is the fallback if its blocking behaviour does not fit. Found while doing
+   O0; this step said earlier that IXWebSocket has no UDP. The netcode milestone owns what happens after `WELCOME`
    (`server-lifecycle.md`: "a real game would continue with its own protocol"). So this
    handshake is the first exchange of that future protocol, and should be written so the socket
    can be handed over rather than reopened.

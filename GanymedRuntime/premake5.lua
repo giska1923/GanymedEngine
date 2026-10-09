@@ -77,9 +77,11 @@ project "GanymedRuntime"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
-			-- Before bimg and bx, which it calls into. enkiTS is a leaf and only needs pthread.
+			-- Before bimg and bx, which it calls into. enkiTS and IXWebSocket are leaves and
+			-- only need pthread.
 			"TextureEncode",
 			"enkiTS",
+			"IXWebSocket",
 			"bgfx",
 			"bimg",
 			"bx",
@@ -101,9 +103,11 @@ project "GanymedRuntime"
 			"ImGui",
 			"yaml-cpp",
 			"Jolt",
-			-- Before bimg and bx, which it calls into. enkiTS is a leaf and only needs pthread.
+			-- Before bimg and bx, which it calls into. enkiTS and IXWebSocket are leaves and
+			-- only need pthread.
 			"TextureEncode",
 			"enkiTS",
+			"IXWebSocket",
 			"bgfx",
 			"bimg",
 			"bx",
