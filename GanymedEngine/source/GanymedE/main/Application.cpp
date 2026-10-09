@@ -4,6 +4,7 @@
 #include "GanymedE/events/KeyEvent.h"
 
 #include "GanymedE/Audio/AudioEngine.h"
+#include "GanymedE/Online/Online.h"
 #include "GanymedE/Reflection/Reflection.h"
 #include "GanymedE/Renderer/Renderer.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
@@ -67,6 +68,11 @@ namespace GanymedE {
 		// AssetManager at this point; script assets are only resolved when one is instantiated.
 		ScriptEngine::Init();
 
+		// After the VM, and shut down before it: requests are owned by script instances, and the
+		// callbacks waiting on them are sol2 references into ScriptEngine's state. Needs nothing
+		// else - it reads --backend= and starts its network threads.
+		Online::Init();
+
 		// After both: it needs a live bgfx with compiled shaders, and it shares
 		// ScriptEngine's lua_State. Sized to the window; the editor re-sizes it to
 		// the viewport once that exists.
@@ -90,6 +96,11 @@ namespace GanymedE {
 		// ScriptEngine's VM, and Rml::Shutdown releases GPU textures, so it must run
 		// while bgfx is still alive. Then the VM, then the GPU.
 		UIEngine::Shutdown();
+
+		// Before the VM (see Init), and before JobSystem: it aborts what is in flight and joins its
+		// network threads, so nothing can SubmitToMainThread into a queue that is being torn down.
+		// Completions it already queued are drained by JobSystem::Shutdown and find it gone.
+		Online::Shutdown();
 		ScriptEngine::Shutdown();
 
 		// Before the LayerStack unwinds, which is why every AudioEngine call is guarded

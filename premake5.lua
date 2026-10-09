@@ -96,6 +96,8 @@ IncludeDir["sol2"] = "%{wks.location}/GanymedEngine/extern/sol2/include"
 IncludeDir["RmlUi"] = "%{wks.location}/GanymedEngine/extern/RmlUi/Include"
 IncludeDir["freetype"] = "%{wks.location}/GanymedEngine/extern/freetype/include"
 IncludeDir["enkiTS"] = "%{wks.location}/GanymedEngine/extern/enkiTS/src"
+-- The submodule root: IXWebSocket's headers are included as <ixwebsocket/IXHttpClient.h>.
+IncludeDir["IXWebSocket"] = "%{wks.location}/GanymedEngine/extern/IXWebSocket"
 
 group "Dependencies"
 	include "vendor/premake"
@@ -108,6 +110,7 @@ group "Dependencies"
 	include "GanymedEngine/extern/FreeType.lua"
 	include "GanymedEngine/extern/RmlUi.lua"
 	include "GanymedEngine/extern/enkiTS.lua"
+	include "GanymedEngine/extern/IXWebSocket.lua"
 
 	-- Engine code, not a dependency, but it groups here because it is a static lib the engine
 	-- links rather than something anyone opens day to day. See GanymedEngine/TextureEncode.lua.

@@ -18,6 +18,7 @@ GanymedE/
 ├── Physics/     PhysicsScene (Jolt, pimpl'd)
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
+├── Online/      HTTP to the backend (IXWebSocket behind Online.cpp) + JSON (see online.md)
 ├── UI/          UIEngine (RmlUi game UI; the editor's own UI is ImGui — see ui.md)
 ├── Math/        Transform decomposition, ScreenPointToRay, AABB + Frustum, FloatCurve + ColorGradient
 ├── ImGui/       ImGuiLayer (docking UI host)
@@ -58,7 +59,9 @@ Application::Run loop
 │
 ├─ compute Timestep from glfwGetTime()
 │
-├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized)
+├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized);
+│                                          backend responses land here and are queued into
+│                                          their scene's script mailbox (online.md)
 ├─ AssetManager::Update                    poll assets/ for edits, then apply parses that
 │                                          finished on workers, within a 4 ms budget (the only
 │                                          place the async asset path creates GPU resources)
@@ -71,7 +74,8 @@ Application::Run loop
 │   │   ├─ SystemManager::OnUpdate[Editor] (m_IsUpdating = true while running)
 │   │   │   ├─ PhysicsSystem               fixed-step Jolt, collision events, transform writeback
 │   │   │   ├─ NativeScriptSystem          script lifecycle + OnUpdate
-│   │   │   ├─ LuaScriptSystem             the same lifecycle for Lua ScriptComponents
+│   │   │   ├─ LuaScriptSystem             the same lifecycle for Lua ScriptComponents; backend
+│   │   │   │                              callbacks run first, inside the scene context
 │   │   │   ├─ AnimationSystem             sample clips, aim offset, palette, two-hand IK (arms, aim lock)
 │   │   │   ├─ TransformSystem             recompute dirty world transforms (ChangeView)
 │   │   │   ├─ BoneAttachmentSystem        pin entities to joints (aim-locked weapon: the IK frame)
@@ -122,6 +126,10 @@ Two ordering facts worth internalizing:
   `Init()`/`Shutdown()` by `Application`; because that shutdown runs in the destructor *body*, before
   the LayerStack unwinds, every one of its calls no-ops once shut down — the `IsGpuAlive` pattern
   again (see [audio.md](audio.md)).
+- `Online` owns the network threads (four `ix::HttpClient`s) and the requests in flight. It is
+  static-lifetime, `Init()` after `ScriptEngine` and `Shutdown()` before it. It knows nothing of
+  owners: `ScriptEngine` records which script instance owns each request and cancels them when the
+  instance or its scene goes ([online.md](online.md)).
 - Renderer subsystems (`Renderer2D`, `Renderer3D`, `ParticleRenderer`, `PostProcess`, `MeshShader`) are static-lifetime
   but explicitly `Init()`/`Shutdown()` by `Renderer`, releasing GPU handles while bgfx is alive.
 - **Loaded assets are owned by whatever holds an `AssetRef<T>`, which in practice is a scene.**

@@ -52,6 +52,12 @@ script that calls `AttachToBone` on an existing component is visible this frame.
 same slot as animation: Lua writes the component, `ParticleSystem` consumes it later in
 the same update.
 
+Each runtime update is: bind the scene context, drain the reactive views (instantiate and tear
+down), **deliver backend responses** (`ScriptEngine::DeliverResponses`), poll hot reload, then
+`OnUpdate` per instance. Delivery comes after the drain so a script destroyed this frame has had
+its requests cancelled and gets no callback, and before `OnUpdate` so a response is seen at the
+start of a frame. See [online.md](online.md).
+
 `OnUpdateEditor` drains both reactive views without instantiating. This is not optional: a skipped
 `InitView`/`FiniView` read asserts on the epoch gap the next time the runtime reads it. Teardown
 still runs there, so removing a `ScriptComponent` in edit mode cleans up an instance left over from
@@ -143,7 +149,9 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 `Key`, `Mouse`, `Log`
 (routed to the **client** logger — script output is game output),
 `Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.FindMarkers` / `Scene.Spawn`, `Entity:Destroy`,
-`Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)).
+`Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)), `Backend` (the online backend:
+`IsSignedIn`, `GetPlayerName`, `GetProfile`, `SubmitScore`, `GetMyStanding`, `GetLeaderboard` — see
+[online.md](online.md#what-a-script-sees)).
 
 > **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
 > `int64_t`, and sol2 with `SOL_ALL_SAFETIES_ON` **throws** rather than truncating when asked to
@@ -157,7 +165,7 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 > top half of the range as negative. A script must treat the value as **opaque**: equality and table
 > keys work, arithmetic is meaningless. The pair round-trips exactly across the full 64-bit range,
 > which is the property runtime prefab spawning depends on
-> ([RUNTIME_PREFAB_SPAWNING.md](../ToDo/RUNTIME_PREFAB_SPAWNING.md)).
+> ([RUNTIME_PREFAB_SPAWNING.md](../history/RUNTIME_PREFAB_SPAWNING.md)).
 >
 > The general rule this is an instance of: **any engine handle wider than 53 bits needs its Lua
 > representation chosen deliberately.** Asset handles are `UUID` too.
@@ -547,7 +555,8 @@ A script error must never cross the C++ boundary. Every call into Lua goes throu
 `safe_script_file`.
 
 On a failed call the instance is **disabled** — logged once with the script filename and method,
-then skipped from then on. Without that, a throwing `OnUpdate` logs the identical error sixty times
+then skipped from then on. A backend callback that errors disables its instance the same way, and a
+disabled instance gets no further callbacks ([online.md](online.md#what-a-script-sees)). Without that, a throwing `OnUpdate` logs the identical error sixty times
 a second and buries whatever actually went wrong.
 
 ## Sandboxing
@@ -562,6 +571,9 @@ gameplay scripts have no business touching the filesystem or spawning processes,
 `Shutdown` in the destructor before `Renderer::Shutdown`. Application scope rather than the
 editor's, because any app that constructs a `Scene` gets a `LuaScriptSystem`. It needs no
 `AssetManager` at init time — script assets are resolved only when an instance is created.
+
+`Online` initialises right after `ScriptEngine` and shuts down right before it: the callbacks
+waiting on backend requests are sol2 references into this VM ([online.md](online.md#init-order-and-shutdown)).
 
 `UIEngine` initialises *after* `ScriptEngine` — RmlUi's Lua plugin runs on this same `lua_State`,
 so UI and gameplay scripts share globals — and shuts down *before* it, because the plugin holds

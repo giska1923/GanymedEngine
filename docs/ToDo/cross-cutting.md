@@ -84,6 +84,39 @@ gcc 11.4). Native hardware has now been tried for Vulkan; GL and audio still hav
 - **Audio.** miniaudio selected its Null device because WSL exposes none, so ALSA and PulseAudio
   were never opened. It degraded cleanly, which is worth something, but it is not a test.
 
+## The editor does not compile on Linux (GCC)
+
+Found during ONLINE.md's O0 Linux build (2026-10-09, Ubuntu 22.04 in WSL2, gcc 11.4), on code merged
+from `master`. The engine and the runtime build and link; `GanymedEditor` stops at compile errors
+that MSVC accepts. None of them is in code O0 touched. Three distinct causes, all in the "What MSVC
+accepts and GCC does not" family of [build-and-tooling.md](../engine/build-and-tooling.md):
+
+- **A member named after its own type changes that name's meaning in the class** (`[-fpermissive]`
+  error, C++ [basic.scope.class]): `Scene* Scene` in `JointPickQuery` (`EditorPicking.h:50`) and
+  `Ref<Mesh> Mesh` in `EditorPicking.cpp:158`'s `Candidate`. MSVC does not diagnose it. Rename the
+  member, or spell the type `GanymedE::Scene` in the declaration.
+- **A dependent member template called without `template`**: `field.traits<Reflection::Trait>()`
+  in `EditorUndo.h:145`. GCC parses `<` as less-than ("expected primary-expression before '>'").
+  It needs `field.template traits<Reflection::Trait>()`.
+- **An entt `meta_handle` built from a temporary `meta_any`** (`entt.hpp:65318` and `:65329`,
+  "cannot bind non-const lvalue reference … to an rvalue"), instantiated from `EditorLayer.cpp`.
+  The call site was not traced; a `meta_any` held in a named variable before the call is the
+  likely fix.
+
+The fix is small, but it needs the Linux build to verify, and it belongs with the code that
+introduced it rather than with the online work that found it.
+
+## The editor and the runtime read a command-line scene path differently
+
+`GanymedRuntime scenes/X.ganymede` resolves the path against the asset root
+([runtime.md](../runtime/runtime.md)), so it finds `assets/scenes/X.ganymede`.
+`GanymedEditor scenes/X.ganymede` resolves it against the working directory
+(`EditorLayer::OnAttach`), so the same argument is "not found", and the editor opens its default
+scene with only a warning in the log. Found during ONLINE.md's O1 editor check, where it made a
+script that should have run silently never load. The runtime's rule is the one to keep, with an
+existing working-directory path still honoured; the editor's open-scene path then shares one
+helper with `RuntimeConfig::ApplyCommandLine`.
+
 ## A frame profiler (Tracy) is still worth considering
 
 The frame loop **is** instrumented now, and the `Instrumentor` behind it was rewritten to afford it

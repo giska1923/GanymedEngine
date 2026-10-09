@@ -47,6 +47,10 @@ namespace GanymedE {
 
 		DrainReactiveViews(/*instantiate=*/true);
 
+		// After the drain, so a script destroyed this frame has had its requests cancelled and
+		// gets no callback; before OnUpdate, so a script sees a response at the start of a frame.
+		ScriptEngine::DeliverResponses();
+
 		// Before the update calls, so an edit saved this second takes effect on this
 		// frame rather than the next one.
 		ScriptEngine::PollHotReload(ts);

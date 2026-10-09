@@ -25,4 +25,16 @@ namespace GanymedE {
 		static bool OpenInVSCode(const std::filesystem::path& path);
 	};
 
+	// The per-user, writable directory for engine data that must survive between runs and must not
+	// live beside the executable: a shipped game's install directory is read-only by design
+	// (docs/runtime/runtime.md). Today it holds the online identity, profiles/<name>/device_id.
+	class UserData
+	{
+	public:
+		// %LOCALAPPDATA%\GanymedEngine on Windows; $XDG_DATA_HOME/GanymedEngine, else
+		// ~/.local/share/GanymedEngine, on Linux; ~/Library/Application Support/GanymedEngine on
+		// macOS. Not created here. Empty if the OS reports no such location.
+		static std::filesystem::path GetDirectory();
+	};
+
 }

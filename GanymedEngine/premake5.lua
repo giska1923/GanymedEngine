@@ -78,7 +78,11 @@ project "GanymedEngine"
 		"%{IncludeDir.RmlUi}",
 		-- Engine-private: Core/JobSystem.h keeps enkiTS out of its own header, so the
 		-- editor, the runtime and Sandbox hold a Future<T> without this path.
-		"%{IncludeDir.enkiTS}"
+		"%{IncludeDir.enkiTS}",
+		-- Engine-private, and more than that: exactly one engine TU may include it
+		-- (Online.cpp, from ONLINE.md O1). IXNetSystem.h pulls in winsock2.h and redefines
+		-- EWOULDBLOCK, EAGAIN, EINVAL and friends to their WSA values for whoever includes it.
+		"%{IncludeDir.IXWebSocket}"
 	}
 
 	links
@@ -94,6 +98,7 @@ project "GanymedEngine"
 		"RmlUi",
 		"FreeType",
 		"enkiTS",
+		"IXWebSocket",
 		"TextureEncode"
 	}
 

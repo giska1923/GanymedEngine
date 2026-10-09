@@ -10,7 +10,13 @@ and content-browser icons, its HUD document) resolve relative to CWD, i.e. from 
 `assets/` tree. A scene path may be passed
 positionally, and `--renderer=<backend>` selects the graphics backend (see
 [rendering.md](../engine/rendering.md#backend-selection)). Options and the scene path may appear in
-either order.
+either order. The scene path is resolved against the working directory
+(`assets/scenes/X.ganymede`), unlike the runtime's, which is relative to the asset root; see
+[cross-cutting.md](../ToDo/cross-cutting.md#the-editor-and-the-runtime-read-a-command-line-scene-path-differently).
+
+`--backend=<url>` and `--profile=<name>` choose the online backend and player, as in the runtime
+([online.md](../engine/online.md#profiles-and-the-device-id)): scripts run in Play exactly as in a
+game, so they can sign in and call the backend from the editor.
 
 `--project=<path>` opens a project other than the workspace's `assets/`. Only the **project** moves:
 the editor's own assets above still come from the working directory, because they ship with the
