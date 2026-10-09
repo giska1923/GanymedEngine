@@ -117,3 +117,24 @@ namespace GanymedE {
 #endif
 
 }
+
+#ifdef GE_PLATFORM_LINUX
+
+namespace GanymedE {
+
+	std::filesystem::path UserData::GetDirectory()
+	{
+		// The XDG Base Directory spec: $XDG_DATA_HOME if set and absolute, else ~/.local/share.
+		const char* xdg = std::getenv("XDG_DATA_HOME");
+		if (xdg && xdg[0] == '/')
+			return std::filesystem::path(xdg) / "GanymedEngine";
+
+		const char* home = std::getenv("HOME");
+		if (home && home[0])
+			return std::filesystem::path(home) / ".local" / "share" / "GanymedEngine";
+		return {};
+	}
+
+}
+
+#endif

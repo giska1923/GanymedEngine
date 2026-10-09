@@ -23,6 +23,25 @@ namespace GanymedE {
 			bool Dead = false;
 		};
 
+		// A backend request a script instance is waiting on. Script-side ids, not Online's: a
+		// request Online could not even queue still completes (with a failure), and the script must
+		// hear about it the same way.
+		using ScriptRequestId = uint64_t;
+
+		struct ScriptRequest
+		{
+			UUID Owner;
+			RequestId Transport = 0;          // Online's id, for Cancel; 0 if it was never queued
+			sol::protected_function Callback;
+			ScriptResponseReader Read;
+		};
+
+		struct ArrivedResponse
+		{
+			ScriptRequestId Id = 0;
+			OnlineResponse Response;
+		};
+
 		struct ScriptEngineData
 		{
 			sol::state Lua;
@@ -65,8 +84,18 @@ namespace GanymedE {
 				// IDComponent - and therefore its UUID - is unreachable. This is captured at
 				// Instantiate time and is the only way to find the instance again afterwards.
 				std::unordered_map<entt::entity, UUID> EntityToUUID;
+
+				// Backend requests this scene's instances are waiting on, and the responses that
+				// have reached the main thread but not yet the scene's script update. The mailbox
+				// is the second of the three hops in docs/engine/online.md: Online delivers from
+				// JobSystem::OnUpdate, where no scene context is set, so the callback cannot run
+				// there; it runs when this scene's LuaScriptSystem next updates.
+				std::unordered_map<ScriptRequestId, ScriptRequest> Requests;
+				std::vector<ArrivedResponse> Mailbox;
 			};
 			std::unordered_map<Scene*, SceneInstances> Instances;
+
+			ScriptRequestId NextRequestId = 1;
 		};
 
 		ScriptEngineData* s_Data = nullptr;
@@ -285,6 +314,88 @@ namespace GanymedE {
 			auto instance = scene->ByUUID.find(uuid->second);
 			return instance != scene->ByUUID.end() ? &instance->second : nullptr;
 		}
+
+		// Cancels the requests `owner` is waiting on, or every request in the scene when `owner` is
+		// null. Cancel, not just forget: the network thread stops waiting on it and moves on to the
+		// next request, rather than sitting out a slow response nobody will read (Online::Cancel
+		// says what it does not do).
+		void CancelRequests(ScriptEngineData::SceneInstances& scene, const UUID* owner)
+		{
+			for (auto it = scene.Requests.begin(); it != scene.Requests.end();)
+			{
+				if (owner && it->second.Owner != *owner)
+				{
+					++it;
+					continue;
+				}
+				Online::Cancel(it->second.Transport);
+				it = scene.Requests.erase(it);
+			}
+		}
+
+		// Main thread, from Online's completion (JobSystem::OnUpdate). Only queues: there is no
+		// scene context here, so nothing can run yet.
+		void OnScriptResponse(Scene* scene, ScriptRequestId id, const OnlineResponse& response)
+		{
+			if (!s_Data)
+				return;
+
+			auto instances = s_Data->Instances.find(scene);
+			if (instances == s_Data->Instances.end())
+				return;   // the scene's instances are gone; its requests were cancelled with them
+
+			if (instances->second.Requests.count(id))
+				instances->second.Mailbox.push_back({ id, response });
+		}
+
+		// The second argument a failed request's callback receives. A problem-details body's
+		// `type` URN when there is one (what O3's bindings promise scripts), else the status, else
+		// why no response arrived.
+		std::string DescribeFailure(const OnlineResponse& response)
+		{
+			if (!response.Arrived())
+				return response.TransportError;
+
+			if (response.ContentType.find("problem+json") != std::string::npos)
+			{
+				if (std::optional<JsonValue> problem = ParseJson(response.Body))
+				{
+					const JsonValue* type = problem->Find("type");
+					if (type && type->Kind == JsonValue::Type::String)
+						return type->String;
+				}
+			}
+			return "HTTP " + std::to_string(response.Status);
+		}
+	}
+
+	void SendScriptRequest(const char* binding, const sol::object& owner, OnlineRequest request,
+		const sol::object& callback, ScriptResponseReader read)
+	{
+		// The owner is explicit (self.entity) and checked, rather than inferred from whichever
+		// instance happens to be running: a request with no owner would have nobody to cancel it.
+		ScriptEngineData::SceneInstances* scene = CurrentScene();
+		const Entity* entity = owner.is<Entity>() ? &owner.as<Entity&>() : nullptr;
+		if (!scene || !entity || !*entity || !FindInstance(static_cast<entt::entity>(*entity)))
+			throw sol::error(std::string(binding) + ": the first argument must be the calling "
+				"script's own entity (self.entity), which owns the request and cancels it when it goes");
+
+		if (!callback.is<sol::protected_function>())
+			throw sol::error(std::string(binding) + ": the last argument must be a function(ok, result)");
+
+		const ScriptRequestId id = s_Data->NextRequestId++;
+		Scene* sceneKey = s_Data->SceneContext;
+
+		ScriptRequest pending;
+		pending.Owner = scene->EntityToUUID.at(static_cast<entt::entity>(*entity));
+		pending.Callback = callback.as<sol::protected_function>();
+		pending.Read = std::move(read);
+
+		// Recorded before Send, so the completion always finds it - Send never calls back inline,
+		// but a request it cannot queue still completes, and must still reach the script.
+		ScriptRequest& stored = scene->Requests.emplace(id, std::move(pending)).first->second;
+		stored.Transport = Online::Send(std::move(request),
+			[sceneKey, id](const OnlineResponse& response) { OnScriptResponse(sceneKey, id, response); });
 	}
 
 	void ScriptEngine::Init()
@@ -427,6 +538,9 @@ namespace GanymedE {
 			scene->ByUUID.erase(instance);
 		}
 
+		// After OnDestroy, so a request sent from OnDestroy is cancelled too rather than orphaned.
+		CancelRequests(*scene, &uuid->second);
+
 		scene->EntityToUUID.erase(uuid);
 	}
 
@@ -441,6 +555,9 @@ namespace GanymedE {
 			for (auto& [uuid, instance] : it->second.ByUUID)
 				CallMethod(instance, "OnDestroy");
 
+			// Stopping play mid-request lands here: the transfers are aborted, and their late
+			// responses are counted by Online as dropped, never delivered.
+			CancelRequests(it->second, nullptr);
 			s_Data->Instances.erase(it);
 		}
 
@@ -464,6 +581,7 @@ namespace GanymedE {
 		{
 			for (auto& [uuid, instance] : instances.ByUUID)
 				CallMethod(instance, "OnDestroy");
+			CancelRequests(instances, nullptr);
 		}
 
 		s_Data->Instances.clear();
@@ -539,6 +657,64 @@ namespace GanymedE {
 
 			GE_INFO("Hot reloaded {0} ({1} live instance{2})",
 				scriptClass.Path.filename().string(), repointed, repointed == 1 ? "" : "s");
+		}
+	}
+
+	void ScriptEngine::DeliverResponses()
+	{
+		GE_PROFILE_FUNCTION();
+
+		ScriptEngineData::SceneInstances* scene = CurrentScene();
+		if (!scene || scene->Mailbox.empty())
+			return;
+
+		// Swapped out first: a callback may send another request, and while its response cannot
+		// arrive before the next frame, nothing here should depend on that.
+		std::vector<ArrivedResponse> arrived;
+		arrived.swap(scene->Mailbox);
+
+		for (ArrivedResponse& item : arrived)
+		{
+			auto pending = scene->Requests.find(item.Id);
+			if (pending == scene->Requests.end())
+				continue;   // cancelled after it arrived
+
+			ScriptRequest request = std::move(pending->second);
+			scene->Requests.erase(pending);
+
+			auto instance = scene->ByUUID.find(request.Owner);
+			if (instance == scene->ByUUID.end() || instance->second.Dead)
+				continue;   // a disabled script gets nothing, like every other callback
+
+			bool ok = item.Response.IsSuccess();
+			sol::object value = sol::lua_nil;
+			std::string failure;
+			if (ok)
+			{
+				try
+				{
+					value = request.Read ? request.Read(s_Data->Lua, item.Response) : sol::lua_nil;
+				}
+				catch (const std::exception& e)
+				{
+					ok = false;
+					failure = std::string("malformed response: ") + e.what();
+				}
+			}
+			else
+				failure = DescribeFailure(item.Response);
+
+			sol::protected_function_result result = ok
+				? request.Callback(true, value)
+				: request.Callback(false, failure);
+
+			if (!result.valid())
+			{
+				sol::error error = result;
+				GE_ERROR("Script error in {0}: a backend callback - {1} (this script is now disabled)",
+					instance->second.Path, error.what());
+				instance->second.Dead = true;
+			}
 		}
 	}
 

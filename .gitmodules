@@ -43,3 +43,6 @@
 [submodule "GanymedEngine/extern/enkiTS"]
 	path = GanymedEngine/extern/enkiTS
 	url = https://github.com/dougbinks/enkiTS.git
+[submodule "GanymedEngine/extern/IXWebSocket"]
+	path = GanymedEngine/extern/IXWebSocket
+	url = https://github.com/machinezone/IXWebSocket

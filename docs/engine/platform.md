@@ -189,6 +189,23 @@ needs to see the press.
   The POSIX halves build their `/bin/sh` commands with `ShellQuote`, which wraps the path in
   single quotes and escapes `'` itself. Only the Windows half has been built.
 
+## Per-user data
+
+`UserData::GetDirectory()` ([PlatformUtils.h](../../GanymedEngine/source/GanymedE/Utils/PlatformUtils.h))
+is where engine data that must survive between runs lives. It cannot live beside the executable,
+because a shipped game's install directory is read-only ([runtime.md](../runtime/runtime.md)).
+
+| OS | Directory |
+|---|---|
+| Windows | `%LOCALAPPDATA%\GanymedEngine` (`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) |
+| Linux | `$XDG_DATA_HOME/GanymedEngine` if set and absolute, else `~/.local/share/GanymedEngine` |
+| macOS | `~/Library/Application Support/GanymedEngine` (unbuilt, unverified) |
+
+Local, not roaming, on Windows on purpose: the one thing kept there today is the online device ID
+(`profiles/<name>/device_id`, see [online.md](online.md#profiles-and-the-device-id)). A roaming
+profile would carry it to a second machine, making two installs one player. The function only names
+the directory; whoever writes there creates what it needs.
+
 ## ImGui
 
 Two halves:

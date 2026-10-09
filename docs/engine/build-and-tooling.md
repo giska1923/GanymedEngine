@@ -342,6 +342,7 @@ Two portability bugs came from warnings rather than errors, and both were real:
 | RmlUi 6.2 | Game UI (HTML/CSS-style documents); Core + Lua plugin only |
 | FreeType 2.14.3 | RmlUi's font engine, and ImGui's atlas rasterizer |
 | enkiTS v1.12 | Task scheduler behind [`Core/JobSystem`](core.md#job-system) |
+| IXWebSocket v12.0.1 | HTTP and WebSocket client for the online milestone ([ONLINE.md](../ToDo/ONLINE.md)); built without TLS or zlib. Nothing calls it yet |
 
 **miniaudio** is a committed single header (`extern/miniaudio/miniaudio.h`), not a submodule — the
 cgltf precedent. It has one implementation TU, `GanymedE/Audio/miniaudio_impl.cpp`, which is the
@@ -369,9 +370,43 @@ available for a submodule. `IncludeDir.enkiTS` is on the **engine project only**
 enkiTS out of its own header (`void* Task` in the shared state), so the editor and the runtime
 hold a `Future<T>` without enkiTS on their include path.
 
+**IXWebSocket** gets its own `StaticLib` project (`extern/IXWebSocket.lua`), pinned to the
+`v12.0.1` tag, for the same PCH reason as enkiTS. It is linked but not yet called: the online
+milestone's `Online.cpp` (O1 in [ONLINE.md](../ToDo/ONLINE.md)) will be its one user. What the
+script does instead of upstream's CMake, and why:
+
+- **No TLS and no zlib.** Upstream's CMake makes both options, and every use of either is behind
+  `#ifdef IXWEBSOCKET_USE_TLS` / `IXWEBSOCKET_USE_ZLIB` inside the sources, so leaving them
+  undefined *is* "off". CMake's only other move is to add a TLS backend when TLS is on. So the file
+  list is every `ixwebsocket/*.cpp` minus the three backends (`IXSocketOpenSSL`, `IXSocketMbedTLS`,
+  `IXSocketAppleSSL`), which is exactly CMake's list with both off; the two lists were diffed. A
+  clean clone never needs an OpenSSL or mbedTLS header. The one define CMake sets is
+  `_CRT_SECURE_NO_WARNINGS` (private, Windows).
+- **Windows links only `ws2_32`.** CMake's list adds `wsock32` and `shlwapi`. `shlwapi` serves only
+  the OpenSSL backend, and nothing includes the Winsock 1 header. They are not free extras: a
+  `StaticLib`'s system links are merged into the `.lib` by `lib.exe` (that is how the engine's
+  own `gdi32`/`psapi`/`uuid` reach the executables on MSVC), and merging `wsock32` over `ws2_32`
+  printed about 60 `LNK4006` duplicate-symbol warnings. On Linux it needs `pthread`, already in
+  every app's list. It sits in the apps' Linux and macOS link lists after the engine, beside
+  enkiTS. The macOS lists carry it, but no macOS build has been run with it.
+- **`IncludeDir.IXWebSocket` is the submodule root** (its headers are `<ixwebsocket/...>`), on the
+  engine project only, and **exactly one engine TU may include it.** `IXNetSystem.h` includes
+  `winsock2.h`, then `#undef`s and redefines `EWOULDBLOCK`, `EAGAIN`, `EINPROGRESS`, `EBADF` and
+  `EINVAL` as their `WSA*` values for the rest of the including TU.
+- **`winsock2.h` after the PCH's `<Windows.h>` compiled clean.** `gepch.h` includes `<Windows.h>`
+  without `WIN32_LEAN_AND_MEAN`, so every engine TU already has the Winsock 1 header before
+  IXWebSocket brings in Winsock 2, which is the classic redefinition clash. With Windows SDK
+  10.0.26100 a TU using the PCH and including IXWebSocket compiled with no error. That was
+  observed, not traced, so an older SDK may still clash; the fix then is for that one TU to opt
+  out of the PCH, as `miniaudio_impl.cpp` does.
+- **Its HTTP client accepts only `HTTP/1.1` responses.** `IXHttpClient.cpp` parses the status line
+  with `sscanf(line, "HTTP/1.1 %d")`, so an `HTTP/1.0` reply, which is what Python's `http.server`
+  sends by default, fails with "Cannot parse response code from status line". Go's `net/http`
+  (the backend) answers 1.1. A Python test server needs `protocol_version = "HTTP/1.1"`.
+
 Build scripts for submodule-shaped deps live *outside* the submodule trees (`extern/GLFW.lua`,
 `extern/Jolt.lua`, `extern/bgfx.lua`, `extern/Lua.lua`, `extern/RmlUi.lua`, `extern/FreeType.lua`,
-`extern/enkiTS.lua`).
+`extern/enkiTS.lua`, `extern/IXWebSocket.lua`).
 
 Two defines these hand-written scripts must supply that CMake would have set for you, both of
 which fail at *runtime* rather than at build time if missed:

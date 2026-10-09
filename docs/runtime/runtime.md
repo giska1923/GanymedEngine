@@ -109,6 +109,11 @@ see [rendering.md](../engine/rendering.md#backend-selection). It is not a `runti
 the backend to run on belongs to the launch, not to the build. Options and the scene override may
 appear in either order.
 
+Two more engine-wide options, read by `Online` ([online.md](../engine/online.md)):
+`--backend=<url>` (default `http://127.0.0.1:8080`) and `--profile=<name>` (default `default`),
+which picks the device ID and so the player. Two runtimes on one machine with different profiles are
+two players.
+
 Why a file at all, when there is exactly one scene? Because hard-coding `assets/ui/hud.rml` is
 precisely the editor-ism this app exists to shed (`EditorLayer::OnScenePlay` still does it), and a
 CLI-only design leaves title, geometry and fullscreen homeless. The production norm is a

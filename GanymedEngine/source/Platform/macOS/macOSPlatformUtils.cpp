@@ -119,3 +119,20 @@ namespace GanymedE {
 #endif
 
 }
+
+#ifdef GE_PLATFORM_MACOS
+
+namespace GanymedE {
+
+	// Unbuilt and unverified, like the rest of macOS (docs/ToDo/cross-cutting.md).
+	std::filesystem::path UserData::GetDirectory()
+	{
+		const char* home = std::getenv("HOME");
+		if (home && home[0])
+			return std::filesystem::path(home) / "Library" / "Application Support" / "GanymedEngine";
+		return {};
+	}
+
+}
+
+#endif
