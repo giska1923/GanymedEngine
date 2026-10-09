@@ -2878,6 +2878,43 @@ remove`, or installing `pwsh`, is the fix, and neither is a change to this repos
 
 ---
 
+### P8 — An online leaderboard — **PASSED** (2026-10-09)
+
+The game half of ONLINE.md's O3. The engine half (`Backend.SubmitScore`, `GetMyStanding`,
+`GetLeaderboard`) landed on master first and came here by merging master, per the branch policy;
+`git diff --stat master.. -- GanymedEngine/source GanymedEditor/source GanymedRuntime/source` was
+empty after the merge. Nothing under any of those paths changed here.
+
+**What is ranked: kills in one life**, from spawning or getting up again until going down or dying
+(`Player:EndLife`). Not `PG.score`. ONLINE.md's plan said "submits on death" without saying what, and
+the score is a currency the upgrade station spends, so ranking it would rank thrift. A life is
+submitted when it ends, because there is no "submit when play stops": a request sent from
+`OnDestroy` is cancelled with the instance (the engine's online.md). A life with no kills sends
+nothing. Gate runs submit too: they are real lives, and they are how this was verified.
+
+**The HUD block is written from Lua through RmlUi's API** (`#leaderboard`'s `inner_rml`), not the
+data model. The plan said "the HUD data model gains a leaderboard block", but the model's two
+variables are declared in C++ ([cross-cutting.md](cross-cutting.md#the-hud-data-model-is-two-variables-declared-in-c)),
+and adding one would be an engine change, which this branch does not make. The block lists the top
+five (the player's own row highlighted), the player's best and rank, and the last life's kills; it
+says "loading...", "no scores yet", "your best: none yet" or "offline" when that is the truth.
+Names are escaped before going into the markup. `Player:DrawLeaderboard` logs the block's text
+whenever it changes, because a HUD nobody reads in a log could sit on "loading..." unnoticed.
+
+**Verified** in `GanymedRuntime` (Debug) against the Compose backend, with a temporary copy of the
+scene running the P5 gate with `contactDamage = 34`, so the player goes down at three hits:
+
+| Check | Result |
+|---|---|
+| A life ending submits | down at 3 hits with 1 kill → "LIFE OVER (down): 1 kill" → "SCORE submitted: 1 -> best 1, rank 5"; one row in `score_submissions` |
+| HUD | "loading..." → the top four → after the submission, re-fetched with the player at #5, highlighted, "your best 1 (#5)" |
+| No score yet | "your best: none yet" before the first life ended |
+| Backend down | "offline" on the HUD; the life's submission failed with its reason, logged once; the gate played on |
+| Stop play before a response lands | not run here: the engine guarantees no callback after Stop (ONLINE.md O1, checked in the editor), and the HUD write also checks the element still exists |
+
+Not exercised: a life ending by falling off the world (`Player:Die`), which calls the same
+`EndLife`; and the Dist build.
+
 ## Decisions, with the ones most likely wrong marked
 
 Recorded now so that when this moves to `docs/history/` we can see which held.

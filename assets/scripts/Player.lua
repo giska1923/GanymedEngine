@@ -415,6 +415,7 @@ function Player:OnCreate()
     self.health = self.maxHealth
     self:PushUI()
     self:StartLoadout()
+    self:StartLeaderboard()
 
     if self.p5gate then
         PG.freeze = false
@@ -490,6 +491,7 @@ function Player:Hurt()
         -- CharacterVirtual::SetPosition - so "back to the spawn point" is not expressible today.
         -- Recorded in docs/ToDo/cross-cutting.md. It recovers where it fell instead.
         Log.Warn(string.format("PLAYER DOWN at %.0f hits taken", self.hits))
+        self:EndLife("down")
     end
 end
 
@@ -505,6 +507,123 @@ function Player:Upgrade()
     PG.damage = (self.gun and GUN_DAMAGE[self.gun] or 0) + UPGRADE_DAMAGE * self.upgrades
     Log.Info(string.format("UPGRADE bought: projectile damage -> %d, score left %d",
         PG.damage, PG.score))
+end
+
+-- ---- The online leaderboard (ONLINE.md O3) ---------------------------------------------------
+--
+-- The board ranks KILLS IN ONE LIFE: from spawning, or getting up again, until going down or dying.
+-- Not PG.score, which is a currency the upgrade station spends - ranking it would rank thrift. A
+-- life is submitted when it ends, because there is no "submit when play stops": a request sent from
+-- OnDestroy is cancelled along with the instance (docs/engine/online.md). Going down and dying both
+-- end a life; the kills of a life that ends with none are not sent.
+--
+-- The HUD block is written through RmlUi's Lua API (inner_rml), not the data model, whose two
+-- variables are declared in C++ and cannot be added to from the game branch. Every backend call
+-- waits for sign-in on its own, and a failure only changes what the block says: the game plays on.
+local BOARD = "proving-ground"
+local BOARD_ROWS = 5
+
+local function EscapeRml(text)
+    return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
+end
+
+function Player:StartLeaderboard()
+    self.lifeStartKills = PG.kills or 0
+    self.board = { rows = nil, best = nil, rank = nil, standingKnown = false, error = nil, lastLife = nil }
+    self:DrawLeaderboard()
+    self:FetchLeaderboard()
+end
+
+function Player:FetchLeaderboard()
+    Backend.GetLeaderboard(self.entity, BOARD, BOARD_ROWS, function(ok, rows)
+        if ok then
+            self.board.rows, self.board.error = rows, nil
+        else
+            self.board.error = rows
+            Log.Warn("LEADERBOARD unavailable: " .. tostring(rows))
+        end
+        self:DrawLeaderboard()
+    end)
+    Backend.GetMyStanding(self.entity, BOARD, function(ok, standing)
+        if ok then
+            self.board.best, self.board.rank, self.board.standingKnown = standing.best, standing.rank, true
+        end
+        self:DrawLeaderboard()
+    end)
+end
+
+function Player:EndLife(how)
+    local kills = (PG.kills or 0) - (self.lifeStartKills or 0)
+    self.lifeStartKills = PG.kills or 0
+    if kills <= 0 or not self.board then
+        return
+    end
+
+    self.board.lastLife = kills
+    Log.Info(string.format("LIFE OVER (%s): %d kill%s - submitting to the leaderboard", how, kills,
+        kills == 1 and "" or "s"))
+    Backend.SubmitScore(self.entity, BOARD, kills, function(ok, result)
+        if ok then
+            Log.Info(string.format("SCORE submitted: %d -> best %d, rank %d%s", kills, result.best, result.rank,
+                result.replayed and " (a replay)" or ""))
+            self.board.best, self.board.rank, self.board.standingKnown = result.best, result.rank, true
+            self:FetchLeaderboard()   -- the top rows may have moved
+        else
+            Log.Warn(string.format("SCORE not submitted (%s) - playing on", tostring(result)))
+            self.board.error = result
+        end
+        self:DrawLeaderboard()
+    end)
+    self:DrawLeaderboard()
+end
+
+function Player:DrawLeaderboard()
+    local context = rmlui and rmlui.contexts["main"]
+    local document = context and context.documents["hud"]
+    local element = document and document:GetElementById("leaderboard")
+    if not element or not self.board then
+        -- No HUD (a scene played without one) is fine; a HUD without the block is a stale hud.rml.
+        if document and not element and not self.boardWarned then
+            self.boardWarned = true
+            Log.Warn("LEADERBOARD: the HUD has no #leaderboard element - is hud.rml up to date?")
+        end
+        return
+    end
+
+    local b = self.board
+    local out = { '<div class="lb-title">KILLS IN ONE LIFE</div>' }
+    if b.rows then
+        if #b.rows == 0 then
+            out[#out + 1] = '<div class="lb-note">no scores yet</div>'
+        end
+        for _, row in ipairs(b.rows) do
+            out[#out + 1] = string.format('<div class="lb-row%s">%d. %s - %d</div>',
+                row.isMe and " lb-me" or "", row.rank, EscapeRml(row.name), row.score)
+        end
+    elseif not b.error then
+        out[#out + 1] = '<div class="lb-note">loading...</div>'
+    end
+
+    if b.error then
+        out[#out + 1] = '<div class="lb-note">offline</div>'
+    elseif b.best then
+        out[#out + 1] = string.format('<div class="lb-note">your best %d (#%d)</div>', b.best, b.rank)
+    elseif b.standingKnown then
+        out[#out + 1] = '<div class="lb-note">your best: none yet</div>'
+    end
+    if b.lastLife then
+        out[#out + 1] = string.format('<div class="lb-note">last life %d</div>', b.lastLife)
+    end
+
+    element.inner_rml = table.concat(out)
+
+    -- Logged when it changes, as plain text: the HUD is the thing nobody reads in a log, and a
+    -- block that silently stayed on "loading..." would look exactly like one that worked.
+    local shown = table.concat(out, " | "):gsub("<[^>]*>", "")
+    if shown ~= self.boardShown then
+        self.boardShown = shown
+        Log.Info("LEADERBOARD shows: " .. shown)
+    end
 end
 
 -- The HUD data model is the thing P5 is meant to put under real gameplay: it has been bound since
@@ -1146,6 +1265,7 @@ end
 function Player:Die(reason)
     local p = self.entity:GetTranslation()
     self.deaths = self.deaths + 1
+    self:EndLife("died")
     Log.Info(string.format("PLAYER DIED (%d): %s at (%.1f, %.1f, %.1f) - respawning at (%.1f, %.1f, %.1f)",
         self.deaths, reason, p.x, p.y, p.z, self.spawn.x, self.spawn.y, self.spawn.z))
 

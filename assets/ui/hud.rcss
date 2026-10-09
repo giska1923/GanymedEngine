@@ -53,6 +53,38 @@ body {
 	font-size: 22dp;
 }
 
+/* The online leaderboard (ONLINE.md O3), under the score. Its rows are written by
+   Player.lua, so the classes here are the whole vocabulary it uses. */
+#leaderboard {
+	position: absolute;
+	top: 66dp;
+	right: 30dp;
+	width: 240dp;
+	padding: 8dp 10dp;
+	background-color: #00000080;
+	border-radius: 4dp;
+	font-size: 15dp;
+}
+
+#leaderboard .lb-title {
+	font-weight: bold;
+	margin-bottom: 4dp;
+}
+
+#leaderboard .lb-row {
+	display: block;
+}
+
+#leaderboard .lb-me {
+	color: #f1c40f;
+	font-weight: bold;
+}
+
+#leaderboard .lb-note {
+	margin-top: 4dp;
+	color: #ffffffa0;
+}
+
 /* Centred by 50% + a negative margin of half the size. RCSS has no `transform:
    translate(-50%, -50%)` shorthand against percentages of the element's own box,
    so the margin is the portable way to do this. */

@@ -20,6 +20,11 @@
 	</div>
 	<div id="score">SCORE {{score}}</div>
 
+	<!-- Filled from Player.lua through RmlUi's Lua API (inner_rml), not the data model:
+	     the model's two variables are declared in C++, and a game branch cannot add a
+	     third (see above). Starts empty; the script writes "loading" before anything. -->
+	<div id="leaderboard"></div>
+
 	<!-- Two divs rather than a texture: the crosshair is the one piece of this HUD
 	     that has to sit exactly in the middle of the viewport at any window size,
 	     and a 2dp box centred with a negative margin does that without an asset. -->
