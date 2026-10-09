@@ -1,6 +1,6 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: O0–O2 done (2026-10-09); O3 next.** The backend is complete (B1–B5, `api-v0.5`), so
+**Status: O0–O2 done; O3's bindings done, its Proving Ground half (on `first-game`) open (2026-10-09).** The backend is complete (B1–B5, `api-v0.5`), so
 O1–O4 and O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
 been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
@@ -569,7 +569,7 @@ script (not committed) polled the status and called `Backend.GetProfile`.
 
 ---
 
-## Phase O3 — leaderboards, and the Proving Ground uses them
+## Phase O3 — leaderboards, and the Proving Ground uses them — **bindings done; game half open**
 
 ### Goal
 
@@ -624,6 +624,43 @@ exists as more than plumbing.
 | No score yet | `GetMyStanding` calls back with `ok == true` and `nil` rank and best; the HUD shows a placeholder |
 | Backend down | the HUD shows a placeholder; the game plays |
 | Stop play before the response lands (editor) | no callback, and no HUD write into a torn-down document |
+
+### Execution notes — steps 1 and 2, the bindings
+
+2026-10-09, on `hello-online`. Live behaviour is in
+[online.md](../engine/online.md#what-a-script-sees). Verified on the Windows x64 Debug runtime
+against the real backend (host binary, `GS_ACCESS_TOKEN_TTL=2s`, a fresh profile), with a throwaway
+test scene and a temporary probe that re-sent one submission verbatim; both are deleted. Linux
+(WSL2, gcc 11.4) builds the bindings with no warnings outside `extern/`; it was not run.
+
+| Check | Result | Evidence |
+|---|---|---|
+| No score yet | **pass** | `GetMyStanding`: `ok == true`, `rank` and `best` nil |
+| Duplicate submit (probe: same key) | **pass**, and harder than planned | the probe and the original went out in the same frame and raced: the first to arrive was applied (`replayed=false`), the other got the stored response (`replayed=true`); one row |
+| Retry after a 401 reuses the key (added) | **pass** | a submission on an expired token: refresh, retry, applied once |
+| All submissions applied once (added) | **pass** | four sent, one twice and one retried: 3 rows and 3 keys in `score_submissions` / `score_idempotency_keys`, best 2000 |
+| Top N (added) | **pass** | 4 rows, ties 1, 2, 2, 4, integer scores, `isMe` on the player's row |
+| Bad arguments refused, nothing sent (added) | **pass** | fraction, negative, 2^53, a string score, `"../../auth/device"` as a board, limits 0 and 101 |
+| Unknown board | **pass** | `ok == false`, `urn:ganymed:problem:not-found` |
+| Death submits, HUD, backend down, stop play | **open** | step 3, the game half, on `first-game` |
+
+**Where the plan was wrong or incomplete, kept visible:**
+
+- **A board name is a path segment and needed validating.** The plan named the bindings and their
+  results, not their inputs. A script-supplied board goes into the URL, so it is held to `a-z`, `0-9`
+  and `-`; `"../../auth/device"` would otherwise reach another route.
+- **Scores are checked at the call.** The plan relied on the writer's whole-number rule. A fraction is
+  also refused there now, with the binding's name, instead of being sent and refused by the backend
+  with a 400. Truncating quietly, as `UI.SetScore` does for display, would change what is recorded.
+- **`replayed` is exposed** (`{ rank, best, replayed }`). The plan had `{ rank, best }`, but a replayed
+  standing is as of the first submission, and a script deserves to know which it got. That needed
+  response headers in `OnlineResponse`, which it now carries.
+- **`GetLeaderboard` rows carry `accountId` and `isMe`**, beyond the plan's `{ rank, name, score }`,
+  so the HUD can highlight the player.
+- **The race was found by accident.** The engine's over-a-second first frame pushed the test's
+  schedule into one update, so four sequential steps ran concurrently. It turned the duplicate check
+  into a concurrent one, which the backend handled as B2 designed; and it showed that two
+  submissions in flight report standings in whatever order the backend processed them.
 
 ---
 

@@ -74,6 +74,7 @@ namespace GanymedE::OnlineTransport {
 			auto contentType = response->headers.find("Content-Type");   // the map is case-insensitive
 			if (contentType != response->headers.end())
 				out.ContentType = contentType->second;
+			out.Headers.assign(response->headers.begin(), response->headers.end());
 			return out;
 		}
 

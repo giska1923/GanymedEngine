@@ -560,6 +560,27 @@ declare interface BackendProfile {
 	rating: number;
 }
 
+/** A player's standing on a board: the rank of their best score, and that best. Both undefined with no score yet. */
+declare interface BackendStanding {
+	rank?: number;
+	best?: number;
+}
+
+/** What Backend.SubmitScore delivers. `replayed` marks the original response served again for a repeated submission. */
+declare interface BackendSubmission extends BackendStanding {
+	replayed: boolean;
+}
+
+/** One row of Backend.GetLeaderboard, best first. Tied scores share a rank (1, 2, 2, 4). */
+declare interface BackendLeaderboardEntry {
+	rank: number;
+	name: string;
+	score: number;
+	accountId: string;
+	/** True for the signed-in player's own row. */
+	isMe: boolean;
+}
+
 /**
  * The online backend (docs/engine/online.md). Requests take their owner first -
  * always `this.entity` - and a callback last: `callback(true, result)` on a 2xx, or
@@ -576,6 +597,19 @@ declare namespace Backend {
 	function GetPlayerName(): string | undefined;
 	/** GET /v1/me/profile. */
 	function GetProfile(owner: Entity, callback: (ok: boolean, result: BackendProfile | string) => void): void;
+	/**
+	 * Records a score. It must be a whole number from 0 to 2^53 - 1 (a whole float such as 1234.0 is
+	 * fine); anything else is an error at the call and nothing is sent. Applied once however often
+	 * it reaches the backend: each call carries its own idempotency key.
+	 */
+	function SubmitScore(owner: Entity, board: string, score: number,
+		callback: (ok: boolean, result: BackendSubmission | string) => void): void;
+	/** The player's standing; ok with rank and best undefined when there is no score yet. */
+	function GetMyStanding(owner: Entity, board: string,
+		callback: (ok: boolean, result: BackendStanding | string) => void): void;
+	/** The first `limit` rows (1-100; undefined for the backend's default, 10). */
+	function GetLeaderboard(owner: Entity, board: string, limit: number | undefined,
+		callback: (ok: boolean, result: BackendLeaderboardEntry[] | string) => void): void;
 }
 
 // ---------------------------------------------------------------------------

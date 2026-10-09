@@ -105,29 +105,6 @@ namespace GanymedE {
 			return true;
 		}
 
-		// A random (version 4) UUID: 122 random bits, which is what the backend asks of a device ID
-		// ("high-entropy random data"). std::random_device is the OS's CSPRNG on both platforms
-		// that build (RtlGenRandom on MSVC, /dev/urandom or RDRAND in libstdc++).
-		std::string NewDeviceId()
-		{
-			std::random_device random;
-			uint8_t bytes[16];
-			for (size_t i = 0; i < sizeof(bytes); i += 4)
-			{
-				const uint32_t value = random();
-				std::memcpy(bytes + i, &value, 4);
-			}
-			bytes[6] = (bytes[6] & 0x0F) | 0x40;   // version 4
-			bytes[8] = (bytes[8] & 0x3F) | 0x80;   // RFC 9562 variant
-
-			char text[37];
-			std::snprintf(text, sizeof(text),
-				"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-				bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-				bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
-			return text;
-		}
-
 		// profiles/<profile>/device_id under the user data directory, created on first use.
 		std::string LoadOrCreateDeviceId(const std::string& profile, std::string& error)
 		{
@@ -165,7 +142,7 @@ namespace GanymedE {
 
 			// Written beside, then renamed into place, so a crash mid-write leaves no half an ID
 			// that the next run would refuse.
-			const std::string id = NewDeviceId();
+			const std::string id = Online::NewUuid();
 			const std::filesystem::path temporary = directory / "device_id.tmp";
 			{
 				std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
@@ -587,6 +564,29 @@ namespace GanymedE {
 	{
 		static const std::string s_None;
 		return s_Data ? s_Data->PlayerName : s_None;
+	}
+
+	// 122 random bits, which is what the backend asks of a device ID ("high-entropy random data")
+	// and of an Idempotency-Key (unique per logical request). std::random_device is the OS's CSPRNG
+	// on both platforms that build (RtlGenRandom on MSVC, /dev/urandom or RDRAND in libstdc++).
+	std::string Online::NewUuid()
+	{
+		std::random_device random;
+		uint8_t bytes[16];
+		for (size_t i = 0; i < sizeof(bytes); i += 4)
+		{
+			const uint32_t value = random();
+			std::memcpy(bytes + i, &value, 4);
+		}
+		bytes[6] = (bytes[6] & 0x0F) | 0x40;   // version 4
+		bytes[8] = (bytes[8] & 0x3F) | 0x80;   // RFC 9562 variant
+
+		char text[37];
+		std::snprintf(text, sizeof(text),
+			"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+			bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+			bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
+		return text;
 	}
 
 	Online::Stats Online::GetStats()

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -35,6 +37,7 @@ namespace GanymedE {
 		int Status = 0;                    // 0 when no HTTP response arrived at all
 		std::string Body;
 		std::string ContentType;
+		std::vector<std::pair<std::string, std::string>> Headers;
 
 		// Empty when an HTTP response arrived, whatever its status. Otherwise the engine's own
 		// wording for why none did ("cannot connect to http://127.0.0.1:8080", "timed out",
@@ -44,6 +47,18 @@ namespace GanymedE {
 
 		bool Arrived() const { return TransportError.empty(); }
 		bool IsSuccess() const { return Arrived() && Status >= 200 && Status < 300; }
+
+		// A response header's value, by case-insensitive name (HTTP header names are), or null.
+		const std::string* Header(const std::string& name) const
+		{
+			for (const auto& [key, value] : Headers)
+			{
+				if (key.size() == name.size() && std::equal(key.begin(), key.end(), name.begin(),
+					[](char a, char b) { return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); }))
+					return &value;
+			}
+			return nullptr;
+		}
 	};
 
 	// Runs on the main thread, from JobSystem::OnUpdate at the top of a frame - never on a network
@@ -117,5 +132,8 @@ namespace GanymedE {
 			uint32_t InFlight = 0;       // requests not yet completed, including those waiting to sign in
 		};
 		static Stats GetStats();
+
+		// A random (version 4) UUID, from the OS's CSPRNG: device IDs and Idempotency-Keys.
+		static std::string NewUuid();
 	};
 }

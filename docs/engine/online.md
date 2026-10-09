@@ -177,6 +177,8 @@ call ever cannot afford the round trip.
 
 ### Measured (O2, 2026-10-09, Windows x64 Debug runtime, against the real backend)
 
+(O3's leaderboard checks are under [What a script sees](#what-a-script-sees).)
+
 Host backend on 8081 with `GS_ACCESS_TOKEN_TTL=2s`, so expiry happens inside a run.
 
 | Check | Result |
@@ -273,9 +275,48 @@ The bindings so far:
 | `Backend.IsSignedIn()` | `true` once a session exists. Local, no request |
 | `Backend.GetPlayerName()` | the display name, or `nil` until it is known. Local, no request |
 | `Backend.GetProfile(self.entity, cb)` | `GET /v1/me/profile` → `{ accountId, name, rating }`; `rating` is a Lua integer, `name` is the API's `display_name` |
+| `Backend.SubmitScore(self.entity, board, score, cb)` | `POST /v1/leaderboards/<board>/scores` → `{ rank, best, replayed }` |
+| `Backend.GetMyStanding(self.entity, board, cb)` | `GET /v1/leaderboards/<board>/me` → `{ rank, best }`, both `nil` with no score yet |
+| `Backend.GetLeaderboard(self.entity, board, limit, cb)` | `GET /v1/leaderboards/<board>?limit=` → array of `{ rank, name, score, accountId, isMe }`, best first; `limit` 1–100 or `nil` (the backend's 10) |
 
 Every request binding is typed per endpoint, and maps the API's names to script-style ones
-(`display_name` → `name`). There is no generic request. O1 was verified through a temporary generic
+(`display_name` → `name`). There is no generic request.
+
+**Arguments are checked before anything is sent**, and a bad one is a Lua error naming the binding,
+like a missing owner:
+
+- **A board name becomes part of the URL path**, so it is held to `a-z`, `0-9` and `-`. Without that,
+  a string like `"../../auth/device"` would aim the request at another route.
+- **A score must be a whole number from 0 to 2^53 − 1**, the contract's range. A whole float
+  (`1234.0`, which is what script properties and arithmetic on them produce) is sent as `1234`. A
+  fraction, a negative, a string or anything past 2^53 − 1 is refused at the call, rather than
+  truncated quietly or refused by the backend a frame later.
+- A limit is a whole number from 1 to 100, or `nil`.
+
+**A score is applied once, however often it arrives.** Each `SubmitScore` call generates one
+`Idempotency-Key` (`Online::NewUuid`) and carries it in the request. The only time the engine sends a
+request again is the session's one retry after a 401, and that re-sends the same request, key and all.
+`replayed` is `true` when the response is the original one served again for a key the backend had
+already processed: its standing is as of that first submission, not now. A submission's standing is
+also only as current as its own response: two submissions in flight at once can complete in either
+order, and each reports the board as it stood when the backend processed it.
+
+`isMe` compares each row's account with the signed-in one, so a HUD can highlight the player without
+holding account IDs itself. A failure's reason is the problem type, as everywhere:
+`urn:ganymed:problem:not-found` for an unknown board.
+
+Measured (O3, 2026-10-09, Windows x64 Debug runtime, against the backend with a 2 s token lifetime,
+a fresh profile):
+
+| Check | Result |
+|---|---|
+| No score yet | `GetMyStanding`: `ok == true`, `rank` and `best` nil |
+| Duplicate submission (a probe re-sent one request, key and all, in the same frame as the original) | the two raced: whichever arrived first was applied (`replayed=false`), the other got the stored response (`replayed=true`); one row in `score_submissions` |
+| A submission on an expired token | 401 → refresh → retried with the same key → applied once |
+| The whole run | four submissions sent, one of them twice and one retried: **3 rows and 3 keys** in Postgres, best 2000 |
+| `GetLeaderboard(…, 5, …)` | 4 rows, ties ranked 1, 2, 2, 4, integer scores, `isMe` on the player's row |
+| Refused at the call, nothing sent | fraction, negative, 2^53, a string score, `"../../auth/device"` as a board, limits 0 and 101 |
+| Unknown board | `ok == false`, `urn:ganymed:problem:not-found` | O1 was verified through a temporary generic
 hook, registered only under an environment variable and deleted once the checks were done
 ([ONLINE.md](../ToDo/ONLINE.md), O1's execution notes). The TypeScript declarations are in
 `GanymedEditor/scripts-src/types/ganymed.d.ts`.

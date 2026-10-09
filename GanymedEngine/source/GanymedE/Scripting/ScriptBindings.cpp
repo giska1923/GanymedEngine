@@ -1130,6 +1130,49 @@ namespace GanymedE {
 			}
 		}
 
+		// A board name becomes part of a URL path, so it is held to the characters the backend's board
+		// IDs use. Without the check a script string like "../../auth/device" would reach another route.
+		std::string BoardPath(const char* binding, const std::string& board)
+		{
+			const bool ok = !board.empty() && board.size() <= 64 && std::all_of(board.begin(), board.end(),
+				[](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
+			if (!ok)
+				throw sol::error(std::string(binding) + ": '" + board + "' is not a board name (a-z, 0-9 and -)");
+			return "/v1/leaderboards/" + board;
+		}
+
+		// rank and best are null for a player with no score: nil in Lua, so "no score yet" and "the
+		// request failed" stay distinguishable (ok is true for the first).
+		sol::object ReadStanding(sol::state_view lua, const OnlineResponse& response)
+		{
+			std::string error;
+			std::optional<JsonValue> standing = ParseJson(response.Body, &error);
+			if (!standing)
+				throw std::runtime_error(error);
+
+			sol::table result = lua.create_table();
+			for (const char* key : { "rank", "best" })
+			{
+				const JsonValue* value = standing->Find(key);
+				if (!value || (value->Kind != JsonValue::Type::Integer && value->Kind != JsonValue::Type::Null))
+					throw std::runtime_error(std::string("expected an integer or null ") + key);
+				if (value->Kind == JsonValue::Type::Integer)
+					result[key] = value->Integer;
+			}
+			return result;
+		}
+
+		// The standing a score submission returns, plus whether the response is a replay: the
+		// original response served again for a key already processed, whose standing is as of the
+		// first submission, not now.
+		sol::object ReadSubmission(sol::state_view lua, const OnlineResponse& response)
+		{
+			sol::table result = ReadStanding(lua, response).as<sol::table>();
+			const std::string* replayed = response.Header("Idempotent-Replayed");
+			result["replayed"] = replayed && *replayed == "true";
+			return result;
+		}
+
 		// The online client (docs/engine/online.md). Every request binding is typed per endpoint,
 		// takes its owner first (self.entity) and its callback last, and maps the API's field names
 		// to script-style ones (display_name -> name). There is no generic request.
@@ -1170,6 +1213,94 @@ namespace GanymedE {
 						result["accountId"] = account->String;
 						result["name"] = name->String;
 						result["rating"] = rating->Integer;
+						return result;
+					});
+			};
+
+			// POST /v1/leaderboards/<board>/scores -> { rank, best, replayed }.
+			//
+			// One Idempotency-Key per call, generated here and carried in the request, so the one
+			// retry the session makes (after a 401) resends the same key: the backend applies a
+			// submission once however often it arrives.
+			backend["SubmitScore"] = [](sol::object owner, const std::string& board, sol::object score,
+				sol::object callback)
+			{
+				// Whole and in range, checked here: a fraction or a negative score is a script bug,
+				// and a named error at the call beats a 400 a frame later. A whole Lua float is
+				// accepted (every script property is a float); see online.md, JSON.
+				constexpr double kMax = 9007199254740991.0;   // 2^53 - 1, the contract's maximum
+				const double value = score.is<double>() ? score.as<double>() : -1.0;
+				if (!score.is<double>() || std::floor(value) != value || value < 0 || value > kMax)
+					throw sol::error("Backend.SubmitScore: the score must be a whole number from 0 to 2^53 - 1");
+
+				JsonValue body = JsonValue::MakeObject();
+				body.Members.emplace_back("score", JsonValue::MakeInteger(static_cast<int64_t>(value)));
+
+				OnlineRequest request;
+				request.Method = "POST";
+				request.Path = BoardPath("Backend.SubmitScore", board) + "/scores";
+				request.Headers.emplace_back("Idempotency-Key", Online::NewUuid());
+				WriteJson(body, request.Body);
+
+				SendScriptRequest("Backend.SubmitScore", owner, std::move(request), callback, ReadSubmission);
+			};
+
+			// GET /v1/leaderboards/<board>/me -> { rank, best }, both nil with no score yet.
+			backend["GetMyStanding"] = [](sol::object owner, const std::string& board, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Path = BoardPath("Backend.GetMyStanding", board) + "/me";
+				SendScriptRequest("Backend.GetMyStanding", owner, std::move(request), callback, ReadStanding);
+			};
+
+			// GET /v1/leaderboards/<board>?limit=n -> an array of { rank, name, score, accountId, isMe },
+			// best first. `limit` is 1-100; nil means the backend's default (10).
+			backend["GetLeaderboard"] = [](sol::object owner, const std::string& board, sol::object limit,
+				sol::object callback)
+			{
+				std::string path = BoardPath("Backend.GetLeaderboard", board);
+				if (limit.valid() && limit.get_type() != sol::type::lua_nil)
+				{
+					const double n = limit.is<double>() ? limit.as<double>() : 0.0;
+					if (std::floor(n) != n || n < 1 || n > 100)
+						throw sol::error("Backend.GetLeaderboard: the limit must be a whole number from 1 to 100, or nil");
+					path += "?limit=" + std::to_string(static_cast<int>(n));
+				}
+
+				OnlineRequest request;
+				request.Path = std::move(path);
+				SendScriptRequest("Backend.GetLeaderboard", owner, std::move(request), callback,
+					[](sol::state_view lua, const OnlineResponse& response) -> sol::object
+					{
+						std::string error;
+						std::optional<JsonValue> page = ParseJson(response.Body, &error);
+						if (!page)
+							throw std::runtime_error(error);
+						const JsonValue* entries = page->Find("entries");
+						if (!entries || entries->Kind != JsonValue::Type::Array)
+							throw std::runtime_error("expected an entries array");
+
+						const std::string& me = Online::GetAccountId();
+						sol::table result = lua.create_table(static_cast<int>(entries->Items.size()), 0);
+						for (size_t i = 0; i < entries->Items.size(); i++)
+						{
+							const JsonValue& entry = entries->Items[i];
+							const JsonValue* rank = entry.Find("rank");
+							const JsonValue* account = entry.Find("account_id");
+							const JsonValue* name = entry.Find("display_name");
+							const JsonValue* score = entry.Find("score");
+							if (!rank || rank->Kind != JsonValue::Type::Integer || !account || account->Kind != JsonValue::Type::String
+								|| !name || name->Kind != JsonValue::Type::String || !score || score->Kind != JsonValue::Type::Integer)
+								throw std::runtime_error("expected rank, account_id, display_name and score in every entry");
+
+							sol::table row = lua.create_table();
+							row["rank"] = rank->Integer;
+							row["name"] = name->String;
+							row["score"] = score->Integer;
+							row["accountId"] = account->String;
+							row["isMe"] = !me.empty() && account->String == me;
+							result[i + 1] = row;
+						}
 						return result;
 					});
 			};
