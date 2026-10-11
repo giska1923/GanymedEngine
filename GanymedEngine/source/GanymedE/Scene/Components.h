@@ -91,6 +91,17 @@ namespace GanymedE {
 		RelationshipComponent(const RelationshipComponent&) = default;
 	};
 
+	// Presence is the mark. The server assigns NetId when it first replicates the entity.
+	// That index is not saved: the next run would be a different number, and a scene file
+	// that names the component is enough for both processes to agree the entity is replicated.
+	struct ReplicatedComponent
+	{
+		uint16_t NetId = 0;
+
+		ReplicatedComponent() = default;
+		ReplicatedComponent(const ReplicatedComponent&) = default;
+	};
+
 	struct SpriteRendererComponent
 	{
 		glm::vec4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };

@@ -2,8 +2,10 @@
 #include "PhysicsSystem.h"
 
 #include "GanymedE/ECS/Singleton.h"
+#include "GanymedE/Net/World.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
+#include "GanymedE/Scene/SceneRole.h"
 #include "GanymedE/Scene/SceneSingletons.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
 
@@ -82,7 +84,9 @@ namespace GanymedE {
 
 		// Before anything else this frame: the command queue flushed at the top of FrameBegin,
 		// so a prefab a script spawned last frame exists now and should simulate from this step
-		// rather than the next one.
+		// rather than the next one. Replicated client bodies are kinematic first, so SyncBodies
+		// creates them that way and the step copies the interpolated transform in.
+		m_PhysicsScene->AdoptReplicatedMotion(&m_Scene);
 		m_PhysicsScene->SyncBodies(&m_Scene);
 
 		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
@@ -96,10 +100,22 @@ namespace GanymedE {
 		int steps = 0;
 		while (m_Accumulator >= fixedTimestep && steps < maxSteps)
 		{
+			Net::DriveWorldTest(m_Scene);
 			m_PhysicsScene->Step(fixedTimestep);
 			DispatchCollisionEvents();
+			Net::NoteSimulatedStep(m_Scene);
 			m_Accumulator -= fixedTimestep;
 			steps++;
+
+			// A snapshot is every second tick, not every frame. A hitch that burns several
+			// steps would otherwise publish only the last tick and leave a hole the client's
+			// 100 ms delay cannot cover. The pose captured here is the discrete tick;
+			// the blend below is only the local render.
+			if (m_Scene.GetRole() == SceneRole::Server)
+			{
+				m_PhysicsScene->SyncTransforms(&m_Scene, 1.0f);
+				Net::CaptureWorld(m_Scene, m_PhysicsScene.get());
+			}
 		}
 		if (steps == maxSteps)
 			m_Accumulator = 0.0f;

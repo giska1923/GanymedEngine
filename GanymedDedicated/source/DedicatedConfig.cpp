@@ -108,6 +108,7 @@ namespace GanymedE {
 		ok = false;
 		std::string publicKey;
 		std::string netSim;
+		std::string netTest;
 		for (int i = 1; i < argc; i++)
 		{
 			const char* arg = argv[i];
@@ -156,10 +157,19 @@ namespace GanymedE {
 			}
 			else if (TakeFlag(argc, argv, i, "net-sim", value))
 				netSim = value;
+			else if (TakeFlag(argc, argv, i, "net-test", value))
+				netTest = value;
 		}
 
 		if (!Net::ParseSim(netSim, config.Sim, error))
 			return config;
+		if (!netTest.empty() && netTest != "move" && netTest != "spawn"
+			&& netTest != "prefab" && netTest != "rest")
+		{
+			error = "--net-test on the server is move, spawn, prefab, or rest";
+			return config;
+		}
+		config.NetTest = netTest;
 
 		if (config.Dev)
 		{

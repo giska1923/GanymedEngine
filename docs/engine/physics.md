@@ -192,9 +192,16 @@ accumulator += dt
 while accumulator >= fixedTimestep (max 5×):
     PhysicsScene::Step(fixedTimestep)
     dispatch collision events
+    on a server: number the step, write the discrete pose, snapshot when the tick is even
 alpha = accumulator / fixedTimestep
 PhysicsScene::SyncTransforms(scene, alpha)
 ```
+
+The snapshot is the discrete tick. The final `SyncTransforms` is still the local render blend.
+[netcode.md](netcode.md) is the packet. On a client, `SyncTransforms` and the character step skip
+an entity with `ReplicatedComponent`. Before the step, a dynamic replicated body is switched to
+kinematic, so the step copies the interpolated transform in instead of simulating it. The
+character's ground state can be read and is not written back.
 
 Inside `Step`:
 1. **Kinematic bodies** are pushed *into* Jolt from their current world transform (gameplay code

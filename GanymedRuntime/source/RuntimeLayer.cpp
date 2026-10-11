@@ -3,6 +3,8 @@
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Net/Net.h"
+#include "GanymedE/Net/World.h"
+#include "GanymedE/Scene/SceneRole.h"
 #include "GanymedE/Scene/SceneSerializer.h"
 #include "GanymedE/UI/UIEngine.h"
 
@@ -74,7 +76,10 @@ namespace GanymedE {
 		// Straight into the play scene - no Scene::Copy. The copy exists to preserve the
 		// editor's edit-time scene across play/stop; there is no edit-time scene here and
 		// no stop, so a copy would only cost a full registry duplication at boot.
-		m_Scene = CreateRef<Scene>();
+		// Role is fixed at construction. A connected runtime is a client before the first
+		// script runs, so replicated bodies are kinematic from the step that creates them.
+		const SceneRole role = m_Config.Connect.empty() ? SceneRole::Standalone : SceneRole::Client;
+		m_Scene = CreateRef<Scene>(role);
 
 		SceneSerializer serializer(m_Scene);
 		if (serializer.Deserialize(scenePath))
@@ -161,7 +166,12 @@ namespace GanymedE {
 		// with no primary camera is a content bug the engine reports rather than hides
 		// (RenderSystem logs it, throttled).
 		if (m_RuntimeStarted)
+		{
+			// Before the systems: a snapshot spawn is CreateEntity, which asserts once
+			// OnUpdateRuntime has set the updating flag.
+			Net::PresentWorld(*m_Scene, ts);
 			m_Scene->OnUpdateRuntime(ts, nullptr);
+		}
 
 		// Update before render for the same reason the editor does it: gameplay scripts
 		// have just written this frame's HUD values, and Context::Update lays out against

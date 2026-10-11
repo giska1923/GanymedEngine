@@ -2,14 +2,16 @@
 
 The game session that starts after `WELCOME`. A client and a server exchange UDP datagrams on one
 socket, each side knows the round trip and the loss, and a small reliable channel carries the few
-messages that must arrive in order. There is no game state in the packets yet. Snapshots and
-prediction are N3 and N4 of [NETCODE.md](../ToDo/NETCODE.md).
+messages that must arrive in order. The world itself travels as unreliable snapshots: each one
+replaces the last, and a client draws replicated entities from the two snapshots around a time a
+tenth of a second behind the server's tick. Predicting the local player is N4 of
+[NETCODE.md](../ToDo/NETCODE.md). A script still sees only `Net.GetStats()`.
 
 | | |
 |---|---|
-| Sources | `GanymedEngine/source/GanymedE/Net/` — `Socket`, `Connection`, `Net.h`, `Host.cpp` |
-| Who pumps it | The dedicated process's door thread calls `PumpServer`. The runtime's main thread calls `PumpClient` from `Online::OnUpdate`, once a frame, after the join's handshake poll |
-| What a script sees | `Net.GetStats()`. Nothing else. `OnTick` and replication are later |
+| Sources | `GanymedEngine/source/GanymedE/Net/` — `Socket`, `Connection`, `Net.h`, `Host.cpp`, `BitStream.h`, `Quantize.h`, `World.cpp` |
+| Who pumps it | The dedicated process's door thread calls `PumpServer`. The runtime's main thread calls `PumpClient` from `Online::OnUpdate`, once a frame, after the join's handshake poll. The main thread builds snapshots; the door is what calls `sendto` |
+| What a script sees | `Net.GetStats()`. Nothing else. `Net.IsServer` and `OnTick` are N4 and N5 |
 
 ## How engines usually do this, and where Ganymed diverges
 
@@ -108,7 +110,7 @@ common internet MTU once the IP and UDP headers are on it.
 | 12 | u16 | Sequence. `0` means nothing has been sent. Numbers start at 1 and skip 0 again when they wrap |
 | 14 | u16 | Ack. The newest sequence received. `0` means nothing has been received |
 | 16 | u32 | Ack bits. Bit `i` set means sequence `ack - 1 - i` was received. 32 packets of history |
-| 20 | u8 | Kind. `1` session request, `2` session accept, `3` data |
+| 20 | u8 | Kind. `1` session request, `2` session accept, `3` data, `4` snapshot |
 
 Comparison of sequence numbers is a signed 16-bit subtract, so the wrap is ordinary.
 
@@ -157,6 +159,127 @@ session.
 the conditioner, so a drop is the server's check and not the loss simulator. One has the session
 id plus one, from the real socket. One has the real id, from a second ephemeral socket. The
 server's next stats line counts them as a session drop and an address drop.
+
+## Ticks
+
+The server numbers its physics steps. `PhysicsSystem` calls `NoteSimulatedStep` once per step, and
+only when the scene's role is `Server`, so the client's own physics loop does not advance the
+clock. The step is `PhysicsSettings::FixedTimestep`, 1/60 s. A snapshot is every second tick.
+
+That capture sits inside the step loop, after the discrete pose has been written back, and not
+once at the end of the frame. A hitch that burns several steps would otherwise publish only the
+last tick and leave a hole wider than the client's delay. The blend `SyncTransforms` does with
+the leftover accumulator is the local render. The snapshot is the tick.
+
+The client does not add the round trip on top of that. A snapshot that says tick T, received at
+time R, estimates the server's current tick as `T + (now − R) / FixedTimestep`. The lead N4 will
+simulate ahead by is half the measured round trip. It is logged (`lead=`) and it is not added into
+the render time. Adding it again would count the same delay twice: once in how late the snapshot
+is, and once more as a bias.
+
+## Snapshots
+
+Kind `4`. The body is not a reliable message. `Receive` still notes the sequence and the ack, and
+`BuildSnapshot` records a sent packet with an empty reliable-id list, so the snapshot takes part
+in the round trip and the loss figures. It does not carry, and is not carried by, the reliable
+channel. A newer snapshot makes an older one useless, which is why it is unreliable.
+
+The main thread builds the packet and submits it to the conditioner. The door thread sends it.
+`StateLock` on the server is a recursive mutex: `PumpServer` holds it across the flush and the
+receive, and not across `select`, and `NoteAdmitted` runs on the door while that lock is already
+held. `SendSnapshot` takes the same lock. The client's incoming snapshot queue is main-thread
+only. `PumpClient` pushes, `PresentWorld` drains, and there is no lock on that queue. Lock order,
+where both exist, is `StateLock` then the stats publish lock.
+
+Per client the server keeps up to 32 sent snapshots, keyed by the sequence `BuildSnapshot`
+assigned. The baseline is the newest of those whose sequence is still acknowledged inside the
+128-packet send window. No such snapshot means a full state: every live replicated entity is a
+spawn. The values in a delta are absolute. What the delta selects is which entities and which
+fields changed, not a numeric difference. An empty delta is still sent, so the client's clock
+moves on a scene that is sitting still.
+
+Spawns and destroys travel in the same packet. There is no reliable spawn. A destroy is also
+emitted for anything in the newest sent stamp that is no longer in the world, even when the spawn
+that created it was never acknowledged. Otherwise a client that applied a spawn whose ack was
+lost, and then watched the server destroy the entity, would keep it. Destroys are packed at the
+front, so a full datagram does not drop them behind spawns. Destroying an unknown net id on the
+client is a no-op. Destroying a prefab collects the subtree and destroys it from the leaves,
+because `Scene::DestroyEntity` unparents children rather than destroying them.
+
+If the next record does not fit, the packet still goes out with the records that did, and the
+stamp stored for that sequence is the baseline plus those records. The remainder is still a diff
+against that partial stamp next time, so a world larger than one datagram drains about one batch
+per acknowledgement rather than starting over. One record that cannot fit alone logs a warning
+and the packet is the tick header with a count of zero.
+
+The body budget is 1200 − 21 = 1179 bytes. The header is a u32 tick, a u16 baseline sequence
+(`0` means this packet is a full state), and a u16 count. Each record is a u16 net id and a 2-bit
+op: `1` spawn, `2` destroy, `3` update. A spawn adds a u64 UUID and a path: a 7-bit length, at
+most 80, then the bytes. A destroy stops there. Anything else carries a 6-bit mask — position,
+yaw, euler, velocity, ground, aim — and the fields the mask names. The same `Bits` function
+writes, measures, and reads, least significant bit first inside the byte, so the three cannot
+disagree about a width. The codec is the compile-time list in `World.cpp`, not `entt::meta`.
+[scene.md](scene.md) forbids reflection on the replication pass.
+
+What that list sends, for an entity with `ReplicatedComponent`:
+
+| Field | When | Encoding |
+|---|---|---|
+| Local position | Always | Millimetres, biased into 24 bits. The span is ±8192 m. Nothing in the tree publishes a tighter map bound. Past it, the value clamps |
+| Yaw | The entity has a `CharacterControllerComponent` | uint16 over one full turn |
+| Euler XYZ | It does not | Each axis uint16 over [−π, π], wrapped before the pack |
+| Linear velocity and ground | It is a character | Signed 16 bits, millimetres per second, clamped to ±32 m/s. Ground is 2 bits: `0` OnGround, `1` OnSteepGround, `2` NotSupported, `3` InAir. Read from Jolt. Nothing writes it back |
+| Aim pitch and yaw | `AimOffsetComponent` is present | The same signed-angle pack as an Euler axis |
+
+Scale is not replicated. Script fields are not. The world transform is not: the client already
+has the parent. The server assigns a 16-bit net id, starting at 1 and skipping 0, stored on the
+component with `Trait::Runtime` so the file does not keep it. Scene entities match by UUID. An
+entity the client does not have yet is `CreateEntityWithUUID` with the server's UUID, or
+`Instantiate` with that UUID pinned as the root when the spawn names a prefab. The client refuses
+a path that is empty, longer than 80, contains `..`, or uses a character outside
+`A–Z`, `a–z`, `0–9`, `_`, `.`, `/` and `-`.
+
+`GanymedDedicated --net-test=` is `move`, `spawn`, `prefab`, or `rest`. Anything else exits 2,
+including under `--dev`. The runtime's `--net-test` is still only `reliable:<count>` and `spoof`.
+The four server tests are what [NETCODE.md](../ToDo/NETCODE.md)'s N3 checks ran. They are not a game mode.
+
+## Interpolation
+
+`GanymedRuntime --connect` constructs the scene as `SceneRole::Client` before `OnRuntimeStart`.
+Client registers the same systems as Standalone. What changes is `GetRole()`.
+
+`PresentWorld` runs at the start of `RuntimeLayer::OnUpdate`, before `OnUpdateRuntime`. A snapshot
+spawn is `CreateEntity`, and that asserts once a system update has set the updating flag. The
+drain is the packets `PumpClient` queued earlier in the same frame.
+
+Replicated entities on a client are kinematic. `AdoptReplicatedMotion` turns a dynamic body into
+a kinematic one before the step, and both `SyncTransforms` and the character step skip a
+replicated entity, so the physics writeback does not overwrite the blend. A kinematic body
+already copies the transform in during `Step`. The ground state is not written into
+`CharacterVirtual`. There is no setter.
+
+The render tick is the estimate minus `0.100 / FixedTimestep`, which is 6 ticks at 60 Hz. The
+entity is the blend of the two buffer samples around that tick. The buffer keeps 32 samples per
+entity. When the render tick is past the newest snapshot, the frame is dry: the pose extrapolates
+the last segment by at most one snapshot interval (2 ticks) and then holds, and the frame is
+counted. Counting starts after one second of summed frame time, so the wait for the first
+snapshot is not a dry run. An entity that has stopped moving keeps its last sample. Holding that
+sample while the render tick is still behind the newest packet is not dry. An entity is
+extrapolated only when the frame is dry and its own newest sample is within 2 ticks of that
+packet.
+
+Once a second, while a test is running:
+
+```
+Replicate server peer={account} tick={n} entities={n} registry={n} snap={bytes} min={bytes} Bps={payload bytes in the last 1s}
+Replicate client tick={floor of the render tick} est={.1f} lead={rtt/2} snap={body bytes} depth={max samples} dry={percent} step={max ratio} entities={n} registry={n} ghosts={n} frames={n}
+```
+
+`step` is the largest ratio, since the warmup, of how far an entity was drawn this frame to how
+far the snapshot segment under the render tick says it should have moved across the ticks the
+render clock advanced. A continuous blend sits near 1. A teleport is many times that. `dry` is
+the percentage of warmed frames that ran past the newest snapshot. `Bps` counts payload bytes at
+the moment the snapshot is queued, not on the wire, so the conditioner's loss is not in it.
 
 ## The conditioner
 

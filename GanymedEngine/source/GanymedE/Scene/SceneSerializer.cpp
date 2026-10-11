@@ -45,6 +45,13 @@ namespace GanymedE {
 		if (entity.HasComponent<TagComponent>())
 			WriteReflectedComponent(out, "TagComponent", entity.GetComponent<TagComponent>());
 
+		// The mark is the key. NetId is runtime, so the map is empty on purpose.
+		if (entity.HasComponent<ReplicatedComponent>())
+		{
+			out << YAML::Key << "ReplicatedComponent";
+			out << YAML::BeginMap << YAML::EndMap;
+		}
+
 		if (entity.HasComponent<TransformComponent>())
 			WriteReflectedComponent(out, "TransformComponent", entity.GetComponent<TransformComponent>());
 
@@ -481,6 +488,9 @@ namespace GanymedE {
 
 		// TagComponent is read above, not here: the tag is needed to CREATE the entity, so it
 		// cannot go through the generic reader that needs an entity to read into.
+		if (entityNode["ReplicatedComponent"])
+			deserializedEntity.AddComponent<ReplicatedComponent>();
+
 		auto transformComponent = entityNode["TransformComponent"];
 		if (transformComponent)
 		{

@@ -61,6 +61,7 @@ and returns 0 from `main`. The agent treats any exit as a dead process and does 
 | `--public-key` | Ed25519 public key, 32 bytes. The standard alphabet, padding and a trailing newline are accepted here only. Not required with `--dev` |
 | `--dev` | No agent, loopback only, `HELLO dev:<name>`. See [development mode](#development-mode) |
 | `--net-sim` | Latency, jitter, loss, duplicate, reorder on the send path. See [netcode.md](../engine/netcode.md#the-conditioner). A bad value exits 2 |
+| `--net-test` | On this process: `move`, `spawn`, `prefab`, or `rest`. Anything else exits 2. The runtime's flag is a different set |
 
 `--match-seconds`, `--outcome`, `--scene` and `--load-delay` override `assets/dedicated.yaml`.
 Both `--name value` and `--name=value` work, and so does the single dash, because the agent's
@@ -86,6 +87,13 @@ Admission is `HELLO dev:<name>`. The name is 1–32 characters from `A–Z`, `a�
 Anything else is `DENIED expected HELLO dev:<name>`. A good hello is `WELCOME <name>`, and the
 session in [netcode.md](../engine/netcode.md) starts from there. `GanymedRuntime --connect=` is the
 other half.
+
+`--net-test=move|spawn|prefab|rest` loads the scene and then drives a replication check. `move`
+instantiates `assets/prefabs/NetMover.gprefab` and writes a scripted pose before each step.
+`rest` creates one entity and leaves it. `spawn` creates 500 entities and destroys them after
+18 s of server ticks. `prefab` instantiates `assets/prefabs/NetPair.gprefab`, a root and one
+child, and logs both UUIDs. The lines are `Replicate ...` in the dedicated log. They are how N3
+was measured. A bad value exits 2 before boot, the same as a bad `--net-sim`.
 
 ## Boot
 

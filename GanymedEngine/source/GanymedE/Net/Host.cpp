@@ -96,8 +96,20 @@ namespace GanymedE::Net {
 
 		struct Engine
 		{
+			// Recursive: the door holds it across the text handler, and that handler calls
+			// NoteAdmitted. Not held across select. The main thread takes it to read acks
+			// and to queue a snapshot. The client queue below is main-thread only.
+			std::recursive_mutex StateLock;
 			std::mutex PublishLock;
 			Stats Published;
+
+			struct Incoming
+			{
+				std::vector<uint8_t> Bytes;
+				float RttMs = 0.0f;
+				Connection::Clock::time_point At{};
+			};
+			std::vector<Incoming> IncomingSnapshots;
 
 			bool Serving = false;
 			Socket ServerSocket;
@@ -132,6 +144,11 @@ namespace GanymedE::Net {
 		{
 			static Engine engine;
 			return engine;
+		}
+
+		std::unique_lock<std::recursive_mutex> LockState()
+		{
+			return std::unique_lock<std::recursive_mutex>(State().StateLock);
 		}
 
 		std::string Hex(uint64_t value)
@@ -575,6 +592,14 @@ namespace GanymedE::Net {
 				{
 					DeliverClient(engine, payload, payloadLength);
 				});
+				if (view.Kind == kKindSnapshot && length > kHeaderBytes)
+				{
+					Engine::Incoming incoming;
+					incoming.Bytes.assign(buffer + kHeaderBytes, buffer + length);
+					incoming.At = now;
+					incoming.RttMs = engine.ClientConn->RttMs();
+					engine.IncomingSnapshots.push_back(std::move(incoming));
+				}
 			}
 
 			if (engine.ClientConn->TimedOut(now))
@@ -691,6 +716,7 @@ namespace GanymedE::Net {
 
 	bool Listen(const Address& bind, std::string& error)
 	{
+		auto guard = LockState();
 		Engine& engine = State();
 		if (engine.Serving)
 		{
@@ -707,11 +733,13 @@ namespace GanymedE::Net {
 
 	void SetTextHandler(std::function<std::string(const Address&, const std::string&)> handler)
 	{
+		auto guard = LockState();
 		State().OnText = std::move(handler);
 	}
 
 	void NoteAdmitted(const std::string& account, const Address& from)
 	{
+		auto guard = LockState();
 		Engine& engine = State();
 		engine.Admitted[account] = from;
 		for (Peer& peer : engine.Peers)
@@ -724,15 +752,24 @@ namespace GanymedE::Net {
 	void PumpServer(int waitMs)
 	{
 		Engine& engine = State();
-		if (!engine.Serving)
-			return;
+		{
+			auto guard = LockState();
+			if (!engine.Serving)
+				return;
 
-		const auto now = Connection::Clock::now();
-		engine.ServerBox->Flush(engine.ServerSocket, now);
-		TickServer(engine, now);
+			const auto now = Connection::Clock::now();
+			engine.ServerBox->Flush(engine.ServerSocket, now);
+			TickServer(engine, now);
+		}
 
+		// The main thread queues snapshots during this wait. CloseServer runs only after
+		// this thread has been joined, so the socket is still ours here.
 		if (waitMs > 0)
 			engine.ServerSocket.Wait(waitMs);
+
+		auto guard = LockState();
+		if (!engine.Serving)
+			return;
 
 		uint8_t buffer[2048];
 		for (;;)
@@ -775,6 +812,7 @@ namespace GanymedE::Net {
 
 	void CloseServer()
 	{
+		auto guard = LockState();
 		Engine& engine = State();
 		engine.Serving = false;
 		engine.Peers.clear();
@@ -895,6 +933,67 @@ namespace GanymedE::Net {
 		Engine& engine = State();
 		std::lock_guard<std::mutex> lock(engine.PublishLock);
 		return engine.Published;
+	}
+
+	std::vector<std::string> ServerAccounts()
+	{
+		auto guard = LockState();
+		Engine& engine = State();
+		std::vector<std::string> accounts;
+		accounts.reserve(engine.Peers.size());
+		for (const Peer& peer : engine.Peers)
+			accounts.push_back(peer.Conn->Account());
+		return accounts;
+	}
+
+	bool SnapshotAcked(const std::string& account, uint16_t sequence)
+	{
+		auto guard = LockState();
+		Engine& engine = State();
+		for (const Peer& peer : engine.Peers)
+		{
+			if (peer.Conn->Account() == account)
+				return peer.Conn->IsAcked(sequence);
+		}
+		return false;
+	}
+
+	uint16_t SendSnapshot(const std::string& account, const uint8_t* data, int length)
+	{
+		auto guard = LockState();
+		Engine& engine = State();
+		if (!engine.Serving || !engine.ServerBox || !data || length <= 0)
+			return 0;
+		for (Peer& peer : engine.Peers)
+		{
+			if (peer.Conn->Account() != account)
+				continue;
+			std::vector<uint8_t> packet;
+			const auto now = Connection::Clock::now();
+			const uint16_t sequence = peer.Conn->BuildSnapshot(packet, data, length, now);
+			if (sequence == 0)
+				return 0;
+			engine.ServerBox->Submit(peer.Conn->Remote(), std::move(packet));
+			return sequence;
+		}
+		return 0;
+	}
+
+	std::vector<SnapshotDatagram> DrainSnapshots()
+	{
+		Engine& engine = State();
+		std::vector<SnapshotDatagram> out;
+		out.reserve(engine.IncomingSnapshots.size());
+		for (Engine::Incoming& incoming : engine.IncomingSnapshots)
+		{
+			SnapshotDatagram datagram;
+			datagram.Bytes = std::move(incoming.Bytes);
+			datagram.RttMs = incoming.RttMs;
+			datagram.At = incoming.At;
+			out.push_back(std::move(datagram));
+		}
+		engine.IncomingSnapshots.clear();
+		return out;
 	}
 
 }

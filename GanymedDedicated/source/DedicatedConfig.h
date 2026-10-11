@@ -28,6 +28,9 @@ namespace GanymedE {
 		bool Dev = false;
 		Net::Sim Sim;
 
+		// move, spawn, prefab, or rest. Empty on a fleet server. See netcode.md.
+		std::string NetTest;
+
 		static DedicatedConfig Load(const std::string& path);
 	};
 

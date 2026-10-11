@@ -2,7 +2,8 @@
 
 **Status: N0 done (2026-10-10). N1 is built (2026-10-11) and its local checks passed; the fleet
 acceptance test has not been run, so N1 is not closed. N2 is built (2026-10-11) and its local
-checks were run; the path through the backend was not. N3–N5 are not started.** It follows
+checks were run; the path through the backend was not. N3 is built (2026-10-11) and its local
+checks were run on Windows x64 Debug; it is not a fleet close. N4–N5 are not started.** It follows
 [ONLINE.md](ONLINE.md), whose last phase, O5b, is this N1. It depends on `online-o4` (O4 and O5a)
 reaching `master`. N1 is written against the backend's `api-v0.6` (results through the agent,
 `DENIED` before allocation), which is built. What the process does now is
@@ -519,13 +520,15 @@ along a scripted path for the test.
 
 #### Verification
 
-| Check | Pass when |
-|---|---|
-| Two clients see the same thing | positions of a scripted mover, logged on both clients at the same server tick, agree within quantization |
-| Smoothness | at 100 ms and 5% loss, the buffer runs dry under 1% of frames, and no entity is drawn jumping more than a frame's travel |
-| Delta compression | a scene at rest sends snapshots of a few bytes; bytes per second are recorded for the Proving Ground with 4 players and its enemies |
-| Spawn/destroy | 500 spawns and despawns at 10% loss: every client ends with the server's entity set, with no leaks |
-| Prefab children | a spawned prefab's child UUIDs match between server and client |
+| Check | Pass when | Measured (Windows x64 Debug, 2026-10-11, port 17777, scene `scenes/Demo.ganymede`) |
+|---|---|---|
+| Two clients see the same thing | positions of a scripted mover, logged on both clients at the same server tick, agree within quantization | `--net-test=move`, `--net-sim=lat:50,loss:5` on the server and both clients. Every pose line a client logged matches the server to the millimetre. 5% loss omits ticks (alpha had no 240 or 540; beta had no 480). The ticks both clients had — 300, 360, 420, 600, 660, 720, 780, 840, 900, 960, 1020, 1080 — agree with the server and with each other. Quantization is 1 mm |
+| Smoothness | at 100 ms and 5% loss, the buffer runs dry under 1% of frames, and no entity is drawn jumping more than a frame's travel | Same run. Dry 0.00% on both clients (50 warmed frames each). Depth 32, the buffer cap. Step high-water 1.35 (alpha) and 1.29 (beta). That is above 1. The debug clients rendered Demo at about 4 frames a second, so one frame covers many ticks of a sine whose speed is not the 2-tick segment the ratio uses. The poses above still match, so this is not a lost snapshot drawn as a teleport. A teleport would be several times one frame. Lead was 263–264 ms: `lat:50` each way is 100 ms of round trip, and the rest is the ack waiting for the next ~250 ms client frame. The render clock is the estimate minus 100 ms (the log's `tick` and `est` differ by 6). The lead is not added again |
+| Delta compression | a scene at rest sends snapshots of a few bytes; bytes per second are recorded for the Proving Ground with 4 players and its enemies | `--net-test=rest`, no `--net-sim`, one client. Snapshot body 8 bytes, 240–248 bytes/s, which is 30–31 payloads a second. `min` stayed 8. Registry 11 on both sides, one replicated entity. Client dry 0.00, depth 1 (an empty delta does not push another sample), lead 128–131 ms with no simulated latency, again because the client acks on its next frame. Proving Ground bytes/s: **not run**. This branch has no enemy content under `assets/` |
+| Spawn/destroy | 500 spawns and despawns at 10% loss: every client ends with the server's entity set, with no leaks | `--net-test=spawn`, `--net-sim=loss:10` on the server and both clients. Entities reached 500 on the server and on both clients, then 0 after the destroy at 18 s of server ticks. Final line on all three: entities 0, ghosts 0, registry 10 (Demo without the 500). One datagram cannot hold 500 spawns; they drain across packets until acknowledged |
+| Prefab children | a spawned prefab's child UUIDs match between server and client | `--net-test=prefab`, no `--net-sim`, two clients. Server, alpha, and beta all logged root `48c7de0c63ab369a` and child `a14fc312d59b8b32`. `assets/prefabs/SparkBurst.gprefab` has no children; the check uses `assets/prefabs/NetPair.gprefab` |
+
+A bad server `--net-test` (`--dev --net-test=nope`) exits 2. The first capture implementation sent one snapshot per frame, and a debug server that spent the frame on several physics steps published about 15 payloads a second (120–152 B/s at rest) instead of every second tick. One client in that run went dry on about 5% of frames. The capture now runs inside the step loop, and the numbers in this table are from that build.
 
 ### N4 — input and prediction
 
@@ -663,7 +666,7 @@ defeat reported by the server and ratings that change.
 |---|---|
 | N1 | [dedicated.md](../dedicated/dedicated.md), [online.md](../engine/online.md), [architecture.md](../engine/architecture.md), [ecs.md](../engine/ecs.md), [build-and-tooling.md](../engine/build-and-tooling.md), [ONLINE.md](ONLINE.md). Written with the code. The fleet row is still open |
 | N2 | [netcode.md](../engine/netcode.md), indexed from [docs/README.md](../README.md); [runtime.md](../runtime/runtime.md) (`--connect=`, `--name=`, `--net-sim=`, `--net-test=`); [online.md](../engine/online.md) (`JoinMatch` hands over its socket); [dedicated.md](../dedicated/dedicated.md) (`--dev`). Written with the code. The fleet row is still open |
-| N3 | netcode.md (ticks, snapshots, delta, interpolation); [scene.md](../engine/scene.md) (`ReplicatedComponent`, derived child UUIDs) |
+| N3 | netcode.md (ticks, snapshots, delta, interpolation); [scene.md](../engine/scene.md) (`ReplicatedComponent`, derived child UUIDs). Written with the code. The local checks are in the N3 section |
 | N4 | netcode.md (commands, prediction, reconciliation); [scripting.md](../engine/scripting.md) (`OnTick`, `PlayerCommand`, roles); [physics.md](../engine/physics.md) (replaying a character) |
 | N5 | scripting.md (replicated fields, `Net.Broadcast`, `OnNetEvent`); the Proving Ground's own record on `first-game` |
 

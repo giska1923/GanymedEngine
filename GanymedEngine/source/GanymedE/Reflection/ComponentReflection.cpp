@@ -152,6 +152,16 @@ namespace GanymedE::Reflection {
 
 		// ---- Transform and hierarchy ------------------------------------------------------
 
+		void RegisterReplication()
+		{
+			// NetId is assigned by the server at runtime. The file stores the component and
+			// nothing else: an empty map is the mark.
+			GE_REFLECT_COMPONENT(ReplicatedComponent)
+				.custom<Attr>(Attr{}.Label("Replicated"))
+				.data<&ReplicatedComponent::NetId>("NetId")
+					.traits(Trait::Runtime);
+		}
+
 		void RegisterTransform()
 		{
 			GE_REFLECT_COMPONENT(TransformComponent)
@@ -713,7 +723,7 @@ namespace GanymedE::Reflection {
 		//
 		// Two honest limits. Padding: a bool dropped into existing padding does not move sizeof -
 		// AudioSourceComponent has three spare bytes right now, so a fifth flag there would slip
-		// through. And these cover 19 of the 28 ComponentList entries - every one with NO
+		// through. And these cover 20 of the 29 ComponentList entries - every one with NO
 		// standard-library container member. sizeof(std::string) is 40 with MSVC's STL and 32 with
 		// libstdc++, and sizeof(std::vector) and sizeof(std::unordered_map) differ likewise, so a
 		// sentinel on TagComponent, RelationshipComponent, StaticMeshComponent, AnimatorComponent,
@@ -746,6 +756,7 @@ namespace GanymedE::Reflection {
 		static_assert(sizeof(PrefabInstanceComponent) == 8, "PrefabInstanceComponent changed - reflect the new field");
 		static_assert(sizeof(PrefabMemberComponent) == 8, "PrefabMemberComponent changed - reflect the new field");
 		static_assert(sizeof(ScatterGroupComponent) == 16, "ScatterGroupComponent changed - reflect the new field");
+		static_assert(sizeof(ReplicatedComponent) == 2, "ReplicatedComponent changed - reflect the new field");
 
 		// Not in ComponentList, but reflected here and equally worth guarding.
 		static_assert(sizeof(IDComponent) == 8, "IDComponent changed - reflect the new field");
@@ -870,6 +881,7 @@ namespace GanymedE::Reflection {
 		RegisterEnums();
 		RegisterIdentity();
 		RegisterTransform();
+		RegisterReplication();
 		RegisterRendering();
 		RegisterLighting();
 		RegisterScripting();

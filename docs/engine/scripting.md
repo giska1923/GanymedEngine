@@ -185,7 +185,9 @@ counts, zeros until a session exists — see [netcode.md](netcode.md)).
 > exist, and `PendingEntity` is meaningful only within the frame it was made in — a handle whose
 > validity expires at a frame boundary is a lifetime problem the engine would then have to police.
 > An id that does not resolve *yet* is indistinguishable from one whose entity has since been
-> destroyed, and a script has to handle the second case anyway.
+> destroyed, and a script has to handle the second case anyway. The children of that root are not
+> minted: child `i` is `DerivePrefabChildUUID(root, i)`, so a server and a client that pin the
+> same root build the same subtree. See [scene.md](scene.md).
 >
 > A path that is not an indexed asset, or is indexed as something other than a prefab, is refused
 > with a named warning and `nil` — a script spawning a texture is a typo, and letting it fail a

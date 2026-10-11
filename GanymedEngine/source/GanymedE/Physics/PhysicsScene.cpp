@@ -875,6 +875,11 @@ namespace GanymedE {
 			if (!entity || !entity.HasComponent<CharacterControllerComponent>())
 				continue;
 
+			// The client's copy is drawn from the snapshot. Stepping it here would put the
+			// controller somewhere else, and the next writeback would throw the interpolation away.
+			if (m_Scene->GetRole() == SceneRole::Client && entity.HasComponent<ReplicatedComponent>())
+				continue;
+
 			const auto& cc = entity.GetComponent<CharacterControllerComponent>();
 
 			// Gravity is integrated here rather than by the solver, because nothing else will:
@@ -1106,6 +1111,9 @@ namespace GanymedE {
 			if (!entity)
 				continue;
 
+			if (scene->GetRole() == SceneRole::Client && entity.HasComponent<ReplicatedComponent>())
+				continue;
+
 			// A character writes back unconditionally; a body only when it is Dynamic, since
 			// Static never moves and Kinematic is driven the other way, from the transform.
 			const bool isCharacter = entity.HasComponent<CharacterControllerComponent>();
@@ -1204,6 +1212,50 @@ namespace GanymedE {
 		// sliding down it, which every gameplay use of "grounded" - jumping, footsteps, a
 		// landing animation - wants to treat as not grounded.
 		return it->second->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+	}
+
+	int PhysicsScene::CharacterGround(UUID entity) const
+	{
+		if (!m_Active || !m_Impl)
+			return -1;
+
+		auto it = m_Impl->EntityToCharacter.find(entity);
+		if (it == m_Impl->EntityToCharacter.end())
+			return -1;
+
+		switch (it->second->GetGroundState())
+		{
+			case JPH::CharacterBase::EGroundState::OnGround: return 0;
+			case JPH::CharacterBase::EGroundState::OnSteepGround: return 1;
+			case JPH::CharacterBase::EGroundState::NotSupported: return 2;
+			case JPH::CharacterBase::EGroundState::InAir: return 3;
+		}
+		return 3;
+	}
+
+	void PhysicsScene::AdoptReplicatedMotion(Scene* scene)
+	{
+		if (!m_Active || !m_Impl || !scene || scene->GetRole() != SceneRole::Client)
+			return;
+
+		auto& bodyInterface = m_Impl->System.GetBodyInterface();
+		auto view = scene->Reg().view<ReplicatedComponent, RigidBodyComponent>();
+		for (auto handle : view)
+		{
+			Entity entity{ handle, scene };
+			auto& body = entity.GetComponent<RigidBodyComponent>();
+			if (body.Type != RigidBodyType::Dynamic)
+				continue;
+			body.Type = RigidBodyType::Kinematic;
+			auto it = m_Impl->EntityToBody.find(entity.GetUUID());
+			if (it == m_Impl->EntityToBody.end())
+				continue;
+			if (bodyInterface.GetMotionType(it->second) != JPH::EMotionType::Kinematic)
+			{
+				bodyInterface.SetMotionType(it->second, JPH::EMotionType::Kinematic,
+					JPH::EActivation::DontActivate);
+			}
+		}
 	}
 
 	PhysicsScene::RaycastHit PhysicsScene::CastRay(const glm::vec3& origin,

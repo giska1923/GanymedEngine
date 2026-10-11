@@ -2,10 +2,12 @@
 
 #include "GanymedE/Net/Socket.h"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace GanymedE::Net {
 
@@ -67,5 +69,23 @@ namespace GanymedE::Net {
 	void ShutdownClient();
 
 	Stats GetStats();
+
+	// A snapshot the client received. The body is everything after the 21-byte header.
+	// `At` is the local time of the receive, which is what the tick estimate measures from.
+	struct SnapshotDatagram
+	{
+		std::vector<uint8_t> Bytes;
+		float RttMs = 0.0f;
+		std::chrono::steady_clock::time_point At{};
+	};
+
+	// Server, main thread. The door thread is the one in `recvfrom`; these copy what it
+	// published and hand it a payload to send. The lock is not held across `select`.
+	std::vector<std::string> ServerAccounts();
+	bool SnapshotAcked(const std::string& account, uint16_t sequence);
+	uint16_t SendSnapshot(const std::string& account, const uint8_t* data, int length);
+
+	// Client, main thread. Empties the queue `PumpClient` filled earlier this frame.
+	std::vector<SnapshotDatagram> DrainSnapshots();
 
 }

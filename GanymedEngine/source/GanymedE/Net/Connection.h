@@ -18,7 +18,7 @@ namespace GanymedE::Net {
 	//   u16 sequence   wraps; 0 means "I have sent nothing"
 	//   u16 ack        highest sequence received; 0 means "I have received nothing"
 	//   u32 ackBits    bit i set => (ack - 1 - i) was received
-	//   u8  kind       1 session request, 2 session accept, 3 data
+	//   u8  kind       1 session request, 2 session accept, 3 data, 4 snapshot
 	//
 	// A session request carries the account id (one length byte, then the bytes).
 	// A data packet carries the reliable messages still waiting for an ack.
@@ -26,6 +26,7 @@ namespace GanymedE::Net {
 	constexpr uint8_t kKindRequest = 1;
 	constexpr uint8_t kKindAccept = 2;
 	constexpr uint8_t kKindData = 3;
+	constexpr uint8_t kKindSnapshot = 4;
 	constexpr int kHeaderBytes = 21;
 	constexpr int kMaxDatagram = 1200;
 	constexpr int kKeepaliveMs = 100;
@@ -64,6 +65,14 @@ namespace GanymedE::Net {
 		// False when there is nothing to say and the keepalive interval has not elapsed.
 		// `account` is written only for a session request.
 		bool Build(std::vector<uint8_t>& out, uint8_t kind, const std::string* account, Clock::time_point now, bool force);
+
+		// Unreliable snapshot. Always consumes a sequence. The payload is the body after
+		// the 21-byte header and must already fit in the 1200-byte cap. Returns the
+		// sequence, or 0 when the payload does not fit.
+		uint16_t BuildSnapshot(std::vector<uint8_t>& out, const uint8_t* payload, int payloadLength, Clock::time_point now);
+
+		// True when `sequence` is still in the send window and the peer has acknowledged it.
+		bool IsAcked(uint16_t sequence) const;
 
 		// Records the peer's sequence and which of our packets they have seen, then
 		// delivers reliable payloads that are now in order. Malformed reliable bytes

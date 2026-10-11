@@ -107,6 +107,14 @@ namespace GanymedE {
 		// gameplay to ask the wrong question.
 		bool IsGrounded(UUID entity) const;
 
+		// Jolt's four ground states, or -1 when the entity is not a character. Read-only:
+		// writing the state back into CharacterVirtual is the prediction step, not this one.
+		int CharacterGround(UUID entity) const;
+
+		// A replicated dynamic body on a client is kinematic. The interpolated transform
+		// drives it; the solver must not.
+		void AdoptReplicatedMotion(Scene* scene);
+
 		// ---- Queries ----
 
 		// What a ray hit, or Hit == false. Entity is the UUID behind the body, so a caller

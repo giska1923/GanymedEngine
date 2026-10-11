@@ -95,7 +95,8 @@ namespace GanymedE::Net {
 			view.Account.assign(reinterpret_cast<const char*>(data + cursor), static_cast<size_t>(accountLen));
 		}
 
-		view.Ok = view.Kind == kKindRequest || view.Kind == kKindAccept || view.Kind == kKindData;
+		view.Ok = view.Kind == kKindRequest || view.Kind == kKindAccept
+			|| view.Kind == kKindData || view.Kind == kKindSnapshot;
 		return view;
 	}
 
@@ -186,6 +187,47 @@ namespace GanymedE::Net {
 		m_LastSend = now;
 		AddBytes(m_BytesOut, now, static_cast<int>(out.size()));
 		return true;
+	}
+
+	uint16_t Connection::BuildSnapshot(std::vector<uint8_t>& out, const uint8_t* payload, int payloadLength, Clock::time_point now)
+	{
+		if (!payload || payloadLength < 0 || kHeaderBytes + payloadLength > kMaxDatagram)
+			return 0;
+
+		if (++m_LocalSeq == 0)
+			m_LocalSeq = 1;
+
+		out.clear();
+		WriteU32(out, kProtocolId);
+		WriteU64(out, m_Session);
+		WriteU16(out, m_LocalSeq);
+		WriteU16(out, m_HaveRecv ? m_RecvAck : 0);
+		WriteU32(out, m_HaveRecv ? m_RecvBits : 0);
+		out.push_back(kKindSnapshot);
+		out.insert(out.end(), payload, payload + payloadLength);
+
+		Sent sent;
+		sent.Sequence = m_LocalSeq;
+		sent.At = now;
+		m_AckPending = false;
+		m_Sent.push_back(std::move(sent));
+		if (m_Sent.size() > 128)
+			m_Sent.erase(m_Sent.begin());
+		m_LastSend = now;
+		AddBytes(m_BytesOut, now, static_cast<int>(out.size()));
+		return m_LocalSeq;
+	}
+
+	bool Connection::IsAcked(uint16_t sequence) const
+	{
+		if (sequence == 0)
+			return false;
+		for (const Sent& sent : m_Sent)
+		{
+			if (sent.Sequence == sequence && sent.Acked)
+				return true;
+		}
+		return false;
 	}
 
 	void Connection::Receive(const uint8_t* data, int length, Clock::time_point now,
