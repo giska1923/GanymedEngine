@@ -96,7 +96,7 @@ namespace GanymedE::Net {
 		}
 
 		view.Ok = view.Kind == kKindRequest || view.Kind == kKindAccept
-			|| view.Kind == kKindData || view.Kind == kKindSnapshot;
+			|| view.Kind == kKindData || view.Kind == kKindSnapshot || view.Kind == kKindCommand;
 		return view;
 	}
 
@@ -189,7 +189,7 @@ namespace GanymedE::Net {
 		return true;
 	}
 
-	uint16_t Connection::BuildSnapshot(std::vector<uint8_t>& out, const uint8_t* payload, int payloadLength, Clock::time_point now)
+	uint16_t Connection::BuildSnapshot(std::vector<uint8_t>& out, const uint8_t* payload, int payloadLength, Clock::time_point now, uint8_t kind)
 	{
 		if (!payload || payloadLength < 0 || kHeaderBytes + payloadLength > kMaxDatagram)
 			return 0;
@@ -203,7 +203,7 @@ namespace GanymedE::Net {
 		WriteU16(out, m_LocalSeq);
 		WriteU16(out, m_HaveRecv ? m_RecvAck : 0);
 		WriteU32(out, m_HaveRecv ? m_RecvBits : 0);
-		out.push_back(kKindSnapshot);
+		out.push_back(kind);
 		out.insert(out.end(), payload, payload + payloadLength);
 
 		Sent sent;

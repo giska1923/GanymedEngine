@@ -88,6 +88,7 @@ namespace GanymedE {
 		// creates them that way and the step copies the interpolated transform in.
 		m_PhysicsScene->AdoptReplicatedMotion(&m_Scene);
 		m_PhysicsScene->SyncBodies(&m_Scene);
+		Net::PredictLocal(m_Scene, m_PhysicsScene.get());
 
 		ECS::SingletonAccessView<PhysicsSettings> settingsView{ m_Scene };
 		const PhysicsSettings& settings = *settingsView.Get();
@@ -100,6 +101,7 @@ namespace GanymedE {
 		int steps = 0;
 		while (m_Accumulator >= fixedTimestep && steps < maxSteps)
 		{
+			Net::BeginStep(m_Scene, m_PhysicsScene.get());
 			Net::DriveWorldTest(m_Scene);
 			m_PhysicsScene->Step(fixedTimestep);
 			DispatchCollisionEvents();
@@ -122,5 +124,6 @@ namespace GanymedE {
 
 		const float alpha = m_Accumulator / fixedTimestep;
 		m_PhysicsScene->SyncTransforms(&m_Scene, alpha);
+		Net::ApplyVisualError(m_Scene, ts);
 	}
 }

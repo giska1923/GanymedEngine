@@ -118,13 +118,42 @@ end
 return Player
 ```
 
-All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`, `OnCollisionEnter(other, contact)`,
-`OnCollisionExit(other)`. `contact` is `{ point, normal }`, where this entity touched `other`, on
-other's surface, with that surface's outward normal; see [physics.md](physics.md#collision-events--scripts).
+All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnTick(tick, cmd)`, `OnDestroy`,
+`OnCollisionEnter(other, contact)`, `OnCollisionExit(other)`. `contact` is `{ point, normal }`,
+where this entity touched `other`, on other's surface, with that surface's outward normal; see
+[physics.md](physics.md#collision-events--scripts). Collision hooks are dispatched by
+`PhysicsSystem::DispatchCollisionEvents`, per fixed step inside the accumulator loop, so native
+and Lua scripts see identical timing. An entity may carry a native script, a Lua script, both, or
+neither; both hear about the same collision.
 
-Collision hooks are dispatched by `PhysicsSystem::DispatchCollisionEvents`, per fixed step inside
-the accumulator loop, so native and Lua scripts see identical timing. An entity may carry a native
-script, a Lua script, both, or neither; both hear about the same collision.
+### The tick
+
+`OnTick(tick, cmd)` runs once per physics step, before that step. `tick` is the step's number.
+`cmd` is a `PlayerCommand`: `Tick`, `MoveX`, `MoveZ`, `Yaw`, `Pitch`, `Jump`, `Fire`, `Melee`,
+`Interact`, `Equip`. `Vec3` is constructed as `Vec3(x, y, z)`. The command is only valid for the
+call; a script must not keep it.
+
+On a server, the entity a player owns receives that player's command. A tick with no packet
+repeats the last command. Every other script receives a zero command. Offline, the same hook
+runs from `Input` sampled once per step, so a script written this way still plays with no server.
+On a client only the owned character is ticked, and it is ticked from prediction rather than from
+the accumulator: the client may have to simulate several ticks in one frame to stay ahead, and
+the frame's physics catch-up is a different budget.
+
+A correction replays `OnTick` for ticks the client already ran, with the stored command, not a
+fresh sample of the keyboard. The hook has to be safe to repeat. Movement belongs here.
+`OnUpdate` stays once per frame and is not replayed, which is where presentation goes.
+`assets/scripts/Player.lua` has no `OnTick` and keeps moving from `OnUpdate`.
+
+`entity:IsLocallyControlled()` is true for every entity when the scene is standalone, false for
+every entity on a server, and true on a client only for the entity the snapshot named as owned.
+`Net.IsServer()` and `Net.IsClient()` read the same role. Both are false offline. Neither means
+"a window exists".
+
+`IsLocallyControlled` is registered after the `Entity` usertype, not as one more argument of that
+call. The call is already at the stack limit of this sol2 on MSVC. One more argument overflowed
+it inside `ScriptEngine::Init`, and the process died with a stack overflow after the last shader
+had loaded. `PlayerCommand` is bound one field at a time for the same reason.
 
 **TypeScriptToLua interop** is handled at load: an `exports.default` table is unwrapped, and method
 lookup falls back to `prototype` so TSTL `class` output resolves. Object literals remain the
@@ -154,7 +183,8 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 `Subscribe`/`Unsubscribe`, `GetPushStatus`, the party calls, and `Queue`, `GetTicket`, `CancelTicket`
 and `JoinMatch` for matches — see [online.md](online.md#what-a-script-sees)),
 `Net.GetStats()` (the session after `WELCOME`: round trip, loss, byte rates, resent and drop
-counts, zeros until a session exists — see [netcode.md](netcode.md)).
+counts, zeros until a session exists), `Net.IsServer()` / `Net.IsClient()`, and
+`Entity:IsLocallyControlled()` — see [netcode.md](netcode.md#prediction).
 
 > **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
 > `int64_t`, and sol2 with `SOL_ALL_SAFETIES_ON` **throws** rather than truncating when asked to

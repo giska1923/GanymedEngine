@@ -25,9 +25,15 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		Window& window = Application::Get().GetWindow();
-		const uint32_t width = window.GetWidth();
-		const uint32_t height = window.GetHeight();
+		const bool headless = Application::Get().GetSpecification().Headless;
+		uint32_t width = 1280;
+		uint32_t height = 720;
+		if (!headless)
+		{
+			Window& window = Application::Get().GetWindow();
+			width = window.GetWidth();
+			height = window.GetHeight();
+		}
 
 		Net::Sim sim;
 		std::string simError;
@@ -38,8 +44,11 @@ namespace GanymedE {
 			Net::SetSim(sim);
 
 		GE_INFO("--- Runtime boot ---");
-		GE_INFO("Window: {0}x{1}{2}", width, height,
-			Application::Get().GetSpecification().Fullscreen ? " (borderless fullscreen)" : "");
+		if (headless)
+			GE_INFO("Headless runtime");
+		else
+			GE_INFO("Window: {0}x{1}{2}", width, height,
+				Application::Get().GetSpecification().Fullscreen ? " (borderless fullscreen)" : "");
 		m_Config.Log();
 
 		// Before any deserialize: the scene format stores bare asset handles, and every
@@ -62,14 +71,17 @@ namespace GanymedE {
 		const std::string uiPath = m_Config.UIDocument.empty()
 			? std::string() : resolve(m_Config.UIDocument).generic_string();
 
-		m_SceneRenderer = CreateRef<SceneRenderer>(width, height);
+		if (!headless)
+		{
+			m_SceneRenderer = CreateRef<SceneRenderer>(width, height);
 
-		// The two calls that make this a game rather than an editor viewport: the post
-		// stack's final pass goes to the backbuffer, and the UI composites there too
-		// rather than into the composite framebuffer nobody is going to display.
-		m_SceneRenderer->SetOutputToBackbuffer(true);
-		UIEngine::SetTarget(nullptr);
-		UIEngine::SetViewport(width, height);
+			// The two calls that make this a game rather than an editor viewport: the post
+			// stack's final pass goes to the backbuffer, and the UI composites there too
+			// rather than into the composite framebuffer nobody is going to display.
+			m_SceneRenderer->SetOutputToBackbuffer(true);
+			UIEngine::SetTarget(nullptr);
+			UIEngine::SetViewport(width, height);
+		}
 		// SetViewportOrigin stays at its (0,0) default: the game owns the whole window,
 		// so window-relative mouse positions are already UI-relative.
 
@@ -101,13 +113,14 @@ namespace GanymedE {
 			m_Scene->OnRuntimeStart();
 			m_RuntimeStarted = true;
 			GE_INFO("Runtime started (physics scene up, scripts instantiated)");
+			Net::StartWorldTest(*m_Scene, m_Config.NetTest);
 		}
 		else
 		{
 			GE_ERROR("Failed to load scene '{0}' - nothing will be simulated", scenePath);
 		}
 
-		if (!uiPath.empty())
+		if (!headless && !uiPath.empty())
 		{
 			if (UIEngine::LoadDocument(uiPath))
 				GE_INFO("UI document '{0}' loaded", uiPath);
@@ -138,7 +151,8 @@ namespace GanymedE {
 	{
 		GE_PROFILE_FUNCTION();
 
-		UIEngine::CloseAllDocuments();
+		if (!Application::Get().GetSpecification().Headless)
+			UIEngine::CloseAllDocuments();
 
 		if (m_RuntimeStarted)
 			m_Scene->OnRuntimeStop();
@@ -160,7 +174,8 @@ namespace GanymedE {
 		Renderer2D::ResetStats();
 		Renderer3D::ResetStats();
 
-		m_SceneRenderer->BeginFrame();
+		if (m_SceneRenderer)
+			m_SceneRenderer->BeginFrame();
 
 		// nullptr fallback camera: an editor camera is the editor's business, and a game
 		// with no primary camera is a content bug the engine reports rather than hides
@@ -176,10 +191,14 @@ namespace GanymedE {
 		// Update before render for the same reason the editor does it: gameplay scripts
 		// have just written this frame's HUD values, and Context::Update lays out against
 		// them. Where the submit lands is RenderPass::UI's business.
-		UIEngine::OnUpdate(ts);
-		UIEngine::OnRender();
+		if (!Application::Get().GetSpecification().Headless)
+		{
+			UIEngine::OnUpdate(ts);
+			UIEngine::OnRender();
+		}
 
-		m_SceneRenderer->EndFrame();
+		if (m_SceneRenderer)
+			m_SceneRenderer->EndFrame();
 	}
 
 	void RuntimeLayer::OnEvent(Event& e)
@@ -187,7 +206,8 @@ namespace GanymedE {
 		// The HUD gets first refusal unconditionally. The editor gates this on the
 		// viewport owning the pointer because a click could land on a panel instead;
 		// here there is nothing else on screen to own it.
-		UIEngine::OnEvent(e);
+		if (!Application::Get().GetSpecification().Headless)
+			UIEngine::OnEvent(e);
 
 		if (e.IsHandled())
 			return;
@@ -204,7 +224,8 @@ namespace GanymedE {
 
 		// Application::OnWindowResize already swallowed minimize-to-zero, so anything
 		// arriving here is a real size.
-		m_SceneRenderer->SetViewportSize(width, height);
+		if (m_SceneRenderer)
+			m_SceneRenderer->SetViewportSize(width, height);
 		if (m_RuntimeStarted)
 			m_Scene->OnViewportResize(width, height);
 		UIEngine::SetViewport(width, height);

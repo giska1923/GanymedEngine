@@ -1,0 +1,24 @@
+Prefab: NetWalker
+Entities:
+  - Entity: 1
+    TagComponent:
+      Tag: Walker
+    TransformComponent:
+      Translation: [0, 1, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 0
+      Children:
+        []
+    CharacterControllerComponent:
+      MaxSlopeAngle: 50
+      StepHeight: 0.4
+      StickToFloor: true
+      Mass: 70
+    CapsuleColliderComponent:
+      Radius: 0.35
+      HalfHeight: 0.6
+    ScriptComponent:
+      Script: 731908552441228810
+    ReplicatedComponent: {}

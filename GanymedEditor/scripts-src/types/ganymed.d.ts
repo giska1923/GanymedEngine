@@ -41,6 +41,11 @@ declare interface Entity {
 	IsValid(): boolean;
 
 	/**
+	 * Standalone: every entity. Server: none. Client: the entity this connection owns.
+	 */
+	IsLocallyControlled(): boolean;
+
+	/**
 	 * Direct children only, first tag match. `Scene.FindEntityByName` is a global first-match,
 	 * so two boxes both parenting a child named `"Sparks"` cannot use it.
 	 */
@@ -718,8 +723,28 @@ declare interface NetStats {
 	droppedAddress: number;
 }
 
+/** One physics tick of input. Valid only for the duration of `OnTick`. */
+declare interface PlayerCommand {
+	Tick: number;
+	/** Stick, -1..1. */
+	MoveX: number;
+	MoveZ: number;
+	/** Radians. */
+	Yaw: number;
+	Pitch: number;
+	Jump: boolean;
+	Fire: boolean;
+	Melee: boolean;
+	Interact: boolean;
+	/** 0–15. */
+	Equip: number;
+}
+
 declare namespace Net {
 	function GetStats(): NetStats;
+	/** Both false when the scene is standalone. */
+	function IsServer(): boolean;
+	function IsClient(): boolean;
 }
 
 // ---------------------------------------------------------------------------

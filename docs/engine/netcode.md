@@ -4,14 +4,16 @@ The game session that starts after `WELCOME`. A client and a server exchange UDP
 socket, each side knows the round trip and the loss, and a small reliable channel carries the few
 messages that must arrive in order. The world itself travels as unreliable snapshots: each one
 replaces the last, and a client draws replicated entities from the two snapshots around a time a
-tenth of a second behind the server's tick. Predicting the local player is N4 of
-[NETCODE.md](../ToDo/NETCODE.md). A script still sees only `Net.GetStats()`.
+tenth of a second behind the server's tick. The character a client owns is predicted from the
+commands it sent, and corrected when a snapshot disagrees. A script sees `Net.GetStats()`,
+`Net.IsServer()`, `Net.IsClient()`, and `OnTick`. Replicated fields and `Net.Broadcast` are still
+N5 of [NETCODE.md](../ToDo/NETCODE.md).
 
 | | |
 |---|---|
-| Sources | `GanymedEngine/source/GanymedE/Net/` — `Socket`, `Connection`, `Net.h`, `Host.cpp`, `BitStream.h`, `Quantize.h`, `World.cpp` |
+| Sources | `GanymedEngine/source/GanymedE/Net/` — `Socket`, `Connection`, `Net.h`, `Host.cpp`, `BitStream.h`, `Quantize.h`, `Command.h`, `World.cpp` |
 | Who pumps it | The dedicated process's door thread calls `PumpServer`. The runtime's main thread calls `PumpClient` from `Online::OnUpdate`, once a frame, after the join's handshake poll. The main thread builds snapshots; the door is what calls `sendto` |
-| What a script sees | `Net.GetStats()`. Nothing else. `Net.IsServer` and `OnTick` are N4 and N5 |
+| What a script sees | `Net.GetStats()`, `Net.IsServer()`, `Net.IsClient()`, and `OnTick(tick, command)`. Both role queries are false offline. `IsLocallyControlled()` is on the entity |
 
 ## How engines usually do this, and where Ganymed diverges
 
@@ -110,13 +112,15 @@ common internet MTU once the IP and UDP headers are on it.
 | 12 | u16 | Sequence. `0` means nothing has been sent. Numbers start at 1 and skip 0 again when they wrap |
 | 14 | u16 | Ack. The newest sequence received. `0` means nothing has been received |
 | 16 | u32 | Ack bits. Bit `i` set means sequence `ack - 1 - i` was received. 32 packets of history |
-| 20 | u8 | Kind. `1` session request, `2` session accept, `3` data, `4` snapshot |
+| 20 | u8 | Kind. `1` session request, `2` session accept, `3` data, `4` snapshot, `5` commands |
 
 Comparison of sequence numbers is a signed 16-bit subtract, so the wrap is ordinary.
 
 A request appends one length byte and the account id. An accept is the header only. A data packet
 appends a count byte and then, that many times, a u16 id, a u16 size, and the bytes. Those are the
-reliable messages still waiting for an acknowledgement.
+reliable messages still waiting for an acknowledgement. A command packet is not one of those: its
+body is a count and then the last few `PlayerCommand`s, and `Receive` does not try to deliver it
+as a reliable message. It still notes the sequence and the ack.
 
 ## Acks, round trip, loss
 
@@ -171,11 +175,26 @@ once at the end of the frame. A hitch that burns several steps would otherwise p
 last tick and leave a hole wider than the client's delay. The blend `SyncTransforms` does with
 the leftover accumulator is the local render. The snapshot is the tick.
 
-The client does not add the round trip on top of that. A snapshot that says tick T, received at
-time R, estimates the server's current tick as `T + (now − R) / FixedTimestep`. The lead N4 will
-simulate ahead by is half the measured round trip. It is logged (`lead=`) and it is not added into
-the render time. Adding it again would count the same delay twice: once in how late the snapshot
-is, and once more as a bias.
+A snapshot that says tick T, received at time R, estimates `T + (now − R) / FixedTimestep`. At the
+moment it arrives, now is R, so the estimate is T. The flight is not in `(now − R)`. That term is
+only how long the packet has been sitting on the client. While it was in the air the server kept
+simulating, about half a round trip's worth.
+
+The render clock is that estimate minus 100 ms, and the flight is not added there either. Remote
+entities are drawn in the past on purpose. Adding the round trip on top of the interpolation delay
+would put them further behind, which is the double count this clock has to avoid. The `lead=` field
+on the replicate line is still half the measured round trip, in milliseconds, and it is still not
+added into the render time.
+
+Prediction is a different clock. The command for tick T has to be in the server's buffer when the
+server starts tick T, and the trip back is the other half of the round trip. The client therefore
+simulates `ceil(rtt / FixedTimestep)` ticks ahead of the estimate, at least 1 and at most 32. From
+a snapshot that has just arrived, that is a full round trip ahead of T, which is about half a
+round trip ahead of where the server is now. Leading by only half the round trip catches the
+server's present. The command then arrives after the tick it names, the server repeats the
+previous command, and a character whose input is not constant never takes the new one. Measured
+with `lat:75` each way — 176 to 177 ms once the poll is in the sample — that ceil is 11. The
+predict line logs it as `leadTicks=`.
 
 ## Snapshots
 
@@ -213,7 +232,8 @@ per acknowledgement rather than starting over. One record that cannot fit alone 
 and the packet is the tick header with a count of zero.
 
 The body budget is 1200 − 21 = 1179 bytes. The header is a u32 tick, a u16 baseline sequence
-(`0` means this packet is a full state), and a u16 count. Each record is a u16 net id and a 2-bit
+(`0` means this packet is a full state), a u16 owned net id (`0` means this client controls
+nothing), and a u16 count. That is 10 bytes before the records. Each record is a u16 net id and a 2-bit
 op: `1` spawn, `2` destroy, `3` update. A spawn adds a u64 UUID and a path: a 7-bit length, at
 most 80, then the bytes. A destroy stops there. Anything else carries a 6-bit mask — position,
 yaw, euler, velocity, ground, aim — and the fields the mask names. The same `Bits` function
@@ -228,7 +248,7 @@ What that list sends, for an entity with `ReplicatedComponent`:
 | Local position | Always | Millimetres, biased into 24 bits. The span is ±8192 m. Nothing in the tree publishes a tighter map bound. Past it, the value clamps |
 | Yaw | The entity has a `CharacterControllerComponent` | uint16 over one full turn |
 | Euler XYZ | It does not | Each axis uint16 over [−π, π], wrapped before the pack |
-| Linear velocity and ground | It is a character | Signed 16 bits, millimetres per second, clamped to ±32 m/s. Ground is 2 bits: `0` OnGround, `1` OnSteepGround, `2` NotSupported, `3` InAir. Read from Jolt. Nothing writes it back |
+| Linear velocity and ground | It is a character | Signed 16 bits, millimetres per second, clamped to ±32 m/s. Ground is 2 bits: `0` OnGround, `1` OnSteepGround, `2` NotSupported, `3` InAir. Read from Jolt. Gameplay does not write it. Reconciliation does, and only then |
 | Aim pitch and yaw | `AimOffsetComponent` is present | The same signed-angle pack as an Euler axis |
 
 Scale is not replicated. Script fields are not. The world transform is not: the client already
@@ -239,9 +259,38 @@ entity the client does not have yet is `CreateEntityWithUUID` with the server's 
 a path that is empty, longer than 80, contains `..`, or uses a character outside
 `A–Z`, `a–z`, `0–9`, `_`, `.`, `/` and `-`.
 
-`GanymedDedicated --net-test=` is `move`, `spawn`, `prefab`, or `rest`. Anything else exits 2,
-including under `--dev`. The runtime's `--net-test` is still only `reliable:<count>` and `spoof`.
-The four server tests are what [NETCODE.md](../ToDo/NETCODE.md)'s N3 checks ran. They are not a game mode.
+`GanymedDedicated --net-test=` is `move`, `spawn`, `prefab`, `rest`, or a predict mode:
+`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`. Anything else exits 2,
+including under `--dev`. The runtime accepts those predict names too, plus `offline`,
+`reliable:<count>` and `spoof`. A name it does not know is a logged connect failure, not exit 2.
+The two parsers are not the same list. The modes are how N3 and N4 were measured. They are not a
+game mode.
+
+## Commands
+
+Kind `5`. Unreliable, like a snapshot: a newer packet carries the commands the older one had, so a
+loss does not need a resend. The body is a count byte, 1 to 4, then that many commands, oldest
+first. Each command is 13 bytes: u32 tick, i16 move X, i16 move Z, u16 yaw, u16 pitch, u8 buttons.
+The sticks are `clamp(v, -1, 1) * 32767`. Yaw is the full-turn uint16. Pitch is the signed-angle
+uint16, the same pack as an Euler axis. Buttons are bit 0 jump, bit 1 fire, bit 2 melee, bit 3
+interact, and bits 4–7 the equip slot, 0–15.
+
+The client builds one of these at the end of every predicted tick, from the last four ticks it has
+stored, and `SendCommands` submits it on the main thread. The door sends it. The server's door
+queues the body after `Receive`, and `BeginStep` drains the queue under the same lock before it
+runs that tick's scripts. A command older than 128 ticks is dropped on the way in. The map keeps
+at most 128, and applied ticks older than 8 are dropped once the tick has been consumed.
+
+The server looks up the command for the tick it is about to simulate. A miss repeats the last
+command it did apply, and counts the repeat. A constant walk survives that: the repeated command
+is the same walk. A direction change does not, which is what the loss check measured. Offline,
+nothing is sent. `BeginStep` samples `Input` once per step and hands that command to every script.
+The runtime's predict modes ignore the keyboard and hold a synthetic stick, so a headless client
+can walk without one. The server does not invent a stick. It applies the command that arrived for
+that tick.
+
+`OnTick` sees the floats and the bools, not the packed bytes. The object is only valid for the
+call. [scripting.md](scripting.md#the-tick) is the hook.
 
 ## Interpolation
 
@@ -252,11 +301,14 @@ Client registers the same systems as Standalone. What changes is `GetRole()`.
 spawn is `CreateEntity`, and that asserts once a system update has set the updating flag. The
 drain is the packets `PumpClient` queued earlier in the same frame.
 
-Replicated entities on a client are kinematic. `AdoptReplicatedMotion` turns a dynamic body into
-a kinematic one before the step, and both `SyncTransforms` and the character step skip a
-replicated entity, so the physics writeback does not overwrite the blend. A kinematic body
-already copies the transform in during `Step`. The ground state is not written into
-`CharacterVirtual`. There is no setter.
+Replicated entities on a client are kinematic, apart from the one this client owns.
+`AdoptReplicatedMotion` turns a dynamic body into a kinematic one before the step.
+`SyncTransforms` and the character step skip a replicated entity the client does not control, so
+the physics writeback does not overwrite the blend. A kinematic body already copies the transform
+in during `Step`. The owned character is stepped by prediction, and `SyncTransforms` writes it at
+alpha 1. Its smoothing is the visual-error decay, not a blend against the previous pose. The
+ground state is read for the snapshot. The only write is the reconciliation restore, through the
+derived helper in [physics.md](physics.md#replaying-a-character).
 
 The render tick is the estimate minus `0.100 / FixedTimestep`, which is 6 ticks at 60 Hz. The
 entity is the blend of the two buffer samples around that tick. The buffer keeps 32 samples per
@@ -280,6 +332,69 @@ far the snapshot segment under the render tick says it should have moved across 
 render clock advanced. A continuous blend sits near 1. A teleport is many times that. `dry` is
 the percentage of warmed frames that ran past the newest snapshot. `Bps` counts payload bytes at
 the moment the snapshot is queued, not on the wire, so the conditioner's loss is not in it.
+
+## Prediction
+
+The client and the server share one tick number. The snapshot's tick is the command's
+acknowledgement: it is the tick the server had simulated when it captured that pose. The owned net
+id in the header is how the client learns which entity that is. `IsLocallyControlled()` is true
+for every entity offline, false for every entity on the server, and true on a client only for that
+one. The first snapshot of it is written onto the body before prediction starts. Otherwise the
+capsule is created at the prefab origin and every later comparison is a metre off.
+
+`PredictLocal` runs once per frame, after `SyncBodies` and before the accumulator. While the
+client's sim tick is behind `floor(estimate) + lead`, and at most eight steps in one frame, it
+samples the command, calls `OnTick` on the owned entity, steps that character, stores the command
+and the resulting position, velocity and ground, and sends the packet. The history is 64 ticks,
+about a second. The accumulator's character step skips every client replicated character, including
+this one, so it is not stepped twice. Other scripts are not ticked on the client. On the server
+and offline, `OnTick` runs inside the accumulator, before `Step`, once per physics step.
+
+On each snapshot the client takes the newest sample of its character that carries position,
+velocity and ground, and if a later snapshot omitted the entity it treats that pose as still
+authoritative at the new tick. An empty delta means "unchanged", not "stop checking". It compares
+that pose with the history entry for the same tick. The tolerance is 2 cm of position, 0.1 m/s of
+velocity, and the ground enum exactly. 0.1 m/s is under one tick of gravity (9.81/60 = 0.1635),
+so a ground miss still fails it. Inside the tolerance the tick is consumed and nothing is counted.
+Outside it, the character is restored to the server's position, linear velocity and ground — not a
+Jolt `SaveState` blob — the history slot is rewritten to that pose, and the stored commands from
+the next tick through the sim tick are replayed. Input is not sampled again. The sim tick does not
+advance. A correction is counted only once the walk has started; the settle before that is logged
+with `settle=1` and left out of the total.
+
+The visual error is where the mesh was before the restore, minus where the character is after the
+replay. It is added to the transform after the final `SyncTransforms` and multiplied by
+`exp(-frameDt / 0.1)`, about 100 ms. The next prediction reads Jolt, not the offset, so the decay
+cannot feed back into the step.
+
+`OnTick` during that replay is the same call with the stored command. It has to be safe to run
+again. Movement belongs there. `OnUpdate` stays once per frame and is not replayed, which is where
+presentation goes when N5 splits the game scripts. `assets/scripts/Player.lua` has no `OnTick` and
+is unchanged.
+
+The checks live on `--net-test`. `predict` holds forward. `predict-loss` reverses every 30 ticks.
+`predict-desync` teleports the pawn +3 m on X at 180 ticks after spawn, on an even tick so the
+snapshot includes it. `predict-wall` walks diagonally into a wall. `predict-step` walks at a 0.2 m
+step. The floor, the wall and the step are static boxes created the same way on both sides. They
+are not replicated; collision does not care that the UUIDs differ. The floor covers the 240 m a
+4 m/s walk covers in 60 s. A 20 m pad ends that walk in the air. The pawn is
+`assets/prefabs/NetWalker.gprefab`, spawned by the server when the account appears. The client
+receives it as a normal prefab spawn. `offline` builds the same floor in a standalone runtime,
+spawns the walker, and strips `ReplicatedComponent` so the ordinary character step runs it.
+Headless is what keeps the client at 60 Hz. A windowed debug runtime on the demo scene does not.
+
+Once a second, and once when the client is done:
+
+```
+Predict server tick={n} x={.3f} y={.3f} z={.3f} repeats={n} walkRepeats={n}
+Predict client tick={n} corrections={n} maxMm={.0f} replay={n} leadTicks={n}
+Predict correct tick={n} sizeMm={.0f} replay={n} settle={0|1}
+Predict done corrections={n} maxMm={.0f} replay={n}
+```
+
+`repeats` counts every tick that did not have its own command. `walkRepeats` starts when the
+first non-zero stick is applied. `replay` is how many newer commands were re-simulated, which is
+the lead and not the round trip.
 
 ## The conditioner
 
@@ -329,4 +444,5 @@ sums. With no session every number is zero and `connected` is false. The counter
 in C++ and `int64` in Lua, the same cast as a UUID: sol2 throws on a `uint64` above `INT64_MAX`.
 The door thread writes a snapshot under a mutex. The frame only reads the snapshot.
 
-`Net.IsServer` and `OnTick` are not this. They are N4 and N5.
+`Net.IsServer()` and `Net.IsClient()` read the scene role. Both are false when the scene is
+standalone, which is offline play and the editor. `OnTick` is the script hook in the next section.

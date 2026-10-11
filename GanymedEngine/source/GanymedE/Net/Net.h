@@ -88,4 +88,15 @@ namespace GanymedE::Net {
 	// Client, main thread. Empties the queue `PumpClient` filled earlier this frame.
 	std::vector<SnapshotDatagram> DrainSnapshots();
 
+	// Commands are the other unreliable kind. The client sends them; the server queues
+	// the bodies on the door thread and the main thread drains them before the step.
+	struct CommandDatagram
+	{
+		std::string Account;
+		std::vector<uint8_t> Bytes;
+	};
+
+	void SendCommands(const uint8_t* data, int length);
+	std::vector<CommandDatagram> DrainCommands();
+
 }

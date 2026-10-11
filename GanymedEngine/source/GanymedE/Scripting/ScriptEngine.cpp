@@ -851,6 +851,15 @@ namespace GanymedE {
 			CallMethod(*instance, "OnUpdate", ts.GetSeconds());
 	}
 
+	void ScriptEngine::Tick(entt::entity entity, uint32_t tick, const Net::PlayerCommand& command)
+	{
+		if (!s_Data)
+			return;
+
+		if (ScriptInstance* instance = FindInstance(entity))
+			CallMethod(*instance, "OnTick", tick, command);
+	}
+
 	// A table rather than two more arguments, for the reason Physics.Raycast returns one: named
 	// fields read at the call site, and a handler written for one argument still works, because
 	// Lua drops arguments a function does not declare.

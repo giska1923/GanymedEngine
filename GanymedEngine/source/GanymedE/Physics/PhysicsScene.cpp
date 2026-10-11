@@ -1,6 +1,7 @@
 #include "gepch.h"
 #include "PhysicsScene.h"
 
+#include "GanymedE/Net/World.h"
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Components.h"
@@ -756,6 +757,15 @@ namespace GanymedE {
 		}
 	}
 
+	// mGroundState is protected. The prediction reset writes it; nothing else does. Every
+	// character is this type so the cast in RestoreCharacter is the dynamic type.
+	class CharacterAccess : public JPH::CharacterVirtual
+	{
+	public:
+		using JPH::CharacterVirtual::CharacterVirtual;
+		void SetGroundState(JPH::CharacterBase::EGroundState state) { mGroundState = state; }
+	};
+
 	// Same contract as CreateBodies: idempotent, run every frame, and it skips anything that
 	// already has a controller.
 	void PhysicsScene::CreateCharacters(Scene* scene)
@@ -833,7 +843,7 @@ namespace GanymedE {
 			settings.mInnerBodyShape = shapeResult.Get();
 			settings.mInnerBodyLayer = Layers::MOVING;
 
-			auto character = new JPH::CharacterVirtual(&settings,
+			auto character = new CharacterAccess(&settings,
 				JPH::RVec3(worldPos.x, worldPos.y, worldPos.z),
 				JPH::Quat(worldRot.x, worldRot.y, worldRot.z, worldRot.w),
 				static_cast<uint64_t>(uuid),
@@ -857,6 +867,30 @@ namespace GanymedE {
 		}
 	}
 
+	// Gravity while airborne, then ExtendedUpdate. ReplayCharacter calls the same function
+	// the live step does, so a restored ground enum does not diverge on the next tick.
+	void StepOneCharacter(JPH::PhysicsSystem& system, JPH::TempAllocator& temp,
+		JPH::CharacterVirtual* character, float stepHeight, bool stick, float fixedDeltaTime)
+	{
+		const JPH::Vec3 gravity = system.GetGravity();
+		JPH::Vec3 velocity = character->GetLinearVelocity();
+		if (character->GetGroundState() != JPH::CharacterBase::EGroundState::OnGround)
+			velocity += gravity * fixedDeltaTime;
+		else
+			velocity.SetY(glm::max(velocity.GetY(), 0.0f));
+		character->SetLinearVelocity(velocity);
+
+		JPH::CharacterVirtual::ExtendedUpdateSettings update;
+		update.mWalkStairsStepUp = JPH::Vec3(0.0f, glm::max(stepHeight, 0.0f), 0.0f);
+		if (!stick)
+			update.mStickToFloorStepDown = JPH::Vec3::sZero();
+
+		character->ExtendedUpdate(fixedDeltaTime, gravity, update,
+			system.GetDefaultBroadPhaseLayerFilter(Layers::MOVING),
+			system.GetDefaultLayerFilter(Layers::MOVING),
+			{}, {}, temp);
+	}
+
 	// Characters are stepped by hand, after the solver has moved everything they might stand on.
 	// ExtendedUpdate is Jolt's own combination of Update + StickToFloor + WalkStairs, and
 	// WalkStairs is the whole reason this exists: it is what lets a character walk up a ledge
@@ -867,41 +901,20 @@ namespace GanymedE {
 		if (!m_Impl)
 			return;
 
-		const JPH::Vec3 gravity = m_Impl->System.GetGravity();
-
 		for (auto& [uuid, character] : m_Impl->EntityToCharacter)
 		{
 			Entity entity = m_Scene ? m_Scene->FindEntityByUUID(uuid) : Entity{};
 			if (!entity || !entity.HasComponent<CharacterControllerComponent>())
 				continue;
 
-			// The client's copy is drawn from the snapshot. Stepping it here would put the
-			// controller somewhere else, and the next writeback would throw the interpolation away.
+			// Remote copies are drawn from the snapshot. The locally controlled one is stepped
+			// by ReplayCharacter, ahead of this loop, so it is not stepped twice.
 			if (m_Scene->GetRole() == SceneRole::Client && entity.HasComponent<ReplicatedComponent>())
 				continue;
 
 			const auto& cc = entity.GetComponent<CharacterControllerComponent>();
-
-			// Gravity is integrated here rather than by the solver, because nothing else will:
-			// a CharacterVirtual is not in the simulation. Only while airborne - accumulating it
-			// on the ground builds a downward velocity that fights StickToFloor and makes the
-			// character judder on slopes.
-			JPH::Vec3 velocity = character->GetLinearVelocity();
-			if (character->GetGroundState() != JPH::CharacterBase::EGroundState::OnGround)
-				velocity += gravity * fixedDeltaTime;
-			else
-				velocity.SetY(glm::max(velocity.GetY(), 0.0f));
-			character->SetLinearVelocity(velocity);
-
-			JPH::CharacterVirtual::ExtendedUpdateSettings update;
-			update.mWalkStairsStepUp = JPH::Vec3(0.0f, glm::max(cc.StepHeight, 0.0f), 0.0f);
-			if (!cc.StickToFloor)
-				update.mStickToFloorStepDown = JPH::Vec3::sZero();
-
-			character->ExtendedUpdate(fixedDeltaTime, gravity, update,
-				m_Impl->System.GetDefaultBroadPhaseLayerFilter(Layers::MOVING),
-				m_Impl->System.GetDefaultLayerFilter(Layers::MOVING),
-				{}, {}, m_Impl->TempAllocator);
+			StepOneCharacter(m_Impl->System, m_Impl->TempAllocator, character,
+				cc.StepHeight, cc.StickToFloor, fixedDeltaTime);
 		}
 	}
 
@@ -1111,7 +1124,10 @@ namespace GanymedE {
 			if (!entity)
 				continue;
 
-			if (scene->GetRole() == SceneRole::Client && entity.HasComponent<ReplicatedComponent>())
+			// Remote entities stay on the interpolated pose. The local character is the
+			// prediction, written at the latest step so a correction is not blended back.
+			if (scene->GetRole() == SceneRole::Client && entity.HasComponent<ReplicatedComponent>()
+				&& !Net::Controls(uuid))
 				continue;
 
 			// A character writes back unconditionally; a body only when it is Dynamic, since
@@ -1130,8 +1146,10 @@ namespace GanymedE {
 			if (prevIt != m_PreviousPoses.end())
 				previous = prevIt->second;
 
-			glm::vec3 pos = glm::mix(previous.Position, current.Position, alpha);
-			glm::quat rot = glm::normalize(glm::slerp(previous.Rotation, current.Rotation, alpha));
+			// The local character's smoothing is the visual error, not this blend.
+			const float blend = Net::Controls(uuid) ? 1.0f : alpha;
+			glm::vec3 pos = glm::mix(previous.Position, current.Position, blend);
+			glm::quat rot = glm::normalize(glm::slerp(previous.Rotation, current.Rotation, blend));
 
 			glm::mat4 world = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(rot);
 			UUID parentID = entity.GetComponent<RelationshipComponent>().Parent;
@@ -1231,6 +1249,57 @@ namespace GanymedE {
 			case JPH::CharacterBase::EGroundState::InAir: return 3;
 		}
 		return 3;
+	}
+
+	bool PhysicsScene::SampleCharacter(UUID entity, glm::vec3& position, glm::vec3& velocity, int& ground) const
+	{
+		ground = CharacterGround(entity);
+		if (ground < 0 || !m_Impl)
+			return false;
+		auto it = m_Impl->EntityToCharacter.find(entity);
+		if (it == m_Impl->EntityToCharacter.end())
+			return false;
+		const JPH::RVec3 p = it->second->GetPosition();
+		position = { (float)p.GetX(), (float)p.GetY(), (float)p.GetZ() };
+		velocity = GetLinearVelocity(entity);
+		return true;
+	}
+
+	void PhysicsScene::RestoreCharacter(UUID entity, const glm::vec3& position, const glm::vec3& velocity, int ground)
+	{
+		if (!m_Active || !m_Impl)
+			return;
+		auto it = m_Impl->EntityToCharacter.find(entity);
+		if (it == m_Impl->EntityToCharacter.end())
+			return;
+
+		Teleport(entity, position);
+		SetLinearVelocity(entity, velocity);
+
+		JPH::CharacterBase::EGroundState state = JPH::CharacterBase::EGroundState::InAir;
+		switch (ground)
+		{
+			case 0: state = JPH::CharacterBase::EGroundState::OnGround; break;
+			case 1: state = JPH::CharacterBase::EGroundState::OnSteepGround; break;
+			case 2: state = JPH::CharacterBase::EGroundState::NotSupported; break;
+			default: break;
+		}
+		static_cast<CharacterAccess*>(it->second.GetPtr())->SetGroundState(state);
+	}
+
+	void PhysicsScene::ReplayCharacter(UUID entity, float fixedDeltaTime)
+	{
+		if (!m_Active || !m_Impl || !m_Scene)
+			return;
+		auto it = m_Impl->EntityToCharacter.find(entity);
+		if (it == m_Impl->EntityToCharacter.end())
+			return;
+		Entity owner = m_Scene->FindEntityByUUID(entity);
+		if (!owner || !owner.HasComponent<CharacterControllerComponent>())
+			return;
+		const auto& cc = owner.GetComponent<CharacterControllerComponent>();
+		StepOneCharacter(m_Impl->System, m_Impl->TempAllocator, it->second,
+			cc.StepHeight, cc.StickToFloor, fixedDeltaTime);
 	}
 
 	void PhysicsScene::AdoptReplicatedMotion(Scene* scene)

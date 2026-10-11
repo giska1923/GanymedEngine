@@ -3,7 +3,8 @@
 **Status: N0 done (2026-10-10). N1 is built (2026-10-11) and its local checks passed; the fleet
 acceptance test has not been run, so N1 is not closed. N2 is built (2026-10-11) and its local
 checks were run; the path through the backend was not. N3 is built (2026-10-11) and its local
-checks were run on Windows x64 Debug; it is not a fleet close. N4–N5 are not started.** It follows
+checks were run on Windows x64 Debug; it is not a fleet close. N4 is built (2026-10-11) and its
+local checks were run on Windows x64 Debug; it is not a fleet close. N5 is not started.** It follows
 [ONLINE.md](ONLINE.md), whose last phase, O5b, is this N1. It depends on `online-o4` (O4 and O5a)
 reaching `master`. N1 is written against the backend's `api-v0.6` (results through the agent,
 `DENIED` before allocation), which is built. What the process does now is
@@ -266,7 +267,7 @@ properties) and none of its machinery:
 | **N1** | `GanymedDedicated`: a headless app, a Scene role, the agent lifecycle, token verification, the result (**was O5b**). Built 2026-10-11. Fleet acceptance not run | master | about a week |
 | **N2** | Transport: sockets, connections, the packet header and acks, the conditioner, `--dev`. Built 2026-10-11. The fleet path was not run | master | about a week |
 | **N3** | Replication: ticks, network IDs, spawn and destroy, snapshots with delta compression, interpolation | master | 1½–2 weeks |
-| **N4** | Input and prediction: commands, `OnTick`, the predicted character, reconciliation | master | 1½–2 weeks |
+| **N4** | Input and prediction: commands, `OnTick`, the predicted character, reconciliation. Built 2026-10-11. Local checks run; not a fleet close | master | 1½–2 weeks |
 | **N5** | The game: script roles and fields, shot events, co-op rules, the match result through the backend | master (engine hooks) + `first-game` (the game) | 2–3 weeks |
 
 **These are estimates, and probably low.** All of it adds up to two to three months of the pace
@@ -557,14 +558,19 @@ authoritative: when the two disagree, the client corrects itself, smoothly when 
 
 #### Verification
 
-| Check | Pass when |
-|---|---|
-| Responsiveness | at 150 ms RTT, movement starts on the frame the key is pressed (logged tick of input vs first moved frame) |
-| No corrections at rest | walking on flat ground at 150 ms and 0% loss: zero corrections in 60 s |
-| Loss | at 5% loss: corrections are rare and small (numbers recorded), and no rubber-banding is visible |
-| Forced desync | a server teleport is corrected on the client within RTT + one interval |
-| Walls and steps | N0 replayed a wall slide and a 0.2 m step to the bit once the ground enum was restored (decision 9). This phase still has to show that, at 150 ms, corrections stay inside the tolerance |
-| Offline unchanged | the same scripts play single-player in the editor with no server |
+Windows x64 Debug, 2026-10-11, port 17777, scene `scenes/Example.ganymede`, headless runtime.
+`--net-sim=lat:75` each way. The settled round trip was 176–177 ms. `leadTicks=11`, which is
+`ceil(rtt / (1/60))`. The editor was not clicked. The offline check is a standalone runtime, the
+same `SceneRole` and the same `OnTick` path the editor's play mode uses.
+
+| Check | Pass when | Measured |
+|---|---|---|
+| Responsiveness | at 150 ms RTT, movement starts on the frame the key is pressed (logged tick of input vs first moved frame) | Every run logged the same tick for `Predict input` and `Predict moved`. Flat 136, loss 118, desync 128, wall 124, step 120. The stick is synthetic; there is no keyboard in the headless process |
+| No corrections at rest | walking on flat ground at 150 ms and 0% loss: zero corrections in 60 s | `--net-test=predict`. `Predict done corrections=0 maxMm=0 replay=0`. One settle correction before the walk, tick 78, 5 mm, not counted. The server ended at y=0.950, z=237.628, which is 4 m/s across the walking ticks, still on the floor. `walkRepeats=942`: about a quarter of those ticks reused the previous command. A repeated forward command is the same walk, so that did not correct. The wall run and a second desync run also finished with no walk correction. The step run and the first desync run each corrected 67–133 mm on the first two or three walking ticks — the first forward command arrived a tick or two late — and then not again |
+| Loss | at 5% loss: corrections are rare and small (numbers recorded), and no rubber-banding is visible | `--net-test=predict-loss`, 20 s, the stick reverses every 30 ticks. 50 corrections, replay up to 11. Sizes, settle excluded: 67 mm ×1, 133–134 mm ×41, 266–267 mm ×8. 133 mm is two ticks at 4 m/s, or one tick of an 8 m/s reversal. 267 mm is two ticks of that reversal. They sit on the reversals, about two and a half a second. A constant walk does not correct when a command is a tick late. A reversal does. This is not rare, and 27 cm is a visible hitch. The tolerance was not opened, and the lead was not given an extra tick |
+| Forced desync | a server teleport is corrected on the client within RTT + one interval | Server `Predict teleport tick=248` (spawn 67 plus 180, bumped to the next even tick so the snapshot carries it). Client `Predict correct tick=248 sizeMm=3000 replay=9`. The correction is the teleport's own tick. 3000 mm is the +3 m move. Replay 9 is how far ahead the client was, not the round trip. `Predict done corrections=1 maxMm=3000 replay=9`. An earlier run of the same mode corrected at tick 250, replay 10, the same 3000 mm, after four walk-start corrections of 67–133 mm |
+| Walls and steps | N0 replayed a wall slide and a 0.2 m step to the bit once the ground enum was restored (decision 9). This phase still has to show that, at 150 ms, corrections stay inside the tolerance | Wall: `corrections=0 maxMm=0`. The server slid along the wall. z held at 3.380 while x reached 40.4. One settle correction of 5 mm before the walk. Step: the capsule center went to y=1.150 on the 0.2 m step (0.95 + 0.2) and back to 0.950 on the floor. The three counted corrections, 67 then 133 then 133 mm, were the first walking ticks, before the step. None after it |
+| Offline unchanged | the same scripts play single-player in the editor with no server | `--net-test=offline --headless`, no `--connect`. `Predict offline tick=120 x=0.000 y=0.950 z=3.983`, exit 0. The walk starts at tick 60, so 60 ticks at 4 m/s is 4 m; 3.983 is a tick short of that. The editor was not driven |
 
 ### N5 — the game
 
@@ -667,7 +673,7 @@ defeat reported by the server and ratings that change.
 | N1 | [dedicated.md](../dedicated/dedicated.md), [online.md](../engine/online.md), [architecture.md](../engine/architecture.md), [ecs.md](../engine/ecs.md), [build-and-tooling.md](../engine/build-and-tooling.md), [ONLINE.md](ONLINE.md). Written with the code. The fleet row is still open |
 | N2 | [netcode.md](../engine/netcode.md), indexed from [docs/README.md](../README.md); [runtime.md](../runtime/runtime.md) (`--connect=`, `--name=`, `--net-sim=`, `--net-test=`); [online.md](../engine/online.md) (`JoinMatch` hands over its socket); [dedicated.md](../dedicated/dedicated.md) (`--dev`). Written with the code. The fleet row is still open |
 | N3 | netcode.md (ticks, snapshots, delta, interpolation); [scene.md](../engine/scene.md) (`ReplicatedComponent`, derived child UUIDs). Written with the code. The local checks are in the N3 section |
-| N4 | netcode.md (commands, prediction, reconciliation); [scripting.md](../engine/scripting.md) (`OnTick`, `PlayerCommand`, roles); [physics.md](../engine/physics.md) (replaying a character) |
+| N4 | netcode.md (commands, prediction, reconciliation); [scripting.md](../engine/scripting.md) (`OnTick`, `PlayerCommand`, roles); [physics.md](../engine/physics.md) (replaying a character). Written with the code. The local checks are in the N4 section |
 | N5 | scripting.md (replicated fields, `Net.Broadcast`, `OnNetEvent`); the Proving Ground's own record on `first-game` |
 
 ## Dependencies that need approval

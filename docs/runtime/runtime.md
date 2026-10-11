@@ -32,12 +32,12 @@ one logs, because the failure mode for getting this order wrong is a black windo
 | Step | Why here |
 |---|---|
 | `AssetManager::Init(/*writableAssets=*/false, config.AssetRoot)` | Must precede any deserialize: scenes store bare asset handles and the serializer resolves them through the index this scan builds. Read-only because a shipped game must not write into its install directory — which is why every shipped asset needs its `.meta` sidecar shipped too ([assets.md](../engine/assets.md)). `AssetRoot` is [the project root](../engine/assets.md#the-project-root), and setting it here fixes it before any parse job composes a path off it |
-| `SceneRenderer(windowW, windowH)` | Owns the HDR target and the post stack |
+| `SceneRenderer(windowW, windowH)` | Owns the HDR target and the post stack. Skipped when `--headless` is set: there is no window and no backbuffer |
 | `SetOutputToBackbuffer(true)` | Retargets the post stack's final pass (FXAA, or tonemap when FXAA is off) at the backbuffer ([rendering.md](../engine/rendering.md)) |
-| `UIEngine::SetTarget(nullptr)` + `SetViewport(w, h)` | Sends the UI view to the backbuffer too. `SetViewportOrigin` stays at its (0,0) default — the game owns the whole window, so window-relative mouse positions are already UI-relative |
+| `UIEngine::SetTarget(nullptr)` + `SetViewport(w, h)` | Sends the UI view to the backbuffer too. `SetViewportOrigin` stays at its (0,0) default — the game owns the whole window, so window-relative mouse positions are already UI-relative. Skipped when headless; `UIEngine` is not initialised |
 | `SceneSerializer::Deserialize` into the scene | **No `Scene::Copy`.** The copy exists to preserve the editor's edit-time scene across play/stop; there is no edit-time scene here and no stop. The scene is constructed as `SceneRole::Client` when `--connect` is set, and `Standalone` otherwise, before this deserialize and before `OnRuntimeStart`. Client builds the same systems as Standalone |
 | `Scene::OnViewportResize` → `OnRuntimeStart` | Creates the Jolt world and instantiates Lua scripts |
-| `UIEngine::LoadDocument(config.UIDocument)` | After the scene starts, so a script's `OnCreate` has already written the HUD data model before first layout |
+| `UIEngine::LoadDocument(config.UIDocument)` | After the scene starts, so a script's `OnCreate` has already written the HUD data model before first layout. Skipped when headless |
 | `Net::ConnectDev`, when `--connect` is set | After boot. The simulator was installed at the start of `OnAttach`, before `OnRuntimeStart`, so a script `JoinMatch` from `OnCreate` and this flag see the same `Sim` |
 
 `OnDetach` unwinds it: close documents → `OnRuntimeStop` → drop the scene and renderer →
@@ -60,6 +60,12 @@ RuntimeLayer::OnUpdate(ts)
 `PresentWorld` is before the systems because a snapshot spawn is `CreateEntity`, and that asserts
 once `OnUpdateRuntime` has set the updating flag. On a standalone runtime it returns immediately.
 The packets it drains were queued by `PumpClient` earlier in the same frame.
+
+`--headless` is read in `CreateApplication` before the `Application` constructor, and it sets
+`spec.Headless`. The window, `SceneRenderer` and the HUD are not created. `OnUpdate` still runs
+`PresentWorld` and `OnUpdateRuntime`. The loop sleeps toward 60 Hz, the same path the dedicated
+process already uses. A windowed debug runtime does not hold that rate, and the prediction checks
+need the client to keep up with the server.
 
 The `nullptr` is the fallback camera, and it is deliberate: an editor camera is the editor's
 business. A scene with no primary `CameraComponent` renders the clear colour and `RenderSystem` logs
@@ -118,7 +124,8 @@ The runtime also accepts the dev-session flags. They are not `runtime.yaml` keys
 | `--connect=<host:port>` | After boot, `HELLO dev:<name>` to that IPv4 address, then the session. No DNS. A bad `--net-sim` skips this and the process still runs |
 | `--name=<name>` | The dev account. Default `p` plus the process id, so two runtimes differ |
 | `--net-sim=` | The send-path conditioner. See [netcode.md](../engine/netcode.md#the-conditioner) |
-| `--net-test=` | `reliable:<count>` or `spoof`, after the session accept. Nothing sends them otherwise. `move`, `spawn`, `prefab`, and `rest` are the dedicated process's flag, not this one |
+| `--headless` | No window. The frame still simulates. See [the frame](#the-frame) |
+| `--net-test=` | `reliable:<count>`, `spoof`, `offline`, or a predict mode (`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`). `offline` is a standalone runtime and does not connect. The predict modes need `--connect`. A name this process does not know is a logged failure, not exit 2. `move`, `spawn`, `prefab`, and `rest` are the dedicated process's flag, not this one |
 
 `--connect=127.0.0.1:7777` is the usual pair with `GanymedDedicated --dev`. The session itself is
 [netcode.md](../engine/netcode.md).

@@ -2,9 +2,13 @@
 #include "World.h"
 
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Core/Input.h"
+#include "GanymedE/Core/KeyCodes.h"
 #include "GanymedE/Core/Log.h"
+#include "GanymedE/Core/MouseButtonCodes.h"
 #include "GanymedE/ECS/Singleton.h"
 #include "GanymedE/Net/BitStream.h"
+#include "GanymedE/Net/Command.h"
 #include "GanymedE/Net/Connection.h"
 #include "GanymedE/Net/Net.h"
 #include "GanymedE/Net/Quantize.h"
@@ -15,11 +19,15 @@
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scene/SceneRole.h"
 #include "GanymedE/Scene/SceneSingletons.h"
+#include "GanymedE/Scene/ScriptableEntity.h"
+#include "GanymedE/Scripting/ScriptEngine.h"
+#include "GanymedE/main/Application.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -40,7 +48,11 @@ namespace GanymedE::Net {
 
 		static_assert(kPosSpanMm * 2 < (1 << kPosBits), "biased millimetres do not fit");
 
-		enum class Test { None, Move, Spawn, Prefab, Rest };
+		enum class Test
+		{
+			None, Move, Spawn, Prefab, Rest,
+			Predict, PredictLoss, PredictDesync, PredictWall, PredictStep, Offline
+		};
 
 		struct RepState
 		{
@@ -80,6 +92,12 @@ namespace GanymedE::Net {
 			float Pitch = 0.0f;
 			float Yaw = 0.0f;
 			float Roll = 0.0f;
+			bool HasVel = false;
+			float Vx = 0.0f;
+			float Vy = 0.0f;
+			float Vz = 0.0f;
+			bool HasGround = false;
+			int Ground = 3;
 		};
 
 		struct Ghost
@@ -106,6 +124,34 @@ namespace GanymedE::Net {
 			std::vector<std::pair<std::chrono::steady_clock::time_point, int>> Bytes;
 			int Last = 0;
 			int Min = 0x7fffffff;
+		};
+
+		struct Pawn
+		{
+			std::string Account;
+			UUID Id{ 0 };
+			uint16_t NetId = 0;
+			uint32_t SpawnTick = 0;
+			bool Teleported = false;
+		};
+
+		struct AccountInput
+		{
+			std::map<uint32_t, PlayerCommand> ByTick;
+			PlayerCommand Last{};
+			bool HaveLast = false;
+			uint32_t Repeats = 0;
+			uint32_t RepeatsAtWalk = 0;
+			bool WalkMarked = false;
+		};
+
+		struct Predicted
+		{
+			PlayerCommand Command{};
+			glm::vec3 Position{ 0.0f };
+			glm::vec3 Velocity{ 0.0f };
+			int Ground = 3;
+			bool Valid = false;
 		};
 
 		struct World
@@ -137,6 +183,33 @@ namespace GanymedE::Net {
 			int DryFrames = 0;
 			float MaxRatio = 0.0f;
 			std::chrono::steady_clock::time_point NextClientLog{};
+
+			std::vector<Pawn> Pawns;
+			std::unordered_map<std::string, AccountInput> Inputs;
+			bool Arena = false;
+
+			uint16_t OwnedNetId = 0;
+			UUID LocalId{ 0 };
+			float Estimated = 0.0f;
+			bool HaveEstimate = false;
+			uint32_t SimTick = 0;
+			bool HaveSim = false;
+			uint32_t WalkFrom = 0;
+			Predicted History[64]{};
+			uint32_t LastReconciled = 0;
+			bool HaveReconciled = false;
+			int Corrections = 0;
+			float MaxCorrectMm = 0.0f;
+			int MaxReplay = 0;
+			glm::vec3 VisualError{ 0.0f };
+			float ViewYaw = 0.0f;
+			float ViewPitch = 0.0f;
+			bool LookNoted = false;
+			bool LoggedInput = false;
+			bool LoggedMoved = false;
+			bool Done = false;
+			uint32_t OfflineTicks = 0;
+			std::chrono::steady_clock::time_point NextPredictLog{};
 		};
 
 		World& State()
@@ -186,10 +259,11 @@ namespace GanymedE::Net {
 		}
 
 		template<typename Stream>
-		void HeaderBits(Stream& stream, uint32_t& tick, uint32_t& baseline, uint32_t& count)
+		void HeaderBits(Stream& stream, uint32_t& tick, uint32_t& baseline, uint32_t& owned, uint32_t& count)
 		{
 			Bits(stream, tick, 32);
 			Bits(stream, baseline, 16);
+			Bits(stream, owned, 16);
 			Bits(stream, count, 16);
 		}
 
@@ -547,8 +621,9 @@ namespace GanymedE::Net {
 			BitMeasure measure;
 			uint32_t tick = 0;
 			uint32_t baseline = 0;
+			uint32_t owned = 0;
 			uint32_t n = static_cast<uint32_t>(count);
-			HeaderBits(measure, tick, baseline, n);
+			HeaderBits(measure, tick, baseline, owned, n);
 			for (int i = 0; i < count; i++)
 			{
 				RepState copy = records[static_cast<size_t>(i)];
@@ -573,14 +648,15 @@ namespace GanymedE::Net {
 			return lo;
 		}
 
-		std::vector<uint8_t> WritePacket(uint32_t tick, uint16_t baseline, const std::vector<RepState>& records, int count)
+		std::vector<uint8_t> WritePacket(uint32_t tick, uint16_t baseline, uint16_t owned, const std::vector<RepState>& records, int count)
 		{
 			std::vector<uint8_t> out;
 			BitWrite writer(out);
 			uint32_t tickBits = tick;
 			uint32_t baselineBits = baseline;
+			uint32_t ownedBits = owned;
 			uint32_t countBits = static_cast<uint32_t>(count);
-			HeaderBits(writer, tickBits, baselineBits, countBits);
+			HeaderBits(writer, tickBits, baselineBits, ownedBits, countBits);
 			for (int i = 0; i < count; i++)
 			{
 				RepState copy = records[static_cast<size_t>(i)];
@@ -612,12 +688,14 @@ namespace GanymedE::Net {
 			return baseline;
 		}
 
-		bool Decode(const uint8_t* data, int length, uint32_t& tick, std::vector<RepState>& records)
+		bool Decode(const uint8_t* data, int length, uint32_t& tick, uint16_t& owned, std::vector<RepState>& records)
 		{
 			BitRead reader(data, length);
 			uint32_t baseline = 0;
+			uint32_t ownedBits = 0;
 			uint32_t count = 0;
-			HeaderBits(reader, tick, baseline, count);
+			HeaderBits(reader, tick, baseline, ownedBits, count);
+			owned = static_cast<uint16_t>(ownedBits);
 			if (!reader.Ok() || count > 512)
 				return false;
 			records.clear();
@@ -716,17 +794,31 @@ namespace GanymedE::Net {
 				sample.Yaw = UnquantizeSignedAngle(record.Ey);
 				sample.Roll = UnquantizeSignedAngle(record.Ez);
 			}
+			if (record.HasVel)
+			{
+				sample.HasVel = true;
+				sample.Vx = UnquantizeSpeed(record.Vx);
+				sample.Vy = UnquantizeSpeed(record.Vy);
+				sample.Vz = UnquantizeSpeed(record.Vz);
+			}
+			if (record.HasGround)
+			{
+				sample.HasGround = true;
+				sample.Ground = record.Ground;
+			}
 		}
 
 		bool ApplyPacket(Scene& scene, const uint8_t* data, int length, float rttMs,
 			std::chrono::steady_clock::time_point at)
 		{
 			uint32_t tick = 0;
+			uint16_t owned = 0;
 			std::vector<RepState> records;
-			if (!Decode(data, length, tick, records))
+			if (!Decode(data, length, tick, owned, records))
 				return false;
 
 			World& world = State();
+			world.OwnedNetId = owned;
 			world.LatestTick = tick;
 			world.LatestAt = at;
 			world.RttMs = rttMs;
@@ -743,6 +835,8 @@ namespace GanymedE::Net {
 					Entity entity = scene.FindEntityByUUID(ghost->second.Id);
 					if (entity)
 						DestroyTree(scene, entity);
+					if (ghost->second.Id == world.LocalId)
+						world.LocalId = UUID{ 0 };
 					world.Ghosts.erase(ghost);
 					continue;
 				}
@@ -789,6 +883,13 @@ namespace GanymedE::Net {
 				OverlaySample(sample, record);
 				ghost->second.Latest = sample;
 				PushSample(ghost->second, sample);
+			}
+
+			if (world.OwnedNetId != 0)
+			{
+				auto ownedGhost = world.Ghosts.find(world.OwnedNetId);
+				if (ownedGhost != world.Ghosts.end())
+					world.LocalId = ownedGhost->second.Id;
 			}
 			return true;
 		}
@@ -951,6 +1052,439 @@ namespace GanymedE::Net {
 			return root.GetUUID();
 		}
 
+		bool IsPredict(Test mode)
+		{
+			return mode == Test::Predict || mode == Test::PredictLoss || mode == Test::PredictDesync
+				|| mode == Test::PredictWall || mode == Test::PredictStep;
+		}
+
+		uint32_t PredictSpan(Test mode)
+		{
+			if (mode == Test::Predict)
+				return 3600;
+			if (mode == Test::PredictLoss)
+				return 1200;
+			return 600;
+		}
+
+		int LeadTicks(float rttMs, float fixedDt)
+		{
+			// T + (now - recv) / dt is the snapshot's tick plus how long that packet has
+			// sat on the client. The flight is not in it, so at receipt the estimate is
+			// about half a round trip behind the server. The command spends the other
+			// half on the way back. Leading by the whole round trip is half a round trip
+			// ahead of the server, which is the tick that command arrives for. Half a
+			// round trip only catches the server's present, and the command is late.
+			const float ms = fixedDt > 0.0f ? fixedDt * 1000.0f : (1000.0f / 60.0f);
+			int ticks = static_cast<int>(std::ceil(rttMs / ms));
+			if (ticks < 1)
+				ticks = 1;
+			if (ticks > 32)
+				ticks = 32;
+			return ticks;
+		}
+
+		void MakeBox(Scene& scene, const char* name, const glm::vec3& position, const glm::vec3& halfExtents)
+		{
+			Entity entity = scene.CreateEntity(name);
+			entity.GetComponent<TransformComponent>().Translation = position;
+			scene.MarkChanged<TransformComponent>(entity);
+			entity.AddComponent<RigidBodyComponent>().Type = RigidBodyType::Static;
+			entity.AddComponent<BoxColliderComponent>().HalfExtents = halfExtents;
+		}
+
+		void BuildArena(Scene& scene, World& world)
+		{
+			if (world.Arena)
+				return;
+			world.Arena = true;
+			// 4 m/s for 60 s is 240 m of +Z, and the wall slide is 4 m/s of +X for 10 s.
+			// A 20 m pad ends the flat walk in the air, which is a different test.
+			MakeBox(scene, "net-floor", { 20.0f, -0.5f, 130.0f }, { 40.0f, 0.5f, 160.0f });
+			if (world.Mode == Test::PredictWall)
+				MakeBox(scene, "net-wall", { 20.0f, 1.0f, 4.0f }, { 30.0f, 1.0f, 0.25f });
+			if (world.Mode == Test::PredictStep)
+				MakeBox(scene, "net-step", { 0.0f, 0.1f, 3.0f }, { 2.0f, 0.1f, 1.0f });
+		}
+
+		void EnsurePawns(Scene& scene, World& world)
+		{
+			if (!IsPredict(world.Mode) || scene.GetRole() != SceneRole::Server)
+				return;
+			for (const std::string& account : ServerAccounts())
+			{
+				bool have = false;
+				for (const Pawn& pawn : world.Pawns)
+				{
+					if (pawn.Account == account)
+						have = true;
+				}
+				if (have)
+					continue;
+				const UUID id = SpawnPrefab(scene, "prefabs/NetWalker.gprefab", world);
+				if (id == UUID{ 0 })
+					continue;
+				Pawn pawn;
+				pawn.Account = account;
+				pawn.Id = id;
+				pawn.SpawnTick = world.Tick;
+				world.Pawns.push_back(std::move(pawn));
+				GE_CORE_INFO("Predict spawn account={0} tick={1}", account, world.Tick);
+			}
+		}
+
+		int16_t QuantizeStick(float value)
+		{
+			value = std::clamp(value, -1.0f, 1.0f);
+			return static_cast<int16_t>(std::lround(value * 32767.0f));
+		}
+
+		float DequantizeStick(int16_t value)
+		{
+			return static_cast<float>(value) / 32767.0f;
+		}
+
+		void AppendCommand(std::vector<uint8_t>& out, const PlayerCommand& cmd)
+		{
+			const uint32_t tick = cmd.Tick;
+			out.push_back(static_cast<uint8_t>(tick));
+			out.push_back(static_cast<uint8_t>(tick >> 8));
+			out.push_back(static_cast<uint8_t>(tick >> 16));
+			out.push_back(static_cast<uint8_t>(tick >> 24));
+			const auto put16 = [&](uint16_t value)
+			{
+				out.push_back(static_cast<uint8_t>(value));
+				out.push_back(static_cast<uint8_t>(value >> 8));
+			};
+			put16(static_cast<uint16_t>(QuantizeStick(cmd.MoveX)));
+			put16(static_cast<uint16_t>(QuantizeStick(cmd.MoveZ)));
+			put16(QuantizeYaw(cmd.Yaw));
+			put16(QuantizeSignedAngle(cmd.Pitch));
+			out.push_back(cmd.PackButtons());
+		}
+
+		bool ReadCommandAt(const uint8_t* data, int length, int& cursor, PlayerCommand& cmd)
+		{
+			if (cursor + 13 > length)
+				return false;
+			const auto u16 = [&]()
+			{
+				const uint16_t value = static_cast<uint16_t>(data[cursor] | (data[cursor + 1] << 8));
+				cursor += 2;
+				return value;
+			};
+			const uint32_t tick = static_cast<uint32_t>(data[cursor])
+				| (static_cast<uint32_t>(data[cursor + 1]) << 8)
+				| (static_cast<uint32_t>(data[cursor + 2]) << 16)
+				| (static_cast<uint32_t>(data[cursor + 3]) << 24);
+			cursor += 4;
+			cmd.Tick = tick;
+			cmd.MoveX = DequantizeStick(static_cast<int16_t>(u16()));
+			cmd.MoveZ = DequantizeStick(static_cast<int16_t>(u16()));
+			cmd.Yaw = UnquantizeYaw(u16());
+			cmd.Pitch = UnquantizeSignedAngle(u16());
+			cmd.UnpackButtons(data[cursor++]);
+			return true;
+		}
+
+		void IngestCommands(World& world)
+		{
+			const std::vector<CommandDatagram> packets = DrainCommands();
+			for (const CommandDatagram& packet : packets)
+			{
+				if (packet.Bytes.empty())
+					continue;
+				const int count = packet.Bytes[0];
+				if (count < 1 || count > 4)
+					continue;
+				int cursor = 1;
+				AccountInput& input = world.Inputs[packet.Account];
+				for (int i = 0; i < count; i++)
+				{
+					PlayerCommand cmd;
+					if (!ReadCommandAt(packet.Bytes.data(), static_cast<int>(packet.Bytes.size()), cursor, cmd))
+						break;
+					if (world.Tick > 128 && cmd.Tick + 128 < world.Tick)
+						continue;
+					input.ByTick[cmd.Tick] = cmd;
+				}
+				while (input.ByTick.size() > 128)
+					input.ByTick.erase(input.ByTick.begin());
+			}
+		}
+
+		PlayerCommand TakeCommand(World& world, const std::string& account, uint32_t tick)
+		{
+			AccountInput& input = world.Inputs[account];
+			PlayerCommand cmd;
+			const auto it = input.ByTick.find(tick);
+			if (it != input.ByTick.end())
+			{
+				cmd = it->second;
+				input.Last = cmd;
+				input.HaveLast = true;
+			}
+			else
+			{
+				cmd = input.HaveLast ? input.Last : PlayerCommand{};
+				cmd.Tick = tick;
+				input.Repeats++;
+			}
+			if (!input.WalkMarked && (cmd.MoveX != 0.0f || cmd.MoveZ != 0.0f))
+			{
+				input.WalkMarked = true;
+				input.RepeatsAtWalk = input.Repeats;
+			}
+			while (!input.ByTick.empty() && input.ByTick.begin()->first + 8 < tick)
+				input.ByTick.erase(input.ByTick.begin());
+			return cmd;
+		}
+
+		void NoteLook(World& world)
+		{
+			if (world.LookNoted || world.Mode != Test::None)
+				return;
+			world.LookNoted = true;
+			const glm::vec2 mouse = Input::GetGameMouseDelta();
+			world.ViewYaw -= mouse.x * 0.002f;
+			world.ViewPitch -= mouse.y * 0.002f;
+			world.ViewPitch = std::clamp(world.ViewPitch, -1.4f, 1.4f);
+		}
+
+		PlayerCommand SampleCommand(World& world, uint32_t tick)
+		{
+			NoteLook(world);
+			PlayerCommand cmd;
+			cmd.Tick = tick;
+			cmd.Yaw = world.ViewYaw;
+			cmd.Pitch = world.ViewPitch;
+			if (IsPredict(world.Mode) || world.Mode == Test::Offline)
+			{
+				const uint32_t from = world.Mode == Test::Offline ? 60u : world.WalkFrom;
+				if (from != 0 && tick >= from)
+				{
+					if (world.Mode == Test::PredictLoss)
+						cmd.MoveZ = ((tick - from) / 30) % 2 == 0 ? 1.0f : -1.0f;
+					else if (world.Mode == Test::PredictWall)
+					{
+						cmd.MoveX = 1.0f;
+						cmd.MoveZ = 1.0f;
+					}
+					else
+						cmd.MoveZ = 1.0f;
+				}
+				return cmd;
+			}
+
+			if (Input::IsGameKeyPressed(Key::A))
+				cmd.MoveX -= 1.0f;
+			if (Input::IsGameKeyPressed(Key::D))
+				cmd.MoveX += 1.0f;
+			if (Input::IsGameKeyPressed(Key::W))
+				cmd.MoveZ -= 1.0f;
+			if (Input::IsGameKeyPressed(Key::S))
+				cmd.MoveZ += 1.0f;
+			const float mag = std::sqrt(cmd.MoveX * cmd.MoveX + cmd.MoveZ * cmd.MoveZ);
+			if (mag > 1.0f)
+			{
+				cmd.MoveX /= mag;
+				cmd.MoveZ /= mag;
+			}
+			if (Input::IsGameKeyPressed(Key::Space))
+				cmd.Jump = true;
+			if (Input::IsGameMouseButtonPressed(Mouse::Button0))
+				cmd.Fire = true;
+			if (Input::IsGameMouseButtonPressed(Mouse::Button1))
+				cmd.Melee = true;
+			if (Input::IsGameKeyPressed(Key::E))
+				cmd.Interact = true;
+			for (int i = 0; i < 10; i++)
+			{
+				const KeyCode key = static_cast<KeyCode>(Key::D0 + i);
+				if (Input::IsGameKeyPressed(key))
+					cmd.Equip = static_cast<uint8_t>(i);
+			}
+			return cmd;
+		}
+
+		Predicted* FindHistory(World& world, uint32_t tick)
+		{
+			Predicted& slot = world.History[tick & 63];
+			if (!slot.Valid || slot.Command.Tick != tick)
+				return nullptr;
+			return &slot;
+		}
+
+		void StoreHistory(World& world, const PlayerCommand& cmd, const glm::vec3& position,
+			const glm::vec3& velocity, int ground)
+		{
+			Predicted& slot = world.History[cmd.Tick & 63];
+			slot.Command = cmd;
+			slot.Position = position;
+			slot.Velocity = velocity;
+			slot.Ground = ground;
+			slot.Valid = true;
+		}
+
+		void TickOne(Scene& scene, Entity entity, uint32_t tick, const PlayerCommand& cmd)
+		{
+			if (entity.HasComponent<ScriptComponent>())
+				ScriptEngine::Tick(static_cast<entt::entity>(entity), tick, cmd);
+			if (entity.HasComponent<NativeScriptComponent>())
+			{
+				ScriptableEntity* instance = entity.GetComponent<NativeScriptComponent>().Instance;
+				if (instance)
+					instance->DispatchTick(tick, cmd);
+			}
+		}
+
+		void TickScripts(Scene& scene, World& world, uint32_t tick, const PlayerCommand& local)
+		{
+			ScriptEngine::SetSceneContext(&scene);
+			const bool server = scene.GetRole() == SceneRole::Server;
+			const auto each = [&](Entity entity)
+			{
+				PlayerCommand cmd = local;
+				cmd.Tick = tick;
+				if (server)
+				{
+					bool owned = false;
+					for (const Pawn& pawn : world.Pawns)
+					{
+						if (pawn.Id != entity.GetUUID())
+							continue;
+						cmd = TakeCommand(world, pawn.Account, tick);
+						owned = true;
+						break;
+					}
+					if (!owned)
+					{
+						cmd = {};
+						cmd.Tick = tick;
+					}
+				}
+				TickOne(scene, entity, tick, cmd);
+			};
+
+			for (auto handle : scene.Reg().view<ScriptComponent>())
+				each(Entity{ handle, &scene });
+			for (auto handle : scene.Reg().view<NativeScriptComponent>())
+			{
+				Entity entity{ handle, &scene };
+				if (entity.HasComponent<ScriptComponent>())
+					continue;
+				each(entity);
+			}
+		}
+
+		void SendRecent(World& world)
+		{
+			PlayerCommand recent[4];
+			int count = 0;
+			for (int back = 3; back >= 0; --back)
+			{
+				if (world.SimTick < static_cast<uint32_t>(back))
+					continue;
+				Predicted* slot = FindHistory(world, world.SimTick - static_cast<uint32_t>(back));
+				if (!slot)
+					continue;
+				recent[count++] = slot->Command;
+			}
+			if (count == 0)
+				return;
+			std::vector<uint8_t> bytes;
+			bytes.push_back(static_cast<uint8_t>(count));
+			for (int i = 0; i < count; i++)
+				AppendCommand(bytes, recent[i]);
+			SendCommands(bytes.data(), static_cast<int>(bytes.size()));
+		}
+
+		bool Reconcile(Scene& scene, PhysicsScene* physics, World& world, Entity entity, glm::vec3& drawn)
+		{
+			if (world.OwnedNetId == 0)
+				return false;
+			auto ghost = world.Ghosts.find(world.OwnedNetId);
+			if (ghost == world.Ghosts.end())
+				return false;
+
+			const Sample* auth = nullptr;
+			for (const Sample& sample : ghost->second.Buffer)
+			{
+				if (!sample.HasPos || !sample.HasVel || !sample.HasGround)
+					continue;
+				if (sample.Tick > world.SimTick)
+					continue;
+				if (!auth || sample.Tick > auth->Tick)
+					auth = &sample;
+			}
+			if (!auth)
+				return false;
+
+			// A later snapshot that omits this entity is still authoritative: the
+			// pose did not change. Comparing only the tick the fields last appeared
+			// on would let a diverged prediction stand once the server stopped moving.
+			uint32_t authTick = auth->Tick;
+			if (world.HaveLatest && world.LatestTick > authTick && world.LatestTick <= world.SimTick)
+				authTick = world.LatestTick;
+			if (world.HaveReconciled && authTick <= world.LastReconciled)
+				return false;
+
+			world.LastReconciled = authTick;
+			world.HaveReconciled = true;
+			Predicted* predicted = FindHistory(world, authTick);
+			if (!predicted)
+				return false;
+
+			const glm::vec3 serverPos = SamplePos(*auth);
+			const glm::vec3 serverVel{ auth->Vx, auth->Vy, auth->Vz };
+			const float posErr = Distance(predicted->Position, serverPos);
+			const float velErr = Distance(predicted->Velocity, serverVel);
+			const bool groundMiss = predicted->Ground != auth->Ground;
+			if (posErr <= 0.02f && velErr <= 0.10f && !groundMiss)
+				return false;
+
+			drawn = entity.GetComponent<TransformComponent>().Translation;
+			physics->RestoreCharacter(world.LocalId, serverPos, serverVel, auth->Ground);
+			predicted->Position = serverPos;
+			predicted->Velocity = serverVel;
+			predicted->Ground = auth->Ground;
+
+			uint32_t replay = 0;
+			const float fixedDt = FixedDt(scene);
+			for (uint32_t tick = authTick + 1; tick <= world.SimTick; tick++)
+			{
+				Predicted* step = FindHistory(world, tick);
+				if (!step)
+					break;
+				TickOne(scene, entity, tick, step->Command);
+				physics->ReplayCharacter(world.LocalId, fixedDt);
+				glm::vec3 position{ 0.0f };
+				glm::vec3 velocity{ 0.0f };
+				int ground = 3;
+				if (physics->SampleCharacter(world.LocalId, position, velocity, ground))
+				{
+					step->Position = position;
+					step->Velocity = velocity;
+					step->Ground = ground;
+				}
+				replay++;
+			}
+
+			const bool walking = world.WalkFrom != 0 && authTick >= world.WalkFrom;
+			const float mm = posErr * 1000.0f;
+			if (walking)
+			{
+				world.Corrections++;
+				if (mm > world.MaxCorrectMm)
+					world.MaxCorrectMm = mm;
+				if (static_cast<int>(replay) > world.MaxReplay)
+					world.MaxReplay = static_cast<int>(replay);
+			}
+			GE_CORE_INFO("Predict correct tick={0} sizeMm={1:.0f} replay={2} settle={3}",
+				authTick, mm, replay, walking ? 0 : 1);
+			return true;
+		}
+
 	}
 
 	void PresentWorld(Scene& scene, float frameDt)
@@ -969,6 +1503,8 @@ namespace GanymedE::Net {
 		const float fixedDt = FixedDt(scene);
 		const float elapsed = std::chrono::duration<float>(std::chrono::steady_clock::now() - world.LatestAt).count();
 		const float estimated = static_cast<float>(world.LatestTick) + elapsed / fixedDt;
+		world.Estimated = estimated;
+		world.HaveEstimate = true;
 		float renderTick = estimated - (kDelaySeconds / fixedDt);
 		const bool dry = renderTick > static_cast<float>(world.LatestTick);
 		if (dry)
@@ -994,6 +1530,11 @@ namespace GanymedE::Net {
 			Ghost& ghost = entry.second;
 			Entity entity = scene.FindEntityByUUID(ghost.Id);
 			if (!entity || !entity.HasComponent<TransformComponent>())
+				continue;
+			// Until prediction starts, the spawn pose has to land on the transform or the
+			// body is created at the prefab origin. After that, interpolation would
+			// fight the prediction.
+			if (Net::Controls(ghost.Id) && world.HaveSim)
 				continue;
 			if (entity.HasComponent<RigidBodyComponent>()
 				&& entity.GetComponent<RigidBodyComponent>().Type == RigidBodyType::Dynamic)
@@ -1086,6 +1627,12 @@ namespace GanymedE::Net {
 		world.LastSnapTick = world.Tick;
 
 		const std::vector<RepState> current = Gather(scene, physics);
+		for (Pawn& pawn : world.Pawns)
+		{
+			Entity entity = scene.FindEntityByUUID(pawn.Id);
+			if (entity && entity.HasComponent<ReplicatedComponent>())
+				pawn.NetId = entity.GetComponent<ReplicatedComponent>().NetId;
+		}
 		if (world.Tick % 60 == 0 && world.Tick != world.LastPoseTick && current.size() <= 4)
 		{
 			world.LastPoseTick = world.Tick;
@@ -1153,7 +1700,13 @@ namespace GanymedE::Net {
 			if (!records.empty() && fit == 0)
 				GE_CORE_WARN("Replicate record does not fit in one datagram");
 			const std::vector<RepState> stamp = StampAfter(baseline, records, fit);
-			const std::vector<uint8_t> bytes = WritePacket(world.Tick, baselineSeq, records, fit);
+			uint16_t owned = 0;
+			for (const Pawn& pawn : world.Pawns)
+			{
+				if (pawn.Account == account)
+					owned = pawn.NetId;
+			}
+			const std::vector<uint8_t> bytes = WritePacket(world.Tick, baselineSeq, owned, records, fit);
 			const uint16_t sequence = SendSnapshot(account, bytes.data(), static_cast<int>(bytes.size()));
 			if (sequence == 0)
 				continue;
@@ -1185,7 +1738,10 @@ namespace GanymedE::Net {
 	void AdvanceWorldTest(Scene& scene)
 	{
 		World& world = State();
-		if (scene.GetRole() != SceneRole::Server || world.Mode != Test::Spawn || world.SpawnGone)
+		if (scene.GetRole() != SceneRole::Server)
+			return;
+		EnsurePawns(scene, world);
+		if (world.Mode != Test::Spawn || world.SpawnGone)
 			return;
 		if (world.Tick < kDestroyTick)
 			return;
@@ -1203,6 +1759,8 @@ namespace GanymedE::Net {
 	void StartWorldTest(Scene& scene, const std::string& test)
 	{
 		World& world = State();
+		if (test.empty() || test == "spoof" || test.rfind("reliable:", 0) == 0)
+			return;
 		if (test == "move")
 			world.Mode = Test::Move;
 		else if (test == "spawn")
@@ -1211,9 +1769,43 @@ namespace GanymedE::Net {
 			world.Mode = Test::Prefab;
 		else if (test == "rest")
 			world.Mode = Test::Rest;
+		else if (test == "predict")
+			world.Mode = Test::Predict;
+		else if (test == "predict-loss")
+			world.Mode = Test::PredictLoss;
+		else if (test == "predict-desync")
+			world.Mode = Test::PredictDesync;
+		else if (test == "predict-wall")
+			world.Mode = Test::PredictWall;
+		else if (test == "predict-step")
+			world.Mode = Test::PredictStep;
+		else if (test == "offline")
+		{
+			if (scene.GetRole() != SceneRole::Standalone)
+			{
+				GE_CORE_ERROR("Predict offline is a standalone runtime");
+				return;
+			}
+			world.Mode = Test::Offline;
+		}
 		else
 		{
-			GE_CORE_ERROR("Replicate test '{0}' is not move, spawn, prefab, or rest", test);
+			GE_CORE_ERROR("Replicate test '{0}' is not a known mode", test);
+			return;
+		}
+
+		if (IsPredict(world.Mode) || world.Mode == Test::Offline)
+		{
+			BuildArena(scene, world);
+			if (world.Mode == Test::Offline)
+			{
+				world.Mover = SpawnPrefab(scene, "prefabs/NetWalker.gprefab", world);
+				Entity walker = scene.FindEntityByUUID(world.Mover);
+				if (walker && walker.HasComponent<ReplicatedComponent>())
+					walker.RemoveComponent<ReplicatedComponent>();
+				world.PrefabOf.erase(static_cast<uint64_t>(world.Mover));
+			}
+			GE_CORE_INFO("Predict test {0}", test);
 			return;
 		}
 
@@ -1247,6 +1839,198 @@ namespace GanymedE::Net {
 			Entity root = scene.FindEntityByUUID(world.PrefabRoot);
 			LogPrefab("server", scene, root, world.PrefabLogged);
 		}
+	}
+
+	bool Controls(UUID id)
+	{
+		return id != UUID{ 0 } && State().LocalId == id;
+	}
+
+	void PredictLocal(Scene& scene, PhysicsScene* physics)
+	{
+		if (scene.GetRole() != SceneRole::Client || !physics)
+			return;
+
+		World& world = State();
+		if (!world.HaveEstimate || world.LocalId == UUID{ 0 })
+			return;
+		Entity entity = scene.FindEntityByUUID(world.LocalId);
+		if (!entity || !entity.HasComponent<CharacterControllerComponent>())
+			return;
+
+		glm::vec3 position{ 0.0f };
+		glm::vec3 velocity{ 0.0f };
+		int ground = 3;
+		if (!physics->SampleCharacter(world.LocalId, position, velocity, ground))
+			return;
+
+		const float fixedDt = FixedDt(scene);
+		if (!world.HaveSim)
+		{
+			world.SimTick = world.LatestTick;
+			world.HaveSim = true;
+			world.WalkFrom = world.LatestTick + 60;
+			GE_CORE_INFO("Predict own net={0} tick={1}", world.OwnedNetId, world.LatestTick);
+		}
+
+		glm::vec3 drawn{ 0.0f };
+		const bool corrected = Reconcile(scene, physics, world, entity, drawn);
+
+		const int lead = LeadTicks(world.RttMs, fixedDt);
+		uint32_t target = static_cast<uint32_t>(std::floor(world.Estimated)) + static_cast<uint32_t>(lead);
+		int steps = 0;
+		while (world.SimTick < target && steps < 8)
+		{
+			world.SimTick++;
+			const PlayerCommand cmd = SampleCommand(world, world.SimTick);
+			glm::vec3 before{ 0.0f };
+			glm::vec3 ignored{ 0.0f };
+			int ignoredGround = 3;
+			physics->SampleCharacter(world.LocalId, before, ignored, ignoredGround);
+			TickOne(scene, entity, world.SimTick, cmd);
+			physics->ReplayCharacter(world.LocalId, fixedDt);
+			if (!physics->SampleCharacter(world.LocalId, position, velocity, ground))
+				break;
+			StoreHistory(world, cmd, position, velocity, ground);
+
+			const bool moving = cmd.MoveX != 0.0f || cmd.MoveZ != 0.0f;
+			if (moving && !world.LoggedInput)
+			{
+				world.LoggedInput = true;
+				GE_CORE_INFO("Predict input tick={0}", world.SimTick);
+			}
+			if (world.LoggedInput && !world.LoggedMoved && Distance(before, position) > 0.001f)
+			{
+				world.LoggedMoved = true;
+				GE_CORE_INFO("Predict moved tick={0}", world.SimTick);
+			}
+			SendRecent(world);
+			steps++;
+		}
+
+		if (corrected)
+		{
+			if (physics->SampleCharacter(world.LocalId, position, velocity, ground))
+				world.VisualError = drawn - position;
+		}
+
+		const auto now = std::chrono::steady_clock::now();
+		if (now >= world.NextPredictLog)
+		{
+			world.NextPredictLog = now + std::chrono::seconds(1);
+			GE_CORE_INFO("Predict client tick={0} corrections={1} maxMm={2:.0f} replay={3} leadTicks={4}",
+				world.SimTick, world.Corrections, world.MaxCorrectMm, world.MaxReplay, lead);
+		}
+
+		if (!world.Done && world.WalkFrom != 0 && IsPredict(world.Mode)
+			&& world.SimTick >= world.WalkFrom + PredictSpan(world.Mode))
+		{
+			world.Done = true;
+			GE_CORE_INFO("Predict done corrections={0} maxMm={1:.0f} replay={2}",
+				world.Corrections, world.MaxCorrectMm, world.MaxReplay);
+			Application::Get().Close();
+		}
+	}
+
+	void BeginStep(Scene& scene, PhysicsScene* physics)
+	{
+		if (scene.GetRole() == SceneRole::Client)
+			return;
+
+		World& world = State();
+		IngestCommands(world);
+
+		uint32_t tick = 0;
+		if (scene.GetRole() == SceneRole::Server)
+			tick = world.Tick + 1;
+		else
+			tick = ++world.OfflineTicks;
+
+		if (scene.GetRole() == SceneRole::Server && world.Mode == Test::PredictDesync && physics)
+		{
+			for (Pawn& pawn : world.Pawns)
+			{
+				uint32_t when = pawn.SpawnTick + 180;
+				if ((when % 2) != 0)
+					when++;
+				if (pawn.Teleported || tick != when)
+					continue;
+				Entity entity = scene.FindEntityByUUID(pawn.Id);
+				if (!entity)
+					continue;
+				glm::vec3 position = entity.GetComponent<TransformComponent>().Translation;
+				position.x += 3.0f;
+				physics->Teleport(pawn.Id, position);
+				pawn.Teleported = true;
+				GE_CORE_INFO("Predict teleport tick={0}", tick);
+			}
+		}
+
+		const PlayerCommand local = scene.GetRole() == SceneRole::Server
+			? PlayerCommand{} : SampleCommand(world, tick);
+		TickScripts(scene, world, tick, local);
+
+		if (world.Mode == Test::Offline && world.OfflineTicks == 120)
+		{
+			Entity walker = scene.FindEntityByUUID(world.Mover);
+			if (walker)
+			{
+				const glm::vec3 position = walker.GetComponent<TransformComponent>().Translation;
+				GE_CORE_INFO("Predict offline tick={0} x={1:.3f} y={2:.3f} z={3:.3f}",
+					world.OfflineTicks, position.x, position.y, position.z);
+			}
+		}
+		if (world.Mode == Test::Offline && world.OfflineTicks >= 180 && !world.Done)
+		{
+			world.Done = true;
+			Application::Get().Close();
+		}
+
+		if (scene.GetRole() == SceneRole::Server && IsPredict(world.Mode))
+		{
+			const auto now = std::chrono::steady_clock::now();
+			if (now >= world.NextPredictLog)
+			{
+				world.NextPredictLog = now + std::chrono::seconds(1);
+				uint32_t repeats = 0;
+				uint32_t walkRepeats = 0;
+				for (const auto& input : world.Inputs)
+				{
+					repeats += input.second.Repeats;
+					if (input.second.WalkMarked)
+						walkRepeats += input.second.Repeats - input.second.RepeatsAtWalk;
+				}
+				for (const Pawn& pawn : world.Pawns)
+				{
+					Entity entity = scene.FindEntityByUUID(pawn.Id);
+					if (!entity)
+						continue;
+					const glm::vec3 position = entity.GetComponent<TransformComponent>().Translation;
+					GE_CORE_INFO(
+						"Predict server tick={0} x={1:.3f} y={2:.3f} z={3:.3f} repeats={4} walkRepeats={5}",
+						world.Tick, position.x, position.y, position.z, repeats, walkRepeats);
+				}
+			}
+		}
+	}
+
+	void ApplyVisualError(Scene& scene, float frameDt)
+	{
+		World& world = State();
+		world.LookNoted = false;
+		if (scene.GetRole() != SceneRole::Client || world.LocalId == UUID{ 0 })
+			return;
+		if (glm::dot(world.VisualError, world.VisualError) < 1.0e-6f)
+		{
+			world.VisualError = glm::vec3{ 0.0f };
+			return;
+		}
+		Entity entity = scene.FindEntityByUUID(world.LocalId);
+		if (!entity || !entity.HasComponent<TransformComponent>())
+			return;
+		entity.GetComponent<TransformComponent>().Translation += world.VisualError;
+		scene.MarkChanged<TransformComponent>(entity);
+		world.VisualError *= std::exp(-frameDt / 0.1f);
 	}
 
 }

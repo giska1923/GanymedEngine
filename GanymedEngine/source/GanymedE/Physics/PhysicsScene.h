@@ -107,9 +107,20 @@ namespace GanymedE {
 		// gameplay to ask the wrong question.
 		bool IsGrounded(UUID entity) const;
 
-		// Jolt's four ground states, or -1 when the entity is not a character. Read-only:
-		// writing the state back into CharacterVirtual is the prediction step, not this one.
+		// Jolt's four ground states, or -1 when the entity is not a character.
+		// 0 OnGround, 1 OnSteepGround, 2 NotSupported, 3 InAir.
 		int CharacterGround(UUID entity) const;
+
+		// Position, linear velocity, and ground, or false when the entity is not a character.
+		bool SampleCharacter(UUID entity, glm::vec3& position, glm::vec3& velocity, int& ground) const;
+
+		// Prediction reset. Copies position, linear velocity, and the ground enum into the
+		// character. Not a Jolt SaveState: that blob's body ids belong to one PhysicsSystem.
+		void RestoreCharacter(UUID entity, const glm::vec3& position, const glm::vec3& velocity, int ground);
+
+		// One character step: gravity while not OnGround, then ExtendedUpdate. The same step
+		// StepCharacters takes. Does not run the rigid-body solver.
+		void ReplayCharacter(UUID entity, float fixedDeltaTime);
 
 		// A replicated dynamic body on a client is kinematic. The interpolated transform
 		// drives it; the solver must not.

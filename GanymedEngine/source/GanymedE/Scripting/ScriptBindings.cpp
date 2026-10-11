@@ -10,11 +10,13 @@
 #include "GanymedE/Core/KeyCodes.h"
 #include "GanymedE/Core/MouseButtonCodes.h"
 #include "GanymedE/ECS/System.h"
+#include "GanymedE/Net/Command.h"
 #include "GanymedE/Net/Net.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
+#include "GanymedE/Scene/SceneRole.h"
 #include "GanymedE/Scene/Systems/AudioSystem.h"
 #include "GanymedE/Scene/Systems/PhysicsSystem.h"
 #include "GanymedE/UI/UIEngine.h"
@@ -658,6 +660,8 @@ namespace GanymedE {
 				sol::meta_function::equal_to, [](const Entity& a, const Entity& b) { return a == b; },
 				sol::meta_function::to_string, [](Entity& e) { return "Entity(" + e.GetName() + ")"; }
 			);
+			// Outside the big usertype call. One more argument there overflowed the stack.
+			lua["Entity"]["IsLocallyControlled"] = [](Entity& e) { return e.IsLocallyControlled(); };
 		}
 
 		void RegisterInput(sol::state& lua)
@@ -1318,9 +1322,34 @@ namespace GanymedE {
 		// to script-style ones (display_name -> name). There is no generic request.
 		void RegisterNet(sol::state& lua)
 		{
+			// Valid only for the duration of OnTick. Scripts must not keep the reference.
+			// One field at a time. A single new_usertype with every member is the same
+			// variadic call that overflowed the stack on Entity under this sol2 on MSVC.
+			sol::usertype<Net::PlayerCommand> command = lua.new_usertype<Net::PlayerCommand>("PlayerCommand", sol::no_constructor);
+			command["Tick"] = &Net::PlayerCommand::Tick;
+			command["MoveX"] = &Net::PlayerCommand::MoveX;
+			command["MoveZ"] = &Net::PlayerCommand::MoveZ;
+			command["Yaw"] = &Net::PlayerCommand::Yaw;
+			command["Pitch"] = &Net::PlayerCommand::Pitch;
+			command["Jump"] = &Net::PlayerCommand::Jump;
+			command["Fire"] = &Net::PlayerCommand::Fire;
+			command["Melee"] = &Net::PlayerCommand::Melee;
+			command["Interact"] = &Net::PlayerCommand::Interact;
+			command["Equip"] = &Net::PlayerCommand::Equip;
+
 			// The HUD line. Zeros until a session exists. On a server the figures are the
 			// mean of the live sessions, and the byte rates are sums. See netcode.md.
 			sol::table net = lua.create_named_table("Net");
+			net["IsServer"] = []()
+			{
+				Scene* scene = ScriptEngine::GetSceneContext();
+				return scene && scene->GetRole() == SceneRole::Server;
+			};
+			net["IsClient"] = []()
+			{
+				Scene* scene = ScriptEngine::GetSceneContext();
+				return scene && scene->GetRole() == SceneRole::Client;
+			};
 			net["GetStats"] = [](sol::this_state ts)
 			{
 				sol::state_view lua(ts);

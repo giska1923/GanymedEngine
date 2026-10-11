@@ -111,6 +111,13 @@ namespace GanymedE::Net {
 			};
 			std::vector<Incoming> IncomingSnapshots;
 
+			struct CommandIn
+			{
+				std::string Account;
+				std::vector<uint8_t> Bytes;
+			};
+			std::vector<CommandIn> IncomingCommands;
+
 			bool Serving = false;
 			Socket ServerSocket;
 			std::unique_ptr<Conditioner> ServerBox;
@@ -392,6 +399,13 @@ namespace GanymedE::Net {
 			{
 				DeliverServer(engine, *peer, payload, payloadLength);
 			});
+			if (view.Kind == kKindCommand && length > kHeaderBytes)
+			{
+				Engine::CommandIn incoming;
+				incoming.Account = peer->Conn->Account();
+				incoming.Bytes.assign(data + kHeaderBytes, data + length);
+				engine.IncomingCommands.push_back(std::move(incoming));
+			}
 		}
 
 		void TickServer(Engine& engine, Connection::Clock::time_point now)
@@ -645,7 +659,10 @@ namespace GanymedE::Net {
 				engine.ReliableTotal = static_cast<int>(value);
 				return true;
 			}
-			error = "--net-test is 'spoof' or 'reliable:<count>'";
+			if (test == "offline" || test == "predict" || test == "predict-loss"
+				|| test == "predict-desync" || test == "predict-wall" || test == "predict-step")
+				return true;
+			error = "--net-test is 'spoof', 'reliable:<count>', or a predict mode";
 			return false;
 		}
 
@@ -993,6 +1010,38 @@ namespace GanymedE::Net {
 			out.push_back(std::move(datagram));
 		}
 		engine.IncomingSnapshots.clear();
+		return out;
+	}
+
+	void SendCommands(const uint8_t* data, int length)
+	{
+		auto guard = LockState();
+		Engine& engine = State();
+		if (!engine.Client || !engine.ClientConn || !engine.ClientBox || !data || length <= 0)
+			return;
+		if (engine.ClientPhase != Engine::Phase::Live)
+			return;
+		std::vector<uint8_t> packet;
+		const auto now = Connection::Clock::now();
+		if (engine.ClientConn->BuildSnapshot(packet, data, length, now, kKindCommand) == 0)
+			return;
+		engine.ClientBox->Submit(engine.ServerAddress, std::move(packet));
+	}
+
+	std::vector<CommandDatagram> DrainCommands()
+	{
+		auto guard = LockState();
+		Engine& engine = State();
+		std::vector<CommandDatagram> out;
+		out.reserve(engine.IncomingCommands.size());
+		for (Engine::CommandIn& incoming : engine.IncomingCommands)
+		{
+			CommandDatagram datagram;
+			datagram.Account = std::move(incoming.Account);
+			datagram.Bytes = std::move(incoming.Bytes);
+			out.push_back(std::move(datagram));
+		}
+		engine.IncomingCommands.clear();
 		return out;
 	}
 

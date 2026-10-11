@@ -2,6 +2,7 @@
 
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Core/Timestep.h"
+#include "GanymedE/Net/Command.h"
 #include "GanymedE/Scene/Components.h"
 
 #include <entt/entt.hpp>
@@ -60,6 +61,10 @@ namespace GanymedE {
 		static void DestroyAllInstances();
 
 		static void Update(entt::entity entity, Timestep ts);
+
+		// Once per physics step, before the step. No-op when the script has no OnTick.
+		// `command` is only valid for the duration of the call.
+		static void Tick(entt::entity entity, uint32_t tick, const Net::PlayerCommand& command);
 
 		// Runs the callbacks of backend requests whose responses have arrived, for the current
 		// scene's instances, with the scene context set. LuaScriptSystem calls it once per update,
