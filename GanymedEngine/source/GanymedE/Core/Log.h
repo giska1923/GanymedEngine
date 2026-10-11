@@ -14,6 +14,12 @@ namespace GanymedE {
 	public:
 		static void Init();
 
+		// Before the first log line. `--root` becomes the working directory, so assets, shaders
+		// and this process's log file all resolve there. `--server-id` selects the dedicated
+		// log (stderr plus `dedicated-<id>.log`) instead of the shared `GanymedE.log`.
+		// False: `error` is set and nothing was opened. `main` exits 2.
+		static bool Prepare(int argc, char** argv, std::string& error);
+
 		inline static std::shared_ptr<spdlog::logger>& GetCoreLogger() { return s_CoreLogger; }
 		inline static std::shared_ptr<spdlog::logger>& GetClientLogger() { return s_ClientLogger; }
 	private:

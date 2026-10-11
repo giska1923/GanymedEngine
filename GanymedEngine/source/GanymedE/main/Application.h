@@ -13,6 +13,7 @@
 
 namespace GanymedE {
 	class WindowCloseEvent;
+	class BgfxContext;
 
 	struct ApplicationCommandLineArgs
 	{
@@ -32,12 +33,22 @@ namespace GanymedE {
 		// grew its first flag (`--renderer=`, see BgfxContext): the flag landed in slot 1 and was
 		// reported as a missing scene file. Options are read by whoever owns them, wherever they
 		// appear, so positional handling has to skip them rather than assume slot 1.
+		// `--root <dir>` is two arguments (see Log::Prepare). The directory must not come back
+		// as the scene path.
 		const char* FirstPositional() const
 		{
 			for (int i = 1; i < Count; i++)
 			{
-				if (Args[i] && Args[i][0] != '-')
-					return Args[i];
+				if (!Args[i])
+					continue;
+				if (Args[i][0] == '-')
+				{
+					const std::string flag(Args[i]);
+					if ((flag == "--root" || flag == "-root") && i + 1 < Count)
+						i++;
+					continue;
+				}
+				return Args[i];
 			}
 
 			return nullptr;
@@ -66,6 +77,14 @@ namespace GanymedE {
 		// the ImGui GLFW callbacks or blocks events, so every event reaches the game
 		// layers raw - which is what a shipped runtime wants.
 		bool EnableImGui = true;
+
+		// No window, no audio, no UI. The renderer is bgfx's Noop, with a null native window.
+		// The loop sleeps toward 60 Hz instead of waiting on a swap. GanymedDedicated sets this.
+		bool Headless = false;
+
+		// False skips the player backend client (sign-in, push socket). A dedicated server talks
+		// only to its fleet agent, through ServerLifecycle, and must not open a session.
+		bool PlayerBackend = true;
 	};
 
 	class GE_API Application {
@@ -89,7 +108,14 @@ namespace GanymedE {
 		const ApplicationSpecification& GetSpecification() const { return m_Specification; }
 
 		inline static Application& Get() { return *s_instance; }
-		inline Window& GetWindow() { return *m_Window; }
+
+		// False on a headless app. GetWindow() asserts when there is none.
+		bool HasWindow() const { return static_cast<bool>(m_Window); }
+		inline Window& GetWindow()
+		{
+			GE_CORE_ASSERT(m_Window, "Application::GetWindow called with no window");
+			return *m_Window;
+		}
 
 		// Set by the entry point before CreateApplication runs
 		static void SetCommandLineArgs(const ApplicationCommandLineArgs& args) { s_CommandLineArgs = args; }
@@ -98,9 +124,11 @@ namespace GanymedE {
 		bool OnWindowClose(WindowCloseEvent& e);
 		bool OnWindowResize(WindowResizeEvent& e);
 		bool OnKeyPressed(KeyPressedEvent& e);
+		void OnFrame(Timestep timestep);
 	private:
 		ApplicationSpecification m_Specification;
 		std::unique_ptr<GanymedE::Window> m_Window;
+		std::unique_ptr<BgfxContext> m_HeadlessContext;
 		ImGuiLayer* m_ImGuiLayer = nullptr;
 		bool m_Running = true;
 		bool m_Minimized = false;

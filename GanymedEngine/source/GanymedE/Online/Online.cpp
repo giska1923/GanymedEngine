@@ -438,4 +438,38 @@ namespace GanymedE::OnlineTransport {
 		s_Data->Socket.reset();
 		s_Data->Events = {};
 	}
+
+	BlockingResponse PostBlocking(const std::string& url, const std::string& body, int transferTimeoutSeconds)
+	{
+		BlockingResponse out;
+		if (!s_Data)
+		{
+			out.TransportError = "online is not initialised";
+			return out;
+		}
+
+		// Sync client: perform returns on this thread. A fresh one per call, because ix::HttpClient
+		// is not safe for two threads and health runs beside the main thread's long-poll.
+		ix::HttpClient client(false);
+		ix::HttpRequestArgsPtr args = client.createRequest(url, ix::HttpClient::kPost);
+		args->connectTimeout = 5;
+		args->transferTimeout = transferTimeoutSeconds;
+		args->followRedirects = false;
+		args->compress = false;
+		args->extraHeaders["Accept"] = "application/json";
+		args->extraHeaders["Content-Type"] = "application/json";
+
+		const ix::HttpResponsePtr response = client.post(url, body, args);
+		if (!response)
+		{
+			out.TransportError = "no response from " + url;
+			return out;
+		}
+
+		const OnlineResponse translated = Translate(response, url);
+		out.Status = translated.Status;
+		out.Body = translated.Body;
+		out.TransportError = translated.TransportError;
+		return out;
+	}
 }

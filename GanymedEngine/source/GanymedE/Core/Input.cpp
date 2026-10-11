@@ -45,6 +45,8 @@ namespace GanymedE {
 		// same reason they have none: Input is only live while one is running.
 		GLFWwindow* NativeWindow()
 		{
+			if (!Application::Get().HasWindow())
+				return nullptr;
 			return static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
 		}
 

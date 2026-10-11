@@ -22,6 +22,7 @@ namespace GanymedE {
 	class RenderSystem : public ECS::System<RenderSystem>
 	{
 	public:
+		static constexpr bool kRunsOnServer = false;
 		// The primary-camera search now lives in CameraSystem, which runs first and leaves the
 		// answer in the RenderContext singleton.
 		// The animator is optional, not a second view: one iteration covers both draw

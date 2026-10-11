@@ -11,6 +11,7 @@
 #include "GanymedE/Core/UUID.h"
 #include "GanymedE/ECS/ChangeBuffer.h"
 #include "GanymedE/ECS/Graveyard.h"
+#include "GanymedE/Scene/SceneRole.h"
 #include "GanymedE/Scene/SceneSingletons.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Renderer/EditorCamera.h"
@@ -25,8 +26,10 @@ namespace GanymedE {
 	class Scene
 	{
 	public:
-		Scene();
+		explicit Scene(SceneRole role = SceneRole::Standalone);
 		~Scene();
+
+		SceneRole GetRole() const { return m_Role; }
 
 		static Ref<Scene> Copy(Ref<Scene> other);
 
@@ -201,6 +204,7 @@ namespace GanymedE {
 
 		void RemoveChildFromParent(UUID parentID, UUID childID);
 	private:
+		SceneRole m_Role = SceneRole::Standalone;
 		entt::registry m_Registry;
 		std::unordered_map<UUID, entt::entity> m_EntityMap;   // O(1) FindEntityByUUID
 		std::unordered_map<entt::id_type, ECS::ChangeBuffer> m_ChangeBuffers;   // one per tracked type

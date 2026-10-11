@@ -24,7 +24,8 @@
 
 namespace GanymedE {
 
-	Scene::Scene()
+	Scene::Scene(SceneRole role)
+		: m_Role(role)
 	{
 		// Component creation counts as a change, so ChangeViews see a remove + re-add within one
 		// frame rather than treating the new instance as unchanged.
@@ -53,7 +54,7 @@ namespace GanymedE {
 		// Registration order IS execution order, and matches the order the logic previously ran
 		// inline in OnUpdateRuntime: physics, then scripts, then rendering. CameraSystem must
 		// come before RenderSystem, which now reads the camera it resolves.
-		m_Systems = CreateScope<ECS::SystemManager>();
+		m_Systems = CreateScope<ECS::SystemManager>(m_Role);
 		m_Systems->Add<PhysicsSystem>(*this);
 		m_Systems->Add<NativeScriptSystem>(*this);
 		m_Systems->Add<LuaScriptSystem>(*this);   // scripts move things...
@@ -71,6 +72,9 @@ namespace GanymedE {
 		// checked is staying ahead of CameraSystem, which reads World. The palette read
 		// against AnimationSystem is also checked, because TargetAccess declares it.
 		m_Systems->Add<BoneAttachmentSystem>(*this);
+		// Server scenes stop here. SystemManager reads kRunsOnServer and does not construct the
+		// four systems below: there is nothing to draw, hear or emit. Standalone and Client
+		// still register them, in this order.
 		m_Systems->Add<CameraSystem>(*this);      // ...and before anything that reads world space
 		// After CameraSystem for a reason ValidateOrdering cannot see: AudioSystem shares no
 		// component with it, but its listener FALLBACK reads the camera pose CameraSystem just
@@ -200,7 +204,7 @@ namespace GanymedE {
 
 	Ref<Scene> Scene::Copy(Ref<Scene> other)
 	{
-		Ref<Scene> newScene = CreateRef<Scene>();
+		Ref<Scene> newScene = CreateRef<Scene>(other->m_Role);
 
 		newScene->m_ViewportWidth = other->m_ViewportWidth;
 		newScene->m_ViewportHeight = other->m_ViewportHeight;

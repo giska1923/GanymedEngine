@@ -125,8 +125,8 @@ which could not be started on this machine"*. bgfx compiles its D3D renderers on
 over vkd3d), so they appear in the supported list on that platform; the substitution notice is what
 makes that harmless.
 
-Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor` and
-`GanymedRuntime` (executables linking the engine), plus the dependency group built from source via their own
+Projects: `GanymedEngine` (static lib, C++17, PCH `gepch.h`), `GanymedEditor`,
+`GanymedRuntime` and `GanymedDedicated` (executables linking the engine), plus the dependency group built from source via their own
 premake scripts in `GanymedEngine/extern/*.lua`: GLFW, ImGui (+ImGuizmo), yaml-cpp, Jolt,
 bx/bimg/bgfx, Lua. Configurations: `Debug` (`GE_DEBUG` → asserts, Jolt debug renderer), `Release`,
 `Dist` (no Jolt debug renderer). Output goes to `bin/<config>-<os>-<arch>/<project>/`,
@@ -229,7 +229,7 @@ Other build facts that have bitten before (details in
   right, pulling only objects that resolve symbols undefined so far, so a library must precede the
   ones it depends on (RmlUi and ImGui before FreeType — both rasterize with it — then Lua; bgfx
   before bimg and bx). The lists in
-  `GanymedEditor` and `GanymedRuntime` must stay in step; a divergence links fine on
+  `GanymedEditor`, `GanymedRuntime` and `GanymedDedicated` must stay in step; a divergence links fine on
   Windows and fails on Linux with symbols that are plainly present in the archive list. This is not
   hypothetical: `enkiTS` and `TextureEncode` were added to the engine's own `links` and to nothing
   else, so every Windows build kept working on project references while the first Linux link failed
@@ -342,7 +342,8 @@ Two portability bugs came from warnings rather than errors, and both were real:
 | RmlUi 6.2 | Game UI (HTML/CSS-style documents); Core + Lua plugin only |
 | FreeType 2.14.3 | RmlUi's font engine, and ImGui's atlas rasterizer |
 | enkiTS v1.12 | Task scheduler behind [`Core/JobSystem`](core.md#job-system) |
-| IXWebSocket v12.0.1 | HTTP and WebSocket client for the online milestone ([ONLINE.md](../ToDo/ONLINE.md)); built without TLS or zlib. Nothing calls it yet |
+| IXWebSocket v12.0.1 | HTTP and WebSocket client ([online.md](online.md)); built without TLS or zlib. The player client and the dedicated server's agent posts both go through it |
+| Monocypher 4.0.3 | Ed25519 verify for connect tokens ([dedicated.md](../dedicated/dedicated.md)). Not a submodule: `extern/monocypher/` is the official tarball, sha256 `8cc9bc341a66249016db9bd70e9142d8d0aef9945973744b1ac05dbc55d8ee66`. The engine compiles `src/monocypher.c` and `src/optional/monocypher-ed25519.c` (both `NoPCH`) and calls `crypto_ed25519_check`. `crypto_eddsa_check` hashes with BLAKE2b and is not RFC 8032 |
 
 **miniaudio** is a committed single header (`extern/miniaudio/miniaudio.h`), not a submodule — the
 cgltf precedent. It has one implementation TU, `GanymedE/Audio/miniaudio_impl.cpp`, which is the
@@ -355,7 +356,7 @@ x64 Debug engine build). Its link surface is per-OS and easy to get wrong:
   dependency on either. `dl` and `pthread` are already in every app's link list. If a linker ever
   asks for `m`, add it there too.
 - **macOS** — `CoreAudio.framework` and `AudioToolbox.framework` must be in the `macosx` links block
-  of **every app** (GanymedEditor, GanymedRuntime), not just the engine: static libraries
+  of **every app** (GanymedEditor, GanymedRuntime, GanymedDedicated), not just the engine: static libraries
   do not propagate their links off MSVC. Same rule as the bgfx frameworks beside them.
 
 **enkiTS** gets its own `StaticLib` project (`extern/enkiTS.lua`) compiling exactly
@@ -390,7 +391,10 @@ script does instead of upstream's CMake, and why:
   every app's list. It sits in the apps' Linux and macOS link lists after the engine, beside
   enkiTS. The macOS lists carry it, but no macOS build has been run with it.
 - **`IncludeDir.IXWebSocket` is the submodule root** (its headers are `<ixwebsocket/...>`), on the
-  engine project only, and **exactly one engine TU may include it.** `IXNetSystem.h` includes
+  engine project only, and **exactly one engine TU may include it.** `GamePort.cpp` is the other
+  Winsock TU, and it does not include IXWebSocket. It is `NoPCH`, so `winsock2.h` is the first
+  Windows header in that file, and the engine's Windows link list includes `ws2_32`.
+  `IXNetSystem.h` includes
   `winsock2.h`, then `#undef`s and redefines `EWOULDBLOCK`, `EAGAIN`, `EINPROGRESS`, `EBADF` and
   `EINVAL` as their `WSA*` values for the rest of the including TU.
 - **`winsock2.h` after the PCH's `<Windows.h>` compiled clean.** `gepch.h` includes `<Windows.h>`
@@ -547,9 +551,11 @@ Take the pair the lockfile records rather than upgrading TypeScript on its own. 
 
 ## Assets
 
-The workspace has **one** asset tree, `assets/` at the repository root. Both apps resolve
-`assets/...` **relative to their working directory**, which is the repository root
-(`debugdir "%{wks.location}"` sets this for the debugger; run from there by hand too). It holds
+The workspace has **one** asset tree, `assets/` at the repository root. The editor and the runtime
+resolve `assets/...` **relative to their working directory**, which is the repository root
+(`debugdir "%{wks.location}"` sets this for the debugger; run from there by hand too).
+GanymedDedicated is started by the fleet agent in the agent's own directory, so it takes `--root`
+and changes there before it opens anything ([dedicated.md](../dedicated/dedicated.md)). The tree holds
 shaders (`src/` + gitignored `compiled/`), environments, models, scenes, scripts, prefabs, audio,
 UI documents, fonts, the editor's icons and textures, `runtime.yaml`, and one `.meta` sidecar per
 asset carrying its handle. The sidecars are **tracked**, and that is the point of them

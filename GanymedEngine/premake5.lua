@@ -24,7 +24,11 @@ project "GanymedEngine"
 		"extern/stb_image/**.cpp",
 		"extern/stb_image/**.h",
 		"extern/glm/glm/**.hpp",
-		"extern/glm/glm/**.inl"
+		"extern/glm/glm/**.inl",
+		"extern/monocypher/src/monocypher.c",
+		"extern/monocypher/src/monocypher.h",
+		"extern/monocypher/src/optional/monocypher-ed25519.c",
+		"extern/monocypher/src/optional/monocypher-ed25519.h"
 	}
 
 	-- The texture block-compressor is its own C++20 project, because bx does not compile
@@ -76,6 +80,8 @@ project "GanymedEngine"
 		"%{IncludeDir.lua_cxx}",
 		"%{IncludeDir.sol2}",
 		"%{IncludeDir.RmlUi}",
+		"extern/monocypher/src",
+		"extern/monocypher/src/optional",
 		-- Engine-private: Core/JobSystem.h keeps enkiTS out of its own header, so the
 		-- editor, the runtime and Sandbox hold a Future<T> without this path.
 		"%{IncludeDir.enkiTS}",
@@ -114,6 +120,12 @@ project "GanymedEngine"
 	filter "files:source/GanymedE/Audio/miniaudio_impl.cpp"
 		flags { "NoPCH" }
 
+	-- C sources, and a TU that must include winsock2.h before the PCH's windows.h.
+	filter "files:extern/monocypher/**.c"
+		flags { "NoPCH" }
+	filter "files:source/GanymedE/Online/GamePort.cpp"
+		flags { "NoPCH" }
+
 	filter "system:windows"
 		systemversion "latest"
 		-- /bigobj raises the COFF section limit. sol2 instantiates enough templates per
@@ -131,7 +143,8 @@ project "GanymedEngine"
 			-- links against OpenGL statically any more.
 			"gdi32.lib",
 			"psapi.lib",
-			"uuid.lib"
+			"uuid.lib",
+			"ws2_32.lib"
 		}
 
 	filter "system:linux"

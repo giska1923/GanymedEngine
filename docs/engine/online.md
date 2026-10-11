@@ -5,14 +5,19 @@ backend ([GanymedServer](https://github.com/giska1923/GanymedServer), a separate
 holds the player's identity and session, issues requests without ever blocking a frame, and hands
 responses to Lua inside the owning scene's script update. A response can never reach a destroyed
 scene or a destroyed script instance. It also keeps the push socket open, and joins a match's game
-server. The milestone that builds it, and what comes next (the game server's side), is
+server. The same directory holds the other side of that join: the dedicated process's client of
+its fleet agent, and the check on the token the player presents. Gameplay packets are not here.
+They start at N2 of [NETCODE.md](../ToDo/NETCODE.md). The player-client milestone is
 [ONLINE.md](../ToDo/ONLINE.md).
 
 | File | Holds |
 |---|---|
 | [Online.h](../../GanymedEngine/source/GanymedE/Online/Online.h) | The public facade: `Send`, `Cancel`, status, identity, stats |
 | [OnlineSession.cpp](../../GanymedEngine/source/GanymedE/Online/OnlineSession.cpp) | `Online`'s implementation: `--backend=` and `--profile=`, the device ID, sign-in, the session, 401 recovery and the one retry, the push channel, `JoinMatch` |
-| [OnlineTransport.h](../../GanymedEngine/source/GanymedE/Online/OnlineTransport.h) / [Online.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | Private: single HTTP attempts over a pool of four clients, the push socket, and one-datagram UDP exchanges. **Online.cpp is the only engine TU that includes IXWebSocket** |
+| [OnlineTransport.h](../../GanymedEngine/source/GanymedE/Online/OnlineTransport.h) / [Online.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | Private: single HTTP attempts over a pool of four clients, the push socket, one-datagram UDP exchanges, and `PostBlocking` for the agent. **Online.cpp is the only engine TU that includes IXWebSocket** |
+| [ServerLifecycle.h](../../GanymedEngine/source/GanymedE/Online/ServerLifecycle.h) | The dedicated process's agent client: ready, allocated, health, result, shutdown, and the UDP door |
+| [ConnectToken.h](../../GanymedEngine/source/GanymedE/Online/ConnectToken.h) | Rules 1–6 of a connect token. Rules 7 and 8 need the allocation, so they stay in `ServerLifecycle` |
+| [GamePort.h](../../GanymedEngine/source/GanymedE/Online/GamePort.h) | The listen socket. N1 only — N2's `Net/Socket` replaces it. No IXWebSocket: that UDP socket cannot bind |
 | [Json.h](../../GanymedEngine/source/GanymedE/Online/Json.h) / [.cpp](../../GanymedEngine/source/GanymedE/Online/Json.cpp) | `JsonValue`, `ParseJson` (over yaml-cpp), `WriteJson` |
 | [ScriptEngine.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptEngine.cpp) | Who owns each request, per-scene mailboxes, cancellation, delivery to Lua |
 | [ScriptBindings.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptBindings.cpp) | The `Backend` table, JSON ↔ Lua |
@@ -453,7 +458,8 @@ A script queues the player, follows the ticket, and asks the engine to join the 
 allocated. Joining is one UDP exchange: `HELLO <connect token>` out, then `WELCOME <account>` or
 `DENIED <reason>` back ([connect-token.md](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/connect-token.md),
 [server-lifecycle.md](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/server-lifecycle.md)).
-There is no netcode yet, so being admitted is the last step today.
+There is no netcode yet, so being admitted is the last step the client takes. The process that
+answers is below.
 
 **How others do it.** In GameLift FlexMatch, the client starts matchmaking, gets a ticket, and
 follows it by polling or through events. A completed ticket carries the session's IP and port and one
@@ -563,7 +569,7 @@ IXWebSocket TU. It uses IXWebSocket's `ix::UdpSocket`, after the same `initNetSy
 
 The plan wanted the netcode milestone to take this socket over, not open a new one. It does not: the
 socket is closed after `WELCOME`. What a handover looks like depends on the protocol that continues
-after it, and that protocol does not exist yet.
+after it, and that protocol does not exist yet. [NETCODE.md](../ToDo/NETCODE.md) plans it in N2.
 
 **Stats:** joins (`JoinMatch` calls), `HELLO`s sent, and joins that succeeded. They go in the shutdown
 line, after the push counts. A join is not a request, so it is not in the request counts, but its
@@ -589,6 +595,41 @@ Not exercised:
 - **A `DENIED`.** The engine always presents a fresh token, so `stubserver` has nothing to refuse.
 - **A `JoinMatch` cancelled mid-flight** because its script went away. The cancel path is O1's, plus
   closing the exchange's socket.
+
+## The dedicated server's half
+
+[`GanymedDedicated`](../dedicated/dedicated.md) does not call `Online::Init`. That call signs a
+player in and opens the push socket, and a match process is not a player. It calls
+`OnlineTransport::Init` with an empty base URL and then only `PostBlocking`.
+
+`PostBlocking` is a synchronous POST on a fresh `ix::HttpClient(false)`. The async pool cannot
+serve this. Its completions are delivered on the main thread, and the two calls that must not
+wait for that thread are the long-poll (`ready`, transfer timeout 25 s, against the agent's 20 s
+hold) and health. Health is a thread of its own, posting every 2 s from the moment the port is
+bound. A scene load holds the main thread; if health lived on the frame, a load longer than 6 s
+would get the agent to kill a healthy process. Each blocking call builds its own client, so the
+long-poll and a health post do not share one. Redirects are off and compression is off, the same
+rules as the player client's attempts. The net system has to be up first, which is why
+`ServerLifecycle` initialises the transport itself and shuts it down when the process tears down.
+`Online::Shutdown` does not run that path: the player session was never created, so it returns
+immediately.
+
+The listen socket is raw Winsock (or BSD sockets), in `GamePort.cpp`, which is excluded from the
+precompiled header so `winsock2.h` is included before `windows.h`. It binds `INADDR_ANY`, receives
+with a 200 ms timeout, and on Windows disables `SIO_UDP_CONNRESET` and treats `WSAECONNRESET` as
+that timeout. It does not call `WSACleanup`. IXWebSocket's `initNetSystem` already called
+`WSAStartup`, and a cleanup here would drop the count the HTTP client still holds. N2 replaces
+the type. The 200 ms wake and the ioctl stay true of whatever socket replaces it: a server that
+treats one dead client as a dead port stops admitting everyone else. Teardown joins that thread
+before `Close`. Stop is already set, so the blocked receive returns inside 200 ms; closing first
+races the descriptor, and on Linux the number can be handed out again before `recvfrom` returns.
+
+Token verification is `crypto_ed25519_check` from Monocypher 4.0.3's SHA-512 files, over the
+encoded payload bytes as they arrived, then the claims. Both halves of the token are raw
+base64url, the alphabet Go's `RawURLEncoding` uses. `+`, `/` and `=` are `malformed connect token`.
+The `--public-key` flag still accepts the standard alphabet and padding. The reason strings and
+the order are the backend's. Nothing in this path logs the token. A health post the agent refuses
+does not become a result: the process shuts down without one.
 
 ## JSON
 

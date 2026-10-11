@@ -1,8 +1,11 @@
 #pragma once
 
 #include <entt/entt.hpp>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
+
+#include "GanymedE/Scene/SceneRole.h"
 
 #include "ViewDesc.h"
 #include "ViewHolder.h"
@@ -62,17 +65,32 @@ namespace GanymedE {
 			}
 		};
 
+		// Present unless the system says otherwise. Camera, audio, particles and rendering opt out:
+		// a server scene does not construct them. The flag is a static on the system, not an
+		// #ifdef, so the same binary is the editor, the runtime and the dedicated server.
+		template<typename S, typename = void>
+		struct RunsOnServer : std::true_type {};
+
+		template<typename S>
+		struct RunsOnServer<S, std::void_t<decltype(S::kRunsOnServer)>>
+			: std::bool_constant<S::kRunsOnServer> {};
+
 		class SystemManager
 		{
 		public:
+			explicit SystemManager(SceneRole role = SceneRole::Standalone)
+				: m_Role(role) {}
+
 			template<typename S, typename... Args>
-			S& Add(Scene& scene, Args&&... args)
+			void Add(Scene& scene, Args&&... args)
 			{
+				if (m_Role == SceneRole::Server && !RunsOnServer<S>::value)
+					return;
+
 				auto system = CreateScope<S>(scene, std::forward<Args>(args)...);
 				S& reference = *system;
 				m_Systems.push_back(std::move(system));
 				m_Lookup[entt::type_hash<S>::value()] = &reference;
-				return reference;
 			}
 
 			// Direct system-to-system access. Prefer communicating through components or (Phase 7)
@@ -167,6 +185,7 @@ namespace GanymedE {
 			}
 
 		private:
+			SceneRole m_Role = SceneRole::Standalone;
 			std::vector<Scope<ISystem>> m_Systems;          // execution order == registration order
 			std::unordered_map<entt::id_type, ISystem*> m_Lookup;
 		};

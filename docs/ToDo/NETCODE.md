@@ -1,9 +1,11 @@
 # Milestone — Netcode (a dedicated server, and clients that play on it)
 
-**Status: N0 done (2026-10-10); N1–N5 planned, nothing built.** It follows [ONLINE.md](ONLINE.md), whose last
-phase, O5b, becomes N1 here. It depends on `online-o4` (O4 and O5a) reaching `master`. N1 is
-written against the backend's `api-v0.6` (results through the agent, `DENIED` before allocation),
-which is built.
+**Status: N0 done (2026-10-10). N1 is built (2026-10-11) and its local checks passed; the fleet
+acceptance test has not been run, so N1 is not closed. N2–N5 are not started.** It follows
+[ONLINE.md](ONLINE.md), whose last phase, O5b, is this N1. It depends on `online-o4` (O4 and O5a)
+reaching `master`. N1 is written against the backend's `api-v0.6` (results through the agent,
+`DENIED` before allocation), which is built. What the process does now is
+[dedicated.md](../dedicated/dedicated.md).
 
 The goal is the Proving Ground played co-op by two to four people. Each person runs
 `GanymedRuntime`, the backend matches them, and the match runs on one `GanymedDedicated` that the
@@ -258,7 +260,7 @@ properties) and none of its machinery:
 | Phase | What | Branch | Rough size |
 |---|---|---|---|
 | **N0** | Spikes: headless boot, `CharacterVirtual` replay, the Ed25519 library | throwaway, done 2026-10-10 | — |
-| **N1** | `GanymedDedicated`: a headless app, a Scene role, the agent lifecycle, token verification, the result (**was O5b**) | master | about a week |
+| **N1** | `GanymedDedicated`: a headless app, a Scene role, the agent lifecycle, token verification, the result (**was O5b**). Built 2026-10-11. Fleet acceptance not run | master | about a week |
 | **N2** | Transport: sockets, connections, the packet header and acks, the conditioner, `--dev` | master | about a week |
 | **N3** | Replication: ticks, network IDs, spawn and destroy, snapshots with delta compression, interpolation | master | 1½–2 weeks |
 | **N4** | Input and prediction: commands, `OnTick`, the predicted character, reconciliation | master | 1½–2 weeks |
@@ -391,12 +393,26 @@ have the details and the measurements). N1 reads the `api-v0.6` tag.
 | Replica down | with backend replica A stopped before the result, the result arrives through B and the players get `match.finished` |
 | Before allocation | a `HELLO` to a ready, unallocated server gets `DENIED not allocated` at once |
 
-**Docs:** a new `docs/dedicated/dedicated.md` (the app, its flags, its lifecycle, like
-[runtime.md](../runtime/runtime.md)), indexed from [docs/README.md](../README.md);
-[online.md](../engine/online.md) for the lifecycle client and token verification;
-[architecture.md](../engine/architecture.md) and [ecs.md](../engine/ecs.md) for headless and the
-Scene role; [build-and-tooling.md](../engine/build-and-tooling.md) for the Ed25519 dependency.
-ONLINE.md's O5b closes with this phase.
+**Run on 2026-10-11, Windows x64 Debug, against a local stand-in for the agent** (not the fleet,
+not GanymedServer). The stand-in was deleted with the rest of the spike.
+
+| Check | Result |
+|---|---|
+| Missing flags, and `--outcome draw` | exit code 2 |
+| Headless, closed agent | Noop at 1280×720, log line "no window", port bound before `ready`, health refusal stopped the process, bgfx shut down cleanly. Exit code 0, which is what `main` returns for every failure after start |
+| Before allocation | `HELLO not-a-token` → `DENIED not allocated`, before the token was parsed |
+| Allocation | `allocated` body was the match id, posted before the scene load |
+| Slow load | `--load-delay 8`. Health gap across the whole process, including that sleep, max 2.03 s (6 posts). The server was not stopped |
+| Idle CPU | 0.016 s of CPU over 2 s of that load sleep (the main thread blocked in `sleep`, the door on a 200 ms receive). Not a spun core. The match loop uses the same 1/60 sleep; that loop was not sampled on its own |
+| Tokens | Minted with `crypto_ed25519_sign` from the same Monocypher the server links, not by Go's `connecttoken.Mint`. N0 already checked a Go-minted token against `crypto_ed25519_check`. This run checked the server's rule order: valid → `WELCOME`, replay → `DENIED token already used`, a second nonce for the same account → `WELCOME` again, expired, not-yet-valid, wrong `server_addr`, wrong `match_id`, account absent from the allocation, one flipped signature byte, and a token that is not base64. Each reason string matched the contract |
+| Scene | `BoxesPhysicsExample.ganymede`, 6 entities, `SceneRole::Server`. Result `{"outcome":"victory"}` on the first attempt, then `shutdown`. Admitted count 1 (the re-admit is the same account) |
+| Not run | `fleetagent` / `gscli load coop 4`. Two `GanymedRuntime` players through `JoinMatch`. Linux without a display (N0's Noop spike ran there; this `Application` path has not). Killing the server mid-match. A backend replica down at result time. CPU across a full idle match, as opposed to the load sleep |
+
+**Docs, written with the code:** [dedicated.md](../dedicated/dedicated.md), indexed from
+[docs/README.md](../README.md); [online.md](../engine/online.md) for the lifecycle client and token
+verification; [architecture.md](../engine/architecture.md) and [ecs.md](../engine/ecs.md) for
+headless and the Scene role; [build-and-tooling.md](../engine/build-and-tooling.md) for Monocypher.
+ONLINE.md's O5b points here.
 
 ### N2 — transport
 
@@ -411,7 +427,10 @@ under simulated bad networks, with no game state in them yet.
    and BSD behind one interface. On Windows, a UDP socket whose sent datagram draws an ICMP port
    unreachable reports an error on its next receive (`WSAECONNRESET`), as O5a measured. A *server*
    socket must not treat that as fatal, because it would come from one client's dead port. Disable
-   it with `SIO_UDP_CONNRESET`, or ignore it.
+   it with `SIO_UDP_CONNRESET`, or ignore it. N1's `GamePort` is the listen socket this replaces:
+   it already binds, disables that ioctl (the constant is defined locally when the SDK header
+   omits it), and treats the reset as a timeout. The 200 ms receive timeout is only there so the
+   door thread can notice a shutdown.
 2. **`Net/Connection`**, after `WELCOME`:
    - **Session.** The client's first game packet carries the account ID that `WELCOME` named. The
      server answers with a random 64-bit session ID that every later packet carries, and drops
@@ -592,10 +611,10 @@ defeat reported by the server and ratings that change.
 
 ## Risks
 
-- **Headless is wiring.** N0 showed `Noop` accepts a null window and returns
-  valid resource handles, on Windows and Linux. N1's cost is `Application` and `BgfxContext`,
-  which still require a `GLFWwindow`, plus pacing the loop without vsync. The no-GPU branch
-  through every asset apply is not the plan.
+- **Headless was wiring, and N1 did it.** `Application` takes `Headless`, `BgfxContext` accepts a
+  null window as Noop, and the loop sleeps toward 60 Hz. The no-GPU branch through every asset
+  apply was not needed. Linux for this path is still unrun; N0's spike is the Linux evidence for
+  Noop itself.
 - **The Lua split is the real work.** The game was written for one player and one frame loop, on
   purpose: the Proving Ground was built to test the engine, not to be networked. The split may show
   engine gaps (a missing `GetParent`, no animation time, no animation events) that the game worked
@@ -626,7 +645,7 @@ defeat reported by the server and ratings that change.
 
 | Phase | Doc |
 |---|---|
-| N1 | **new** `docs/dedicated/dedicated.md`; [online.md](../engine/online.md) (lifecycle client, token verification); [architecture.md](../engine/architecture.md) (headless, roles); [ecs.md](../engine/ecs.md) (role-gated systems); [build-and-tooling.md](../engine/build-and-tooling.md) (the new project, the Ed25519 dependency); [ONLINE.md](ONLINE.md) (O5b done) |
+| N1 | [dedicated.md](../dedicated/dedicated.md), [online.md](../engine/online.md), [architecture.md](../engine/architecture.md), [ecs.md](../engine/ecs.md), [build-and-tooling.md](../engine/build-and-tooling.md), [ONLINE.md](ONLINE.md). Written with the code. The fleet row is still open |
 | N2 | **new** `docs/engine/netcode.md`, indexed from [docs/README.md](../README.md): sockets, connections, the packet format, the conditioner; [runtime.md](../runtime/runtime.md) (`--connect=`, `--net-sim=`); online.md (`JoinMatch` hands over its socket) |
 | N3 | netcode.md (ticks, snapshots, delta, interpolation); [scene.md](../engine/scene.md) (`ReplicatedComponent`, derived child UUIDs) |
 | N4 | netcode.md (commands, prediction, reconciliation); [scripting.md](../engine/scripting.md) (`OnTick`, `PlayerCommand`, roles); [physics.md](../engine/physics.md) (replaying a character) |
@@ -636,7 +655,7 @@ defeat reported by the server and ratings that change.
 
 | What | Why | When |
 |---|---|---|
-| An Ed25519 implementation: **Monocypher 4.0.3 with its `monocypher-ed25519` files.** Approved 2026-10-10; N0's cross-language test passed the same day | connect-token verification, fixed by the backend's contract | vendored in N1 |
+| An Ed25519 implementation: **Monocypher 4.0.3 with its `monocypher-ed25519` files.** Approved 2026-10-10; N0's cross-language test passed the same day | connect-token verification, fixed by the backend's contract | vendored in N1, `extern/monocypher/` |
 
 Nothing else is planned as a dependency. The transport, the serializer and the socket are written
 here (decision 3).

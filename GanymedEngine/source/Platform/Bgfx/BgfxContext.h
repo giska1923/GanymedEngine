@@ -15,7 +15,10 @@ namespace GanymedE {
 	class BgfxContext
 	{
 	public:
-		explicit BgfxContext(GLFWwindow* windowHandle);
+		// `headless` is the only way a null window is legal. A windowed app whose window
+		// failed to open still asserts, including in the constructor, rather than falling
+		// through to Noop.
+		BgfxContext(GLFWwindow* windowHandle, bool headless = false);
 		~BgfxContext();
 
 		void Init(uint32_t width, uint32_t height);
@@ -39,6 +42,7 @@ namespace GanymedE {
 
 	private:
 		GLFWwindow* m_WindowHandle;
+		bool m_Headless = false;
 
 		uint32_t m_Width = 0;
 		uint32_t m_Height = 0;

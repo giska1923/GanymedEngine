@@ -14,6 +14,7 @@ namespace GanymedE {
 	class CameraSystem : public ECS::System<CameraSystem>
 	{
 	public:
+		static constexpr bool kRunsOnServer = false;
 		// Reads the cached world transform, which TransformSystem has already refreshed this update.
 		using CameraView = ECS::IterView<ECS::EntityId, ECS::RO<WorldTransformComponent>, ECS::RO<CameraComponent>>;
 		using Views = TypeList<CameraView>;

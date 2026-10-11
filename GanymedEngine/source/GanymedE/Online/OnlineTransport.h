@@ -77,4 +77,19 @@ namespace GanymedE::OnlineTransport {
 	// Main thread, once per frame (Online::OnUpdate): one non-blocking receive per pending exchange.
 	// No thread waits on a datagram; a reply is noticed within a frame of arriving.
 	void PollExchanges();
+
+	// One HTTP POST that blocks the calling thread. The async pool delivers onto the main thread,
+	// which is exactly what a health timer cannot depend on: a scene load holds that thread, and
+	// the agent kills a server that misses three health posts. Safe from any thread once Init has
+	// run. Each call uses its own client, so a long-poll and a health post do not share one.
+	struct BlockingResponse
+	{
+		int Status = 0;
+		std::string Body;
+		std::string TransportError;
+
+		bool Arrived() const { return TransportError.empty(); }
+	};
+
+	BlockingResponse PostBlocking(const std::string& url, const std::string& body, int transferTimeoutSeconds);
 }

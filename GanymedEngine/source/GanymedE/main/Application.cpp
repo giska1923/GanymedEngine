@@ -14,8 +14,12 @@
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Core/JobSystem.h"
 #include "GanymedE/Core/KeyCodes.h"
+#include "Platform/Bgfx/BgfxContext.h"
 
 #include <GLFW/glfw3.h>
+
+#include <chrono>
+#include <thread>
 
 namespace GanymedE {
 
@@ -50,18 +54,33 @@ namespace GanymedE {
 		// boot rather than the first time a panel draws.
 		Reflection::Init();
 
-		m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(
-			WindowProps(m_Specification.Name, m_Specification.Width, m_Specification.Height,
-				m_Specification.Fullscreen, m_Specification.CustomTitleBar)));
-		m_Window->SetEventCallback(BIND_CALLBACK_FN(Application::OnEvent, this));
+		if (m_Specification.Headless)
+		{
+			// Nominal resolution: Noop accepts 0x0, and engine code that divides by the width
+			// should not have to. N0 measured both. No vsync, because there is no swap to wait on.
+			const uint32_t width = m_Specification.Width ? m_Specification.Width : 1280;
+			const uint32_t height = m_Specification.Height ? m_Specification.Height : 720;
+			m_HeadlessContext = CreateScope<BgfxContext>(nullptr, /*headless=*/true);
+			m_HeadlessContext->Init(width, height);
+			GE_CORE_INFO("Headless: bgfx Noop, {0}x{1}, no window", width, height);
+		}
+		else
+		{
+			m_Window = std::unique_ptr<GanymedE::Window>(Window::Create(
+				WindowProps(m_Specification.Name, m_Specification.Width, m_Specification.Height,
+					m_Specification.Fullscreen, m_Specification.CustomTitleBar)));
+			m_Window->SetEventCallback(BIND_CALLBACK_FN(Application::OnEvent, this));
+		}
 
 		Renderer::Init();
 
 		// No ordering dependency either way - audio touches neither the GPU nor the VM.
 		// It sits here so the boot log reads renderer, audio, scripting, UI, and so that
 		// a device failure is reported before anything slower has run. Failure is not
-		// fatal: the app continues silent (see AudioEngine.h).
-		AudioEngine::Init();
+		// fatal: the app continues silent (see AudioEngine.h). A headless process has no
+		// device to open and no one to play to.
+		if (!m_Specification.Headless)
+			AudioEngine::Init();
 
 		// Application scope, not the editor's, because the VM belongs to the engine the way the
 		// renderer does — a Scene constructed by any app registers a LuaScriptSystem. It needs no
@@ -71,18 +90,24 @@ namespace GanymedE {
 		// After the VM, and shut down before it: requests are owned by script instances, and the
 		// callbacks waiting on them are sol2 references into ScriptEngine's state. Needs nothing
 		// else - it reads --backend= and starts its network threads.
-		Online::Init();
-		Online::SetPushHandler(&ScriptEngine::QueuePush);
+		// A dedicated server is not a player: it must not sign in or open the push socket.
+		// Its HTTP peer is the fleet agent, started later by ServerLifecycle.
+		if (m_Specification.PlayerBackend)
+		{
+			Online::Init();
+			Online::SetPushHandler(&ScriptEngine::QueuePush);
+		}
 
 		// After both: it needs a live bgfx with compiled shaders, and it shares
 		// ScriptEngine's lua_State. Sized to the window; the editor re-sizes it to
 		// the viewport once that exists.
-		UIEngine::Init(m_Window->GetWidth(), m_Window->GetHeight());
+		if (!m_Specification.Headless)
+			UIEngine::Init(m_Window->GetWidth(), m_Window->GetHeight());
 
 		// A shipped game has no editor chrome, and ImGui is not passive: it installs its
 		// own GLFW callbacks and blocks events by default. Leaving it out is the whole
-		// opt-out - layers' OnImGuiRender simply never runs.
-		if (m_Specification.EnableImGui)
+		// opt-out - layers' OnImGuiRender simply never runs. Headless has no window to attach to.
+		if (m_Specification.EnableImGui && !m_Specification.Headless)
 		{
 			m_ImGuiLayer = new ImGuiLayer();
 			PushOverlay(m_ImGuiLayer);
@@ -197,22 +222,12 @@ namespace GanymedE {
 		return false;
 	}
 
-	void Application::Run()
+	void Application::OnFrame(Timestep timestep)
 	{
-		GE_PROFILE_FUNCTION();
-
-		while (m_Running)
-		{
-			GE_PROFILE_SCOPE("RunLoop");
-
-			float time = (float)glfwGetTime(); // Platform::GetTime()
-			Timestep timestep = time - m_LastFrameTime;
-			m_LastFrameTime = time;
-
-			// One cursor sample per frame, before anything can ask for it, so every caller in a
-			// frame sees the same delta. Deriving it lazily inside GetMouseDelta would give the
-			// second caller in a frame a zero.
-			Input::NewFrame();
+		// One cursor sample per frame, before anything can ask for it, so every caller in a
+		// frame sees the same delta. Deriving it lazily inside GetMouseDelta would give the
+		// second caller in a frame a zero. Headless has no cursor; NewFrame returns immediately.
+		Input::NewFrame();
 
 			// Before the layers, and outside the minimised gate. Before, so a resource a
 			// worker finished last frame becomes usable by the systems that draw with it
@@ -274,13 +289,57 @@ namespace GanymedE {
 				}
 			}
 
+			if (m_Window)
 			{
 				// Event poll plus the bgfx frame submit and swap. A large span here is the
 				// frame waiting on the GPU or on vsync, not CPU work - read it with the bgfx
-				// stats overlay (F1) beside it.
+				// stats overlay (F1) beside it. Headless presents from Run, after this returns.
 				GE_PROFILE_SCOPE("Window::OnUpdate (poll + present)");
 				m_Window->OnUpdate();
 			}
+	}
+
+	void Application::Run()
+	{
+		GE_PROFILE_FUNCTION();
+
+		if (m_Specification.Headless)
+		{
+			// 60 Hz is the physics step. Sleeping the remainder is what keeps an idle server
+			// off a core; vsync is what does this when there is a window.
+			using clock = std::chrono::steady_clock;
+			const auto tick = std::chrono::duration<double>(1.0 / 60.0);
+			auto previous = clock::now();
+
+			while (m_Running)
+			{
+				GE_PROFILE_SCOPE("RunLoop");
+
+				const auto frameStart = clock::now();
+				const float seconds = std::chrono::duration<float>(frameStart - previous).count();
+				previous = frameStart;
+
+				OnFrame(seconds);
+
+				if (m_HeadlessContext)
+					m_HeadlessContext->Frame();
+
+				const auto spent = clock::now() - frameStart;
+				if (spent < tick)
+					std::this_thread::sleep_for(tick - spent);
+			}
+			return;
+		}
+
+		while (m_Running)
+		{
+			GE_PROFILE_SCOPE("RunLoop");
+
+			float time = (float)glfwGetTime(); // Platform::GetTime()
+			Timestep timestep = time - m_LastFrameTime;
+			m_LastFrameTime = time;
+
+			OnFrame(timestep);
 		}
 	}
 }

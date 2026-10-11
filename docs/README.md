@@ -1,12 +1,13 @@
 # GanymedEngine Documentation
 
-The repository contains four projects:
+The repository contains the engine and three applications:
 
-| Project          | What it is                                                                                     |
-| ---------------- | ---------------------------------------------------------------------------------------------- |
-| `GanymedEngine`  | The engine static library. All code under `GanymedEngine/source/`.                             |
-| `GanymedEditor`  | The editor application (scene editing, play mode, content browser).                            |
-| `GanymedRuntime` | The standalone game player: boots a scene into play mode, renders to the backbuffer, no ImGui. |
+| Project            | What it is                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| `GanymedEngine`    | The engine static library. All code under `GanymedEngine/source/`.                             |
+| `GanymedEditor`    | The editor application (scene editing, play mode, content browser).                            |
+| `GanymedRuntime`   | The standalone game player: boots a scene into play mode, renders to the backbuffer, no ImGui. |
+| `GanymedDedicated` | The headless match process the fleet agent spawns. No window. Players are admitted, not yet simulated over the network. |
 
 ## Documentation map
 
@@ -39,6 +40,12 @@ The repository contains four projects:
 | Document                      | Covers                                                                                          |
 | ----------------------------- | ----------------------------------------------------------------------------------------------- |
 | [Runtime](runtime/runtime.md) | GanymedRuntime: boot sequence, runtime.yaml config, backbuffer render mode, the assets snapshot |
+
+### Dedicated
+
+| Document                            | Covers                                                                                                      |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| [Dedicated](dedicated/dedicated.md) | GanymedDedicated: headless boot, the agent lifecycle, connect-token admission, the timed result |
 
 ### ToDo
 

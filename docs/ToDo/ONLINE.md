@@ -1,7 +1,8 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: O0–O4 and O5a done (2026-10-09).** The backend is complete (B1–B5, `api-v0.5`). O5b, the
-last phase, waits on a dedicated-server milestone that has not been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
+**Status: O0–O4 and O5a done (2026-10-09). O5b landed as N1 of [NETCODE.md](NETCODE.md) (2026-10-11);
+the fleet acceptance test is still open there.** The backend is complete (B1–B5, `api-v0.5`, and
+`api-v0.6` for the agent-side result). See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
 The engine half of a game backend: an HTTP and WebSocket client that never blocks the frame, a
 device identity and session, typed Lua bindings for leaderboards and push notifications, and,
@@ -15,8 +16,9 @@ there, complete) and its own phases (B1–B5 below). This file covers only what 
 in `GanymedEngine/`, `GanymedRuntime/` and, for O3's game use, `first-game`.
 
 **Naming, because the two are easy to confuse:** *GanymedServer* is the backend (accounts,
-leaderboards, matchmaking, allocation). *`GanymedDedicated`* is the planned engine app that runs
-one match headless: the game server the backend allocates and the one O5b is about.
+leaderboards, matchmaking, allocation). *`GanymedDedicated`* is the engine app that runs one match
+headless: the game server the backend allocates. What it does is
+[dedicated.md](../dedicated/dedicated.md).
 
 ---
 
@@ -98,6 +100,7 @@ Versions published so far, as git tags on the backend repo:
 | [`api-v0.3`](https://github.com/giska1923/GanymedServer/blob/api-v0.3/docs/api/realtime.md) | the push socket ([`realtime.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.3/docs/api/realtime.md)): messages, presence, close codes; party routes in [`openapi.yaml`](https://github.com/giska1923/GanymedServer/blob/api-v0.3/docs/api/openapi.yaml) | O4 |
 | [`api-v0.4`](https://github.com/giska1923/GanymedServer/blob/api-v0.4/docs/api/openapi.yaml) | matchmaking tickets, the profile's `rating`, the `ticket.updated`, `match.found` and `ticket.failed` pushes | superseded by `api-v0.5` before any engine phase used it |
 | [`api-v0.5`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/openapi.yaml) | the states after `matched`, the ticket's `server` and `result`, `match.ready` and `match.finished` ([`realtime.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/realtime.md)), [`connect-token.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/connect-token.md), [`server-lifecycle.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/server-lifecycle.md). **Changes a meaning:** `matched` was final in `api-v0.4` and is not any more | O5a, O5b |
+| [`api-v0.6`](https://github.com/giska1923/GanymedServer/blob/api-v0.6/docs/api/server-lifecycle.md) | **Breaking for game servers only:** the result goes to the agent (`POST …/result`), the allocation carries no `result_url` or `result_token`, and a server answers `HELLO` before its allocation (`DENIED not allocated`). [`connect-token.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.6/docs/api/connect-token.md) writes down the join-retry rule O5a already follows. Nothing a client calls changed, so O1–O5a stand as built | NETCODE.md's N1 (was O5b) |
 
 **The session token is opaque to the engine.** The backend issues a JWT; the client stores it and
 sends it as `Authorization: Bearer …` and never decodes it. That keeps a JWT library out of the
@@ -130,7 +133,7 @@ prerequisite for anything here.
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores. **Done** | master + `first-game` | **B2** (leaderboards) | about a day |
 | **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings. **Done** | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
 | **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP. **Done** | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
-| **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result | master | **B5** + the dedicated-server milestone | blocked, unsized |
+| **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result. **Built as N1** — fleet acceptance still open in NETCODE.md | master | **B5** + the dedicated-server milestone | landed 2026-10-11 |
 
 These are estimates, not measurements. O1 is the phase that matters. Everything after it is a
 consumer of O1's threading and ownership rules, and getting those wrong shows up as a crash on
@@ -992,65 +995,13 @@ party member.
 - **Not exercised:** a `DENIED` (a fresh token leaves `stubserver` nothing to refuse), and a join
   cancelled mid-flight by its script going away.
 
-### O5b — `GanymedDedicated` hooks (blocked)
+### O5b — `GanymedDedicated` hooks
 
-**Blocked on** a dedicated-server milestone that does not exist yet (`GanymedDedicated`, a
-headless `ApplicationSpecification`, a Scene role, netcode). The backend side is done, and the
-contract is fixed by `server-lifecycle.md` and `connect-token.md`. **This replaces the earlier
-sketch here**, which had the server push its states to the agent with a per-process secret and
-left the signature algorithm open. Neither survived contact with the backend's design.
-
-The backend's [`cmd/stubserver`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/cmd/stubserver/main.go)
-does all of the following in about 270 lines of Go. It is the reference: read it first.
-
-What `GanymedDedicated` needs from `Online/`:
-
-- **Spawn flags.** `--server-id`, `--agent`, `--game-port`, `--advertise`, `--public-key`, read the
-  way `--backend=` is (O1). Refuse to start without them.
-- **The lifecycle, as an HTTP client only.** The server opens no HTTP listener. It calls its
-  agent on localhost, which is the Agones SDK model, and it means O1's client is all it needs.
-  - Bind the UDP game port **before** the first `ready`. A server that cannot accept players
-    must never be offered.
-  - `POST …/ready` is a long-poll held up to 20 s (`204`: ask again; `200`: the allocation).
-    **O1's `transferTimeout` must be overridable per request**, or this call times out by
-    design.
-  - `POST …/allocated` **as soon as the allocation arrives, before loading the map**. The backend
-    withdraws an allocation that is not acknowledged within 5 s. A `4xx` means: do not run the
-    match, shut down.
-  - `POST …/health` every 2 s; 6 s of silence gets the process killed. **Health must not depend
-    on the frame loop.** A 6 s map load on the main thread would otherwise get a healthy server
-    killed. Drive it from a timer on the network thread.
-  - `POST …/shutdown`, then exit. Any non-2xx from the agent means exit as well.
-- **Connect-token verification**, rules 1–8 in order. The contract fixes **Ed25519 (RFC 8032)**,
-  so the HMAC option is gone: a server holds only the public key and cannot mint a token. What
-  is left to choose is the library:
-  - **Monocypher**, with a caution I am fairly sure of but have not checked against a pinned
-    version: its default `crypto_eddsa_*` functions use BLAKE2b, which is *not* RFC 8032
-    Ed25519. The standard variant (SHA-512) is in its optional `monocypher-ed25519` files.
-    Linking the default one would reject every backend signature.
-  - **libsodium** is the larger, unambiguous alternative.
-
-  Either way the acceptance test is cross-language: tokens minted by the backend's Go
-  `connecttoken.Mint` must verify in C++, and a token with one changed byte must not. The rest
-  is small:
-  - base64url without padding, hand-written, about 30 lines;
-  - the claims parsed with O1's JSON reader, **after** the signature checks out;
-  - 5 s of leeway on `iat` and `exp`;
-  - a nonce map with expiry, for replays.
-- **The result**: `POST {result_url}` with `Authorization: Bearer <result_token>` and
-  `{"outcome": "victory" | "defeat"}`.
-  - Retry network errors and `5xx` with backoff. The endpoint is idempotent, so a retry after an
-    unseen success is harmless.
-  - Stop on `4xx`. A `409` means a different outcome was already recorded.
-  - The result token is a credential: never logged, never in Lua.
-  - **Check the contract before implementing this.** The backend has an open item to route results
-    through the agent, because today they reach only one backend replica. That would change this
-    call, and arrive as a new `api-v0.x` tag.
-
-**The acceptance test exists already.** Run the backend's agent with `GanymedDedicated` in place
-of the stub, `fleetagent -- GanymedDedicated.exe`, and the backend's load test,
-`gscli load coop 4`. It must pass the same four stages it passes against `stubserver`: queue
-drained, servers ready, `WELCOME:4`, finished with results.
+Landed as N1 of [NETCODE.md](NETCODE.md) on 2026-10-11. The process, the flags and the admission
+rules are [dedicated.md](../dedicated/dedicated.md). The agent client and the token check are
+[online.md](../engine/online.md#the-dedicated-servers-half). What has not been run — the fleet
+acceptance test in particular — stays in NETCODE.md's N1 table. This section used to be the plan;
+it is not a second spec.
 
 ---
 
@@ -1089,12 +1040,10 @@ drained, servers ready, `WELCOME:4`, finished with results.
 | O3 | [scripting.md](../engine/scripting.md): `Backend.*` bindings. Game-branch HUD changes are recorded in `first-game`'s Proving Ground doc |
 | O4 | `online.md` (reconnect rules by close code); [scripting.md](../engine/scripting.md): `Backend.Subscribe` and the party bindings |
 | O5a | `online.md` (matchmaking, `JoinMatch`, the retry-with-a-fresh-token rule, the UDP socket); [scripting.md](../engine/scripting.md): the matchmaking bindings |
-| O5b | `online.md` (the lifecycle, token verification, the result call), plus the dedicated-server milestone's own docs |
+| O5b | [dedicated.md](../dedicated/dedicated.md), [online.md](../engine/online.md#the-dedicated-servers-half). **Done** with N1; the fleet row is still open in NETCODE.md |
 
 ## Found while planning, out of scope
 
-- **No dedicated-server milestone exists.** O5b depends on one. Its shape was discussed
-  (server-authoritative, a headless `ApplicationSpecification`, a Scene role gating the
-  presentation systems, snapshot interpolation plus local prediction on `CharacterVirtual`), but
-  no plan is written. The backend went ahead without it, with a Go stub server standing in. It is
-  now the only thing between the backend and a playable online match.
+- **No dedicated-server milestone existed.** It is [NETCODE.md](NETCODE.md). N1 (the headless
+  process, the scene role, admission, the result) is built. Snapshot interpolation and prediction
+  are N3 and N4, not started.

@@ -267,7 +267,12 @@ precedent.
 
 ## Built-in systems
 
-Registered in this order (order = execution order; validated against declared access):
+Registered in this order (order = execution order; validated against declared access). A scene
+constructed with `SceneRole::Server` — `GanymedDedicated` does this — stops after
+`BoneAttachmentSystem`. The four systems below that are presentation, and `SystemManager` does not
+construct them ([ecs.md](ecs.md#systemmanager)). `Scene::Copy` keeps the role, so a
+server scene copied for play would still be a server scene. The default role is `Standalone`,
+which is every scene the editor and the runtime create today.
 
 ### PhysicsSystem — [`Systems/PhysicsSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/PhysicsSystem.h)
 Owns the `PhysicsScene` (created on play, destroyed on stop) and the fixed-timestep accumulator.
