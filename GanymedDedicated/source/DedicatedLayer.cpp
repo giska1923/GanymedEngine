@@ -2,6 +2,7 @@
 
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Net/Net.h"
 #include "GanymedE/Scene/SceneSerializer.h"
 
 #include <cstring>
@@ -27,7 +28,10 @@ namespace GanymedE {
 		launch.Port = m_Config.GamePort;
 		launch.Advertise = m_Config.Advertise;
 		launch.Outcome = m_Config.Outcome;
+		launch.Dev = m_Config.Dev;
 		std::memcpy(launch.PublicKey, m_Config.PublicKey, sizeof(launch.PublicKey));
+
+		Net::SetSim(m_Config.Sim);
 
 		std::string error;
 		if (!m_Server.Start(launch, error))
@@ -37,7 +41,7 @@ namespace GanymedE {
 			return;
 		}
 
-		if (!m_Server.WaitForAllocation(error))
+		if (!m_Config.Dev && !m_Server.WaitForAllocation(error))
 		{
 			GE_CORE_ERROR("No allocation: {0}", error);
 			Application::Get().Close();
@@ -83,10 +87,17 @@ namespace GanymedE {
 		m_Scene->OnRuntimeStart();
 		m_RuntimeStarted = true;
 		m_Simulating = true;
-		m_MatchEnd = std::chrono::steady_clock::now()
-			+ std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-				std::chrono::duration<double>(m_Config.MatchSeconds));
-		GE_CORE_INFO("Match running for {0} s, outcome {1}", m_Config.MatchSeconds, m_Config.Outcome);
+		if (m_Config.Dev)
+		{
+			GE_CORE_INFO("Dev server up on {0}; it runs until killed", m_Config.Advertise);
+		}
+		else
+		{
+			m_MatchEnd = std::chrono::steady_clock::now()
+				+ std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+					std::chrono::duration<double>(m_Config.MatchSeconds));
+			GE_CORE_INFO("Match running for {0} s, outcome {1}", m_Config.MatchSeconds, m_Config.Outcome);
+		}
 	}
 
 	void DedicatedLayer::OnDetach()
@@ -114,6 +125,10 @@ namespace GanymedE {
 			return;
 
 		m_Scene->OnUpdateRuntime(ts);
+
+		// Dev has no agent and no match clock. Killing the process is the stop.
+		if (m_Config.Dev)
+			return;
 
 		const bool refused = m_Server.IsStopped();
 		const bool elapsed = std::chrono::steady_clock::now() >= m_MatchEnd;

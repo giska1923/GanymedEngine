@@ -1,11 +1,13 @@
 # Milestone — Netcode (a dedicated server, and clients that play on it)
 
 **Status: N0 done (2026-10-10). N1 is built (2026-10-11) and its local checks passed; the fleet
-acceptance test has not been run, so N1 is not closed. N2–N5 are not started.** It follows
+acceptance test has not been run, so N1 is not closed. N2 is built (2026-10-11) and its local
+checks were run; the path through the backend was not. N3–N5 are not started.** It follows
 [ONLINE.md](ONLINE.md), whose last phase, O5b, is this N1. It depends on `online-o4` (O4 and O5a)
 reaching `master`. N1 is written against the backend's `api-v0.6` (results through the agent,
 `DENIED` before allocation), which is built. What the process does now is
-[dedicated.md](../dedicated/dedicated.md).
+[dedicated.md](../dedicated/dedicated.md). The session after `WELCOME` is
+[netcode.md](../engine/netcode.md).
 
 The goal is the Proving Ground played co-op by two to four people. Each person runs
 `GanymedRuntime`, the backend matches them, and the match runs on one `GanymedDedicated` that the
@@ -261,7 +263,7 @@ properties) and none of its machinery:
 |---|---|---|---|
 | **N0** | Spikes: headless boot, `CharacterVirtual` replay, the Ed25519 library | throwaway, done 2026-10-10 | — |
 | **N1** | `GanymedDedicated`: a headless app, a Scene role, the agent lifecycle, token verification, the result (**was O5b**). Built 2026-10-11. Fleet acceptance not run | master | about a week |
-| **N2** | Transport: sockets, connections, the packet header and acks, the conditioner, `--dev` | master | about a week |
+| **N2** | Transport: sockets, connections, the packet header and acks, the conditioner, `--dev`. Built 2026-10-11. The fleet path was not run | master | about a week |
 | **N3** | Replication: ticks, network IDs, spawn and destroy, snapshots with delta compression, interpolation | master | 1½–2 weeks |
 | **N4** | Input and prediction: commands, `OnTick`, the predicted character, reconciliation | master | 1½–2 weeks |
 | **N5** | The game: script roles and fields, shot events, co-op rules, the match result through the backend | master (engine hooks) + `first-game` (the game) | 2–3 weeks |
@@ -473,6 +475,20 @@ under simulated bad networks, with no game state in them yet.
 | Through the backend | the real path: matchmaking → `JoinMatch` → the same socket continues into a session with the allocated `GanymedDedicated` |
 | Spoofing | a packet with the wrong session ID, or from another port, is dropped and counted |
 
+**Run on 2026-10-11, Windows x64 Debug.** `GanymedDedicated --dev` on `127.0.0.1:17777` and
+`GanymedRuntime --connect`. No fleet. What the code does now is [netcode.md](../engine/netcode.md).
+
+| Check | Result |
+|---|---|
+| Bad flags | `--dev --advertise 10.0.0.1:7777` and `--dev --net-sim=nope` each exited 2. `--dev` with no `--server-id` wrote `dedicated-dev.log` and left `GanymedE.log` at the same length (116438) |
+| Connect | Two runtimes, `--name=alpha` and `--name=beta`. The server logged session `00183cc38d65add6` for alpha at `127.0.0.1:55140` and `c19ab98e6359eeb7` for beta at `127.0.0.1:55141` |
+| RTT | `--net-sim=lat:50` on both sides. After the estimate settled, the server read 115, 118, 118, 121 ms and the client 115, 117, 115, 119 ms. The same link with no added latency read 15–24 ms, which is the poll: the client once a frame, the server's `select` at 2 ms. 50 + 50 plus that poll is the 115–121. A strict ±16 ms band around 100 ms is 84–116, so the high end sits a few milliseconds outside it. The estimator was not adjusted |
+| Loss | `--net-sim=loss:10` each way, ~32 s after the session (32 one-second lines). Server, last line: loss in 9.5% out 9.7%. Client: in 9.9% out 9.1%. All four inside 10% ± 2. No added latency, so the ack loop ran at frame rate rather than 10 Hz; the percentage is over that larger sample |
+| Reliable channel | `--net-sim=loss:20,reorder:50` both sides, `--net-test=reliable:1000`. The client logged `Reliable test ok: 1000 messages, in order, exactly once`. The server logged no gap |
+| Timeout | Killing the client: `Player to left (timeout)` 5.1 s later (the waiter's poll is 100 ms). Killing the server: `server at 127.0.0.1:17777 went silent; session ended` 5.1 s later |
+| Spoofing | The client's line was `Spoof probes sent: one wrong session, one from another port`. The server's next stats lines read `dropped session 1, address 1` |
+| Not run | Matchmaking → `JoinMatch` → the same socket into a session on an allocated `GanymedDedicated`. The handover is wired; nothing here spoke to GanymedServer or fleetagent |
+
 ### N3 — replication
 
 #### Goal
@@ -646,7 +662,7 @@ defeat reported by the server and ratings that change.
 | Phase | Doc |
 |---|---|
 | N1 | [dedicated.md](../dedicated/dedicated.md), [online.md](../engine/online.md), [architecture.md](../engine/architecture.md), [ecs.md](../engine/ecs.md), [build-and-tooling.md](../engine/build-and-tooling.md), [ONLINE.md](ONLINE.md). Written with the code. The fleet row is still open |
-| N2 | **new** `docs/engine/netcode.md`, indexed from [docs/README.md](../README.md): sockets, connections, the packet format, the conditioner; [runtime.md](../runtime/runtime.md) (`--connect=`, `--net-sim=`); online.md (`JoinMatch` hands over its socket) |
+| N2 | [netcode.md](../engine/netcode.md), indexed from [docs/README.md](../README.md); [runtime.md](../runtime/runtime.md) (`--connect=`, `--name=`, `--net-sim=`, `--net-test=`); [online.md](../engine/online.md) (`JoinMatch` hands over its socket); [dedicated.md](../dedicated/dedicated.md) (`--dev`). Written with the code. The fleet row is still open |
 | N3 | netcode.md (ticks, snapshots, delta, interpolation); [scene.md](../engine/scene.md) (`ReplicatedComponent`, derived child UUIDs) |
 | N4 | netcode.md (commands, prediction, reconciliation); [scripting.md](../engine/scripting.md) (`OnTick`, `PlayerCommand`, roles); [physics.md](../engine/physics.md) (replaying a character) |
 | N5 | scripting.md (replicated fields, `Net.Broadcast`, `OnNetEvent`); the Proving Ground's own record on `first-game` |

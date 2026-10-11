@@ -1,5 +1,7 @@
 #pragma once
 
+#include "GanymedE/Net/Net.h"
+
 #include <cstdint>
 #include <string>
 
@@ -15,6 +17,7 @@ namespace GanymedE {
 		std::string Advertise;      // host:port, the token's server_addr
 		uint8_t PublicKey[32]{};
 		std::string Outcome;        // "victory" or "defeat"
+		bool Dev = false;           // loopback only, no agent, HELLO dev:<name>
 	};
 
 	// The game server's half of the fleet: an HTTP client of its agent, and a UDP port for
@@ -51,7 +54,7 @@ namespace GanymedE {
 	private:
 		void HealthLoop();
 		void DoorLoop();
-		std::string Answer(const std::string& datagram);
+		std::string Answer(const std::string& datagram, const Net::Address& from);
 		bool Post(const std::string& path, const std::string& body, int transferTimeoutSeconds,
 			int& status, std::string& responseBody, std::string& error);
 		void ReportResult();

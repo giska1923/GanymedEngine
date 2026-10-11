@@ -2,8 +2,8 @@
 
 The process the fleet agent spawns for one match. It boots without a window, waits until the agent
 allocates it, loads one scene as a server, admits players who present a connect token, and reports
-a victory or a defeat when a timer expires. Admitted players are counted. Nothing is replicated yet:
-that is N2 onward in [NETCODE.md](../ToDo/NETCODE.md).
+a victory or a defeat when a timer expires. Admitted players are counted, and after `WELCOME` they
+have a session ([netcode.md](../engine/netcode.md)). Nothing is replicated yet: that is N3.
 
 Production engines usually ship this as a second build of the game. Unreal's dedicated server is a
 target: `WITH_SERVER_CODE`, the client rendered out, often a different executable. Unity's headless
@@ -19,7 +19,7 @@ them. There is no server `#ifdef`.
 | Sources | `GanymedDedicated/source/` — `DedicatedApp.cpp`, `DedicatedConfig`, `DedicatedLayer` |
 | Content | `assets/dedicated.yaml`, then the scene it names (default `scenes/BoxesPhysicsExample.ganymede`) |
 | Working directory | whatever `--root` names. The Visual Studio `debugdir` is the repository root, and that is only the debugger |
-| Log | stderr, which the agent captures, and `dedicated-<server-id>.log` in that directory, opened append. `GanymedE.log` is not touched |
+| Log | stderr, which the agent captures, and `dedicated-<server-id>.log` in that directory, opened append. `--dev` with no id uses `dedicated-dev.log`. `GanymedE.log` is not touched |
 
 ## How the agent starts it
 
@@ -56,9 +56,11 @@ and returns 0 from `main`. The agent treats any exit as a dead process and does 
 | `--root` | Working directory for this process. Optional under the debugger, required in the agent command above |
 | `--server-id` | Path segment in every agent URL, and the log file's name |
 | `--agent` | The agent's origin, no path (`http://127.0.0.1:…`). A trailing slash is stripped |
-| `--game-port` | UDP port to bind, on all interfaces |
-| `--advertise` | `host:port` the token's `server_addr` must equal |
-| `--public-key` | Ed25519 public key, 32 bytes. The standard alphabet, padding and a trailing newline are accepted here only |
+| `--game-port` | UDP port to bind. All interfaces on the fleet path; loopback only with `--dev` |
+| `--advertise` | `host:port` the token's `server_addr` must equal. With `--dev`, forced to `127.0.0.1:<port>` |
+| `--public-key` | Ed25519 public key, 32 bytes. The standard alphabet, padding and a trailing newline are accepted here only. Not required with `--dev` |
+| `--dev` | No agent, loopback only, `HELLO dev:<name>`. See [development mode](#development-mode) |
+| `--net-sim` | Latency, jitter, loss, duplicate, reorder on the send path. See [netcode.md](../engine/netcode.md#the-conditioner). A bad value exits 2 |
 
 `--match-seconds`, `--outcome`, `--scene` and `--load-delay` override `assets/dedicated.yaml`.
 Both `--name value` and `--name=value` work, and so does the single dash, because the agent's
@@ -66,6 +68,24 @@ example command is a Go flag set. Unknown flags are ignored, so a stray `--rende
 refuse to start: a headless process forces bgfx's Noop backend anyway. `--load-delay` holds the
 main thread for that many seconds after the allocation is acknowledged and before the scene loads.
 It exists so the health check can be proven; the default is 0.
+
+## Development mode
+
+`--dev` is how a transport test runs without the fleet. The agent flags are not required. The port
+defaults to 7777 when `--game-port` is omitted. The socket binds `127.0.0.1` only, and `--advertise`
+must be that same `127.0.0.1:<port>` or it is filled in as that. Anything else exits 2, so a dev
+process cannot be pointed at a public address by accident.
+
+There is no `OnlineTransport::Init`, no health thread, no `ready`, no `allocated`, and no result.
+The match clock is not armed: `dedicated.yaml`'s ten seconds is shorter than a loss measurement,
+and the process stays up until it is killed. `GiveUp` and `Finish` only tear the socket down.
+`Finish` logs `Dev server stopped`. The scene still loads as `SceneRole::Server`, and the door
+thread is the same one as the fleet path.
+
+Admission is `HELLO dev:<name>`. The name is 1–32 characters from `A–Z`, `a–z`, `0–9`, `-` and `_`.
+Anything else is `DENIED expected HELLO dev:<name>`. A good hello is `WELCOME <name>`, and the
+session in [netcode.md](../engine/netcode.md) starts from there. `GanymedRuntime --connect=` is the
+other half.
 
 ## Boot
 
@@ -80,13 +100,13 @@ not retry on a real backend: a real backend needs the window this process does n
 
 `PlayerBackend = false` skips `Online::Init`. A dedicated process must not sign in to the game
 backend or open the push socket. Its only HTTP peer is the agent, and that client is
-`ServerLifecycle`, which calls `OnlineTransport::Init` itself.
+`ServerLifecycle`, which calls `OnlineTransport::Init` itself. `--dev` does not: there is no agent.
 
 The run loop is not `glfwGetTime` and not a swap. It takes a timestep from `steady_clock` and
 sleeps out the rest of 1/60 s after `BgfxContext::Frame()`. 60 Hz is the physics step. The sleep
 is what keeps an idle server off a core; vsync is what does that job when a window exists.
 
-`DedicatedLayer::OnAttach` then:
+`DedicatedLayer::OnAttach` on the fleet path then:
 
 1. Binds the UDP port and starts two threads: health, and the door that reads that port. The port
    is bound before the first `ready`. A server that cannot accept a datagram must not be offered.
@@ -99,8 +119,8 @@ is what keeps an idle server off a core; vsync is what does that job when a wind
    deserializes the scene with `SceneRole::Server`.
 5. `OnRuntimeStart`. The match clock starts here.
 
-The frame loop steps the scene. When the clock expires it posts the result, posts `shutdown`,
-and closes. A refused health post is not a finished match: the process calls `GiveUp`, which
+The frame loop steps the scene. On the fleet path, when the clock expires it posts the result,
+posts `shutdown`, and closes. A refused health post is not a finished match: the process calls `GiveUp`, which
 posts `shutdown` once and does not report the configured outcome, and does not spend the result
 endpoint's five retries on an agent that has already stopped answering. The same split is in
 `OnDetach`, so a layer torn down after a refusal does not report one either. A scene that fails
@@ -121,13 +141,13 @@ immediately, then every 2 s, through `OnlineTransport::PostBlocking`: a synchron
 constructed for that call, so it does not share the long-poll's client and does not touch the
 main-thread completion queue. A non-2xx or a transport error stops the process.
 
-The door thread is the other one. It blocks in `recvfrom` with a 200 ms timeout, answers one
-datagram, and repeats. N2's `Net/Socket` replaces this socket; until then the 200 ms wake is the
-way the thread notices a shutdown. Teardown sets stop, joins the health thread, joins the door,
-and only then closes the socket. Closing under a blocked `recvfrom` would race the descriptor,
-and on Linux that number can be reused before the call returns. On Windows the socket disables
-`SIO_UDP_CONNRESET` and treats `WSAECONNRESET` as a timeout, so one dead client does not close
-the port.
+The door thread is the other one. It calls `Net::PumpServer(2)`: `select` for up to 2 ms, then
+whatever datagrams are waiting. That wake is how the thread notices a shutdown. Teardown sets
+stop, joins the health thread, joins the door, and only then closes the socket. Closing under a
+blocked `select` would race the descriptor, and on Linux that number can be reused before the
+call returns. On Windows the server socket disables `SIO_UDP_CONNRESET` and treats
+`WSAECONNRESET` as another empty read, so one dead client does not close the port. The socket,
+the session and the conditioner are [netcode.md](../engine/netcode.md).
 
 ## Admission
 
@@ -152,6 +172,9 @@ writes them. Before the allocation is acknowledged every well-formed hello is
    prints.
 
 The token and the public key are never logged. The line that is logged is the peer and the reply.
+A `WELCOME` also records the address on the session (`Net::NoteAdmitted`), so the client's next
+datagram is a session request rather than a stranger. A re-admit points the existing session at
+the new address and keeps the id.
 
 ## The result
 

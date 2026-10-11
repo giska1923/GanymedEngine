@@ -70,16 +70,41 @@ namespace GanymedE {
 		if (argc <= 1)
 			return;
 
-		// Skip options - the engine reads its own (--renderer=, see BgfxContext) and they can
-		// appear before the scene.
+		// Skip options the engine reads itself (--renderer=, --root). `--connect` and
+		// the net flags are this app's, and their values are not a scene path.
 		const char* positional = nullptr;
 		for (int i = 1; i < argc; i++)
 		{
-			if (argv[i] && argv[i][0] != '-')
+			const char* arg = argv[i];
+			if (!arg)
+				continue;
+
+			const auto take = [&](const char* name, std::string& dest) -> bool
 			{
-				positional = argv[i];
-				break;
-			}
+				const std::string dashed = std::string("--") + name;
+				const std::string single = std::string("-") + name;
+				const std::string text = arg;
+				if (text == dashed || text == single)
+				{
+					if (i + 1 < argc && argv[i + 1])
+						dest = argv[++i];
+					return true;
+				}
+				const std::string eq = dashed + "=";
+				if (text.rfind(eq, 0) == 0)
+				{
+					dest = text.substr(eq.size());
+					return true;
+				}
+				return false;
+			};
+
+			if (take("connect", Connect) || take("name", Name) || take("net-sim", NetSim) || take("net-test", NetTest))
+				continue;
+			if (arg[0] == '-')
+				continue;
+			if (!positional)
+				positional = arg;
 		}
 
 		if (!positional)

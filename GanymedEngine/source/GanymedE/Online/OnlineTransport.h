@@ -4,6 +4,7 @@
 // with no idea of sessions, tokens or retries. OnlineSession.cpp builds those on top of it.
 // Online.cpp is its only implementation, and the only engine TU that includes IXWebSocket.
 
+#include "GanymedE/Net/Socket.h"
 #include "GanymedE/Online/Online.h"
 
 #include <chrono>
@@ -65,11 +66,13 @@ namespace GanymedE::OnlineTransport {
 
 	using ExchangeId = uint64_t;
 
-	// Sends `payload` as one datagram to `address` ("host:port") and waits up to `timeout` for one
-	// datagram back. `completion(ok, text)` gets the reply, or why there is none ("no answer",
-	// "nothing is listening"). It runs on the main thread, from PollExchanges, never inline.
-	ExchangeId Exchange(const std::string& address, const std::string& payload, std::chrono::milliseconds timeout,
-		std::function<void(bool ok, const std::string& text)> completion);
+	// Sends `payload` as one datagram on `socket` to `address` ("host:port") and waits up to
+	// `timeout` for one datagram back. The socket is not owned here: JoinMatch keeps one for
+	// every attempt and, on WELCOME, hands that same socket to the game session.
+	// `completion(ok, text)` gets the reply, or why there is none ("no answer", "nothing is
+	// listening"). It runs on the main thread, from PollExchanges, never inline.
+	ExchangeId Exchange(Net::Socket& socket, const std::string& address, const std::string& payload,
+		std::chrono::milliseconds timeout, std::function<void(bool ok, const std::string& text)> completion);
 
 	// The completion will never run.
 	void AbortExchange(ExchangeId id);

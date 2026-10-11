@@ -701,6 +701,27 @@ declare namespace Backend {
 	function JoinMatch(owner: Entity, callback: (ok: boolean, result: string) => void): void;
 }
 
+/** The game session after WELCOME, or the dev session from `--connect`. Zeros when there is none. */
+declare interface NetStats {
+	connected: boolean;
+	peers: number;
+	/** Smoothed round trip, milliseconds. */
+	rtt: number;
+	/** Percent of the peer's packets missing, over the whole session. */
+	lossIn: number;
+	/** Percent of our packets the peer did not acknowledge, once they have left the ack window. */
+	lossOut: number;
+	bytesInPerSec: number;
+	bytesOutPerSec: number;
+	resent: number;
+	droppedSession: number;
+	droppedAddress: number;
+}
+
+declare namespace Net {
+	function GetStats(): NetStats;
+}
+
 // ---------------------------------------------------------------------------
 // RmlUi's own Lua API, available because the UI plugin shares this VM.
 //

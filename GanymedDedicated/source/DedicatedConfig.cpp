@@ -1,6 +1,7 @@
 #include "DedicatedConfig.h"
 
 #include "GanymedE/Core/Log.h"
+#include "GanymedE/Net/Net.h"
 #include "GanymedE/Online/ConnectToken.h"
 
 #include <cstdlib>
@@ -106,8 +107,16 @@ namespace GanymedE {
 	{
 		ok = false;
 		std::string publicKey;
+		std::string netSim;
 		for (int i = 1; i < argc; i++)
 		{
+			const char* arg = argv[i];
+			if (arg && (std::string(arg) == "--dev" || std::string(arg) == "-dev"))
+			{
+				config.Dev = true;
+				continue;
+			}
+
 			const char* value = nullptr;
 			if (TakeFlag(argc, argv, i, "server-id", value))
 				config.ServerId = value;
@@ -145,6 +154,32 @@ namespace GanymedE {
 					return config;
 				}
 			}
+			else if (TakeFlag(argc, argv, i, "net-sim", value))
+				netSim = value;
+		}
+
+		if (!Net::ParseSim(netSim, config.Sim, error))
+			return config;
+
+		if (config.Dev)
+		{
+			if (config.GamePort == 0)
+				config.GamePort = 7777;
+			const std::string loopback = "127.0.0.1:" + std::to_string(config.GamePort);
+			if (config.Advertise.empty())
+				config.Advertise = loopback;
+			else
+			{
+				Net::Address advertised;
+				if (!Net::ParseAddress(config.Advertise, advertised, error) || !advertised.IsLoopback()
+					|| advertised.Port != static_cast<uint16_t>(config.GamePort))
+				{
+					error = "--dev listens on 127.0.0.1:" + std::to_string(config.GamePort) + " only";
+					return config;
+				}
+			}
+			ok = true;
+			return config;
 		}
 
 		if (config.ServerId.empty() || config.Agent.empty() || config.GamePort == 0

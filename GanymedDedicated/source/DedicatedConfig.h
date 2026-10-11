@@ -1,5 +1,7 @@
 #pragma once
 
+#include "GanymedE/Net/Net.h"
+
 #include <cstdint>
 #include <string>
 
@@ -20,6 +22,11 @@ namespace GanymedE {
 		int GamePort = 0;
 		std::string Advertise;
 		uint8_t PublicKey[32]{};
+
+		// Loopback, no agent, `HELLO dev:<name>`. The match clock does not run: the
+		// process stays up until it is killed, which is what a transport test needs.
+		bool Dev = false;
+		Net::Sim Sim;
 
 		static DedicatedConfig Load(const std::string& path);
 	};

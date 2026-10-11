@@ -161,11 +161,23 @@ namespace GanymedE {
 			}
 		}
 
-		if (!serverId)
+		// `--dev` has no value, so TakeFlag will not see it. A dev server is still a dedicated
+		// process: it must not truncate the editor's GanymedE.log. Without an id the file is
+		// dedicated-dev.log.
+		bool dev = false;
+		for (int i = 1; i < argc; i++)
+		{
+			const char* arg = argv[i];
+			if (arg && (std::string(arg) == "--dev" || std::string(arg) == "-dev"))
+				dev = true;
+		}
+		if (!serverId && !dev)
 		{
 			Init();
 			return true;
 		}
+
+		const char* logId = serverId ? serverId : "dev";
 
 		std::vector<spdlog::sink_ptr> logSinks;
 #ifdef GE_PLATFORM_WINDOWS
@@ -180,7 +192,7 @@ namespace GanymedE {
 		err->set_pattern("[%T] [%l] %n: %v");
 		logSinks.push_back(std::move(err));
 
-		const std::string file = ServerLogFile(serverId);
+		const std::string file = ServerLogFile(logId);
 		try
 		{
 			auto disk = std::make_shared<spdlog::sinks::basic_file_sink_mt>(file, /*truncate=*/false);

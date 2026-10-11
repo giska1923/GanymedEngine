@@ -123,7 +123,7 @@ project "GanymedEngine"
 	-- C sources, and a TU that must include winsock2.h before the PCH's windows.h.
 	filter "files:extern/monocypher/**.c"
 		flags { "NoPCH" }
-	filter "files:source/GanymedE/Online/GamePort.cpp"
+	filter "files:source/GanymedE/Net/Socket.cpp"
 		flags { "NoPCH" }
 
 	filter "system:windows"

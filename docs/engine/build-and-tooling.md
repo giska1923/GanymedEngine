@@ -391,7 +391,7 @@ script does instead of upstream's CMake, and why:
   every app's list. It sits in the apps' Linux and macOS link lists after the engine, beside
   enkiTS. The macOS lists carry it, but no macOS build has been run with it.
 - **`IncludeDir.IXWebSocket` is the submodule root** (its headers are `<ixwebsocket/...>`), on the
-  engine project only, and **exactly one engine TU may include it.** `GamePort.cpp` is the other
+  engine project only, and **exactly one engine TU may include it.** `Net/Socket.cpp` is the other
   Winsock TU, and it does not include IXWebSocket. It is `NoPCH`, so `winsock2.h` is the first
   Windows header in that file, and the engine's Windows link list includes `ws2_32`.
   `IXNetSystem.h` includes

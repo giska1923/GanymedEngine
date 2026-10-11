@@ -152,7 +152,9 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 `Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)), `Backend` (the online backend:
 `IsSignedIn`, `GetPlayerName`, `GetProfile`, `SubmitScore`, `GetMyStanding`, `GetLeaderboard`,
 `Subscribe`/`Unsubscribe`, `GetPushStatus`, the party calls, and `Queue`, `GetTicket`, `CancelTicket`
-and `JoinMatch` for matches — see [online.md](online.md#what-a-script-sees)).
+and `JoinMatch` for matches — see [online.md](online.md#what-a-script-sees)),
+`Net.GetStats()` (the session after `WELCOME`: round trip, loss, byte rates, resent and drop
+counts, zeros until a session exists — see [netcode.md](netcode.md)).
 
 > **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
 > `int64_t`, and sol2 with `SOL_ALL_SAFETIES_ON` **throws** rather than truncating when asked to

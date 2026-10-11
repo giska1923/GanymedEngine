@@ -6,9 +6,8 @@ holds the player's identity and session, issues requests without ever blocking a
 responses to Lua inside the owning scene's script update. A response can never reach a destroyed
 scene or a destroyed script instance. It also keeps the push socket open, and joins a match's game
 server. The same directory holds the other side of that join: the dedicated process's client of
-its fleet agent, and the check on the token the player presents. Gameplay packets are not here.
-They start at N2 of [NETCODE.md](../ToDo/NETCODE.md). The player-client milestone is
-[ONLINE.md](../ToDo/ONLINE.md).
+its fleet agent, and the check on the token the player presents. The packets after `WELCOME` are
+[netcode.md](netcode.md). The player-client milestone is [ONLINE.md](../ToDo/ONLINE.md).
 
 | File | Holds |
 |---|---|
@@ -17,7 +16,7 @@ They start at N2 of [NETCODE.md](../ToDo/NETCODE.md). The player-client mileston
 | [OnlineTransport.h](../../GanymedEngine/source/GanymedE/Online/OnlineTransport.h) / [Online.cpp](../../GanymedEngine/source/GanymedE/Online/Online.cpp) | Private: single HTTP attempts over a pool of four clients, the push socket, one-datagram UDP exchanges, and `PostBlocking` for the agent. **Online.cpp is the only engine TU that includes IXWebSocket** |
 | [ServerLifecycle.h](../../GanymedEngine/source/GanymedE/Online/ServerLifecycle.h) | The dedicated process's agent client: ready, allocated, health, result, shutdown, and the UDP door |
 | [ConnectToken.h](../../GanymedEngine/source/GanymedE/Online/ConnectToken.h) | Rules 1–6 of a connect token. Rules 7 and 8 need the allocation, so they stay in `ServerLifecycle` |
-| [GamePort.h](../../GanymedEngine/source/GanymedE/Online/GamePort.h) | The listen socket. N1 only — N2's `Net/Socket` replaces it. No IXWebSocket: that UDP socket cannot bind |
+| [Net/](../../GanymedEngine/source/GanymedE/Net) | The socket the join hands over, and the session that continues on it. [netcode.md](netcode.md) |
 | [Json.h](../../GanymedEngine/source/GanymedE/Online/Json.h) / [.cpp](../../GanymedEngine/source/GanymedE/Online/Json.cpp) | `JsonValue`, `ParseJson` (over yaml-cpp), `WriteJson` |
 | [ScriptEngine.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptEngine.cpp) | Who owns each request, per-scene mailboxes, cancellation, delivery to Lua |
 | [ScriptBindings.cpp](../../GanymedEngine/source/GanymedE/Scripting/ScriptBindings.cpp) | The `Backend` table, JSON ↔ Lua |
@@ -553,23 +552,27 @@ seconds.
 
 ### The socket
 
-`OnlineTransport::Exchange(address, payload, timeout, completion)` lives in `Online.cpp`, the one
-IXWebSocket TU. It uses IXWebSocket's `ix::UdpSocket`, after the same `initNetSystem`.
+`OnlineTransport::Exchange(socket, address, payload, timeout, completion)` lives in `Online.cpp`.
+The socket is a `Net::Socket` the join owns. Exchange borrows the pointer, sends the datagram at
+once, and does not close it. IXWebSocket's UDP socket is not used: it cannot bind, and it cannot
+report the sender.
 
-- **Each exchange opens its own non-blocking socket** and sends the datagram.
+- **One socket for every attempt.** The first `HELLO` opens an ephemeral client port. A retry sends
+  on that same socket. A `WELCOME` lost on attempt 1 must not leave the server holding a port this
+  client has already closed.
 - **The wait is a non-blocking `recvfrom` per pending exchange, polled from `Online::OnUpdate` once
   a frame.** That runs on the main thread, with no thread of its own. Like the reconnect timer, it
   costs nothing when nothing is pending, and one system call per pending exchange per frame
   otherwise.
 - **Why polling.** A blocking receive on a worker would need its own thread, or a job that sleeps.
   Both cost more than polling one socket for at most a second. Polling is precise to a frame, which
-  is fine against a 1 s timeout.
-- **The socket is closed** when the exchange completes, when it is aborted (`Cancel`), or at
-  `Shutdown`.
-
-The plan wanted the netcode milestone to take this socket over, not open a new one. It does not: the
-socket is closed after `WELCOME`. What a handover looks like depends on the protocol that continues
-after it, and that protocol does not exist yet. [NETCODE.md](../ToDo/NETCODE.md) plans it in N2.
+  is fine against a 1 s timeout, and it is the same granularity the session's round-trip sample
+  allows.
+- **On `WELCOME` the socket is moved into the session** (`Net::BeginClient`) before the join is
+  erased. Cancel drops the borrow first and then destroys the join, which closes the socket.
+  `Shutdown` does the same if a join is still in flight.
+- **The handshake send is not conditioned.** The retry is one second. Simulated delay starts with
+  the session, so it cannot eat the retry. See [netcode.md](netcode.md).
 
 **Stats:** joins (`JoinMatch` calls), `HELLO`s sent, and joins that succeeded. They go in the shutdown
 line, after the push counts. A join is not a request, so it is not in the request counts, but its
@@ -614,15 +617,17 @@ rules as the player client's attempts. The net system has to be up first, which 
 `Online::Shutdown` does not run that path: the player session was never created, so it returns
 immediately.
 
-The listen socket is raw Winsock (or BSD sockets), in `GamePort.cpp`, which is excluded from the
-precompiled header so `winsock2.h` is included before `windows.h`. It binds `INADDR_ANY`, receives
-with a 200 ms timeout, and on Windows disables `SIO_UDP_CONNRESET` and treats `WSAECONNRESET` as
-that timeout. It does not call `WSACleanup`. IXWebSocket's `initNetSystem` already called
-`WSAStartup`, and a cleanup here would drop the count the HTTP client still holds. N2 replaces
-the type. The 200 ms wake and the ioctl stay true of whatever socket replaces it: a server that
-treats one dead client as a dead port stops admitting everyone else. Teardown joins that thread
-before `Close`. Stop is already set, so the blocked receive returns inside 200 ms; closing first
-races the descriptor, and on Linux the number can be handed out again before `recvfrom` returns.
+The listen socket is `Net::Socket` ([netcode.md](netcode.md)). It binds `INADDR_ANY` on the fleet
+path and `127.0.0.1` with `--dev`. The door thread polls it with `select` for 2 ms.
+`Socket.cpp` is excluded from the precompiled header so `winsock2.h` comes before `windows.h`. It
+does not call `WSACleanup`. IXWebSocket's `initNetSystem` already called `WSAStartup`, and a
+cleanup here would drop the count the HTTP client still holds. On Windows the server socket
+disables `SIO_UDP_CONNRESET` and treats `WSAECONNRESET` as an empty read: a server that treats one
+dead client as a dead port stops admitting everyone else. A client socket leaves that error on, so
+JoinMatch can still tell a dead port from silence. Teardown joins the door before `CloseServer`.
+Stop is already set, so `select` returns inside 2 ms; closing first races the descriptor, and on
+Linux the number can be handed out again before the call returns. A `WELCOME` also calls
+`Net::NoteAdmitted`, which is what lets the next datagram open a session instead of being dropped.
 
 Token verification is `crypto_ed25519_check` from Monocypher 4.0.3's SHA-512 files, over the
 encoded payload bytes as they arrived, then the claims. Both halves of the token are raw

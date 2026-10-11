@@ -10,6 +10,7 @@
 #include "GanymedE/Core/KeyCodes.h"
 #include "GanymedE/Core/MouseButtonCodes.h"
 #include "GanymedE/ECS/System.h"
+#include "GanymedE/Net/Net.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
@@ -1315,6 +1316,30 @@ namespace GanymedE {
 		// The online client (docs/engine/online.md). Every request binding is typed per endpoint,
 		// takes its owner first (self.entity) and its callback last, and maps the API's field names
 		// to script-style ones (display_name -> name). There is no generic request.
+		void RegisterNet(sol::state& lua)
+		{
+			// The HUD line. Zeros until a session exists. On a server the figures are the
+			// mean of the live sessions, and the byte rates are sums. See netcode.md.
+			sol::table net = lua.create_named_table("Net");
+			net["GetStats"] = [](sol::this_state ts)
+			{
+				sol::state_view lua(ts);
+				const Net::Stats stats = Net::GetStats();
+				sol::table out = lua.create_table();
+				out["connected"] = stats.Connected;
+				out["peers"] = stats.Peers;
+				out["rtt"] = stats.RttMs;
+				out["lossIn"] = stats.LossIn;
+				out["lossOut"] = stats.LossOut;
+				out["bytesInPerSec"] = stats.BytesInPerSec;
+				out["bytesOutPerSec"] = stats.BytesOutPerSec;
+				out["resent"] = static_cast<int64_t>(stats.Resent);
+				out["droppedSession"] = static_cast<int64_t>(stats.DroppedSession);
+				out["droppedAddress"] = static_cast<int64_t>(stats.DroppedAddress);
+				return out;
+			};
+		}
+
 		void RegisterBackend(sol::state& lua)
 		{
 			sol::table backend = lua.create_named_table("Backend");
@@ -1644,6 +1669,7 @@ namespace GanymedE {
 		RegisterAudio(lua);
 		RegisterUI(lua);
 		RegisterBackend(lua);
+		RegisterNet(lua);
 	}
 
 	void RegisterScriptBindings(sol::state& lua)

@@ -2,8 +2,15 @@
 
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
+#include "GanymedE/Net/Net.h"
 #include "GanymedE/Scene/SceneSerializer.h"
 #include "GanymedE/UI/UIEngine.h"
+
+#ifdef _WIN32
+	#include <process.h>
+#else
+	#include <unistd.h>
+#endif
 
 namespace GanymedE {
 
@@ -19,6 +26,14 @@ namespace GanymedE {
 		Window& window = Application::Get().GetWindow();
 		const uint32_t width = window.GetWidth();
 		const uint32_t height = window.GetHeight();
+
+		Net::Sim sim;
+		std::string simError;
+		const bool simOk = Net::ParseSim(m_Config.NetSim, sim, simError);
+		if (!simOk)
+			GE_ERROR("--net-sim: {0}", simError);
+		else
+			Net::SetSim(sim);
 
 		GE_INFO("--- Runtime boot ---");
 		GE_INFO("Window: {0}x{1}{2}", width, height,
@@ -96,6 +111,22 @@ namespace GanymedE {
 		}
 
 		GE_INFO("--- Boot complete ---");
+
+		if (simOk && !m_Config.Connect.empty())
+		{
+			std::string name = m_Config.Name;
+			if (name.empty())
+			{
+#ifdef _WIN32
+				name = "p" + std::to_string(_getpid());
+#else
+				name = "p" + std::to_string(getpid());
+#endif
+			}
+			std::string error;
+			if (!Net::ConnectDev(m_Config.Connect, name, m_Config.NetTest, error))
+				GE_ERROR("Dev connect failed: {0}", error);
+		}
 	}
 
 	void RuntimeLayer::OnDetach()
@@ -114,6 +145,7 @@ namespace GanymedE {
 		// GPU caches this drops release real handles. The same guarantee EditorLayer
 		// relies on - see the shutdown-order note in docs/engine/core.md.
 		AssetManager::Shutdown();
+		Net::ShutdownClient();
 	}
 
 	void RuntimeLayer::OnUpdate(Timestep ts)

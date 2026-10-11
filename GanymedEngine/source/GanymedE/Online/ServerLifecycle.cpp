@@ -1,8 +1,8 @@
 #include "gepch.h"
 #include "GanymedE/Online/ServerLifecycle.h"
 
+#include "GanymedE/Net/Net.h"
 #include "GanymedE/Online/ConnectToken.h"
-#include "GanymedE/Online/GamePort.h"
 #include "GanymedE/Online/Json.h"
 #include "GanymedE/Online/OnlineTransport.h"
 
@@ -53,7 +53,6 @@ namespace GanymedE {
 
 	struct ServerLifecycle::State
 	{
-		GamePort Port;
 		std::thread Health;
 		std::thread Door;
 
@@ -95,11 +94,19 @@ namespace GanymedE {
 		m_Launch = launch;
 		m_State = new State();
 
-		// Before the first socket, so WSAStartup has run and a later Shutdown is paired.
-		OnlineTransport::Init(std::string());
-		m_State->Transport = true;
+		// The agent client is what needs the net system. A dev server has no agent.
+		if (!launch.Dev)
+		{
+			OnlineTransport::Init(std::string());
+			m_State->Transport = true;
+		}
 
-		if (!m_State->Port.Bind(launch.Port, error))
+		const Net::Address bind = launch.Dev ? Net::Loopback(launch.Port) : Net::Any(launch.Port);
+		Net::SetTextHandler([this](const Net::Address& from, const std::string& text)
+		{
+			return Answer(text, from);
+		});
+		if (!Net::Listen(bind, error))
 		{
 			TearDown();
 			return false;
@@ -107,7 +114,10 @@ namespace GanymedE {
 
 		GE_CORE_INFO("Game port {0} bound ({1})", launch.Port, launch.Advertise);
 
-		m_State->Health = std::thread([this]() { HealthLoop(); });
+		if (!launch.Dev)
+			m_State->Health = std::thread([this]() { HealthLoop(); });
+		else
+			m_State->Phase = State::Phase::Open;
 		m_State->Door = std::thread([this]() { DoorLoop(); });
 		return true;
 	}
@@ -254,6 +264,11 @@ namespace GanymedE {
 	{
 		if (!m_State || m_State->TornDown)
 			return;
+		if (m_Launch.Dev)
+		{
+			TearDown();
+			return;
+		}
 
 		int status = 0;
 		std::string body;
@@ -299,6 +314,12 @@ namespace GanymedE {
 	{
 		if (!m_State || m_State->TornDown)
 			return;
+		if (m_Launch.Dev)
+		{
+			GE_CORE_INFO("Dev server stopped");
+			TearDown();
+			return;
+		}
 
 		size_t admitted = 0;
 		{
@@ -329,12 +350,12 @@ namespace GanymedE {
 		if (m_State->Health.joinable())
 			m_State->Health.join();
 
-		// Stop is already set, so the door leaves recvfrom within its 200 ms timeout and the
-		// loop exits. Join before close: closing under a blocked recvfrom races m_Socket, and
-		// on Linux the descriptor number can be reused by another socket before the call returns.
+		// Stop is already set, so the door leaves select within a couple of milliseconds.
+		// Join before close: closing under a blocked call races the descriptor, and on
+		// Linux that number can be reused before the call returns.
 		if (m_State->Door.joinable())
 			m_State->Door.join();
-		m_State->Port.Close();
+		Net::CloseServer();
 
 		if (m_State->Transport)
 		{
@@ -349,34 +370,34 @@ namespace GanymedE {
 	void ServerLifecycle::DoorLoop()
 	{
 		while (!m_State->Stop)
-		{
-			std::string text;
-			GamePeer from;
-			std::string error;
-			switch (m_State->Port.Receive(text, from, error))
-			{
-				case GamePort::Recv::Packet:
-				{
-					const std::string reply = Answer(text);
-					GE_CORE_INFO("Join from {0}: {1}", from.Text, reply);
-					m_State->Port.Send(from, reply);
-					break;
-				}
-				case GamePort::Recv::Timeout:
-					break;
-				case GamePort::Recv::Closed:
-					return;
-				case GamePort::Recv::Error:
-					GE_CORE_WARN("Game port read failed: {0}", error);
-					break;
-			}
-		}
+			Net::PumpServer(2);
 	}
 
-	std::string ServerLifecycle::Answer(const std::string& datagram)
+	std::string ServerLifecycle::Answer(const std::string& datagram, const Net::Address& from)
 	{
 		const std::string text = Trim(datagram);
 		constexpr const char* kHello = "HELLO ";
+		if (m_Launch.Dev)
+		{
+			constexpr const char* kDev = "HELLO dev:";
+			if (text.rfind(kDev, 0) != 0)
+				return "DENIED expected HELLO dev:<name>";
+			const std::string name = text.substr(std::char_traits<char>::length(kDev));
+			bool ok = name.size() >= 1 && name.size() <= 32;
+			for (unsigned char c : name)
+			{
+				const bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+				if (!letter && c != '-' && c != '_')
+					ok = false;
+			}
+			if (!ok)
+				return "DENIED expected HELLO dev:<name>";
+			if (m_State->Phase == State::Phase::Over)
+				return "DENIED match over";
+			Net::NoteAdmitted(name, from);
+			return "WELCOME " + name;
+		}
+
 		if (text.rfind(kHello, 0) != 0)
 			return "DENIED expected HELLO <token>";
 
@@ -419,6 +440,7 @@ namespace GanymedE {
 
 		m_State->SeenNonce.emplace(checked.Claims.Nonce, checked.Claims.ExpiresAt + 5);
 		m_State->Admitted.insert(checked.Claims.AccountId);
+		Net::NoteAdmitted(checked.Claims.AccountId, from);
 		return "WELCOME " + checked.Claims.AccountId;
 	}
 

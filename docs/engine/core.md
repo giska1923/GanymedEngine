@@ -320,10 +320,11 @@ wall of numeric ids.
 [`Log`](../../GanymedEngine/source/GanymedE/Core/Log.h) wraps two spdlog loggers. On Windows the
 editor and the runtime write to the debugger (`msvc_sink`) and to `GanymedE.log`, which is
 truncated on open. On Linux and macOS the debugger sink is a color stdout sink, and the file is
-the same. A process started with `--server-id` does not open `GanymedE.log` at all: a pool of
+the same. A process started with `--server-id`, or with `--dev`, does not open `GanymedE.log` at all: a pool of
 dedicated servers, and a replacement that reuses a directory, were truncating each other's match
 out of that one file. It writes stderr (plain, so an agent capture stays readable — the stub
-does the same) and appends `dedicated-<server-id>.log` in the working directory. Characters in
+does the same) and appends `dedicated-<server-id>.log` in the working directory. `--dev` with no
+id uses `dedicated-dev.log`. Characters in
 the id that are not a letter, a digit, `-` or `_` are folded to `_`, and the name is capped at
 80 of those. The debugger sink is kept on Windows as well.
 

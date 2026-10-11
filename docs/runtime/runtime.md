@@ -38,9 +38,11 @@ one logs, because the failure mode for getting this order wrong is a black windo
 | `SceneSerializer::Deserialize` into the scene | **No `Scene::Copy`.** The copy exists to preserve the editor's edit-time scene across play/stop; there is no edit-time scene here and no stop |
 | `Scene::OnViewportResize` → `OnRuntimeStart` | Creates the Jolt world and instantiates Lua scripts |
 | `UIEngine::LoadDocument(config.UIDocument)` | After the scene starts, so a script's `OnCreate` has already written the HUD data model before first layout |
+| `Net::ConnectDev`, when `--connect` is set | After boot. The simulator was installed at the start of `OnAttach`, before `OnRuntimeStart`, so a script `JoinMatch` from `OnCreate` and this flag see the same `Sim` |
 
 `OnDetach` unwinds it: close documents → `OnRuntimeStop` → drop the scene and renderer →
-`AssetManager::Shutdown()`. That last call releases GPU caches, and it is safe because `LayerStack`
+`AssetManager::Shutdown()` → `Net::ShutdownClient()`. The asset shutdown releases GPU caches, and
+it is safe because `LayerStack`
 is destroyed before the `Window` — so bgfx is still alive. The same guarantee `EditorLayer` leans on.
 
 ## The frame
@@ -103,6 +105,18 @@ plays — so it stays put when `AssetRoot` moves. The two paths in it are projec
 scene that names its own location cannot be opened from anywhere else; an **absolute** path is
 honoured as given, which is what makes `GanymedRuntime /abs/path/to/scene.ganymede` behave when it
 is typed at a shell.
+
+The runtime also accepts the dev-session flags. They are not `runtime.yaml` keys.
+
+| Flag | Meaning |
+|---|---|
+| `--connect=<host:port>` | After boot, `HELLO dev:<name>` to that IPv4 address, then the session. No DNS. A bad `--net-sim` skips this and the process still runs |
+| `--name=<name>` | The dev account. Default `p` plus the process id, so two runtimes differ |
+| `--net-sim=` | The send-path conditioner. See [netcode.md](../engine/netcode.md#the-conditioner) |
+| `--net-test=` | `reliable:<count>` or `spoof`, after the session accept. Nothing sends them otherwise |
+
+`--connect=127.0.0.1:7777` is the usual pair with `GanymedDedicated --dev`. The session itself is
+[netcode.md](../engine/netcode.md).
 
 The runtime also accepts `--renderer=<backend>`, which is engine-wide rather than runtime config —
 see [rendering.md](../engine/rendering.md#backend-selection). It is not a `runtime.yaml` key because

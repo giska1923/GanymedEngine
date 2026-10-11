@@ -6,9 +6,10 @@
 // The only engine TU that includes IXWebSocket, and it must stay that way: IXNetSystem.h pulls
 // in winsock2.h and redefines EWOULDBLOCK, EAGAIN, EINVAL and friends to their WSA values for
 // the rest of whatever TU includes it. See docs/engine/build-and-tooling.md, IXWebSocket.
+#include "GanymedE/Net/Socket.h"
+
 #include <ixwebsocket/IXHttpClient.h>
 #include <ixwebsocket/IXNetSystem.h>
-#include <ixwebsocket/IXUdpSocket.h>
 #include <ixwebsocket/IXWebSocket.h>
 
 namespace GanymedE::OnlineTransport {
@@ -50,7 +51,7 @@ namespace GanymedE::OnlineTransport {
 			// UDP exchanges in flight, polled by PollExchanges.
 			struct PendingExchange
 			{
-				std::unique_ptr<ix::UdpSocket> Socket;
+				Net::Socket* Socket = nullptr;   // owned by the join, not by this map
 				std::string Address;
 				std::chrono::steady_clock::time_point Deadline;
 				std::function<void(bool, const std::string&)> Completion;
@@ -346,8 +347,8 @@ namespace GanymedE::OnlineTransport {
 		s_Data->Socket = std::move(socket);
 	}
 
-	ExchangeId Exchange(const std::string& address, const std::string& payload, std::chrono::milliseconds timeout,
-		std::function<void(bool ok, const std::string& text)> completion)
+	ExchangeId Exchange(Net::Socket& socket, const std::string& address, const std::string& payload,
+		std::chrono::milliseconds timeout, std::function<void(bool ok, const std::string& text)> completion)
 	{
 		GE_CORE_ASSERT(JobSystem::IsMainThread(), "OnlineTransport::Exchange is main-thread only");
 
@@ -359,22 +360,20 @@ namespace GanymedE::OnlineTransport {
 		if (!s_Data)
 			return fail("online is not initialised");
 
-		const size_t colon = address.rfind(':');
-		const int port = colon == std::string::npos ? 0 : std::atoi(address.c_str() + colon + 1);
-		if (colon == std::string::npos || port <= 0 || port > 65535)
-			return fail("'" + address + "' is not host:port");
-
-		// Non-blocking (UdpSocket::init sets it), which is what lets one poll a frame do the waiting.
-		auto socket = std::make_unique<ix::UdpSocket>();
+		Net::Address to;
 		std::string error;
-		if (!socket->init(address.substr(0, colon), port, error))
-			return fail("cannot reach " + address + ": " + error);
-		if (socket->sendto(payload) < 0)
+		if (!Net::ParseAddress(address, to, error))
+			return fail(error);
+
+		// The token handshake is not conditioned. Its retry is one second, and a simulated
+		// delay belongs to the session that continues after WELCOME, not to this wait.
+		const std::vector<uint8_t> bytes(payload.begin(), payload.end());
+		if (!socket.Send(to, bytes.data(), static_cast<int>(bytes.size())))
 			return fail("cannot send to " + address);
 
 		const ExchangeId id = s_Data->NextExchangeId++;
 		auto& pending = s_Data->Exchanges[id];
-		pending.Socket = std::move(socket);
+		pending.Socket = &socket;
 		pending.Address = address;
 		pending.Deadline = std::chrono::steady_clock::now() + timeout;
 		pending.Completion = std::move(completion);
@@ -397,16 +396,24 @@ namespace GanymedE::OnlineTransport {
 		for (auto it = s_Data->Exchanges.begin(); it != s_Data->Exchanges.end();)
 		{
 			auto& pending = it->second;
-			char buffer[512];
-			const auto received = pending.Socket->recvfrom(buffer, sizeof(buffer));
+			uint8_t buffer[2048];
+			int received = 0;
+			Net::Address from;
+			std::string error;
+			const Net::Socket::Recv result = pending.Socket
+				? pending.Socket->Receive(buffer, sizeof(buffer), received, from, error)
+				: Net::Socket::Recv::Closed;
 			bool finished = true;
 			std::pair<bool, std::string> outcome;
-			if (received >= 0)
-				outcome = { true, std::string(buffer, static_cast<size_t>(received)) };
-			else if (!ix::UdpSocket::isWaitNeeded())
+			if (result == Net::Socket::Recv::Packet)
+				outcome = { true, std::string(reinterpret_cast<char*>(buffer), static_cast<size_t>(received)) };
+			else if (result == Net::Socket::Recv::Refused)
 				// Windows reports an ICMP port-unreachable for an earlier send as a failed receive
-				// (WSAECONNRESET): nothing is listening on that port. Elsewhere, any receive error.
+				// (WSAECONNRESET): nothing is listening on that port. A client socket leaves that
+				// error enabled. Linux does not report it, so the same dead port is silence.
 				outcome = { false, "nothing is listening at " + pending.Address };
+			else if (result == Net::Socket::Recv::Error || result == Net::Socket::Recv::Closed)
+				outcome = { false, error.empty() ? "nothing is listening at " + pending.Address : error };
 			else if (now >= pending.Deadline)
 				outcome = { false, "no answer from " + pending.Address };
 			else

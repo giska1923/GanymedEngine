@@ -2,6 +2,7 @@
 #include "GanymedE/Online/Online.h"
 
 #include "GanymedE/Core/JobSystem.h"
+#include "GanymedE/Net/Net.h"
 #include "GanymedE/Online/Json.h"
 #include "GanymedE/Online/OnlineTransport.h"
 #include "GanymedE/Utils/PlatformUtils.h"
@@ -74,6 +75,9 @@ namespace GanymedE {
 				int Attempt = 0;
 				RequestId TicketRead = 0;                    // the GET in flight, or 0
 				OnlineTransport::ExchangeId Hello = 0;       // the datagram awaiting a reply, or 0
+				// One socket for every attempt. A WELCOME lost on attempt 1 must not leave
+				// the server holding a port this client has already closed.
+				std::unique_ptr<Net::Socket> Socket;
 			};
 			std::unordered_map<RequestId, JoinOperation> Joins;
 			std::vector<RequestId> Waiting;   // authenticated requests waiting for a session
@@ -697,9 +701,19 @@ namespace GanymedE {
 			// The reply's reason is for logs, never parsed beyond its first word (server-lifecycle.md).
 			if (text.rfind("WELCOME ", 0) == 0)
 			{
+				std::string account = text.substr(8);
+				while (!account.empty() && (account.back() == '\n' || account.back() == '\r' || account.back() == ' '))
+					account.pop_back();
+				std::string handoverError;
+				auto socket = std::move(it->second.Socket);
+				if (!Net::BeginClient(std::move(socket), address, account, handoverError))
+				{
+					FailJoin(id, handoverError);
+					return;
+				}
 				GE_CORE_INFO("Online: joined the game server at {0} (attempt {1})", address, it->second.Attempt);
 				JsonValue body = JsonValue::MakeObject();
-				body.Members.emplace_back("account_id", JsonValue::MakeString(text.substr(8)));
+				body.Members.emplace_back("account_id", JsonValue::MakeString(account));
 				OnlineResponse response;
 				response.Status = 200;
 				WriteJson(body, response.Body);
@@ -747,7 +761,17 @@ namespace GanymedE {
 			it->second.Attempt++;
 			s_Data->Stats.JoinAttempts++;
 			const std::string where = address->String;
-			it->second.Hello = OnlineTransport::Exchange(where, "HELLO " + token->String, kJoinWait,
+			if (!it->second.Socket)
+			{
+				it->second.Socket = std::make_unique<Net::Socket>();
+				std::string socketError;
+				if (!it->second.Socket->OpenClient(socketError))
+				{
+					FailJoin(id, socketError);
+					return;
+				}
+			}
+			it->second.Hello = OnlineTransport::Exchange(*it->second.Socket, where, "HELLO " + token->String, kJoinWait,
 				[id, where](bool answered, const std::string& text)
 				{
 					if (s_Data)
@@ -792,7 +816,10 @@ namespace GanymedE {
 			return;
 
 		// Waiting for a game server's reply is a non-blocking receive here, once a frame.
+		// The session that follows WELCOME is polled in the same place: one socket, and
+		// the frame is the granularity the RTT check allows.
 		OnlineTransport::PollExchanges();
+		Net::PumpClient();
 
 		if (!s_Data->ReconnectPending || std::chrono::steady_clock::now() < s_Data->ReconnectAt)
 			return;
@@ -850,6 +877,7 @@ namespace GanymedE {
 		if (!s_Data)
 			return;
 
+		Net::ShutdownClient();
 		const Stats stats = GetStats();   // before the transport goes: it holds the dropped-late count
 		const size_t abandoned = OnlineTransport::Shutdown();
 		GE_CORE_INFO("Online shut down: {0} sent, {1} succeeded, {2} failed, {3} cancelled, {4} retried, "

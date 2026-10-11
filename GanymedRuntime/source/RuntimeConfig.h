@@ -39,6 +39,14 @@ namespace GanymedE {
 		uint32_t Height = 900;
 		bool Fullscreen = false;
 
+		// Dev join. Empty means the runtime does not open a game socket of its own;
+		// a script may still Backend.JoinMatch. `--name` defaults to a per-process
+		// id so two clients on one machine are two sessions.
+		std::string Connect;
+		std::string Name;
+		std::string NetSim;
+		std::string NetTest;
+
 		// Missing or malformed file: every field keeps its default and a warning is logged.
 		// A game that boots to something diagnosable beats one that refuses to start,
 		// because the log then tells you which step failed rather than nothing at all.
