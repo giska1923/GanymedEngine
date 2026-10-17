@@ -361,14 +361,10 @@ function Player:OnCreate()
     self.yawEntity = self.entity:GetChildByName("Yaw")
     if not self.yawEntity then
         Log.Error("Player: no child named 'Yaw' - turning and the camera will not work")
-    else
-        self.cameraEntity = self.yawEntity:GetChildByName("Main Camera")
-        if self.cameraEntity then
-            -- Seed pitch from whatever the scene authored, so capturing the mouse does not snap
-            -- the view level on the first frame.
-            self.pitch = self.cameraEntity:GetRotation().x
-        end
     end
+    -- The camera is not ours any more. It is the scene's "Camera Rig", which only the pawn being
+    -- played drives (StartPresenting): with several pawns, a camera inside each would be several
+    -- primary cameras on every client.
 
     -- P6. Both are optional on purpose: the scripts have to keep working in a scene that has
     -- not been given sound or particles yet, and a missing child is an authoring state rather
@@ -376,7 +372,7 @@ function Player:OnCreate()
     self.footsteps = self.entity:GetChildByName("Footsteps")
     -- Under Yaw, not under the capsule: the capsule is LockRotation and never turns, so a
     -- mesh parented to it cannot face where the player is aiming. Yaw is the entity the mouse
-    -- drives, and it already carries the camera.
+    -- drives.
     self.body = self.yawEntity and self.yawEntity:GetChildByName("Body") or nil
     if not self.footsteps then Log.Warn("Player: no 'Footsteps' child - no step sound") end
     if not self.body then Log.Warn("Player: no 'Body' child - the player will not animate") end
@@ -393,8 +389,6 @@ function Player:OnCreate()
             Log.Warn(string.format("Player: no '%s' under Body - it cannot be held", name))
         end
     end
-
-    Log.Info("Player: click to look, Escape to release the cursor")
 
     local p = self.entity:GetTranslation()
     self.startY = p.y
@@ -413,9 +407,7 @@ function Player:OnCreate()
     PG.gateClear = false
     PG.score = PG.score or 0
     self.health = self.maxHealth
-    self:PushUI()
     self:StartLoadout()
-    self:StartLeaderboard()
 
     if self.p5gate then
         PG.freeze = false
@@ -439,7 +431,7 @@ end
 -- broadphase at all. Enemies passed through it, projectiles passed through it, and a trigger
 -- volume could not notice it. The inner body landed on master for this phase.
 function Player:OnCollisionEnter(other)
-    if not other then return end
+    if not other or Net.IsClient() then return end
     local name = other:GetName()
 
     -- A gun on the rack, or one tossed there by a swap: "<Gun> Pickup".
@@ -471,6 +463,7 @@ function Player:OnCollisionEnter(other)
 end
 
 function Player:OnCollisionExit(other)
+    if Net.IsClient() then return end
     if other and other:GetName() == "Heal Spot" and self.inHeal > 0 then
         self.inHeal = self.inHeal - 1
     end
@@ -750,21 +743,136 @@ function Player:ProbeTurn(ts)
     return math.max(-1.0, math.min(1.0, diff * 2.0))
 end
 
-function Player:OnUpdate(ts)
-    -- Frame 1 spans boot and is over a second long (docs/ToDo/cross-cutting.md). Applying a
-    -- second of input to a character on its first frame launches it across the map, so the first
-    -- frame is skipped outright rather than clamped - a controller has nothing useful to do with
-    -- it either way.
-    if ts > 0.25 then
+-- ---- N5: one pawn, three roles ----------------------------------------------------------------
+--
+-- This script used to be the whole player in one OnUpdate: read the keyboard, turn, move, fire,
+-- animate, draw the HUD. With a server, a pawn has three different lives, and each frame below is
+-- one of them:
+--
+--   OnTick        on the server, offline, and on the client for its own pawn. Movement and look,
+--                 from the command, once per physics step. A correction replays it, so it must
+--                 be safe to run again: it reads the command and the body, and writes the body.
+--   ServerFrame   the server's once-a-frame: health, down, heal, score, and the animation melee
+--                 will trace from. No input, no camera, no HUD.
+--   LocalFrame    the pawn someone is playing, offline or on their own client: the cursor, the
+--                 camera rig, the HUD and the leaderboard, footsteps, animation. Offline it is
+--                 also the authority, so firing, melee, pickups and health run here too; on a
+--                 client those wait for G2-G5 to put them on the command.
+--   RemoteFrame   someone else's pawn, on a client: where it faces, from two replicated bytes,
+--                 and how it moves, estimated from where it is drawn.
+--
+-- The facing is replicated as bytes because a character's root never rotates (SyncTransforms
+-- writes it from the controller), so the snapshot's own yaw field is always zero for it.
+
+local TWO_PI = 2.0 * math.pi
+local PITCH_LIMIT = 1.4
+
+local function PackYaw(yaw)
+    return math.floor((yaw % TWO_PI) / TWO_PI * 256.0 + 0.5) % 256
+end
+
+local function UnpackYaw(byte)
+    return (byte or 0) / 256.0 * TWO_PI
+end
+
+local function PackPitch(pitch)
+    local p = math.max(-PITCH_LIMIT, math.min(PITCH_LIMIT, pitch))
+    return math.floor((p + PITCH_LIMIT) / (2.0 * PITCH_LIMIT) * 255.0 + 0.5)
+end
+
+local function UnpackPitch(byte)
+    return (byte or 127.5) / 255.0 * (2.0 * PITCH_LIMIT) - PITCH_LIMIT
+end
+
+-- The gate modes predate commands: they steer from OnUpdate (AutoTurn, ProbeTurn) and walk
+-- forward on their own. Offline only; a server never runs them.
+function Player:GateDriving()
+    return not Net.IsServer() and not Net.IsClient()
+        and (self.autopilot or self.losgate or self.p5gate)
+end
+
+function Player:OnTick(tick, cmd)
+    if self:GateDriving() then
+        self:Drive(self.gateX or 0.0, self.gateZ or 0.0)
         return
     end
 
+    self.yaw, self.pitch = cmd.Yaw, cmd.Pitch
+    if self.yawEntity then
+        self.yawEntity:SetRotation(Vec3(0, self.yaw, 0))
+    end
+
+    -- The stick is in the pawn's frame: W is MoveZ -1, which is forward. Forward is -Z at yaw 0,
+    -- matching the engine's camera convention.
+    local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
+    local fx, fz = -sinY, -cosY
+    local rx, rz = cosY, -sinY
+    self:Drive(rx * cmd.MoveX - fx * cmd.MoveZ, rz * cmd.MoveX - fz * cmd.MoveZ)
+
+    self.yaw8, self.pitch8 = PackYaw(self.yaw), PackPitch(self.pitch)
+end
+
+-- Keep the body's own vertical velocity. Overwriting it with 0 would cancel gravity and the
+-- capsule would hang in the air the moment it walked off anything. Downed and attacking root the
+-- player: the attack clips are in place, so moving during one slides the feet.
+function Player:Drive(ix, iz)
+    local len = math.sqrt(ix * ix + iz * iz)
+    if len > 1.0 then
+        ix, iz = ix / len, iz / len
+    end
+    local v = self.entity:GetLinearVelocity()
+    local speed = (self.downed or self.attack) and 0.0 or (self.speed * self.probeSlow)
+    self.entity:SetLinearVelocity(Vec3(ix * speed, v.y, iz * speed))
+end
+
+function Player:OnUpdate(ts)
+    -- Frame 1 spans boot and is over a second long (docs/ToDo/cross-cutting.md). Nothing here has
+    -- anything useful to do with a second of it.
+    if ts > 0.25 then
+        return
+    end
     self.t = self.t + ts
+
+    if Net.IsServer() then
+        self:ServerFrame(ts)
+    elseif self.entity:IsLocallyControlled() then
+        self:LocalFrame(ts)
+    else
+        self:RemoteFrame(ts)
+    end
+end
+
+function Player:ServerFrame(ts)
+    self:Reveal()
+    self:FallCheck(ts)
+    self:Simulate(ts)
+    self:Animate(ts)
+end
+
+-- Once, the first frame this pawn is the one being played: the camera, the HUD, the leaderboard.
+function Player:StartPresenting()
+    self.presenting = true
+    self.rig = Scene.FindEntityByName("Camera Rig")
+    self.cameraEntity = self.rig and self.rig:GetChildByName("Main Camera") or nil
+    if not self.cameraEntity then
+        Log.Warn("Player: no 'Camera Rig' with a 'Main Camera' child - the view will not follow")
+    end
+    self:StartLeaderboard()
+    self:PushUI()
+    Log.Info("Player: click to look, Escape to release the cursor")
+end
+
+function Player:LocalFrame(ts)
+    if not self.presenting then
+        self:StartPresenting()
+    end
+    local offline = not Net.IsClient()
 
     -- ---- capture ----
     -- The capturing click is not an attack, for as long as it is held: a click lasts several
     -- frames, so skipping only the frame that captured would still fire on the next one. LMB arms
-    -- once it has been seen up.
+    -- once it has been seen up. The look itself is the command's: the engine sums the mouse while
+    -- the cursor is captured (docs/engine/netcode.md, Commands).
     local lmbDown = Input.IsMouseButtonPressed(Mouse.ButtonLeft)
     if not self.looking and lmbDown then
         Input.SetCursorMode(Cursor.Locked)
@@ -774,7 +882,6 @@ function Player:OnUpdate(ts)
         Input.SetCursorMode(Cursor.Normal)
         self.looking = false
     end
-
     if not lmbDown then
         self.lmbArmed = true
     end
@@ -784,26 +891,53 @@ function Player:OnUpdate(ts)
     local attackPressed = attackHeld and not self.triggerHeld
     self.triggerHeld = attackHeld
 
-    -- ---- look ----
-    if self.looking then
-        -- NOT scaled by ts. The delta is pixels moved last frame - an amount, not a rate - and
-        -- multiplying it by frame time makes sensitivity depend on framerate.
-        local dx, dy = Input.GetMouseDelta()
-        self.yaw = self.yaw - dx * self.sensitivity
-        self.pitch = self.pitch - dy * self.sensitivity
-        -- ~80 degrees. Past vertical the forward vector flips and the controls invert.
-        if self.pitch > 1.4 then self.pitch = 1.4 end
-        if self.pitch < -1.4 then self.pitch = -1.4 end
-        if self.cameraEntity then
-            self.cameraEntity:SetRotation(Vec3(self.pitch, 0, 0))
+    if offline then
+        self:FireFrame(ts, attackHeld, attackPressed)
+
+        -- ---- weapon slots and melee ----
+        -- The same button attacks with whatever is in hand. Not on the click that captures the
+        -- cursor (attackHeld), which for a melee weapon would commit the player to a three-second
+        -- swing.
+        if not self.attack then
+            if Input.IsKeyPressed(Key.D1) then self:Equip("Gun")
+            elseif Input.IsKeyPressed(Key.D2) then self:Equip("Knife") end
         end
+        self:Melee(ts, attackHeld)
+
+        -- ---- the gate modes' steering ----
+        -- They walk forward along their own yaw (OnTick reads gateX/gateZ).
+        if self:GateDriving() then
+            local turn = 0.0
+            if self.autopilot then turn = turn + self:AutoTurn() end
+            if self.losgate or self.p5gate then turn = turn + self:ProbeTurn(ts) end
+            self.yaw = self.yaw + turn * self.turnSpeed * ts
+            if self.yawEntity then
+                self.yawEntity:SetRotation(Vec3(0, self.yaw, 0))
+            end
+            local forward = self.autopilot or self.probeDrive
+            self.gateX = forward and -math.sin(self.yaw) or 0.0
+            self.gateZ = forward and -math.cos(self.yaw) or 0.0
+        end
+
+        self:FallCheck(ts)
+        self:Simulate(ts)
+        self:PushPending()
     end
 
-    -- ---- fire ----
+    self:FollowCamera()
+    self:Reveal()
+    self:Step(ts)
+    self:Animate(ts)
+    self:PushUI()
+    self:Diagnose(ts)
+end
+
+-- The fire block that used to sit in OnUpdate. Offline only until G2 puts the trigger on the
+-- command and the round on the server.
+function Player:FireFrame(ts, attackHeld, attackPressed)
     -- The same left button captures the cursor and then fires, which is the convention every
-    -- shooter uses: the first click is "I am playing now", the rest are shots. Until 2026-10-01
-    -- the capturing click fired too, because `looking` was already true by the time it got here;
-    -- attackHeld (above) is what keeps it out now.
+    -- shooter uses: the first click is "I am playing now", the rest are shots. attackHeld (above)
+    -- is what keeps the capturing click out.
     self.fireCooldown = self.fireCooldown - ts
     self.sinceShot = self.sinceShot + ts
     if self.sinceShot > SPREAD_RECOVER_DELAY then
@@ -832,67 +966,54 @@ function Player:OnUpdate(ts)
     if self.fireCooldown < 0.0 then
         self.fireCooldown = 0.0
     end
+end
 
-    -- ---- weapon slots and melee ----
-    -- The same button attacks with whatever is in hand. Not on the click that captures the
-    -- cursor (attackHeld), which for a melee weapon would commit the player to a three-second
-    -- swing.
-    if not self.attack then
-        if Input.IsKeyPressed(Key.D1) then self:Equip("Gun")
-        elseif Input.IsKeyPressed(Key.D2) then self:Equip("Knife") end
+-- The scene's camera rig sits where the pawn's Yaw is and turns with it; the camera under it
+-- pitches. That is the hierarchy the camera used to have inside the player, rebuilt each frame,
+-- so AimPoint's arithmetic is unchanged.
+function Player:FollowCamera()
+    if not self.rig or not self.cameraEntity then
+        return
     end
-    self:Melee(ts, attackHeld)
+    local offset = self.yawEntity and self.yawEntity:GetTranslation() or Vec3(0, 0, 0)
+    self.rig:SetTranslation(self.entity:GetTranslation() + offset)
+    self.rig:SetRotation(Vec3(0, self.yaw, 0))
+    self.cameraEntity:SetRotation(Vec3(self.pitch, 0, 0))
+end
 
-    -- ---- turn (keyboard fallback, and the autopilot's only steering) ----
-    local turn = 0.0
-    if Input.IsKeyPressed(Key.Q) or Input.IsKeyPressed(Key.Left) then turn = turn + 1.0 end
-    if Input.IsKeyPressed(Key.E) or Input.IsKeyPressed(Key.Right) then turn = turn - 1.0 end
-    if self.autopilot then turn = turn + self:AutoTurn() end
-    if self.losgate or self.p5gate then turn = turn + self:ProbeTurn(ts) end
-    self.yaw = self.yaw + turn * self.turnSpeed * ts
+function Player:RemoteFrame(ts)
+    -- Not simulated here, so the body's own velocity says nothing. Estimated from where the pawn
+    -- is drawn, eased so one uneven frame does not flick the legs between clips.
+    local p = self.entity:GetTranslation()
+    if self.lastDrawn and ts > 0.0 then
+        local d = p - self.lastDrawn
+        local v = Vec3(d.x / ts, d.y / ts, d.z / ts)
+        local k = math.min(1.0, ts * 12.0)
+        local e = self.estVel or v
+        self.estVel = Vec3(e.x + (v.x - e.x) * k, e.y + (v.y - e.y) * k, e.z + (v.z - e.z) * k)
+    end
+    self.lastDrawn = p
+
+    self.yaw, self.pitch = UnpackYaw(self.yaw8), UnpackPitch(self.pitch8)
     if self.yawEntity then
         self.yawEntity:SetRotation(Vec3(0, self.yaw, 0))
     end
-
-    self:FallCheck(ts)
-
-    -- ---- move ----
-    -- Forward is -Z at yaw 0, matching the engine's camera convention.
-    local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
-    local fx, fz = -sinY, -cosY
-    local rx, rz = cosY, -sinY
-
-    local ix, iz = 0.0, 0.0
-    if self.autopilot then ix, iz = ix + fx, iz + fz end
-    if self.probeDrive then ix, iz = ix + fx, iz + fz end
-    if Input.IsKeyPressed(Key.W) then ix = ix + fx; iz = iz + fz end
-    if Input.IsKeyPressed(Key.S) then ix = ix - fx; iz = iz - fz end
-    if Input.IsKeyPressed(Key.D) then ix = ix + rx; iz = iz + rz end
-    if Input.IsKeyPressed(Key.A) then ix = ix - rx; iz = iz - rz end
-
-    local len = math.sqrt(ix * ix + iz * iz)
-    if len > 0.0 then
-        ix, iz = ix / len, iz / len
-    end
-
-    -- Keep the body's own vertical velocity. Overwriting it with 0 would cancel gravity and the
-    -- capsule would hang in the air the moment it walked off anything.
-    local v = self.entity:GetLinearVelocity()
-    -- Downed is not dead: a character cannot be moved from script, so there is nowhere to
-    -- respawn to. It stops instead, and gets back up where it fell.
-    -- An attack roots the player too: the attack clips are in place, so moving during one slides
-    -- the feet, and the swing's lane was aimed from where it started.
-    local speed = (self.downed or self.attack) and 0.0 or (self.speed * self.probeSlow)
-    self.entity:SetLinearVelocity(Vec3(ix * speed, v.y, iz * speed))
-
-    self:Tick(ts)
-    self:PushPending()
-    self:Diagnose(ts)
+    self:Reveal()
+    self:Step(ts)
+    self:Animate(ts)
 end
 
--- Health, score and the HUD, once a frame.
-function Player:Tick(ts)
-    -- A gun equipped last frame has its socket now (Equip): full size.
+-- How the pawn is moving, for the legs and the feet: the body's own state where it is simulated,
+-- the estimate where it is someone else's on a client.
+function Player:Motion()
+    if self.estVel then
+        return self.estVel, math.abs(self.estVel.y) < 1.0
+    end
+    return self.entity:GetLinearVelocity(), self.entity:IsGrounded()
+end
+
+-- A gun equipped last frame has its socket now (Equip): full size.
+function Player:Reveal()
     if self.reveal and self.reveal.ready then
         local sc = self.reveal.scale
         self.reveal.entity:SetScale(Vec3(sc, sc, sc))
@@ -905,6 +1026,10 @@ function Player:Tick(ts)
     elseif self.reveal then
         self.reveal.ready = true
     end
+end
+
+-- Health and score, once a frame, where the pawn is authoritative: the server, or offline.
+function Player:Simulate(ts)
     self.hurtCooldown = math.max(0.0, self.hurtCooldown - ts)
 
     if (self.pendingHurt or 0) > 0 and self.hurtCooldown <= 0.0 and not self.downed then
@@ -930,10 +1055,6 @@ function Player:Tick(ts)
         PG.score = PG.score + (PG.kills - self.lastKills)
         self.lastKills = PG.kills
     end
-
-    self:Step(ts)
-    self:Animate(ts)
-    self:PushUI()
 end
 
 -- The player's own three clips, chosen from the capsule's measured horizontal speed rather
@@ -1032,12 +1153,12 @@ function Player:Animate(ts)
         return
     end
 
-    local v = self.entity:GetLinearVelocity()
+    local v, grounded = self:Motion()
     local speed = math.sqrt(v.x * v.x + v.z * v.z)
 
     -- Airborne or downed is not walking, whatever the horizontal velocity says. Same test
     -- Player:Step uses to keep footsteps off a falling character.
-    if self.downed or not self.entity:IsGrounded() then
+    if self.downed or not grounded then
         speed = 0.0
     end
 
@@ -1191,7 +1312,7 @@ function Player:Equip(slot, force)
         if gun then
             -- Guns are authored shrunk, so their size comes from GUNS. Even the one going in hand
             -- stays shrunk this frame: adding its socket is structural and lands next frame, and
-            -- until then it would be drawn at Body's origin. Player:Tick reveals it.
+            -- until then it would be drawn at Body's origin. Player:Reveal shows it.
             local sc = gun[1] * HIDDEN_SCALE
             w.entity:SetScale(Vec3(sc, sc, sc))
             if inHand then
@@ -1208,7 +1329,7 @@ function Player:Equip(slot, force)
     end
 
     -- The IK is off unless a two-handed gun is in hand, and it comes on with that gun's socket
-    -- (Player:Tick): on now, it would find no socketed gun for a frame. Weight 0 is not off - it
+    -- (Player:Reveal): on now, it would find no socketed gun for a frame. Weight 0 is not off - it
     -- still finds the weapon, and on the knife or the pistol warns that it sits in the right arm
     -- with no left marker (SetHandIKEnabled, docs/engine/scripting.md).
     if self.reveal then
@@ -1413,11 +1534,11 @@ function Player:Step(ts)
         return
     end
 
-    local v = self.entity:GetLinearVelocity()
+    local v, grounded = self:Motion()
     local speed = math.sqrt(v.x * v.x + v.z * v.z)
     -- Grounded matters: the same velocity while falling is not walking, and a character sliding
     -- down a slope should not sound like it is striding.
-    if speed < 1.0 or not self.entity:IsGrounded() then
+    if speed < 1.0 or not grounded then
         -- Reset rather than pause, so the first step after stopping lands immediately instead of
         -- on whatever fraction of a stride was left over.
         self.stepTimer = self.stepInterval
@@ -1836,6 +1957,9 @@ function Player:Diagnose(ts)
             self.xmn, self.xmx, self.zmn, self.zmx, hits))
     end
 end
+
+-- Where this pawn faces, for the other clients (RemoteFrame). Written in OnTick on the server.
+Player.Replicated = { yaw8 = "u8", pitch8 = "u8" }
 
 local ____exports = {}
 ____exports.default = Player

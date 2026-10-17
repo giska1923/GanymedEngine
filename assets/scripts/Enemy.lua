@@ -191,6 +191,13 @@ function Enemy:OnUpdate(ts)
         return
     end
 
+    -- N5. On a client the server owns this enemy: its pose arrives in snapshots (it is replicated
+    -- in the scene), and running the AI here too would fight that. What a client still owes it is
+    -- its animation, which G3 drives from replicated state.
+    if Net.IsClient() then
+        return
+    end
+
     -- The P5 gate's fight is over (Player:ProbeTurn): leave without counting as a kill, so the
     -- score the gate banked is the score it fought for.
     if PG.gateClear then
@@ -434,7 +441,7 @@ function Enemy:Animate()
 end
 
 function Enemy:OnCollisionEnter(other)
-    if self.dead or not other then
+    if self.dead or not other or Net.IsClient() then
         return
     end
 

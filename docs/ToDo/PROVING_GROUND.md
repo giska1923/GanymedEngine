@@ -2915,6 +2915,67 @@ scene running the P5 gate with `contactDamage = 34`, so the player goes down at 
 Not exercised: a life ending by falling off the world (`Player:Die`), which calls the same
 `EndLife`; and the Dist build.
 
+### N9 — Co-op: G1, a pawn per player (2026-10-17)
+
+The game half of NETCODE.md's N5, stage G1 (the engine's NETCODE.md has the staging). The engine
+half (`Net.Players`, `Net.AssignPawn`, `Net.EndMatch`, spawned prefabs replicating as prefabs,
+mouse look only while captured, and `Entity:IsValid` checking the scene) landed on master first and
+came here by merge. `git diff --stat master.. -- GanymedEngine/source GanymedEditor/source
+GanymedRuntime/source GanymedDedicated/source` was empty after it.
+
+**The player is a prefab now.** `prefabs/Player.gprefab` is the scene's old Player subtree, 68
+entities, generated from the scene file rather than re-authored, so every component came across
+byte for byte. Three things changed on the way: the camera stayed in the scene; the knife's
+link to its own prefab was dropped, because nested prefabs do not exist; and the root gained
+`ReplicatedComponent`. The scene lost those 68 entities and gained a **Camera Rig** (the old Yaw →
+Main Camera shape, with the same camera and listener) and a **Game Mode** entity. The 7 enemies
+gained `ReplicatedComponent`. A block-by-block comparison of the scene before and after showed
+nothing else changed.
+
+**`GameMode.lua` decides who has a pawn.** On a dedicated server: every account in `Net.Players()`,
+at the next free spawn point, 2.5 m apart, assigned with `Net.AssignPawn`; a pawn is destroyed when
+its player's session ends. Offline (the runtime alone, or the editor's Play): exactly one. A client
+spawns nothing; its pawns arrive in snapshots.
+
+**`Player.lua` has three roles**, and its old OnUpdate is split along them:
+
+- `OnTick(tick, cmd)` moves and looks, from the command, once per physics step: on the server, offline,
+  and on a client for its own pawn under prediction. The stick is in the pawn's frame. The facing is
+  written as two replicated bytes (`yaw8`, `pitch8`), because a character's root rotation is always
+  zero on the wire.
+- `ServerFrame`: health, down, heal, score, animation. No input, camera or HUD.
+- `LocalFrame`, for the pawn being played: the cursor, the camera rig, HUD, leaderboard, footsteps,
+  animation. Offline it is still the authority (firing, melee, pickups, health). On a client those
+  wait for G2–G5.
+- `RemoteFrame`, someone else's pawn on a client: facing from the bytes, legs and feet from a
+  velocity estimated from where it is drawn.
+
+`Enemy.lua` runs its AI only where it is authoritative. On a client it returns early: its pose
+arrives in snapshots, and G3 drives its animation from replicated state. Contacts with pickups,
+enemies and heal spots are ignored on a client for the same reason.
+
+**What was dropped.** Q/E keyboard turning: a command carries no turn input, and the mouse is the
+look. The gate harness modes (`autopilot`, `losgate`, `p5gate`, `autofire`) still work, offline
+only, steering from `OnUpdate` as before.
+
+**Verified**, Windows x64 Debug. Dev server on `scenes/ProvingGround.ganymede` and two headless
+runtimes at `lat:75` each way, their stick reversing every 30 ticks (the runtime's `predict-loss`
+mode; the arena floor it adds on the client is coplanar with the ground):
+
+| Check | Result |
+|---|---|
+| Offline | the runtime alone: "GameMode: offline, one pawn", the pawn presented (camera rig bound), no script errors. With `autopilot` set in the prefab for one run: it drove the circuit, 100% grounded, `inWall=0`, every waypoint reached; it then stuck behind the Sentry inside the Blockhouse, which postdates the P1 gate |
+| A pawn each | "c1 joined, pawn at spawn 1", "c2 joined, pawn at spawn 2". The clients owned net ids 8 and 9, each held both pawns and the 7 enemies (`ghosts=9`), and a registry of 251: 114 scene entities, 68 per pawn, and the client's floor |
+| Leaving | "c1 left, pawn removed", "c2 left, pawn removed", and the server kept running. The first run crashed here: enemies cache the "Player" entity, and `IsValid` said true for a destroyed one. Fixed on master (`Entity:IsValid` checks the scene) |
+| Prediction, enemies frozen on the server (a temporary `PG.freeze`, removed) | c1 **1** correction, c2 **4**, each 200 mm, one tick of a 12 m/s reversal |
+| Prediction, enemies active | c1 **239** corrections, about 237 mm each; c2 16. All 11 enemy acquisitions were of the pawn near spawn 1, c1's. On the server they press into the pawn; on the client they are kinematic copies 100 ms in the past, so the pawn is pushed differently. This is NETCODE.md's "remote bodies block the predicted one" risk, and G3's to solve |
+| Not seen | a remote pawn's animation and facing on screen: the clients were headless, and the code ran without an error, nothing more. The editor's Play with the game mode was not driven |
+
+**Found in passing:** `GanymedEditor/scripts-src/Player.ts` says it "now generates"
+`assets/scripts/Player.lua`, but it is a 132-line demo player, and this Player.lua is 1,800 hand-written
+lines. Building the TypeScript scripts would overwrite the game's player with the demo. Not changed
+here.
+
 ## Decisions, with the ones most likely wrong marked
 
 Recorded now so that when this moves to `docs/history/` we can see which held.
