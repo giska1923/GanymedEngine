@@ -668,6 +668,55 @@ defeat reported by the server and ratings that change.
    client, which trusts itself. A server-side submission needs a server credential the backend does
    not issue, and is recorded as a follow-up, not built.
 
+#### How the game steps are staged (written 2026-10-17, after reading the game)
+
+Steps 4–7 above are one change on paper and several in practice. Reading `first-game` showed what
+they rest on:
+
+- **The game is single-player in its structure, not just its rules.** One `Player` placed in the
+  scene, with the camera inside its hierarchy. All of `Player.lua`'s ~1,800 lines run in `OnUpdate`,
+  reading the keyboard directly. Enemies chase `Scene.FindEntityByName("Player")`, and every
+  cross-script value (damage, score, kills, melee hits) goes through the global `PG` table.
+- **The client runs scene scripts too.** The 7 enemies are in the scene file, so each client would
+  run its own enemy AI against the replicated poses unless the scripts check `Net.IsClient()`.
+- **The engine was missing four things a server-side game needs.** A script could not assign a pawn
+  (only the test module could). A prefab spawned with `Scene.Spawn` did not replicate as a prefab
+  (only test spawns registered their path). A script could not end the match (the dedicated
+  process ended on a timer). And a script could not ask who is connected.
+
+So the work is staged. Each stage ends playable and measured. Engine stages land on `master` first
+and reach `first-game` by merge; game stages land on `first-game`.
+
+| Stage | Where | What | Done when |
+|---|---|---|---|
+| **E** | `master` | `Net.Players()`, `Net.AssignPawn(account, id)`, `Net.EndMatch(outcome)`; a spawned prefab replicates as that prefab (its `PrefabInstanceComponent` source); `--match-seconds 0` means only the game ends the match | **Done 2026-10-17**, below |
+| **G1** | `first-game` | A game-mode script; `Player` becomes a prefab; one pawn per account on the server, one offline; the scene camera follows the local pawn; movement and look in `OnTick`, presentation in `OnUpdate` | two clients walk, each predicting its own pawn, and the game still plays offline |
+| **G2** | `first-game` | Firing: the server spawns the real round, `Net.Shot` for the cosmetic, damage per shooter instead of `PG.damage` | rounds from both players damage enemies; each client sees the other's shots |
+| **G3** | `first-game` | Enemies simulate only on the server, target the nearest player, and animate on clients from replicated state | enemies chase and hurt both players; clients agree on where they are |
+| **G4** | `first-game` | Health, down and respawn, pickups, heal, upgrade, score per player; the HUD for the local player | each player's HUD is their own |
+| **G5** | `first-game` | Melee: the server traces from its own animation, triggered by `cmd.Melee` | a knife hit on the server damages the enemy, and both clients see the swing |
+| **G6** | `first-game` | Waves, the win and loss rules above, `Net.EndMatch`; the backend's full path with four clients | the N5 verification table below |
+
+**The cheaper path, taken where it saves weeks.** Not every single-player feature has to be networked
+before the game is playable co-op. The gate harness modes (`autopilot`, `losgate`, `p5gate`,
+`autofire`) stay offline-only. The leaderboard stays client-side (step 7). Melee is its own stage
+because it is the most expensive to network: a hit comes from animated weapon points, so the server
+has to play the same clip the client shows.
+
+#### Stage E, measured (2026-10-17, Windows x64 Debug, `--dev`, two headless clients at `lat:75`)
+
+A temporary probe scene and script (not committed) did on the server what a game mode will: give
+every account in `Net.Players()` a `NetWalker` spawned with `Scene.Spawn`, assign it with
+`Net.AssignPawn`, and call `Net.EndMatch("victory")` after 25 s.
+
+| Check | Result |
+|---|---|
+| Pawns from script | `Probe pawn for c1`, `for c2`. Each client logged `Predict own` for a different net id (1 and 2) |
+| A spawned prefab replicates as the prefab | both clients held both pawns as full `NetWalker`s: their own was predicted, which needs the character controller a bare replicated entity would not have. `nobase=0`, `stale=0` |
+| `Net.EndMatch` | `accepted=true`, then `Match ended by the game: victory (dev: nothing is reported)` |
+| Prediction | c1: 0 corrections. c2: 10, up to 800 mm, and its first move 22 ticks after its first input. The probe spawned both pawns on the same spot. The server pushed the two characters apart, while c2 collided with an interpolated, 100 ms-old kinematic copy of the other one. That is the "remote characters block the predicted one" risk under Risks. G1 spawns pawns apart; the risk stays open |
+| Not run | `Net.EndMatch` on the fleet path (G6 runs it end to end) |
+
 #### Local checks (engine hooks only)
 
 Windows x64 Debug, 2026-10-11, port 17778, `scenes/Example.ganymede`, headless, two runtimes,

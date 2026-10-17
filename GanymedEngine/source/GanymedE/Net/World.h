@@ -59,6 +59,11 @@ namespace GanymedE {
 		// Server. The last tick the physics step finished.
 		uint32_t ServerTick();
 
+		// Server. The game decided the match: "victory" or "defeat". The dedicated process takes
+		// it once (TakeMatchEnd) and reports it through its agent. The first call wins.
+		bool RequestMatchEnd(const std::string& outcome);
+		bool TakeMatchEnd(std::string& outcome);
+
 		// Server. Ticks that reused the previous command because the real one had not arrived,
 		// summed over accounts, in total and since each account first moved its stick.
 		struct InputStats

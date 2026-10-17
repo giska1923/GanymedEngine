@@ -46,6 +46,10 @@ namespace GanymedE {
 		// Match over: stop admitting, report the outcome, post /shutdown, then tear down.
 		void Finish();
 
+		// The outcome Finish reports, when the game decided it (Net.EndMatch) rather than the
+		// configured stand-in.
+		void SetOutcome(const std::string& outcome) { m_Launch.Outcome = outcome; }
+
 		// Health was refused. Finish and GiveUp tear the process down on the calling thread.
 		bool IsStopped() const;
 

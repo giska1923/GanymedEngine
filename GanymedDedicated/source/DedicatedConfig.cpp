@@ -205,9 +205,10 @@ namespace GanymedE {
 			error = "--outcome must be victory or defeat";
 			return config;
 		}
-		if (config.MatchSeconds <= 0.0f)
+		// 0 is "no clock": the game ends the match with Net.EndMatch.
+		if (config.MatchSeconds < 0.0f)
 		{
-			error = "--match-seconds must be positive";
+			error = "--match-seconds must not be negative (0 means the game ends the match)";
 			return config;
 		}
 		if (config.LoadDelaySeconds < 0.0f)

@@ -1471,6 +1471,57 @@ namespace GanymedE {
 			net["Broadcast"] = sol::overload(
 				[=](sol::object nameObj, sol::object argsObj) { broadcast(nameObj, argsObj, false); },
 				broadcast);
+			// Server. The accounts with a live session, in no particular order. Empty anywhere else.
+			// A game-mode script polls this and gives each new account a pawn.
+			net["Players"] = [](sol::this_state ts)
+			{
+				sol::state_view lua(ts);
+				sol::table out = lua.create_table();
+				if (!ServerRole())
+					return out;
+				int i = 1;
+				for (const std::string& account : Net::ServerAccounts())
+					out[i++] = account;
+				return out;
+			};
+			// Server. This account's commands now drive the entity with this id, which is what
+			// Scene.Spawn returns: the entity itself exists from the next frame, and the id is
+			// valid before that.
+			net["AssignPawn"] = [](const std::string& account, int64_t id)
+			{
+				if (!ServerRole())
+				{
+					static bool warned = false;
+					if (!warned)
+					{
+						GE_CORE_WARN("Net.AssignPawn is server-only");
+						warned = true;
+					}
+					return;
+				}
+				Net::AssignPawn(account, UUID(static_cast<uint64_t>(id)));
+			};
+			// Server. Ends the match with "victory" or "defeat". The dedicated process reports it
+			// through its agent and exits. The first call wins; anything else is refused.
+			net["EndMatch"] = [](const std::string& outcome)
+			{
+				if (!ServerRole())
+				{
+					static bool warned = false;
+					if (!warned)
+					{
+						GE_CORE_WARN("Net.EndMatch is server-only");
+						warned = true;
+					}
+					return false;
+				}
+				if (!Net::RequestMatchEnd(outcome))
+				{
+					GE_CORE_WARN("Net.EndMatch: '{0}' is not victory or defeat", outcome);
+					return false;
+				}
+				return true;
+			};
 			net["Shot"] = [](Entity entity, glm::vec3 muzzle, glm::vec3 direction, float speed)
 			{
 				if (!ServerRole())

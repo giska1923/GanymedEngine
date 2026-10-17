@@ -199,6 +199,24 @@ would draw a second one. The cosmetic cannot damage anything. The server resolve
 round is not a replicated entity. Offline, `Net.Shot` returns without calling `OnShot`; the local
 `OnTick` is the only cosmetic, and there is no other client.
 
+### Players, pawns and the end of a match
+
+Three server-only calls are what a game-mode script needs. Each logs once and does nothing on a
+client or offline.
+
+- `Net.Players()` is the accounts with a live session, as an array of strings. A game mode polls it:
+  a new name is a player to spawn, and a name that is gone has left (5 s after its last packet).
+- `Net.AssignPawn(account, id)` makes that account's commands drive the entity with this id, and
+  makes its client predict that entity. The id is what `Scene.Spawn` returns, which is valid before
+  the entity exists. Assigning again moves the account to another pawn.
+- `Net.EndMatch("victory" | "defeat")` ends the match. The dedicated process reports that outcome
+  through its agent and exits ([dedicated.md](../dedicated/dedicated.md#the-result)). The first call
+  wins. Under `--dev` the outcome is only logged.
+
+A pawn is an ordinary prefab spawned on the server with `Scene.Spawn`. If its root has
+`ReplicatedComponent`, it replicates as that prefab: the client instantiates the same file with the
+same root UUID, so its children come out with the same UUIDs ([netcode.md](netcode.md#snapshots)).
+
 `--net-test=fields` is the check, with `assets/scripts/NetEcho.lua`. The numbers are in
 [NETCODE.md](../ToDo/NETCODE.md#n5--the-game).
 

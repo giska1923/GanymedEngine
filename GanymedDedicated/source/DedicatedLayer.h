@@ -25,6 +25,7 @@ namespace GanymedE {
 		Ref<Scene> m_Scene;
 		bool m_RuntimeStarted = false;
 		bool m_Simulating = false;
+		bool m_DevEndLogged = false;
 		std::chrono::steady_clock::time_point m_MatchEnd{};
 	};
 
