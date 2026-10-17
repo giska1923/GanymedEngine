@@ -164,11 +164,11 @@ namespace GanymedE {
 		if (!Net::ParseSim(netSim, config.Sim, error))
 			return config;
 		if (!netTest.empty() && netTest != "move" && netTest != "spawn"
-			&& netTest != "prefab" && netTest != "rest"
+			&& netTest != "prefab" && netTest != "rest" && netTest != "churn"
 			&& netTest != "predict" && netTest != "predict-loss" && netTest != "predict-desync"
-			&& netTest != "predict-wall" && netTest != "predict-step")
+			&& netTest != "predict-wall" && netTest != "predict-step" && netTest != "fields")
 		{
-			error = "--net-test on the server is move, spawn, prefab, rest, or a predict mode";
+			error = "--net-test on the server is move, spawn, prefab, rest, churn, a predict mode, or fields";
 			return config;
 		}
 		config.NetTest = netTest;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GanymedE/Net/ScriptWire.h"
 #include "GanymedE/Net/Socket.h"
 
 #include <chrono>
@@ -72,11 +73,15 @@ namespace GanymedE::Net {
 
 	// A snapshot the client received. The body is everything after the 21-byte header.
 	// `At` is the local time of the receive, which is what the tick estimate measures from.
+	// `Session` is the one it arrived on: a new session is a new server tick timeline.
+	// `Sequence` is its transport sequence, which is how a later snapshot names it as a baseline.
 	struct SnapshotDatagram
 	{
 		std::vector<uint8_t> Bytes;
 		float RttMs = 0.0f;
 		std::chrono::steady_clock::time_point At{};
+		uint64_t Session = 0;
+		uint16_t Sequence = 0;
 	};
 
 	// Server, main thread. The door thread is the one in `recvfrom`; these copy what it
@@ -98,5 +103,15 @@ namespace GanymedE::Net {
 
 	void SendCommands(const uint8_t* data, int length);
 	std::vector<CommandDatagram> DrainCommands();
+
+	// Server, main thread. One reliable payload on every peer. The door sends it; this only
+	// queues, and it takes the state lock to do that. Empty and anything over 256 bytes is
+	// dropped. Byte 3 is a script event. Bytes 1 and 2 stay the probe.
+	void SendReliable(const uint8_t* data, int length);
+
+	// Client, main thread, from the door's delivery of a reliable payload. Queues a script
+	// event for the scene update. A client must not be believed if it sends one of these:
+	// the server's deliver path ignores byte 3.
+	void IngestReliable(const uint8_t* data, int length);
 
 }

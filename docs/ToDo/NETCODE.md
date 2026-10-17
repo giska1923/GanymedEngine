@@ -4,7 +4,12 @@
 acceptance test has not been run, so N1 is not closed. N2 is built (2026-10-11) and its local
 checks were run; the path through the backend was not. N3 is built (2026-10-11) and its local
 checks were run on Windows x64 Debug; it is not a fleet close. N4 is built (2026-10-11) and its
-local checks were run on Windows x64 Debug; it is not a fleet close. N5 is not started.** It follows
+local checks were run on Windows x64 Debug; it is not a fleet close. N5's engine hooks (replicated
+fields, server events, cosmetic shots) are built (2026-10-11) and the local two-client checks were
+run on Windows x64 Debug. The game steps are not: the Proving Ground scripts live on `first-game`
+and are not in this tree. N5 is not a fleet close. Review fixes (snapshot order, lost destroys, the command lead, the
+reliable window, the test module) landed 2026-10-17, and so did the fix for the corrections they exposed at every input change
+(the client now decodes onto the named baseline).** It follows
 [ONLINE.md](ONLINE.md), whose last phase, O5b, is this N1. It depends on `online-o4` (O4 and O5a)
 reaching `master`. N1 is written against the backend's `api-v0.6` (results through the agent,
 `DENIED` before allocation), which is built. What the process does now is
@@ -268,7 +273,7 @@ properties) and none of its machinery:
 | **N2** | Transport: sockets, connections, the packet header and acks, the conditioner, `--dev`. Built 2026-10-11. The fleet path was not run | master | about a week |
 | **N3** | Replication: ticks, network IDs, spawn and destroy, snapshots with delta compression, interpolation | master | 1½–2 weeks |
 | **N4** | Input and prediction: commands, `OnTick`, the predicted character, reconciliation. Built 2026-10-11. Local checks run; not a fleet close | master | 1½–2 weeks |
-| **N5** | The game: script roles and fields, shot events, co-op rules, the match result through the backend | master (engine hooks) + `first-game` (the game) | 2–3 weeks |
+| **N5** | The game: script roles and fields, shot events, co-op rules, the match result through the backend. Engine hooks built 2026-10-11. The game steps are not in this tree. Not a fleet close | master (engine hooks) + `first-game` (the game) | 2–3 weeks |
 
 **These are estimates, and probably low.** All of it adds up to two to three months of the pace
 ONLINE.md ran at. N5 is the one most likely to grow: `Player.lua` alone is about 1,800 lines of
@@ -572,6 +577,49 @@ same `SceneRole` and the same `OnTick` path the editor's play mode uses.
 | Walls and steps | N0 replayed a wall slide and a 0.2 m step to the bit once the ground enum was restored (decision 9). This phase still has to show that, at 150 ms, corrections stay inside the tolerance | Wall: `corrections=0 maxMm=0`. The server slid along the wall. z held at 3.380 while x reached 40.4. One settle correction of 5 mm before the walk. Step: the capsule center went to y=1.150 on the 0.2 m step (0.95 + 0.2) and back to 0.950 on the floor. The three counted corrections, 67 then 133 then 133 mm, were the first walking ticks, before the step. None after it |
 | Offline unchanged | the same scripts play single-player in the editor with no server | `--net-test=offline --headless`, no `--connect`. `Predict offline tick=120 x=0.000 y=0.950 z=3.983`, exit 0. The walk starts at tick 60, so 60 ticks at 4 m/s is 4 m; 3.983 is a tick short of that. The editor was not driven |
 
+### Review fixes (2026-10-17): snapshot order, lost destroys, the lead, the reliable window, the test module
+
+A review of N1–N5 found four things to fix before N5's game work. All four are done. Windows x64
+Debug, `GanymedDedicated --dev` on port 17790, headless runtimes each in their own working directory
+(so each has its own `GanymedE.log`). Live behaviour is in [netcode.md](../engine/netcode.md).
+
+| Item | Change | Measured |
+|---|---|---|
+| Snapshots applied out of order | The client drops a snapshot whose tick is not newer than the last it applied, per session (`stale=` on the replicate line) | New server mode `churn` (one entity a frame, each destroyed 3 ticks later, for 20 s) at `reorder:30`: before, the server held 0 and the client kept **111** for good |
+| Lost destroys, found while fixing the first | Per client, the set of net ids a spawn went out for. A gone one gets a destroy in every snapshot until a snapshot carrying it is acknowledged. The old rule looked only at the newest stamp | Ordering fix alone: the client still kept **10** (`reorder:30`) and **47** (`reorder:30,loss:10,dup:10,lat:30`). Both fixes: **0** and **0**, with 225 and 281 stale snapshots dropped. Idle snapshots back to 11 bytes once the destroys were acknowledged |
+| The lead had no margin | `ceil(rtt / dt) + 2` ticks | `lat:75`, 60 s flat walk: ticks with a repeated command went from **660 (about 18.5%)** to **0**. `lat:75,loss:5`, reversing stick: corrections from 55 (and 71 on a rerun) to **18 and 34**, the largest from 534 mm to **134 mm**. `leadTicks` 11 → 13 |
+| Unbounded reliable hold | Held only within 256 ids of the next expected, and at most 256 at once; the rest counted as `reliable refused` | New client probe `reliable-flood` (1020 messages outside the window): `reliable refused 1020`. `reliable:1000` at `loss:20,reorder:50`: all 1000 in order, `reliable refused 0` |
+| Test scaffolding in the engine | `--net-test` modes moved to `Net/NetTest.cpp` behind `Net::Test::` hooks. Pawns go through the production `Net::SpawnReplicatedPrefab` and `Net::AssignPawn`. `World.cpp` lost 245 lines and both `Application::Close` calls; `WalkFrom` is `SettleFrom` | Every mode reproduced its baseline from before the move: `predict-desync` (3000 mm at the teleport tick), `spawn` (500 then 0), `prefab` (child UUIDs equal), `fields` (both clients, the shot echo suppressed for the owner), `offline` (z 3.93–4.00 at tick 120). `predict-loss` gave 71 corrections against 55; it is random loss and late commands, and the code moved unchanged |
+
+**Found by this work, and fixed the same day: corrections at every change of input.** With the
+margin, `predict-loss`'s stick at `lat:75` and **no loss** had no repeated command, and still
+corrected 16 times in 20 s: at every reversal and the snapshot after it, 133–134 mm each. Tick-level
+logs on both sides (temporary, removed) showed the prediction matching the server to quantization,
+and the *authoritative sample* wrong. At tick 604, four ticks after a reversal at 600, the server was
+at z = 1.6667 and the client's sample said 1.8000, the server's position at 602. The server had
+diffed against the client's acknowledged baseline, tick 594, where the position on the way out was
+also 1.6667, so the delta omitted it. The client filled the omission from its latest sample, not
+from that baseline. So it corrected to a wrong position, then back. This was the review's item 5
+(deltas applied onto the latest state, not the named baseline), showing up as a prediction bug.
+
+The fix is the Quake 3 rule: the client keeps the full state of its last 64 received snapshots by
+transport sequence and decodes each snapshot onto the exact baseline the header names, with the
+server's own `StampAfter` ([netcode.md](../engine/netcode.md#snapshots)). Measured after it:
+
+| Run (`lat:75` each way unless noted) | Before (margin only) | After |
+|---|---|---|
+| `predict-loss` stick, no loss | 16 corrections | **0** |
+| `predict-loss`, `loss:5`, twice | 18 and 34 | **0 and 0** |
+| `predict` 60 s walk; `predict-wall`; `predict-step` | 0; 0; 0 | 0; 0; 0 |
+| `predict-desync` | the one 3000 mm correction | the one 3000 mm correction, at the teleport tick |
+| `churn` at `reorder:30`, and with `loss:10,dup:10,lat:30` | 0 left | 0 left, `nobase=0` |
+| `spawn` at `loss:10`; `prefab`; `fields` (two clients); `move` (two clients, `lat:50,loss:5`); `rest` | as before | as before. `move`: 25 sampled poses identical on the server and both clients. `rest`: an idle entity now gets a sample every snapshot, so its buffer depth is 32, not 1 |
+| `reliable:1000` at `loss:20,reorder:50` | in order, once | in order, once |
+
+Not changed, still open from the same review: records fit in net id order with no priority, so
+high ids can starve under load; net ids wrap at 65,535 without checking which are live; velocity clamps at
+±32 m/s; the prediction history is 64 ticks.
+
 ### N5 — the game
 
 #### Goal
@@ -619,6 +667,31 @@ defeat reported by the server and ratings that change.
 7. **The HUD is per local player.** The leaderboard submission (kills in one life) stays on the
    client, which trusts itself. A server-side submission needs a server credential the backend does
    not issue, and is recorded as a follow-up, not built.
+
+#### Local checks (engine hooks only)
+
+Windows x64 Debug, 2026-10-11, port 17778, `scenes/Example.ganymede`, headless, two runtimes,
+`lat:75` each way. `--net-test=fields`. The server spawns `assets/prefabs/NetEcho.gprefab` per
+account. At tick 1200 the script sets `health = 40`, `weapon = "rifle"`, `attackTick = 1200`,
+`down = true`, broadcasts unreliable `ping` and reliable `dead`, and calls `Net.Shot`.
+
+0% loss. Pawns spawned at tick 78 (`alpha`) and 133 (`beta`). The server logged `Echo fired tick=1200`.
+Both clients logged `Field health=40 weapon=rifle attack=1200 down=true`, `Event ping n=7 note=hi`,
+and `Event dead who=alpha`. The client that does not own the shooter logged
+`Shot x=1.000 y=2.000 z=3.000 dz=1.000 speed=20.000 tick=1200`. The owner (`beta`, net id 2) logged
+`Shot echo suppressed net=2` and did not log `Shot`. Idle snapshots after that change was acked were
+11 bytes, 330 B/s.
+
+`lat:75,loss:10`, same scene and the same tick. Both clients still got the field, the reliable
+`dead`, the ping, and the same shot-or-echo split. This trial did not lose the one unreliable
+snapshot. A lost snapshot would drop the ping and the shot; they are not retried. The field stays
+in the baseline until it is acknowledged.
+
+Steps 4–7 were not done. `Player.lua` here is the small demo, and `Enemy.lua`, `MeleeAttacker.lua`,
+`Projectile.lua` and the Proving Ground scene are on `first-game`. They are not in this tree, and a
+stand-in co-op game would not be the one the table below describes. The editor was not played.
+`GanymedE.log` stayed 116438 bytes. The fleet rows below were not run. A session that ends on
+the 5 s silence still does not call a script; a match-end script has to `Net.Broadcast` that itself.
 
 #### Verification
 
@@ -674,7 +747,7 @@ defeat reported by the server and ratings that change.
 | N2 | [netcode.md](../engine/netcode.md), indexed from [docs/README.md](../README.md); [runtime.md](../runtime/runtime.md) (`--connect=`, `--name=`, `--net-sim=`, `--net-test=`); [online.md](../engine/online.md) (`JoinMatch` hands over its socket); [dedicated.md](../dedicated/dedicated.md) (`--dev`). Written with the code. The fleet row is still open |
 | N3 | netcode.md (ticks, snapshots, delta, interpolation); [scene.md](../engine/scene.md) (`ReplicatedComponent`, derived child UUIDs). Written with the code. The local checks are in the N3 section |
 | N4 | netcode.md (commands, prediction, reconciliation); [scripting.md](../engine/scripting.md) (`OnTick`, `PlayerCommand`, roles); [physics.md](../engine/physics.md) (replaying a character). Written with the code. The local checks are in the N4 section |
-| N5 | scripting.md (replicated fields, `Net.Broadcast`, `OnNetEvent`); the Proving Ground's own record on `first-game` |
+| N5 | scripting.md (replicated fields, `Net.Broadcast`, `OnNetEvent`, `OnShot`) and netcode.md (the 7-bit mask, the event trailer, type `3`). Written with the engine hooks. The Proving Ground's own record is still on `first-game`, which this tree does not contain |
 
 ## Dependencies that need approval
 

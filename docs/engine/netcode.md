@@ -6,14 +6,13 @@ messages that must arrive in order. The world itself travels as unreliable snaps
 replaces the last, and a client draws replicated entities from the two snapshots around a time a
 tenth of a second behind the server's tick. The character a client owns is predicted from the
 commands it sent, and corrected when a snapshot disagrees. A script sees `Net.GetStats()`,
-`Net.IsServer()`, `Net.IsClient()`, and `OnTick`. Replicated fields and `Net.Broadcast` are still
-N5 of [NETCODE.md](../ToDo/NETCODE.md).
+`Net.IsServer()`, `Net.IsClient()`, `OnTick`, replicated fields, `Net.Broadcast`, and `Net.Shot`.
 
 | | |
 |---|---|
-| Sources | `GanymedEngine/source/GanymedE/Net/` — `Socket`, `Connection`, `Net.h`, `Host.cpp`, `BitStream.h`, `Quantize.h`, `Command.h`, `World.cpp` |
+| Sources | `GanymedEngine/source/GanymedE/Net/` — `Socket`, `Connection`, `Net.h`, `Host.cpp`, `BitStream.h`, `Quantize.h`, `Command.h`, `ScriptWire.h`, `World.cpp` |
 | Who pumps it | The dedicated process's door thread calls `PumpServer`. The runtime's main thread calls `PumpClient` from `Online::OnUpdate`, once a frame, after the join's handshake poll. The main thread builds snapshots; the door is what calls `sendto` |
-| What a script sees | `Net.GetStats()`, `Net.IsServer()`, `Net.IsClient()`, and `OnTick(tick, command)`. Both role queries are false offline. `IsLocallyControlled()` is on the entity |
+| What a script sees | `Net.GetStats()`, `Net.IsServer()`, `Net.IsClient()`, `OnTick(tick, command)`, a `Replicated` table, `Net.Broadcast`, `Net.Shot`, `OnNetEvent`, `OnShot`. Both role queries are false offline. `IsLocallyControlled()` is on the entity |
 
 ## How engines usually do this, and where Ganymed diverges
 
@@ -94,7 +93,8 @@ the test is the network. Everything after the handover is conditioned, on both s
 `Sim` that was installed before `Listen` and before `OnRuntimeStart`.
 
 Silence of 5 s ends the connection. The server logs `Player {account} left (timeout)`. The client
-logs `server at {addr} went silent; session ended`. Telling a script is N5. Each side sends at
+logs `server at {addr} went silent; session ended`. That path does not call a script. A server
+script can `Net.Broadcast` when it decides the match is over. Each side sends at
 least every 100 ms, and also on the pump that noticed the peer's packet, so the acknowledgement
 does not wait out the keepalive. On a quiet link that is about one packet per round trip, and
 never slower than the 100 ms floor. When the round trip is near that floor the two overlap and the
@@ -151,6 +151,17 @@ is dropped. The receiver delivers id `N` only when it has delivered `N - 1`. Any
 held. Anything older is ignored. A duplicate therefore does not run twice, and a hole does not
 deliver the messages behind it.
 
+**What may be held is bounded.** A message more than 256 ids past the next expected one is dropped
+unheld, and so is any message once 256 are already held. Each one is counted as `reliable refused`
+in the stats line. An honest sender cannot hit either limit: a packet carries at most 255 messages,
+starting from the sender's oldest unacknowledged one, so nothing it sends is more than 254 ahead.
+Without the limit, any peer holding a session could make the receiver store up to 255 messages per
+packet, with ids anywhere up to 32,767 ahead, for as long as it kept sending.
+`--net-test=reliable-flood` (a client flag) sends four raw data packets of 255 messages each, all
+outside the window. Measured on 2026-10-17: the server's stats line read `reliable refused 1020`,
+and `reliable:1000` at `loss:20,reorder:50` on both sides still delivered all 1000 in order, with
+`reliable refused 0`.
+
 `--net-test=reliable:<count>` (1 to 10000) is a client flag, used after the session accept. It
 enqueues `count` payloads of a type byte `1` and a little-endian index. The server, on an in-order
 delivery of type `1`, echoes type `2` with the same index, and only when the index is the next one
@@ -158,6 +169,12 @@ it expected. The client's success line is the proof the server saw them in order
 echoed. Nothing sends these unless the flag is set. A fleet server will still echo a type `1` a
 client sends: there is no encryption to refuse it, which is the same limit as the rest of the
 session.
+
+Type `3` is a server-to-client script event, one per message, packed with the same bits as a
+snapshot event. `SendReliable` queues it on every peer from the main thread. The door still does
+the `sendto`. A payload over 256 bytes is dropped, which is `Enqueue`'s cap. The server's deliver
+path ignores type `3`: a client cannot inject one. The client's deliver path queues it for the
+scene update. Bytes `1` and `2` are still only the probe.
 
 `--net-test=spoof` sends two datagrams that do not go through the connection and do not go through
 the conditioner, so a drop is the server's check and not the loss simulator. One has the session
@@ -188,13 +205,19 @@ added into the render time.
 
 Prediction is a different clock. The command for tick T has to be in the server's buffer when the
 server starts tick T, and the trip back is the other half of the round trip. The client therefore
-simulates `ceil(rtt / FixedTimestep)` ticks ahead of the estimate, at least 1 and at most 32. From
-a snapshot that has just arrived, that is a full round trip ahead of T, which is about half a
-round trip ahead of where the server is now. Leading by only half the round trip catches the
-server's present. The command then arrives after the tick it names, the server repeats the
-previous command, and a character whose input is not constant never takes the new one. Measured
-with `lat:75` each way — 176 to 177 ms once the poll is in the sample — that ceil is 11. The
-predict line logs it as `leadTicks=`.
+simulates `ceil(rtt / FixedTimestep) + 2` ticks ahead of the estimate, at least 1 and at most 32.
+From a snapshot that has just arrived, the round-trip part is a full round trip ahead of T, which
+is about half a round trip ahead of where the server is now: the tick the command arrives for.
+Leading by only half the round trip catches the server's present, and the command is late.
+
+The two extra ticks are the margin, and the round trip alone left none. A command a tick late is
+not used: the server repeats the previous one, and at a change of direction that is a correction.
+The margin covers what the round trip does not show. The server steps several ticks per frame, so
+a command has to arrive before the frame that simulates its tick, not before the tick itself. The
+client sends at the end of its own frame. And the RTT is a smoothed average, not the slow packets.
+Measured with `lat:75` each way (176 to 177 ms once the poll is in the sample), the lead is 13
+ticks, 11 of them the round trip. The predict line logs it as `leadTicks=`. Without the margin, a
+60 s walk had about 18.5% of its ticks repeated at 0% loss. With it, none were (2026-10-17).
 
 ## Snapshots
 
@@ -214,14 +237,48 @@ Per client the server keeps up to 32 sent snapshots, keyed by the sequence `Buil
 assigned. The baseline is the newest of those whose sequence is still acknowledged inside the
 128-packet send window. No such snapshot means a full state: every live replicated entity is a
 spawn. The values in a delta are absolute. What the delta selects is which entities and which
-fields changed, not a numeric difference. An empty delta is still sent, so the client's clock
-moves on a scene that is sitting still.
+fields changed **since that baseline**, not a numeric difference. An empty delta is still sent, so
+the client's clock moves on a scene that is sitting still.
 
-Spawns and destroys travel in the same packet. There is no reliable spawn. A destroy is also
-emitted for anything in the newest sent stamp that is no longer in the world, even when the spawn
-that created it was never acknowledged. Otherwise a client that applied a spawn whose ack was
-lost, and then watched the server destroy the entity, would keep it. Destroys are packed at the
-front, so a full datagram does not drop them behind spawns. Destroying an unknown net id on the
+**The client decodes each snapshot onto exactly the baseline the header names**, never onto
+whatever it applied last. It keeps the full state after each of the last 64 snapshots it received,
+keyed by transport sequence, whether it applied them or not, because any of them can be named as
+the next baseline. The new state is that baseline with the snapshot's records stamped on, through
+`StampAfter`, the same function the server uses for what the client holds after a snapshot, so both
+sides compute the same state from the same records. The scene then follows the full state:
+entities that left it are destroyed, entities that joined it are spawned, every entity gets a
+sample of its whole state at the snapshot's tick, and script fields are written when they differ
+from what the scene was last given. This is Quake 3's delta rule.
+
+The latest applied state is not a substitute for the baseline. A field missing from a delta means
+"as in the baseline", and the two differ whenever a value has moved and come back within a round
+trip. Before this rule, the client filled missing fields from its latest sample. A character
+reversing direction passes back through the positions of the ticks before the reversal. About ten
+ticks after it, its position equalled the baselined one exactly, so the delta omitted it, and the
+client read the position from two ticks earlier. Prediction then corrected 133 mm to a wrong
+position, and 133 mm back on the next snapshot, at every reversal. The same would happen to any
+field toggled twice within a round trip. A snapshot whose baseline the client does not hold is
+dropped and counted as `nobase`. Every baseline is a snapshot the client acknowledged, and the
+server picks among its last 32 sent, so none has been seen.
+
+Spawns and destroys travel in the same packet. There is no reliable spawn. **The client may hold an
+entity the acked baseline does not list:** it applied a spawn whose ack the server has not seen.
+If that entity is then destroyed, a diff against the baseline never mentions it. So per client the
+server keeps the set of net ids a spawn record has gone out for. Any of them that is gone from the
+world gets a destroy in every snapshot, until a snapshot that carried its destroy is acknowledged.
+Only then does it leave the set. An earlier version emitted that destroy only while the entity was
+in the newest sent stamp. When the one snapshot carrying it was lost, the next stamp no longer
+listed the entity, and nothing said it again. `churn` (below) left 10 to 47 entities on a client
+that way. Destroys are packed at the front, so a full datagram does not drop them behind spawns.
+
+**The client applies snapshots in tick order, and does not apply one that is not newer** than the
+last it applied (`stale=` on the replicate line). It still decodes and keeps that snapshot's state,
+since the server may name it as a baseline. UDP reorders and duplicates. Applying an old snapshot
+after a newer one moved the tick estimate backwards and put older state on the scene. It could also
+spawn an entity that a newer snapshot had already destroyed, and that entity stayed. Not applying
+the old snapshot loses nothing: the newer one's state already includes whatever the older one
+changed. Quake 3 discards out-of-order snapshots the same way. The ordering, and the kept states,
+are per session: a snapshot on a new session starts a new timeline. Destroying an unknown net id on the
 client is a no-op. Destroying a prefab collects the subtree and destroys it from the leaves,
 because `Scene::DestroyEntity` unparents children rather than destroying them.
 
@@ -235,8 +292,9 @@ The body budget is 1200 − 21 = 1179 bytes. The header is a u32 tick, a u16 bas
 (`0` means this packet is a full state), a u16 owned net id (`0` means this client controls
 nothing), and a u16 count. That is 10 bytes before the records. Each record is a u16 net id and a 2-bit
 op: `1` spawn, `2` destroy, `3` update. A spawn adds a u64 UUID and a path: a 7-bit length, at
-most 80, then the bytes. A destroy stops there. Anything else carries a 6-bit mask — position,
-yaw, euler, velocity, ground, aim — and the fields the mask names. The same `Bits` function
+most 80, then the bytes. A destroy stops there. Anything else carries a 7-bit mask — position,
+yaw, euler, velocity, ground, aim, script fields — and the fields the mask names. Every snapshot
+then ends with a 4-bit event count, even when the count is zero. The same `Bits` function
 writes, measures, and reads, least significant bit first inside the byte, so the three cannot
 disagree about a width. The codec is the compile-time list in `World.cpp`, not `entt::meta`.
 [scene.md](scene.md) forbids reflection on the replication pass.
@@ -250,8 +308,9 @@ What that list sends, for an entity with `ReplicatedComponent`:
 | Euler XYZ | It does not | Each axis uint16 over [−π, π], wrapped before the pack |
 | Linear velocity and ground | It is a character | Signed 16 bits, millimetres per second, clamped to ±32 m/s. Ground is 2 bits: `0` OnGround, `1` OnSteepGround, `2` NotSupported, `3` InAir. Read from Jolt. Gameplay does not write it. Reconciliation does, and only then |
 | Aim pitch and yaw | `AimOffsetComponent` is present | The same signed-angle pack as an Euler axis |
+| Script fields | The script's class table declares `Replicated` | Bit 64 of the mask, then the block in the next section. A spawn carries every declared field. A later snapshot carries the ones that changed |
 
-Scale is not replicated. Script fields are not. The world transform is not: the client already
+Scale is not replicated. The world transform is not: the client already
 has the parent. The server assigns a 16-bit net id, starting at 1 and skipping 0, stored on the
 component with `Trait::Runtime` so the file does not keep it. Scene entities match by UUID. An
 entity the client does not have yet is `CreateEntityWithUUID` with the server's UUID, or
@@ -259,12 +318,79 @@ entity the client does not have yet is `CreateEntityWithUUID` with the server's 
 a path that is empty, longer than 80, contains `..`, or uses a character outside
 `A–Z`, `a–z`, `0–9`, `_`, `.`, `/` and `-`.
 
-`GanymedDedicated --net-test=` is `move`, `spawn`, `prefab`, `rest`, or a predict mode:
-`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`. Anything else exits 2,
-including under `--dev`. The runtime accepts those predict names too, plus `offline`,
-`reliable:<count>` and `spoof`. A name it does not know is a logged connect failure, not exit 2.
-The two parsers are not the same list. The modes are how N3 and N4 were measured. They are not a
-game mode.
+`GanymedDedicated --net-test=` is `move`, `spawn`, `prefab`, `rest`, `churn`, `fields`, or a predict
+mode: `predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`. Anything else
+exits 2, including under `--dev`. The runtime accepts those predict names too, plus `fields`,
+`offline`, `reliable:<count>`, `reliable-flood` and `spoof`. A name it does not know is a logged
+connect failure, not exit 2. The two parsers are not the same list. The modes are how N3, N4 and
+the N5 engine hooks were measured. They are not a game mode.
+
+**The modes live in `Net/NetTest.cpp`, not in the replication code.** `World.cpp` calls a handful
+of `Net::Test::` hooks (start, the per-frame advance, before and after the scripts tick, after a
+prediction frame, when a client spawns a prefab), and each is a no-op when no mode is set. The
+movers, arenas, synthetic sticks, the 500-entity phase, the desync teleport and both
+`Application::Close` calls are there. A test that needs a pawn uses the same production calls the
+game will: `Net::SpawnReplicatedPrefab` and `Net::AssignPawn`. The transport's own probes
+(`reliable:<count>`, `reliable-flood`, `spoof`) stay in `Host.cpp`, beside the channel they test.
+
+`churn` spawns one replicated entity per frame and destroys each three ticks later, for 20 s. A life
+that short fits inside one reorder hold, so a snapshot that spawned an entity can arrive after the
+one that destroyed it. The server logs `Churn done` once it holds none; the client must end with
+`ghosts=0`. Measured on 2026-10-17 with `reorder:30` on the server, before both fixes above: the
+server held 0, and the client kept 111, for good. With the ordering fix only, 10. With both, 0, at
+`reorder:30` and again at `reorder:30,loss:10,dup:10,lat:30`, with 225 and 281 stale snapshots
+dropped.
+
+An idle snapshot — no records, event count zero — is 11 bytes. That is the 10-byte header plus the
+4-bit count, which rounds up to one more byte. Two idle `NetEcho` entities measured 11 bytes and
+330 B/s at 30 Hz on 2026-10-11. The N3 rest figure was taken before the owned id and this trailer,
+and it stays in the N3 verification record.
+
+## Script fields and events
+
+Unreal replicates actor properties through a property list and `NetSerialize`, and marks each RPC
+reliable or unreliable on the function. Source sends unreliable user messages, and reliable ones on
+a different channel. Ganymed already has a snapshot delta and a 256-byte reliable channel, so a
+field rides the snapshot — it has to converge after a loss — and an event takes the channel its
+caller asked for. The declaration is a Lua table, read once into a C++ schema. `entt::meta` is not
+on this pass. [scene.md](scene.md) forbids a by-value `meta_any` at 30 Hz.
+
+`Replicated` sits on the table the script returns. The types are `bool`, `u8`, `tick` (a u32) and
+`str16`. At most 16 fields. Names are sorted, and the index on the wire is that position. Each
+field is a 4-bit index, a 2-bit type (`0` bool, `1` u8, `2` tick, `3` str16) and the payload: one
+bit, 8 bits, 32 bits, or a 5-bit length and at most 16 bytes. A count of changed fields, 5 bits,
+precedes them. The baseline merges by index, so a later diff does not resend a field that held.
+Nil on the server reads as the zero of the type.
+
+The client does not write these during `ApplyPacket`. That runs before `LuaScriptSystem`
+instantiates a prefab spawned in the same frame. `DeliverScriptTraffic` writes them after
+`Instantiate` and before `OnUpdate`. The owned pawn is included. Health is not predicted.
+
+`Net.Broadcast(name, args)` queues an unreliable event on the server. A third argument `true`
+sends it as reliable type `3` instead. `args` is nil or a flat table of at most 4 string keys,
+each a bool, a number, a string or a `Vec3`. A nested table is skipped. Numbers are f32. The name
+is at most 16 bytes, a key 12, a string 16. The event is delivered to that same entity on each
+client as `OnNetEvent(name, args)`.
+
+Unreliable events are the snapshot trailer: a 4-bit count, then each event. They are not in the
+baseline and they are not retried. A lost snapshot loses them. At most 8. If they do not fit in
+what the records left of the 1179-byte body, they are dropped. Records win.
+
+`Net.Shot(entity, muzzle, direction, speed)` is an unreliable trailer event of a different kind:
+six floats, a speed, and the server tick, plus the shooter's net id. The client calls
+`OnShot(muzzle, direction, speed, tick)` unless that entity is locally controlled. The owner's
+cosmetic is spawned from its own `OnTick` when `cmd.Fire` is set, and the echo would draw a
+second one. The cosmetic cannot damage anything. The server owns the hit. A round is not an
+entity. Replicating each one was rejected: the bandwidth is the whole point of the event.
+
+A reliable event whose entity has not spawned is held for about a second (60 frames) and then
+dropped, with a log. An unreliable one for an unknown entity is dropped at once. A call to
+`Broadcast` or `Shot` on a client or in a standalone scene logs once and returns. Both role
+queries are false there, and there is no second client to tell.
+
+`--net-test=fields` spawns `assets/prefabs/NetEcho.gprefab` for each account. The script is
+`assets/scripts/NetEcho.lua`. The measured run is in
+[NETCODE.md](../ToDo/NETCODE.md#n5--the-game).
 
 ## Commands
 
@@ -315,7 +441,8 @@ entity is the blend of the two buffer samples around that tick. The buffer keeps
 entity. When the render tick is past the newest snapshot, the frame is dry: the pose extrapolates
 the last segment by at most one snapshot interval (2 ticks) and then holds, and the frame is
 counted. Counting starts after one second of summed frame time, so the wait for the first
-snapshot is not a dry run. An entity that has stopped moving keeps its last sample. Holding that
+snapshot is not a dry run. Every entity gets a sample from every applied snapshot, moving or not,
+so an idle entity's buffer fills to 32 like a moving one (`depth`). Holding that
 sample while the render tick is still behind the newest packet is not dry. An entity is
 extrapolated only when the frame is dry and its own newest sample is within 2 ticks of that
 packet.
@@ -324,13 +451,14 @@ Once a second, while a test is running:
 
 ```
 Replicate server peer={account} tick={n} entities={n} registry={n} snap={bytes} min={bytes} Bps={payload bytes in the last 1s}
-Replicate client tick={floor of the render tick} est={.1f} lead={rtt/2} snap={body bytes} depth={max samples} dry={percent} step={max ratio} entities={n} registry={n} ghosts={n} frames={n}
+Replicate client tick={floor of the render tick} est={.1f} lead={rtt/2} snap={body bytes} depth={max samples} dry={percent} step={max ratio} entities={n} registry={n} ghosts={n} frames={n} stale={n} nobase={n}
 ```
 
 `step` is the largest ratio, since the warmup, of how far an entity was drawn this frame to how
 far the snapshot segment under the render tick says it should have moved across the ticks the
 render clock advanced. A continuous blend sits near 1. A teleport is many times that. `dry` is
-the percentage of warmed frames that ran past the newest snapshot. `Bps` counts payload bytes at
+the percentage of warmed frames that ran past the newest snapshot. `stale` counts snapshots
+dropped because they were no newer than one already applied. `Bps` counts payload bytes at
 the moment the snapshot is queued, not on the wire, so the conditioner's loss is not in it.
 
 ## Prediction
@@ -350,17 +478,17 @@ about a second. The accumulator's character step skips every client replicated c
 this one, so it is not stepped twice. Other scripts are not ticked on the client. On the server
 and offline, `OnTick` runs inside the accumulator, before `Step`, once per physics step.
 
-On each snapshot the client takes the newest sample of its character that carries position,
-velocity and ground, and if a later snapshot omitted the entity it treats that pose as still
-authoritative at the new tick. An empty delta means "unchanged", not "stop checking". It compares
-that pose with the history entry for the same tick. The tolerance is 2 cm of position, 0.1 m/s of
+On each snapshot the client takes the newest sample of its character, which carries the full
+decoded position, velocity and ground at that snapshot's tick, and compares it with the history
+entry for the same tick. The tolerance is 2 cm of position, 0.1 m/s of
 velocity, and the ground enum exactly. 0.1 m/s is under one tick of gravity (9.81/60 = 0.1635),
 so a ground miss still fails it. Inside the tolerance the tick is consumed and nothing is counted.
 Outside it, the character is restored to the server's position, linear velocity and ground — not a
 Jolt `SaveState` blob — the history slot is rewritten to that pose, and the stored commands from
 the next tick through the sim tick are replayed. Input is not sampled again. The sim tick does not
-advance. A correction is counted only once the walk has started; the settle before that is logged
-with `settle=1` and left out of the total.
+advance. A correction is counted only after the first second of prediction (`SettleFrom`); the
+settle before that is logged with `settle=1` and left out of the total. The test sticks start
+walking at that same tick.
 
 The visual error is where the mesh was before the restore, minus where the character is after the
 replay. It is added to the transform after the final `SyncTransforms` and multiplied by
@@ -434,7 +562,7 @@ One process is a server or a client. `Listen` and `ConnectDev` do not both run.
 Once a second, per live connection:
 
 ```
-Net {who}: rtt {ms} ms, loss in {%}% out {%}%, {B/s} in, {B/s} out, resent {n}, dropped session {n}, address {n}
+Net {who}: rtt {ms} ms, loss in {%}% out {%}%, {B/s} in, {B/s} out, resent {n}, dropped session {n}, address {n}, reliable refused {n}
 ```
 
 `Net.GetStats()` returns `connected`, `peers`, `rtt`, `lossIn`, `lossOut`, `bytesInPerSec`,

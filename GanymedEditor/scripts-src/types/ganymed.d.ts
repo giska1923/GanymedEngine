@@ -345,8 +345,21 @@ declare interface Script {
 	/** Editor-exposed tunables; see ScriptProperties. */
 	Properties?: ScriptProperties;
 
+	/**
+	 * Server-owned state copied into the client instance before OnUpdate.
+	 * Types are the strings `"bool"`, `"u8"`, `"tick"` and `"str16"`. At most 16.
+	 * Names are sorted; that order is the wire index.
+	 */
+	Replicated?: { [name: string]: "bool" | "u8" | "tick" | "str16" };
+
 	OnCreate?(): void;
 	OnUpdate?(ts: number): void;
+	/** Once per physics step, before the step. `cmd` is valid only for the call. */
+	OnTick?(tick: number, cmd: PlayerCommand): void;
+	/** Server event for this entity. `args` is a flat table. */
+	OnNetEvent?(name: string, args: { [key: string]: boolean | number | string | Vec3 }): void;
+	/** Cosmetic shot. Not called on the locally controlled entity. */
+	OnShot?(muzzle: Vec3, direction: Vec3, speed: number, tick: number): void;
 	/**
 	 * `contact` is where this entity touched `other`: a point on other's surface and that
 	 * surface's outward normal, facing this entity. World space.
@@ -745,6 +758,13 @@ declare namespace Net {
 	/** Both false when the scene is standalone. */
 	function IsServer(): boolean;
 	function IsClient(): boolean;
+	/**
+	 * Server only. Unreliable unless `reliable` is true. Delivered to this entity on each
+	 * client as OnNetEvent. A call on a client is ignored.
+	 */
+	function Broadcast(name: string, args?: { [key: string]: boolean | number | string | Vec3 }, reliable?: boolean): void;
+	/** Server only. The owner's client does not receive OnShot for this. */
+	function Shot(entity: Entity, muzzle: Vec3, direction: Vec3, speed: number): void;
 }
 
 // ---------------------------------------------------------------------------

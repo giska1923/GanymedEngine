@@ -108,6 +108,8 @@ namespace GanymedE::Net {
 				std::vector<uint8_t> Bytes;
 				float RttMs = 0.0f;
 				Connection::Clock::time_point At{};
+				uint64_t Session = 0;
+				uint16_t Sequence = 0;
 			};
 			std::vector<Incoming> IncomingSnapshots;
 
@@ -141,6 +143,8 @@ namespace GanymedE::Net {
 			int ReliableTotal = 0;
 			bool Spoof = false;
 			bool SpoofSent = false;
+			bool Flood = false;
+			bool FloodSent = false;
 			uint32_t EchoExpect = 0;
 			bool EchoBad = false;
 			bool EchoLogged = false;
@@ -202,10 +206,10 @@ namespace GanymedE::Net {
 		void LogStats(const std::string& who, const Connection& connection, Connection::Clock::time_point now,
 			uint64_t droppedSession, uint64_t droppedAddress)
 		{
-			GE_CORE_INFO("Net {0}: rtt {1:.0f} ms, loss in {2:.1f}% out {3:.1f}%, {4:.0f} B/s in, {5:.0f} B/s out, resent {6}, dropped session {7}, address {8}",
+			GE_CORE_INFO("Net {0}: rtt {1:.0f} ms, loss in {2:.1f}% out {3:.1f}%, {4:.0f} B/s in, {5:.0f} B/s out, resent {6}, dropped session {7}, address {8}, reliable refused {9}",
 				who, connection.RttMs(), connection.LossIn(), connection.LossOut(),
 				connection.BytesInPerSec(now), connection.BytesOutPerSec(now), connection.Resent(),
-				droppedSession, droppedAddress);
+				droppedSession, droppedAddress, connection.ReliableRefused());
 		}
 
 		Stats FromConnection(const Connection& connection, Connection::Clock::time_point now, bool connected,
@@ -227,6 +231,8 @@ namespace GanymedE::Net {
 
 		void DeliverServer(Engine& engine, Peer& peer, const uint8_t* data, int length)
 		{
+			// Byte 3 is a server-to-client script event. A client that sends one is ignored,
+			// the same as any payload that is not the probe.
 			if (length != 5 || data[0] != 1)
 				return;
 			const uint32_t index = ReadU32(data + 1);
@@ -248,6 +254,11 @@ namespace GanymedE::Net {
 
 		void DeliverClient(Engine& engine, const uint8_t* data, int length)
 		{
+			if (length >= 1 && data[0] == 3)
+			{
+				IngestReliable(data, length);
+				return;
+			}
 			if (length != 5 || data[0] != 2 || engine.ReliableTotal <= 0)
 				return;
 			const uint32_t index = ReadU32(data + 1);
@@ -316,6 +327,31 @@ namespace GanymedE::Net {
 			GE_CORE_INFO("Spoof probes sent: one wrong session, one from another port");
 		}
 
+		// `reliable-flood`: four data packets of 255 reliable messages each, every id far
+		// past anything the server expects. A server that held them would grow without limit;
+		// it must refuse them all (`reliable refused` in its stats line) and hold none.
+		void SendFlood(Engine& engine)
+		{
+			if (!engine.ClientConn || !engine.ClientSocket)
+				return;
+			for (int packet = 0; packet < 4; packet++)
+			{
+				std::vector<uint8_t> out = BareData(engine.ClientConn->Session());
+				out.back() = 255;   // the reliable count BareData left at 0
+				for (int i = 0; i < 255; i++)
+				{
+					const uint16_t id = static_cast<uint16_t>(10000 + packet * 255 + i);
+					out.push_back(static_cast<uint8_t>(id));
+					out.push_back(static_cast<uint8_t>(id >> 8));
+					out.push_back(1);
+					out.push_back(0);
+					out.push_back(1);
+				}
+				engine.ClientSocket->Send(engine.ServerAddress, out.data(), static_cast<int>(out.size()));
+			}
+			GE_CORE_INFO("Flood probe sent: 1020 reliable messages outside the window");
+		}
+
 		void StartProbes(Engine& engine)
 		{
 			if (engine.ReliableTotal > 0 && engine.ClientConn)
@@ -332,6 +368,11 @@ namespace GanymedE::Net {
 			{
 				engine.SpoofSent = true;
 				SendSpoof(engine);
+			}
+			if (engine.Flood && !engine.FloodSent)
+			{
+				engine.FloodSent = true;
+				SendFlood(engine);
 			}
 		}
 
@@ -612,6 +653,8 @@ namespace GanymedE::Net {
 					incoming.Bytes.assign(buffer + kHeaderBytes, buffer + length);
 					incoming.At = now;
 					incoming.RttMs = engine.ClientConn->RttMs();
+					incoming.Session = engine.ClientConn->Session();
+					incoming.Sequence = view.Sequence;
 					engine.IncomingSnapshots.push_back(std::move(incoming));
 				}
 			}
@@ -638,8 +681,14 @@ namespace GanymedE::Net {
 		{
 			engine.ReliableTotal = 0;
 			engine.Spoof = false;
+			engine.Flood = false;
 			if (test.empty())
 				return true;
+			if (test == "reliable-flood")
+			{
+				engine.Flood = true;
+				return true;
+			}
 			if (test == "spoof")
 			{
 				engine.Spoof = true;
@@ -660,9 +709,10 @@ namespace GanymedE::Net {
 				return true;
 			}
 			if (test == "offline" || test == "predict" || test == "predict-loss"
-				|| test == "predict-desync" || test == "predict-wall" || test == "predict-step")
+				|| test == "predict-desync" || test == "predict-wall" || test == "predict-step"
+				|| test == "fields")
 				return true;
-			error = "--net-test is 'spoof', 'reliable:<count>', or a predict mode";
+			error = "--net-test is 'spoof', 'reliable:<count>', 'reliable-flood', a predict mode, or 'fields'";
 			return false;
 		}
 
@@ -975,6 +1025,22 @@ namespace GanymedE::Net {
 		return false;
 	}
 
+	void SendReliable(const uint8_t* data, int length)
+	{
+		if (!data || length <= 0 || length > 256)
+			return;
+		auto guard = LockState();
+		Engine& engine = State();
+		if (!engine.Serving)
+			return;
+		for (Peer& peer : engine.Peers)
+		{
+			if (!peer.Conn)
+				continue;
+			peer.Conn->Enqueue(std::vector<uint8_t>(data, data + length));
+		}
+	}
+
 	uint16_t SendSnapshot(const std::string& account, const uint8_t* data, int length)
 	{
 		auto guard = LockState();
@@ -1007,6 +1073,8 @@ namespace GanymedE::Net {
 			datagram.Bytes = std::move(incoming.Bytes);
 			datagram.RttMs = incoming.RttMs;
 			datagram.At = incoming.At;
+			datagram.Session = incoming.Session;
+			datagram.Sequence = incoming.Sequence;
 			out.push_back(std::move(datagram));
 		}
 		engine.IncomingSnapshots.clear();

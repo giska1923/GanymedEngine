@@ -11,6 +11,7 @@
 #include "GanymedE/Net/Command.h"
 #include "GanymedE/Net/Connection.h"
 #include "GanymedE/Net/Net.h"
+#include "GanymedE/Net/NetTest.h"
 #include "GanymedE/Net/Quantize.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Scene/Components.h"
@@ -21,12 +22,12 @@
 #include "GanymedE/Scene/SceneSingletons.h"
 #include "GanymedE/Scene/ScriptableEntity.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
-#include "GanymedE/main/Application.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -44,15 +45,9 @@ namespace GanymedE::Net {
 		constexpr uint8_t kUpdate = 3;
 		constexpr float kDelaySeconds = 0.100f;
 		constexpr uint32_t kSnapshotTicks = 2;
-		constexpr uint32_t kDestroyTick = 60 * 18;
+		constexpr int kLeadMarginTicks = 2;
 
 		static_assert(kPosSpanMm * 2 < (1 << kPosBits), "biased millimetres do not fit");
-
-		enum class Test
-		{
-			None, Move, Spawn, Prefab, Rest,
-			Predict, PredictLoss, PredictDesync, PredictWall, PredictStep, Offline
-		};
 
 		struct RepState
 		{
@@ -79,6 +74,8 @@ namespace GanymedE::Net {
 			bool HasAim = false;
 			uint16_t AimPitch = 0;
 			uint16_t AimYaw = 0;
+			bool HasScript = false;
+			std::vector<FieldValue> Script;
 		};
 
 		struct Sample
@@ -118,9 +115,16 @@ namespace GanymedE::Net {
 			{
 				uint16_t Seq = 0;
 				std::vector<RepState> State;
+				std::vector<uint16_t> Destroys;   // the destroy records this snapshot carried
+				bool Confirmed = false;           // its ack has been seen, and Destroys applied
 			};
 
 			std::vector<Snap> Snaps;
+			// Every net id a spawn record has gone out for, until a snapshot carrying its
+			// destroy is acknowledged. The client may hold any of these, whatever the acked
+			// baseline says, so each one that is gone gets a destroy in every snapshot until
+			// one of those arrives.
+			std::unordered_set<uint16_t> MayHave;
 			std::vector<std::pair<std::chrono::steady_clock::time_point, int>> Bytes;
 			int Last = 0;
 			int Min = 0x7fffffff;
@@ -131,8 +135,7 @@ namespace GanymedE::Net {
 			std::string Account;
 			UUID Id{ 0 };
 			uint16_t NetId = 0;
-			uint32_t SpawnTick = 0;
-			bool Teleported = false;
+			uint32_t AssignedTick = 0;
 		};
 
 		struct AccountInput
@@ -154,19 +157,43 @@ namespace GanymedE::Net {
 			bool Valid = false;
 		};
 
+		// Kind 1 is a named event. Kind 2 is a shot. Reliable is not a wire bit: a reliable
+		// event is its own message, and a shot is always unreliable.
+		struct WireEvent
+		{
+			uint16_t NetId = 0;
+			uint8_t Kind = 1;
+			bool Reliable = false;
+			std::string Name;
+			std::vector<EventArg> Args;
+			float Mx = 0.0f;
+			float My = 0.0f;
+			float Mz = 0.0f;
+			float Dx = 0.0f;
+			float Dy = 0.0f;
+			float Dz = 0.0f;
+			float Speed = 0.0f;
+			uint32_t Tick = 0;
+		};
+
+		struct FieldWrite
+		{
+			UUID Id{ 0 };
+			std::vector<FieldValue> Fields;
+		};
+
+		struct HeldEvent
+		{
+			WireEvent Event;
+			int Waits = 0;
+		};
+
 		struct World
 		{
-			Test Mode = Test::None;
 			uint32_t Tick = 0;
 			uint32_t LastSnapTick = 0;
 			uint32_t LastPoseTick = 0;
 			uint16_t NextId = 1;
-			UUID Mover{ 0 };
-			UUID PrefabRoot{ 0 };
-			std::vector<UUID> Spawned;
-			bool SpawnGone = false;
-			bool PrefabLogged = false;
-			bool ClientPrefabLogged = false;
 			std::unordered_map<uint64_t, std::string> PrefabOf;
 			std::unordered_map<std::string, Ring> Rings;
 			std::chrono::steady_clock::time_point NextServerLog{};
@@ -174,6 +201,22 @@ namespace GanymedE::Net {
 			std::unordered_map<uint16_t, Ghost> Ghosts;
 			uint32_t LatestTick = 0;
 			bool HaveLatest = false;
+			// The session LatestTick belongs to, and how many snapshots arrived no newer than it.
+			uint64_t LatestSession = 0;
+			uint64_t StaleSnapshots = 0;
+
+			// The full state after each of the last 64 snapshots received, applied or not, keyed
+			// by transport sequence: any of them can be the next snapshot's baseline. `Applied` is
+			// the full state the scene was last brought to.
+			struct ClientSnap
+			{
+				uint16_t Seq = 0;
+				std::vector<RepState> State;
+			};
+			std::vector<ClientSnap> Received;
+			std::vector<RepState> Applied;
+			uint64_t NoBaseline = 0;
+			std::unordered_set<uint16_t> RefusedPrefab;
 			std::chrono::steady_clock::time_point LatestAt{};
 			float RttMs = 0.0f;
 			int LastSnapBytes = 0;
@@ -186,7 +229,6 @@ namespace GanymedE::Net {
 
 			std::vector<Pawn> Pawns;
 			std::unordered_map<std::string, AccountInput> Inputs;
-			bool Arena = false;
 
 			uint16_t OwnedNetId = 0;
 			UUID LocalId{ 0 };
@@ -194,7 +236,9 @@ namespace GanymedE::Net {
 			bool HaveEstimate = false;
 			uint32_t SimTick = 0;
 			bool HaveSim = false;
-			uint32_t WalkFrom = 0;
+			// One second after prediction starts. Corrections before it are the settle, and the
+			// counters below leave them out.
+			uint32_t SettleFrom = 0;
 			Predicted History[64]{};
 			uint32_t LastReconciled = 0;
 			bool HaveReconciled = false;
@@ -207,9 +251,13 @@ namespace GanymedE::Net {
 			bool LookNoted = false;
 			bool LoggedInput = false;
 			bool LoggedMoved = false;
-			bool Done = false;
 			uint32_t OfflineTicks = 0;
 			std::chrono::steady_clock::time_point NextPredictLog{};
+
+			uint32_t ScriptTick = 0;
+			std::vector<WireEvent> Unreliable;
+			std::vector<FieldWrite> FieldWrites;
+			std::vector<HeldEvent> Held;
 		};
 
 		World& State()
@@ -268,6 +316,158 @@ namespace GanymedE::Net {
 		}
 
 		template<typename Stream>
+		void TextBits(Stream& stream, std::string& text, int lenBits, size_t maxLen)
+		{
+			uint32_t length = static_cast<uint32_t>(std::min(text.size(), maxLen));
+			Bits(stream, length, lenBits);
+			if constexpr (Stream::Reading)
+				text.assign(length, '\0');
+			for (uint32_t i = 0; i < length; i++)
+			{
+				uint32_t ch = 0;
+				if constexpr (!Stream::Reading)
+					ch = static_cast<uint8_t>(text[i]);
+				Bits(stream, ch, 8);
+				if constexpr (Stream::Reading)
+					text[i] = static_cast<char>(ch);
+			}
+		}
+
+		template<typename Stream>
+		void FloatBits(Stream& stream, float& value)
+		{
+			uint32_t bits = 0;
+			if constexpr (!Stream::Reading)
+				std::memcpy(&bits, &value, sizeof(bits));
+			Bits(stream, bits, 32);
+			if constexpr (Stream::Reading)
+				std::memcpy(&value, &bits, sizeof(bits));
+		}
+
+		template<typename Stream>
+		bool FieldBlock(Stream& stream, std::vector<FieldValue>& fields)
+		{
+			uint32_t count = static_cast<uint32_t>(std::min<size_t>(fields.size(), 16));
+			Bits(stream, count, 5);
+			if constexpr (Stream::Reading)
+				fields.resize(count);
+			for (uint32_t i = 0; i < count; i++)
+			{
+				FieldValue& field = fields[i];
+				uint32_t index = field.Index;
+				uint32_t type = field.Type;
+				Bits(stream, index, 4);
+				Bits(stream, type, 2);
+				field.Index = static_cast<uint8_t>(index);
+				field.Type = static_cast<uint8_t>(type);
+				if (field.Type == kFieldBool)
+				{
+					uint32_t bit = field.Number ? 1u : 0u;
+					Bits(stream, bit, 1);
+					field.Number = bit;
+				}
+				else if (field.Type == kFieldU8)
+				{
+					uint32_t number = field.Number & 255u;
+					Bits(stream, number, 8);
+					field.Number = number;
+				}
+				else if (field.Type == kFieldTick)
+				{
+					uint32_t number = field.Number;
+					Bits(stream, number, 32);
+					field.Number = number;
+				}
+				else if (field.Type == kFieldStr16)
+					TextBits(stream, field.Text, 5, 16);
+				else
+					return false;
+			}
+			return StreamOk(stream);
+		}
+
+		template<typename Stream>
+		bool ArgBits(Stream& stream, EventArg& arg)
+		{
+			TextBits(stream, arg.Key, 4, 12);
+			uint32_t type = arg.Type;
+			Bits(stream, type, 2);
+			arg.Type = static_cast<uint8_t>(type);
+			if (arg.Type == kArgBool)
+			{
+				uint32_t bit = arg.Number != 0.0f ? 1u : 0u;
+				Bits(stream, bit, 1);
+				arg.Number = bit ? 1.0f : 0.0f;
+			}
+			else if (arg.Type == kArgNumber)
+				FloatBits(stream, arg.Number);
+			else if (arg.Type == kArgString)
+				TextBits(stream, arg.Text, 5, 16);
+			else if (arg.Type == kArgVec3)
+			{
+				FloatBits(stream, arg.X);
+				FloatBits(stream, arg.Y);
+				FloatBits(stream, arg.Z);
+			}
+			else
+				return false;
+			return StreamOk(stream);
+		}
+
+		template<typename Stream>
+		bool OneEventBits(Stream& stream, WireEvent& event)
+		{
+			uint32_t id = event.NetId;
+			uint32_t kind = event.Kind;
+			Bits(stream, id, 16);
+			Bits(stream, kind, 2);
+			event.NetId = static_cast<uint16_t>(id);
+			event.Kind = static_cast<uint8_t>(kind);
+			if (event.Kind == 2)
+			{
+				FloatBits(stream, event.Mx);
+				FloatBits(stream, event.My);
+				FloatBits(stream, event.Mz);
+				FloatBits(stream, event.Dx);
+				FloatBits(stream, event.Dy);
+				FloatBits(stream, event.Dz);
+				FloatBits(stream, event.Speed);
+				uint32_t tick = event.Tick;
+				Bits(stream, tick, 32);
+				event.Tick = tick;
+				return StreamOk(stream);
+			}
+			if (event.Kind != 1)
+				return false;
+			TextBits(stream, event.Name, 5, 16);
+			uint32_t argc = static_cast<uint32_t>(std::min<size_t>(event.Args.size(), 4));
+			Bits(stream, argc, 3);
+			if constexpr (Stream::Reading)
+				event.Args.resize(argc);
+			for (uint32_t i = 0; i < argc; i++)
+			{
+				if (!ArgBits(stream, event.Args[i]))
+					return false;
+			}
+			return StreamOk(stream);
+		}
+
+		template<typename Stream>
+		bool TrailerBits(Stream& stream, std::vector<WireEvent>& events)
+		{
+			uint32_t count = static_cast<uint32_t>(std::min<size_t>(events.size(), 8));
+			Bits(stream, count, 4);
+			if constexpr (Stream::Reading)
+				events.resize(count);
+			for (uint32_t i = 0; i < count; i++)
+			{
+				if (!OneEventBits(stream, events[i]))
+					return false;
+			}
+			return StreamOk(stream);
+		}
+
+		template<typename Stream>
 		bool RecordBits(Stream& stream, RepState& state)
 		{
 			uint32_t id = state.NetId;
@@ -301,8 +501,9 @@ namespace GanymedE::Net {
 				if (state.HasVel) mask |= 8u;
 				if (state.HasGround) mask |= 16u;
 				if (state.HasAim) mask |= 32u;
+				if (state.HasScript) mask |= 64u;
 			}
-			Bits(stream, mask, 6);
+			Bits(stream, mask, 7);
 			if constexpr (Stream::Reading)
 			{
 				state.HasPos = (mask & 1u) != 0;
@@ -311,6 +512,7 @@ namespace GanymedE::Net {
 				state.HasVel = (mask & 8u) != 0;
 				state.HasGround = (mask & 16u) != 0;
 				state.HasAim = (mask & 32u) != 0;
+				state.HasScript = (mask & 64u) != 0;
 			}
 
 			if (state.HasPos)
@@ -373,6 +575,8 @@ namespace GanymedE::Net {
 				state.AimPitch = static_cast<uint16_t>(pitch);
 				state.AimYaw = static_cast<uint16_t>(yaw);
 			}
+			if (state.HasScript && !FieldBlock(stream, state.Script))
+				return false;
 			return StreamOk(stream);
 		}
 
@@ -459,6 +663,43 @@ namespace GanymedE::Net {
 				dst.AimPitch = src.AimPitch;
 				dst.AimYaw = src.AimYaw;
 			}
+			if (src.HasScript)
+			{
+				dst.HasScript = true;
+				for (const FieldValue& field : src.Script)
+				{
+					bool found = false;
+					for (FieldValue& have : dst.Script)
+					{
+						if (have.Index != field.Index)
+							continue;
+						have = field;
+						found = true;
+						break;
+					}
+					if (!found)
+						dst.Script.push_back(field);
+				}
+			}
+		}
+
+		const FieldValue* FindField(const std::vector<FieldValue>& fields, uint8_t index)
+		{
+			for (const FieldValue& field : fields)
+			{
+				if (field.Index == index)
+					return &field;
+			}
+			return nullptr;
+		}
+
+		bool FieldEqual(const FieldValue& a, const FieldValue& b)
+		{
+			if (a.Type != b.Type)
+				return false;
+			if (a.Type == kFieldStr16)
+				return a.Text == b.Text;
+			return a.Number == b.Number;
 		}
 
 		std::vector<RepState> Gather(Scene& scene, PhysicsScene* physics)
@@ -525,6 +766,13 @@ namespace GanymedE::Net {
 					state.HasAim = true;
 					state.AimPitch = QuantizeSignedAngle(aim.Pitch);
 					state.AimYaw = QuantizeSignedAngle(aim.Yaw);
+				}
+
+				std::vector<FieldValue> fields;
+				if (ScriptEngine::CopyReplicated(entity.GetUUID(), fields))
+				{
+					state.HasScript = true;
+					state.Script = std::move(fields);
 				}
 				list.push_back(std::move(state));
 			}
@@ -599,6 +847,21 @@ namespace GanymedE::Net {
 					update.AimYaw = entity.AimYaw;
 					changed = true;
 				}
+				if (entity.HasScript)
+				{
+					for (const FieldValue& field : entity.Script)
+					{
+						const FieldValue* old = previous->HasScript
+							? FindField(previous->Script, field.Index) : nullptr;
+						if (!old || !FieldEqual(*old, field))
+							update.Script.push_back(field);
+					}
+					if (!update.Script.empty())
+					{
+						update.HasScript = true;
+						changed = true;
+					}
+				}
 				if (changed)
 					records.push_back(std::move(update));
 			}
@@ -616,7 +879,7 @@ namespace GanymedE::Net {
 			return records;
 		}
 
-		int MeasurePrefix(const std::vector<RepState>& records, int count)
+		int MeasureAll(const std::vector<RepState>& records, int count, const std::vector<WireEvent>& events)
 		{
 			BitMeasure measure;
 			uint32_t tick = 0;
@@ -630,17 +893,20 @@ namespace GanymedE::Net {
 				if (!RecordBits(measure, copy))
 					return kBudget + 1;
 			}
+			std::vector<WireEvent> trailer = events;
+			if (!TrailerBits(measure, trailer))
+				return kBudget + 1;
 			return measure.Bytes();
 		}
 
-		int FitCount(const std::vector<RepState>& records)
+		int FitCount(const std::vector<RepState>& records, const std::vector<WireEvent>& events)
 		{
 			int lo = 0;
 			int hi = static_cast<int>(records.size());
 			while (lo < hi)
 			{
 				const int mid = (lo + hi + 1) / 2;
-				if (MeasurePrefix(records, mid) <= kBudget)
+				if (MeasureAll(records, mid, events) <= kBudget)
 					lo = mid;
 				else
 					hi = mid - 1;
@@ -648,7 +914,8 @@ namespace GanymedE::Net {
 			return lo;
 		}
 
-		std::vector<uint8_t> WritePacket(uint32_t tick, uint16_t baseline, uint16_t owned, const std::vector<RepState>& records, int count)
+		std::vector<uint8_t> WritePacket(uint32_t tick, uint16_t baseline, uint16_t owned,
+			const std::vector<RepState>& records, int count, const std::vector<WireEvent>& events)
 		{
 			std::vector<uint8_t> out;
 			BitWrite writer(out);
@@ -662,6 +929,8 @@ namespace GanymedE::Net {
 				RepState copy = records[static_cast<size_t>(i)];
 				RecordBits(writer, copy);
 			}
+			std::vector<WireEvent> trailer = events;
+			TrailerBits(writer, trailer);
 			return out;
 		}
 
@@ -688,13 +957,15 @@ namespace GanymedE::Net {
 			return baseline;
 		}
 
-		bool Decode(const uint8_t* data, int length, uint32_t& tick, uint16_t& owned, std::vector<RepState>& records)
+		bool Decode(const uint8_t* data, int length, uint32_t& tick, uint16_t& baseline, uint16_t& owned,
+			std::vector<RepState>& records, std::vector<WireEvent>& events)
 		{
 			BitRead reader(data, length);
-			uint32_t baseline = 0;
+			uint32_t baselineBits = 0;
 			uint32_t ownedBits = 0;
 			uint32_t count = 0;
-			HeaderBits(reader, tick, baseline, ownedBits, count);
+			HeaderBits(reader, tick, baselineBits, ownedBits, count);
+			baseline = static_cast<uint16_t>(baselineBits);
 			owned = static_cast<uint16_t>(ownedBits);
 			if (!reader.Ok() || count > 512)
 				return false;
@@ -707,6 +978,9 @@ namespace GanymedE::Net {
 					return false;
 				records.push_back(std::move(record));
 			}
+			events.clear();
+			if (!TrailerBits(reader, events))
+				return false;
 			return reader.Ok();
 		}
 
@@ -722,22 +996,6 @@ namespace GanymedE::Net {
 					return false;
 			}
 			return true;
-		}
-
-		void LogPrefab(const char* role, Scene& scene, Entity root, bool& logged)
-		{
-			if (logged || !root)
-				return;
-			uint64_t child = 0;
-			if (root.HasComponent<RelationshipComponent>())
-			{
-				const auto& children = root.GetComponent<RelationshipComponent>().Children;
-				if (!children.empty())
-					child = static_cast<uint64_t>(children.front());
-			}
-			GE_CORE_INFO("Replicate prefab {0} root={1} child={2}",
-				role, Hex(static_cast<uint64_t>(root.GetUUID())), Hex(child));
-			logged = true;
 		}
 
 		void DestroyTree(Scene& scene, Entity root)
@@ -808,16 +1066,154 @@ namespace GanymedE::Net {
 			}
 		}
 
+		// The fields that differ from what the scene was last given for this entity. All of them
+		// when there was nothing before. A field the script changes locally is not overwritten
+		// every snapshot, only when the server's value moves.
+		void QueueChangedFields(World& world, UUID id, const RepState& entity, const RepState* before)
+		{
+			if (!entity.HasScript || entity.Script.empty() || id == UUID{ 0 })
+				return;
+			FieldWrite write;
+			write.Id = id;
+			for (const FieldValue& field : entity.Script)
+			{
+				const FieldValue* old = before && before->HasScript ? FindField(before->Script, field.Index) : nullptr;
+				if (!old || !FieldEqual(*old, field))
+					write.Fields.push_back(field);
+			}
+			if (!write.Fields.empty())
+				world.FieldWrites.push_back(std::move(write));
+		}
+
+		void SortById(std::vector<RepState>& list)
+		{
+			std::sort(list.begin(), list.end(), [](const RepState& a, const RepState& b) { return a.NetId < b.NetId; });
+		}
+
+		const RepState* FindSorted(const std::vector<RepState>& list, uint16_t id)
+		{
+			auto it = std::lower_bound(list.begin(), list.end(), id,
+				[](const RepState& state, uint16_t value) { return state.NetId < value; });
+			return it != list.end() && it->NetId == id ? &*it : nullptr;
+		}
+
+		void DestroyGhost(Scene& scene, World& world, uint16_t netId)
+		{
+			auto ghost = world.Ghosts.find(netId);
+			if (ghost == world.Ghosts.end())
+				return;
+			Entity entity = scene.FindEntityByUUID(ghost->second.Id);
+			if (entity)
+				DestroyTree(scene, entity);
+			if (ghost->second.Id == world.LocalId)
+				world.LocalId = UUID{ 0 };
+			world.Ghosts.erase(ghost);
+		}
+
+		// The scene entity for a replicated one the client does not have a ghost for yet: the
+		// scene's own entity with that UUID, the named prefab, or a bare entity.
+		Entity SpawnGhostEntity(Scene& scene, World& world, const RepState& state)
+		{
+			Entity entity = scene.FindEntityByUUID(UUID(state.Uuid));
+			if (!entity && !state.Prefab.empty())
+			{
+				if (world.RefusedPrefab.count(state.NetId))
+					return {};
+				if (!SafePrefabPath(state.Prefab))
+				{
+					world.RefusedPrefab.insert(state.NetId);
+					GE_CORE_WARN("Replicate refused a prefab path");
+					return {};
+				}
+				PrefabSerializer::InstantiateOptions options;
+				options.RootUUID = UUID(state.Uuid);
+				entity = PrefabSerializer::Instantiate(GetAssetRoot() / state.Prefab, scene, UUID{ 0 }, options);
+				if (entity)
+					Test::OnClientSpawn(scene, entity, state.Prefab);
+			}
+			if (!entity)
+				entity = scene.CreateEntityWithUUID(UUID(state.Uuid), "replicated");
+			if (!entity)
+				return {};
+			if (!entity.HasComponent<ReplicatedComponent>())
+				entity.AddComponent<ReplicatedComponent>();
+			entity.GetComponent<ReplicatedComponent>().NetId = state.NetId;
+			return entity;
+		}
+
 		bool ApplyPacket(Scene& scene, const uint8_t* data, int length, float rttMs,
-			std::chrono::steady_clock::time_point at)
+			std::chrono::steady_clock::time_point at, uint64_t session, uint16_t sequence)
 		{
 			uint32_t tick = 0;
+			uint16_t baselineSeq = 0;
 			uint16_t owned = 0;
 			std::vector<RepState> records;
-			if (!Decode(data, length, tick, owned, records))
+			std::vector<WireEvent> events;
+			if (!Decode(data, length, tick, baselineSeq, owned, records, events))
 				return false;
 
 			World& world = State();
+			if (session != world.LatestSession)
+			{
+				world.LatestSession = session;
+				world.HaveLatest = false;
+				world.Received.clear();
+			}
+
+			// Decode onto exactly the baseline the server named, never onto whatever the client
+			// applied last. A field missing from a delta means "as in that baseline", and the
+			// latest state can differ from it. A value that returned to its baselined value within
+			// a round trip (a position on the way back through a reversal, a flag toggled twice)
+			// would otherwise be read as the latest, stale value. StampAfter is the server's own
+			// function for what the client holds after a snapshot, so both sides compute the same
+			// state from the same records. This is Quake 3's delta rule.
+			static const std::vector<RepState> kNothing;
+			const std::vector<RepState>* base = baselineSeq == 0 ? &kNothing : nullptr;
+			for (const World::ClientSnap& snap : world.Received)
+			{
+				if (base)
+					break;
+				if (snap.Seq == baselineSeq)
+					base = &snap.State;
+			}
+			if (!base)
+			{
+				// Every baseline is a snapshot this client acknowledged, and the server picks
+				// among its last 32, so this should not happen. Counted, not guessed around.
+				world.NoBaseline++;
+				return false;
+			}
+			std::vector<RepState> full = StampAfter(*base, records, static_cast<int>(records.size()));
+			SortById(full);
+
+			// Kept whether or not it is applied below: a snapshot that arrives late is still a
+			// state the server may name as a baseline.
+			bool known = false;
+			for (const World::ClientSnap& snap : world.Received)
+				known = known || snap.Seq == sequence;
+			if (!known)
+			{
+				world.Received.push_back({ sequence, full });
+				if (world.Received.size() > 64)
+					world.Received.erase(world.Received.begin());
+			}
+
+			// Snapshots apply in tick order or not at all. UDP reorders and duplicates, and an old
+			// snapshot applied after a newer one would move LatestTick backwards and put older
+			// state on the scene. Nothing is lost by not applying it: the newer snapshot's state
+			// already includes whatever this one changed.
+			if (world.HaveLatest && tick <= world.LatestTick)
+			{
+				world.StaleSnapshots++;
+				return false;
+			}
+
+			for (WireEvent& event : events)
+			{
+				HeldEvent held;
+				held.Event = std::move(event);
+				world.Held.push_back(std::move(held));
+			}
 			world.OwnedNetId = owned;
 			world.LatestTick = tick;
 			world.LatestAt = at;
@@ -825,65 +1221,34 @@ namespace GanymedE::Net {
 			world.LastSnapBytes = length;
 			world.HaveLatest = true;
 
-			for (const RepState& record : records)
+			// The scene follows the full state: what left it is destroyed, what joined it is
+			// spawned, and every entity gets a sample of its whole state at this tick.
+			for (const RepState& old : world.Applied)
 			{
-				if (record.Op == kDestroy)
-				{
-					auto ghost = world.Ghosts.find(record.NetId);
-					if (ghost == world.Ghosts.end())
-						continue;
-					Entity entity = scene.FindEntityByUUID(ghost->second.Id);
-					if (entity)
-						DestroyTree(scene, entity);
-					if (ghost->second.Id == world.LocalId)
-						world.LocalId = UUID{ 0 };
-					world.Ghosts.erase(ghost);
-					continue;
-				}
-
-				if (record.Op == kSpawn)
-				{
-					Entity entity = scene.FindEntityByUUID(UUID(record.Uuid));
-					if (!entity && !record.Prefab.empty())
-					{
-						if (!SafePrefabPath(record.Prefab))
-						{
-							GE_CORE_WARN("Replicate refused a prefab path");
-							continue;
-						}
-						PrefabSerializer::InstantiateOptions options;
-						options.RootUUID = UUID(record.Uuid);
-						entity = PrefabSerializer::Instantiate(GetAssetRoot() / record.Prefab, scene, UUID{ 0 }, options);
-						if (entity && record.Prefab.find("NetPair") != std::string::npos)
-							LogPrefab("client", scene, entity, world.ClientPrefabLogged);
-					}
-					if (!entity)
-						entity = scene.CreateEntityWithUUID(UUID(record.Uuid), "replicated");
-					if (!entity)
-						continue;
-					if (!entity.HasComponent<ReplicatedComponent>())
-						entity.AddComponent<ReplicatedComponent>();
-					entity.GetComponent<ReplicatedComponent>().NetId = record.NetId;
-
-					Ghost& ghost = world.Ghosts[record.NetId];
-					ghost.Id = entity.GetUUID();
-					Sample sample;
-					sample.Tick = tick;
-					OverlaySample(sample, record);
-					ghost.Latest = sample;
-					PushSample(ghost, sample);
-					continue;
-				}
-
-				auto ghost = world.Ghosts.find(record.NetId);
+				if (!FindSorted(full, old.NetId))
+					DestroyGhost(scene, world, old.NetId);
+			}
+			for (const RepState& entity : full)
+			{
+				const RepState* before = FindSorted(world.Applied, entity.NetId);
+				auto ghost = world.Ghosts.find(entity.NetId);
 				if (ghost == world.Ghosts.end())
-					continue;
-				Sample sample = ghost->second.Latest;
+				{
+					Entity created = SpawnGhostEntity(scene, world, entity);
+					if (!created)
+						continue;
+					world.Ghosts[entity.NetId].Id = created.GetUUID();
+					ghost = world.Ghosts.find(entity.NetId);
+					before = nullptr;
+				}
+				Sample sample;
 				sample.Tick = tick;
-				OverlaySample(sample, record);
+				OverlaySample(sample, entity);
 				ghost->second.Latest = sample;
 				PushSample(ghost->second, sample);
+				QueueChangedFields(world, ghost->second.Id, entity, before);
 			}
+			world.Applied = std::move(full);
 
 			if (world.OwnedNetId != 0)
 			{
@@ -1018,55 +1383,6 @@ namespace GanymedE::Net {
 			return total;
 		}
 
-		glm::vec3 MoverPosition(uint32_t tick)
-		{
-			const float t = static_cast<float>(tick);
-			return { std::sin(t * 0.02f) * 3.0f, 1.0f, t * 0.02f };
-		}
-
-		void WriteMover(Scene& scene, UUID id, uint32_t tick)
-		{
-			Entity entity = scene.FindEntityByUUID(id);
-			if (!entity)
-				return;
-			auto& transform = entity.GetComponent<TransformComponent>();
-			transform.Translation = MoverPosition(tick);
-			transform.Rotation = { 0.0f, static_cast<float>(tick) * 0.01f, 0.0f };
-			scene.MarkChanged<TransformComponent>(entity);
-		}
-
-		UUID SpawnPrefab(Scene& scene, const char* relative, World& world)
-		{
-			UUID rootId;
-			PrefabSerializer::InstantiateOptions options;
-			options.RootUUID = rootId;
-			Entity root = PrefabSerializer::Instantiate(GetAssetRoot() / relative, scene, UUID{ 0 }, options);
-			if (!root)
-			{
-				GE_CORE_ERROR("Replicate test could not spawn {0}", relative);
-				return UUID{ 0 };
-			}
-			if (!root.HasComponent<ReplicatedComponent>())
-				root.AddComponent<ReplicatedComponent>();
-			world.PrefabOf[static_cast<uint64_t>(root.GetUUID())] = relative;
-			return root.GetUUID();
-		}
-
-		bool IsPredict(Test mode)
-		{
-			return mode == Test::Predict || mode == Test::PredictLoss || mode == Test::PredictDesync
-				|| mode == Test::PredictWall || mode == Test::PredictStep;
-		}
-
-		uint32_t PredictSpan(Test mode)
-		{
-			if (mode == Test::Predict)
-				return 3600;
-			if (mode == Test::PredictLoss)
-				return 1200;
-			return 600;
-		}
-
 		int LeadTicks(float rttMs, float fixedDt)
 		{
 			// T + (now - recv) / dt is the snapshot's tick plus how long that packet has
@@ -1075,62 +1391,20 @@ namespace GanymedE::Net {
 			// half on the way back. Leading by the whole round trip is half a round trip
 			// ahead of the server, which is the tick that command arrives for. Half a
 			// round trip only catches the server's present, and the command is late.
+			//
+			// That is the tick the command is due on, with nothing to spare, and a command a tick
+			// late is not used: the server repeats the previous one, and at a change of direction
+			// that is a correction. The margin covers what the round trip does not show. The
+			// server steps several ticks per frame, so a command has to arrive before the frame
+			// that simulates its tick, not before the tick itself. The client sends at the end of
+			// its own frame. And the RTT is a smoothed average, not the slow packets.
 			const float ms = fixedDt > 0.0f ? fixedDt * 1000.0f : (1000.0f / 60.0f);
-			int ticks = static_cast<int>(std::ceil(rttMs / ms));
+			int ticks = static_cast<int>(std::ceil(rttMs / ms)) + kLeadMarginTicks;
 			if (ticks < 1)
 				ticks = 1;
 			if (ticks > 32)
 				ticks = 32;
 			return ticks;
-		}
-
-		void MakeBox(Scene& scene, const char* name, const glm::vec3& position, const glm::vec3& halfExtents)
-		{
-			Entity entity = scene.CreateEntity(name);
-			entity.GetComponent<TransformComponent>().Translation = position;
-			scene.MarkChanged<TransformComponent>(entity);
-			entity.AddComponent<RigidBodyComponent>().Type = RigidBodyType::Static;
-			entity.AddComponent<BoxColliderComponent>().HalfExtents = halfExtents;
-		}
-
-		void BuildArena(Scene& scene, World& world)
-		{
-			if (world.Arena)
-				return;
-			world.Arena = true;
-			// 4 m/s for 60 s is 240 m of +Z, and the wall slide is 4 m/s of +X for 10 s.
-			// A 20 m pad ends the flat walk in the air, which is a different test.
-			MakeBox(scene, "net-floor", { 20.0f, -0.5f, 130.0f }, { 40.0f, 0.5f, 160.0f });
-			if (world.Mode == Test::PredictWall)
-				MakeBox(scene, "net-wall", { 20.0f, 1.0f, 4.0f }, { 30.0f, 1.0f, 0.25f });
-			if (world.Mode == Test::PredictStep)
-				MakeBox(scene, "net-step", { 0.0f, 0.1f, 3.0f }, { 2.0f, 0.1f, 1.0f });
-		}
-
-		void EnsurePawns(Scene& scene, World& world)
-		{
-			if (!IsPredict(world.Mode) || scene.GetRole() != SceneRole::Server)
-				return;
-			for (const std::string& account : ServerAccounts())
-			{
-				bool have = false;
-				for (const Pawn& pawn : world.Pawns)
-				{
-					if (pawn.Account == account)
-						have = true;
-				}
-				if (have)
-					continue;
-				const UUID id = SpawnPrefab(scene, "prefabs/NetWalker.gprefab", world);
-				if (id == UUID{ 0 })
-					continue;
-				Pawn pawn;
-				pawn.Account = account;
-				pawn.Id = id;
-				pawn.SpawnTick = world.Tick;
-				world.Pawns.push_back(std::move(pawn));
-				GE_CORE_INFO("Predict spawn account={0} tick={1}", account, world.Tick);
-			}
 		}
 
 		int16_t QuantizeStick(float value)
@@ -1242,7 +1516,7 @@ namespace GanymedE::Net {
 
 		void NoteLook(World& world)
 		{
-			if (world.LookNoted || world.Mode != Test::None)
+			if (world.LookNoted || Test::Active())
 				return;
 			world.LookNoted = true;
 			const glm::vec2 mouse = Input::GetGameMouseDelta();
@@ -1258,21 +1532,9 @@ namespace GanymedE::Net {
 			cmd.Tick = tick;
 			cmd.Yaw = world.ViewYaw;
 			cmd.Pitch = world.ViewPitch;
-			if (IsPredict(world.Mode) || world.Mode == Test::Offline)
+			if (Test::DrivesInput())
 			{
-				const uint32_t from = world.Mode == Test::Offline ? 60u : world.WalkFrom;
-				if (from != 0 && tick >= from)
-				{
-					if (world.Mode == Test::PredictLoss)
-						cmd.MoveZ = ((tick - from) / 30) % 2 == 0 ? 1.0f : -1.0f;
-					else if (world.Mode == Test::PredictWall)
-					{
-						cmd.MoveX = 1.0f;
-						cmd.MoveZ = 1.0f;
-					}
-					else
-						cmd.MoveZ = 1.0f;
-				}
+				Test::Stick(cmd, world.SettleFrom);
 				return cmd;
 			}
 
@@ -1470,7 +1732,7 @@ namespace GanymedE::Net {
 				replay++;
 			}
 
-			const bool walking = world.WalkFrom != 0 && authTick >= world.WalkFrom;
+			const bool walking = world.SettleFrom != 0 && authTick >= world.SettleFrom;
 			const float mm = posErr * 1000.0f;
 			if (walking)
 			{
@@ -1495,7 +1757,8 @@ namespace GanymedE::Net {
 		World& world = State();
 		const auto packets = DrainSnapshots();
 		for (const SnapshotDatagram& packet : packets)
-			ApplyPacket(scene, packet.Bytes.data(), static_cast<int>(packet.Bytes.size()), packet.RttMs, packet.At);
+			ApplyPacket(scene, packet.Bytes.data(), static_cast<int>(packet.Bytes.size()), packet.RttMs, packet.At,
+				packet.Session, packet.Sequence);
 
 		if (!world.HaveLatest)
 			return;
@@ -1594,10 +1857,11 @@ namespace GanymedE::Net {
 				? 100.0f * static_cast<float>(world.DryFrames) / static_cast<float>(world.Frames)
 				: 0.0f;
 			GE_CORE_INFO(
-				"Replicate client tick={0} est={1:.1f} lead={2:.0f} snap={3} depth={4} dry={5:.2f} step={6:.2f} entities={7} registry={8} ghosts={9} frames={10}",
+				"Replicate client tick={0} est={1:.1f} lead={2:.0f} snap={3} depth={4} dry={5:.2f} step={6:.2f} entities={7} registry={8} ghosts={9} frames={10} stale={11} nobase={12}",
 				static_cast<uint32_t>(renderTick), estimated, world.RttMs * 0.5f, world.LastSnapBytes, depth,
 				dryPct, world.MaxRatio, static_cast<int>(scene.Reg().view<ReplicatedComponent>().size()),
-				RegistryCount(scene), static_cast<int>(world.Ghosts.size()), world.Frames);
+				RegistryCount(scene), static_cast<int>(world.Ghosts.size()), world.Frames, world.StaleSnapshots,
+				world.NoBaseline);
 		}
 	}
 
@@ -1606,14 +1870,6 @@ namespace GanymedE::Net {
 		if (scene.GetRole() != SceneRole::Server)
 			return;
 		State().Tick++;
-	}
-
-	void DriveWorldTest(Scene& scene)
-	{
-		World& world = State();
-		if (scene.GetRole() != SceneRole::Server || world.Mode != Test::Move || world.Mover == UUID{ 0 })
-			return;
-		WriteMover(scene, world.Mover, world.Tick + 1);
 	}
 
 	void CaptureWorld(Scene& scene, PhysicsScene* physics)
@@ -1660,6 +1916,11 @@ namespace GanymedE::Net {
 		if (logNow)
 			world.NextServerLog = now + std::chrono::seconds(1);
 
+		// One copy for every peer. Unreliable events are not in the baseline and are not
+		// retried: a client that misses this snapshot misses them. Records keep the budget.
+		std::vector<WireEvent> riding;
+		riding.swap(world.Unreliable);
+
 		for (const std::string& account : accounts)
 		{
 			Ring& ring = world.Rings[account];
@@ -1675,28 +1936,45 @@ namespace GanymedE::Net {
 				baseline = snap.State;
 			}
 
-			std::vector<RepState> records = Diff(baseline, current);
-			// A spawn the client applied whose ack we missed is not in the acked baseline.
-			// If the entity is already gone, that diff will not mention it, and the client
-			// would keep it. Anything we have ever put in a sent stamp gets a destroy until
-			// some later acked snapshot no longer has it.
-			if (!ring.Snaps.empty())
+			// A destroy is settled once a snapshot that carried it has been acknowledged.
+			for (Ring::Snap& snap : ring.Snaps)
 			{
-				for (const RepState& sent : ring.Snaps.back().State)
-				{
-					if (FindId(current, sent.NetId) || FindId(records, sent.NetId))
-						continue;
-					RepState destroyed;
-					destroyed.Op = kDestroy;
-					destroyed.NetId = sent.NetId;
-					records.push_back(destroyed);
-				}
+				if (snap.Confirmed || !SnapshotAcked(account, snap.Seq))
+					continue;
+				snap.Confirmed = true;
+				for (uint16_t id : snap.Destroys)
+					ring.MayHave.erase(id);
+			}
+
+			std::vector<RepState> records = Diff(baseline, current);
+			// A spawn the client applied whose ack we have not seen is not in the acked
+			// baseline, so if the entity is already gone the diff does not mention it. The
+			// client may still hold it, and keeps it for good unless it is told. So anything
+			// a spawn went out for and that is gone gets a destroy here, again in every
+			// snapshot, until one of them is acknowledged. Checking only the last stamp is
+			// not enough: when the one snapshot carrying the destroy is lost, the next stamp
+			// no longer lists the entity, and nothing would ever say it again.
+			for (uint16_t id : ring.MayHave)
+			{
+				if (FindId(current, id) || FindId(records, id))
+					continue;
+				RepState destroyed;
+				destroyed.Op = kDestroy;
+				destroyed.NetId = id;
+				records.push_back(destroyed);
 			}
 			std::stable_partition(records.begin(), records.end(), [](const RepState& record)
 			{
 				return record.Op == kDestroy;
 			});
-			const int fit = FitCount(records);
+			std::vector<WireEvent> events = riding;
+			while (!events.empty() && MeasureAll(records, 0, events) > kBudget)
+			{
+				GE_CORE_WARN("Dropped unreliable script event '{0}'; the records filled the datagram",
+					events.back().Name);
+				events.pop_back();
+			}
+			const int fit = FitCount(records, events);
 			if (!records.empty() && fit == 0)
 				GE_CORE_WARN("Replicate record does not fit in one datagram");
 			const std::vector<RepState> stamp = StampAfter(baseline, records, fit);
@@ -1706,7 +1984,7 @@ namespace GanymedE::Net {
 				if (pawn.Account == account)
 					owned = pawn.NetId;
 			}
-			const std::vector<uint8_t> bytes = WritePacket(world.Tick, baselineSeq, owned, records, fit);
+			const std::vector<uint8_t> bytes = WritePacket(world.Tick, baselineSeq, owned, records, fit, events);
 			const uint16_t sequence = SendSnapshot(account, bytes.data(), static_cast<int>(bytes.size()));
 			if (sequence == 0)
 				continue;
@@ -1714,6 +1992,14 @@ namespace GanymedE::Net {
 			Ring::Snap sent;
 			sent.Seq = sequence;
 			sent.State = stamp;
+			for (int i = 0; i < fit; i++)
+			{
+				const RepState& record = records[static_cast<size_t>(i)];
+				if (record.Op == kSpawn)
+					ring.MayHave.insert(record.NetId);
+				else if (record.Op == kDestroy)
+					sent.Destroys.push_back(record.NetId);
+			}
 			ring.Snaps.push_back(std::move(sent));
 			if (ring.Snaps.size() > 32)
 				ring.Snaps.erase(ring.Snaps.begin());
@@ -1732,112 +2018,6 @@ namespace GanymedE::Net {
 					account, world.Tick, static_cast<int>(current.size()), RegistryCount(scene),
 					ring.Last, ring.Min == 0x7fffffff ? 0 : ring.Min, ByteRate(ring, now));
 			}
-		}
-	}
-
-	void AdvanceWorldTest(Scene& scene)
-	{
-		World& world = State();
-		if (scene.GetRole() != SceneRole::Server)
-			return;
-		EnsurePawns(scene, world);
-		if (world.Mode != Test::Spawn || world.SpawnGone)
-			return;
-		if (world.Tick < kDestroyTick)
-			return;
-		for (UUID id : world.Spawned)
-		{
-			Entity entity = scene.FindEntityByUUID(id);
-			if (entity)
-				scene.DestroyEntity(entity);
-		}
-		world.Spawned.clear();
-		world.SpawnGone = true;
-		GE_CORE_INFO("Replicate phase destroy");
-	}
-
-	void StartWorldTest(Scene& scene, const std::string& test)
-	{
-		World& world = State();
-		if (test.empty() || test == "spoof" || test.rfind("reliable:", 0) == 0)
-			return;
-		if (test == "move")
-			world.Mode = Test::Move;
-		else if (test == "spawn")
-			world.Mode = Test::Spawn;
-		else if (test == "prefab")
-			world.Mode = Test::Prefab;
-		else if (test == "rest")
-			world.Mode = Test::Rest;
-		else if (test == "predict")
-			world.Mode = Test::Predict;
-		else if (test == "predict-loss")
-			world.Mode = Test::PredictLoss;
-		else if (test == "predict-desync")
-			world.Mode = Test::PredictDesync;
-		else if (test == "predict-wall")
-			world.Mode = Test::PredictWall;
-		else if (test == "predict-step")
-			world.Mode = Test::PredictStep;
-		else if (test == "offline")
-		{
-			if (scene.GetRole() != SceneRole::Standalone)
-			{
-				GE_CORE_ERROR("Predict offline is a standalone runtime");
-				return;
-			}
-			world.Mode = Test::Offline;
-		}
-		else
-		{
-			GE_CORE_ERROR("Replicate test '{0}' is not a known mode", test);
-			return;
-		}
-
-		if (IsPredict(world.Mode) || world.Mode == Test::Offline)
-		{
-			BuildArena(scene, world);
-			if (world.Mode == Test::Offline)
-			{
-				world.Mover = SpawnPrefab(scene, "prefabs/NetWalker.gprefab", world);
-				Entity walker = scene.FindEntityByUUID(world.Mover);
-				if (walker && walker.HasComponent<ReplicatedComponent>())
-					walker.RemoveComponent<ReplicatedComponent>();
-				world.PrefabOf.erase(static_cast<uint64_t>(world.Mover));
-			}
-			GE_CORE_INFO("Predict test {0}", test);
-			return;
-		}
-
-		GE_CORE_INFO("Replicate test {0}", test);
-		if (world.Mode == Test::Move)
-		{
-			world.Mover = SpawnPrefab(scene, "prefabs/NetMover.gprefab", world);
-		}
-		else if (world.Mode == Test::Rest)
-		{
-			Entity entity = scene.CreateEntity("net-rest");
-			entity.AddComponent<ReplicatedComponent>();
-			entity.GetComponent<TransformComponent>().Translation = { 2.0f, 1.0f, 0.0f };
-			scene.MarkChanged<TransformComponent>(entity);
-		}
-		else if (world.Mode == Test::Spawn)
-		{
-			world.Spawned.reserve(500);
-			for (int i = 0; i < 500; i++)
-			{
-				Entity entity = scene.CreateEntity("net-spawn");
-				entity.AddComponent<ReplicatedComponent>();
-				entity.GetComponent<TransformComponent>().Translation = { static_cast<float>(i) * 0.1f, 0.0f, 0.0f };
-				world.Spawned.push_back(entity.GetUUID());
-			}
-			GE_CORE_INFO("Replicate phase spawn");
-		}
-		else if (world.Mode == Test::Prefab)
-		{
-			world.PrefabRoot = SpawnPrefab(scene, "prefabs/NetPair.gprefab", world);
-			Entity root = scene.FindEntityByUUID(world.PrefabRoot);
-			LogPrefab("server", scene, root, world.PrefabLogged);
 		}
 	}
 
@@ -1869,7 +2049,7 @@ namespace GanymedE::Net {
 		{
 			world.SimTick = world.LatestTick;
 			world.HaveSim = true;
-			world.WalkFrom = world.LatestTick + 60;
+			world.SettleFrom = world.LatestTick + 60;
 			GE_CORE_INFO("Predict own net={0} tick={1}", world.OwnedNetId, world.LatestTick);
 		}
 
@@ -1922,14 +2102,13 @@ namespace GanymedE::Net {
 				world.SimTick, world.Corrections, world.MaxCorrectMm, world.MaxReplay, lead);
 		}
 
-		if (!world.Done && world.WalkFrom != 0 && IsPredict(world.Mode)
-			&& world.SimTick >= world.WalkFrom + PredictSpan(world.Mode))
-		{
-			world.Done = true;
-			GE_CORE_INFO("Predict done corrections={0} maxMm={1:.0f} replay={2}",
-				world.Corrections, world.MaxCorrectMm, world.MaxReplay);
-			Application::Get().Close();
-		}
+		Test::PredictProgress progress;
+		progress.SimTick = world.SimTick;
+		progress.SettleFrom = world.SettleFrom;
+		progress.Corrections = world.Corrections;
+		progress.MaxCorrectMm = world.MaxCorrectMm;
+		progress.MaxReplay = world.MaxReplay;
+		Test::AfterPredict(progress);
 	}
 
 	void BeginStep(Scene& scene, PhysicsScene* physics)
@@ -1945,73 +2124,18 @@ namespace GanymedE::Net {
 			tick = world.Tick + 1;
 		else
 			tick = ++world.OfflineTicks;
+		world.ScriptTick = tick;
 
-		if (scene.GetRole() == SceneRole::Server && world.Mode == Test::PredictDesync && physics)
-		{
-			for (Pawn& pawn : world.Pawns)
-			{
-				uint32_t when = pawn.SpawnTick + 180;
-				if ((when % 2) != 0)
-					when++;
-				if (pawn.Teleported || tick != when)
-					continue;
-				Entity entity = scene.FindEntityByUUID(pawn.Id);
-				if (!entity)
-					continue;
-				glm::vec3 position = entity.GetComponent<TransformComponent>().Translation;
-				position.x += 3.0f;
-				physics->Teleport(pawn.Id, position);
-				pawn.Teleported = true;
-				GE_CORE_INFO("Predict teleport tick={0}", tick);
-			}
-		}
+		Test::BeforeScripts(scene, physics, tick);
 
 		const PlayerCommand local = scene.GetRole() == SceneRole::Server
 			? PlayerCommand{} : SampleCommand(world, tick);
 		TickScripts(scene, world, tick, local);
 
-		if (world.Mode == Test::Offline && world.OfflineTicks == 120)
-		{
-			Entity walker = scene.FindEntityByUUID(world.Mover);
-			if (walker)
-			{
-				const glm::vec3 position = walker.GetComponent<TransformComponent>().Translation;
-				GE_CORE_INFO("Predict offline tick={0} x={1:.3f} y={2:.3f} z={3:.3f}",
-					world.OfflineTicks, position.x, position.y, position.z);
-			}
-		}
-		if (world.Mode == Test::Offline && world.OfflineTicks >= 180 && !world.Done)
-		{
-			world.Done = true;
-			Application::Get().Close();
-		}
-
-		if (scene.GetRole() == SceneRole::Server && IsPredict(world.Mode))
-		{
-			const auto now = std::chrono::steady_clock::now();
-			if (now >= world.NextPredictLog)
-			{
-				world.NextPredictLog = now + std::chrono::seconds(1);
-				uint32_t repeats = 0;
-				uint32_t walkRepeats = 0;
-				for (const auto& input : world.Inputs)
-				{
-					repeats += input.second.Repeats;
-					if (input.second.WalkMarked)
-						walkRepeats += input.second.Repeats - input.second.RepeatsAtWalk;
-				}
-				for (const Pawn& pawn : world.Pawns)
-				{
-					Entity entity = scene.FindEntityByUUID(pawn.Id);
-					if (!entity)
-						continue;
-					const glm::vec3 position = entity.GetComponent<TransformComponent>().Translation;
-					GE_CORE_INFO(
-						"Predict server tick={0} x={1:.3f} y={2:.3f} z={3:.3f} repeats={4} walkRepeats={5}",
-						world.Tick, position.x, position.y, position.z, repeats, walkRepeats);
-				}
-			}
-		}
+		if (scene.GetRole() == SceneRole::Server)
+			Test::AfterServerStep(scene, world.Tick);
+		else
+			Test::AfterStandaloneStep(scene, tick);
 	}
 
 	void ApplyVisualError(Scene& scene, float frameDt)
@@ -2031,6 +2155,252 @@ namespace GanymedE::Net {
 		entity.GetComponent<TransformComponent>().Translation += world.VisualError;
 		scene.MarkChanged<TransformComponent>(entity);
 		world.VisualError *= std::exp(-frameDt / 0.1f);
+	}
+
+	namespace {
+
+		std::vector<uint8_t> PackReliable(const WireEvent& event)
+		{
+			std::vector<uint8_t> body;
+			BitWrite writer(body);
+			WireEvent copy = event;
+			if (!OneEventBits(writer, copy))
+				return {};
+			if (body.size() + 1 > 256)
+				return {};
+			body.insert(body.begin(), 3);
+			return body;
+		}
+
+		void TrimEvent(WireEvent& event)
+		{
+			if (event.Name.size() > 16)
+				event.Name.resize(16);
+			if (event.Args.size() > 4)
+				event.Args.resize(4);
+			for (EventArg& arg : event.Args)
+			{
+				if (arg.Key.size() > 12)
+					arg.Key.resize(12);
+				if (arg.Text.size() > 16)
+					arg.Text.resize(16);
+			}
+		}
+
+	}
+
+	void DeliverScriptTraffic(Scene& scene)
+	{
+		if (scene.GetRole() != SceneRole::Client)
+			return;
+
+		World& world = State();
+		for (const FieldWrite& write : world.FieldWrites)
+			ScriptEngine::ApplyReplicated(write.Id, write.Fields);
+		world.FieldWrites.clear();
+
+		std::vector<HeldEvent> kept;
+		for (HeldEvent& held : world.Held)
+		{
+			auto ghost = world.Ghosts.find(held.Event.NetId);
+			if (ghost == world.Ghosts.end())
+			{
+				if (!held.Event.Reliable)
+					continue;
+				held.Waits++;
+				if (held.Waits < 60)
+					kept.push_back(std::move(held));
+				else
+					GE_CORE_WARN("Reliable script event '{0}' dropped; net {1} never spawned",
+						held.Event.Name, held.Event.NetId);
+				continue;
+			}
+
+			Entity entity = scene.FindEntityByUUID(ghost->second.Id);
+			if (!entity)
+				continue;
+
+			if (held.Event.Kind == 2)
+			{
+				if (entity.IsLocallyControlled())
+				{
+					GE_CORE_INFO("Shot echo suppressed net={0}", held.Event.NetId);
+					continue;
+				}
+				const WireEvent& shot = held.Event;
+				ScriptEngine::DeliverShot(entity.GetUUID(), shot.Mx, shot.My, shot.Mz,
+					shot.Dx, shot.Dy, shot.Dz, shot.Speed, shot.Tick);
+				continue;
+			}
+
+			ScriptEngine::DeliverNetEvent(entity.GetUUID(), held.Event.Name, held.Event.Args);
+		}
+		world.Held = std::move(kept);
+	}
+
+	UUID SpawnReplicatedPrefab(Scene& scene, const std::string& relative)
+	{
+		PrefabSerializer::InstantiateOptions options;
+		options.RootUUID = UUID();
+		Entity root = PrefabSerializer::Instantiate(GetAssetRoot() / relative, scene, UUID{ 0 }, options);
+		if (!root)
+		{
+			GE_CORE_ERROR("Replicate could not spawn {0}", relative);
+			return UUID{ 0 };
+		}
+		if (!root.HasComponent<ReplicatedComponent>())
+			root.AddComponent<ReplicatedComponent>();
+		State().PrefabOf[static_cast<uint64_t>(root.GetUUID())] = relative;
+		return root.GetUUID();
+	}
+
+	void AssignPawn(const std::string& account, UUID id)
+	{
+		World& world = State();
+		for (Pawn& pawn : world.Pawns)
+		{
+			if (pawn.Account != account)
+				continue;
+			pawn.Id = id;
+			pawn.NetId = 0;
+			pawn.AssignedTick = world.Tick;
+			return;
+		}
+		Pawn pawn;
+		pawn.Account = account;
+		pawn.Id = id;
+		pawn.AssignedTick = world.Tick;
+		world.Pawns.push_back(std::move(pawn));
+	}
+
+	bool HasPawn(const std::string& account)
+	{
+		for (const Pawn& pawn : State().Pawns)
+		{
+			if (pawn.Account == account)
+				return true;
+		}
+		return false;
+	}
+
+	std::vector<PawnInfo> Pawns()
+	{
+		std::vector<PawnInfo> out;
+		for (const Pawn& pawn : State().Pawns)
+			out.push_back({ pawn.Account, pawn.Id, pawn.AssignedTick });
+		return out;
+	}
+
+	uint32_t ServerTick()
+	{
+		return State().Tick;
+	}
+
+	InputStats GetInputStats()
+	{
+		InputStats stats;
+		for (const auto& input : State().Inputs)
+		{
+			stats.Repeats += input.second.Repeats;
+			if (input.second.WalkMarked)
+				stats.RepeatsSinceMove += input.second.Repeats - input.second.RepeatsAtWalk;
+		}
+		return stats;
+	}
+
+	uint16_t EnsureNetId(Scene& scene, UUID id)
+	{
+		Entity entity = scene.FindEntityByUUID(id);
+		if (!entity || !entity.HasComponent<ReplicatedComponent>())
+			return 0;
+		auto& replicated = entity.GetComponent<ReplicatedComponent>();
+		if (replicated.NetId != 0)
+			return replicated.NetId;
+		World& world = State();
+		replicated.NetId = world.NextId++;
+		if (world.NextId == 0)
+			world.NextId = 1;
+		return replicated.NetId;
+	}
+
+	uint32_t CurrentScriptTick()
+	{
+		return State().ScriptTick;
+	}
+
+	void BroadcastEvent(uint16_t netId, std::string name, std::vector<EventArg> args, bool reliable)
+	{
+		if (netId == 0 || name.empty())
+			return;
+		WireEvent event;
+		event.NetId = netId;
+		event.Kind = 1;
+		event.Reliable = reliable;
+		event.Name = std::move(name);
+		event.Args = std::move(args);
+		TrimEvent(event);
+		if (event.Name.empty())
+			return;
+		if (reliable)
+		{
+			const std::vector<uint8_t> bytes = PackReliable(event);
+			if (bytes.empty())
+			{
+				GE_CORE_WARN("Reliable script event '{0}' did not fit", event.Name);
+				return;
+			}
+			SendReliable(bytes.data(), static_cast<int>(bytes.size()));
+			return;
+		}
+		World& world = State();
+		if (world.Unreliable.size() >= 8)
+		{
+			GE_CORE_WARN("Dropped unreliable script event '{0}'", event.Name);
+			return;
+		}
+		world.Unreliable.push_back(std::move(event));
+	}
+
+	void BroadcastShot(uint16_t netId, float muzzleX, float muzzleY, float muzzleZ,
+		float dirX, float dirY, float dirZ, float speed, uint32_t tick)
+	{
+		if (netId == 0)
+			return;
+		WireEvent event;
+		event.NetId = netId;
+		event.Kind = 2;
+		event.Mx = muzzleX;
+		event.My = muzzleY;
+		event.Mz = muzzleZ;
+		event.Dx = dirX;
+		event.Dy = dirY;
+		event.Dz = dirZ;
+		event.Speed = speed;
+		event.Tick = tick;
+		World& world = State();
+		if (world.Unreliable.size() >= 8)
+		{
+			GE_CORE_WARN("Dropped a shot event");
+			return;
+		}
+		world.Unreliable.push_back(std::move(event));
+	}
+
+	void IngestReliable(const uint8_t* data, int length)
+	{
+		if (!data || length < 2 || data[0] != 3)
+			return;
+		BitRead reader(data + 1, length - 1);
+		WireEvent event;
+		event.Reliable = true;
+		if (!OneEventBits(reader, event) || !reader.Ok())
+		{
+			GE_CORE_WARN("Reliable script event did not decode");
+			return;
+		}
+		HeldEvent held;
+		held.Event = std::move(event);
+		State().Held.push_back(std::move(held));
 	}
 
 }

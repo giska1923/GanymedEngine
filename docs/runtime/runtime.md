@@ -59,6 +59,8 @@ RuntimeLayer::OnUpdate(ts)
 
 `PresentWorld` is before the systems because a snapshot spawn is `CreateEntity`, and that asserts
 once `OnUpdateRuntime` has set the updating flag. On a standalone runtime it returns immediately.
+Replicated script fields and `OnNetEvent` / `OnShot` are not applied here. The prefab's script
+does not exist yet. `LuaScriptSystem` writes them after `Instantiate` and before `OnUpdate`.
 The packets it drains were queued by `PumpClient` earlier in the same frame.
 
 `--headless` is read in `CreateApplication` before the `Application` constructor, and it sets
@@ -125,7 +127,7 @@ The runtime also accepts the dev-session flags. They are not `runtime.yaml` keys
 | `--name=<name>` | The dev account. Default `p` plus the process id, so two runtimes differ |
 | `--net-sim=` | The send-path conditioner. See [netcode.md](../engine/netcode.md#the-conditioner) |
 | `--headless` | No window. The frame still simulates. See [the frame](#the-frame) |
-| `--net-test=` | `reliable:<count>`, `spoof`, `offline`, or a predict mode (`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`). `offline` is a standalone runtime and does not connect. The predict modes need `--connect`. A name this process does not know is a logged failure, not exit 2. `move`, `spawn`, `prefab`, and `rest` are the dedicated process's flag, not this one |
+| `--net-test=` | `reliable:<count>`, `reliable-flood`, `spoof`, `offline`, `fields`, or a predict mode (`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`). `offline` is a standalone runtime and does not connect. The predict modes and `fields` need `--connect`. A name this process does not know is a logged failure, not exit 2. `move`, `spawn`, `prefab`, and `rest` are the dedicated process's flag, not this one |
 
 `--connect=127.0.0.1:7777` is the usual pair with `GanymedDedicated --dev`. The session itself is
 [netcode.md](../engine/netcode.md).

@@ -2,6 +2,7 @@
 #include "PhysicsSystem.h"
 
 #include "GanymedE/ECS/Singleton.h"
+#include "GanymedE/Net/NetTest.h"
 #include "GanymedE/Net/World.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
@@ -102,7 +103,7 @@ namespace GanymedE {
 		while (m_Accumulator >= fixedTimestep && steps < maxSteps)
 		{
 			Net::BeginStep(m_Scene, m_PhysicsScene.get());
-			Net::DriveWorldTest(m_Scene);
+			Net::Test::AfterScripts(m_Scene);
 			m_PhysicsScene->Step(fixedTimestep);
 			DispatchCollisionEvents();
 			Net::NoteSimulatedStep(m_Scene);

@@ -3,6 +3,7 @@
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Net/Net.h"
+#include "GanymedE/Net/NetTest.h"
 #include "GanymedE/Net/World.h"
 #include "GanymedE/Scene/SceneSerializer.h"
 
@@ -88,7 +89,7 @@ namespace GanymedE {
 		m_Scene->OnRuntimeStart();
 		m_RuntimeStarted = true;
 		if (!m_Config.NetTest.empty())
-			Net::StartWorldTest(*m_Scene, m_Config.NetTest);
+			Net::Test::Start(*m_Scene, m_Config.NetTest);
 		m_Simulating = true;
 		if (m_Config.Dev)
 		{
@@ -128,7 +129,7 @@ namespace GanymedE {
 			return;
 
 		if (!m_Config.NetTest.empty())
-			Net::AdvanceWorldTest(*m_Scene);
+			Net::Test::Advance(*m_Scene);
 		m_Scene->OnUpdateRuntime(ts);
 
 		// Dev has no agent and no match clock. Killing the process is the stop.

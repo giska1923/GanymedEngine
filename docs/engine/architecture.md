@@ -19,7 +19,7 @@ GanymedE/
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
 ├── Online/      HTTP to the backend (IXWebSocket behind Online.cpp) + JSON (see online.md)
-├── Net/         The session after WELCOME: socket, acks, conditioner, snapshots, commands and prediction (see netcode.md)
+├── Net/         The session after WELCOME: socket, acks, conditioner, snapshots, commands, prediction, replicated script fields and server events (see netcode.md)
 ├── UI/          UIEngine (RmlUi game UI; the editor's own UI is ImGui — see ui.md)
 ├── Math/        Transform decomposition, ScreenPointToRay, AABB + Frustum, FloatCurve + ColorGradient
 ├── ImGui/       ImGuiLayer (docking UI host)

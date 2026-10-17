@@ -61,7 +61,7 @@ and returns 0 from `main`. The agent treats any exit as a dead process and does 
 | `--public-key` | Ed25519 public key, 32 bytes. The standard alphabet, padding and a trailing newline are accepted here only. Not required with `--dev` |
 | `--dev` | No agent, loopback only, `HELLO dev:<name>`. See [development mode](#development-mode) |
 | `--net-sim` | Latency, jitter, loss, duplicate, reorder on the send path. See [netcode.md](../engine/netcode.md#the-conditioner). A bad value exits 2 |
-| `--net-test` | On this process: `move`, `spawn`, `prefab`, `rest`, or a predict mode (`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`). Anything else exits 2. The runtime's flag is a different set |
+| `--net-test` | On this process: `move`, `spawn`, `prefab`, `rest`, `churn`, `fields`, or a predict mode (`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`). Anything else exits 2. The runtime's flag is a different set. The modes are in `Net/NetTest.cpp`; see [netcode.md](../engine/netcode.md) |
 
 `--match-seconds`, `--outcome`, `--scene` and `--load-delay` override `assets/dedicated.yaml`.
 Both `--name value` and `--name=value` work, and so does the single dash, because the agent's
@@ -94,7 +94,10 @@ instantiates `assets/prefabs/NetMover.gprefab` and writes a scripted pose before
 18 s of server ticks. `prefab` instantiates `assets/prefabs/NetPair.gprefab`, a root and one
 child, and logs both UUIDs. The lines are `Replicate ...` in the dedicated log. They are how N3
 was measured. A predict mode spawns `assets/prefabs/NetWalker.gprefab` for each account and
-applies that client's commands; the lines are `Predict server ...`. A bad value exits 2 before
+applies that client's commands; the lines are `Predict server ...`. `fields` spawns
+`assets/prefabs/NetEcho.gprefab` per account; the script sets replicated fields and sends a
+shot and two events at tick 1200. The lines are `Field spawn` and the script's `Echo fired`.
+A bad value exits 2 before
 boot, the same as a bad `--net-sim`.
 
 ## Boot

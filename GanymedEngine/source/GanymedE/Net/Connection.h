@@ -33,6 +33,12 @@ namespace GanymedE::Net {
 	constexpr int kKeepaliveMs = 100;
 	constexpr int kTimeoutMs = 5000;
 
+	// How far past the next expected reliable id a message may be and still be held, and how
+	// many may be held at once. A sender puts at most 255 messages in a packet, oldest unacked
+	// first, so an honest message is never more than 254 ahead. Anything beyond is dropped
+	// unheld: otherwise one peer could grow the held list without limit.
+	constexpr int kReliableWindow = 256;
+
 	struct PacketView
 	{
 		uint64_t Session = 0;
@@ -91,6 +97,7 @@ namespace GanymedE::Net {
 		float BytesInPerSec(Clock::time_point now) const;
 		float BytesOutPerSec(Clock::time_point now) const;
 		uint64_t Resent() const { return m_Resent; }
+		uint64_t ReliableRefused() const { return m_ReliableRefused; }
 
 	private:
 		struct Sent
@@ -147,6 +154,7 @@ namespace GanymedE::Net {
 		uint32_t m_RecvExpected = 0;
 		uint32_t m_RecvGot = 0;
 		uint64_t m_Resent = 0;
+		uint64_t m_ReliableRefused = 0;
 
 		std::vector<std::pair<Clock::time_point, int>> m_BytesIn;
 		std::vector<std::pair<Clock::time_point, int>> m_BytesOut;

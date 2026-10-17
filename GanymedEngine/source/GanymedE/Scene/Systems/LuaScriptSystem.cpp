@@ -1,6 +1,7 @@
 #include "gepch.h"
 #include "LuaScriptSystem.h"
 
+#include "GanymedE/Net/World.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
 #include "GanymedE/Scripting/ScriptEngine.h"
@@ -46,6 +47,11 @@ namespace GanymedE {
 		BindSceneContext();
 
 		DrainReactiveViews(/*instantiate=*/true);
+
+		// After Instantiate, so a prefab spawned earlier this frame already has its instance,
+		// and before OnUpdate, which is when the script reads the values. PresentWorld queued
+		// the fields; it cannot write them itself, because the instance does not exist yet.
+		Net::DeliverScriptTraffic(m_Scene);
 
 		// After the drain, so a script destroyed this frame has had its requests cancelled and
 		// gets no callback; before OnUpdate, so a script sees a response at the start of a frame.

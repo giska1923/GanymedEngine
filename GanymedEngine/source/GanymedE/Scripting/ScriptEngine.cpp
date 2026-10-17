@@ -7,15 +7,25 @@
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
 
+#include <cmath>
+
 namespace GanymedE {
 
 	namespace {
+
+		struct ReplicatedDecl
+		{
+			std::string Name;
+			uint8_t Type = 0;
+		};
 
 		struct ScriptInstance
 		{
 			sol::table Self;
 			AssetHandle Script = InvalidAssetHandle;
 			std::string Path;            // for diagnostics; the handle alone means nothing to a human
+			UUID Id{ 0 };
+			std::vector<ReplicatedDecl> Schema;
 
 			// Set on the first failed protected call. A script that throws in OnUpdate would
 			// otherwise log the identical error every frame forever - 60 lines a second of noise
@@ -242,6 +252,67 @@ namespace GanymedE {
 			return fields;
 		}
 
+		// The class table, not the prototype. An object literal keeps `Replicated` beside the
+		// methods. A TSTL class keeps it on the class, which is the table the chunk returns.
+		std::vector<ReplicatedDecl> ReadSchema(const sol::table& scriptClass, const std::string& scriptName)
+		{
+			std::vector<ReplicatedDecl> fields;
+			sol::object replicated = scriptClass["Replicated"];
+			if (!replicated.is<sol::table>())
+				return fields;
+
+			for (const auto& [key, value] : replicated.as<sol::table>())
+			{
+				if (key.get_type() != sol::type::string || value.get_type() != sol::type::string)
+					continue;
+				const std::string name = key.as<std::string>();
+				const std::string type = value.as<std::string>();
+				uint8_t code = 0;
+				if (type == "bool")
+					code = Net::kFieldBool;
+				else if (type == "u8")
+					code = Net::kFieldU8;
+				else if (type == "tick")
+					code = Net::kFieldTick;
+				else if (type == "str16")
+					code = Net::kFieldStr16;
+				else
+				{
+					GE_CORE_WARN("Script [{0}]: replicated field '{1}' has unknown type '{2}'",
+						scriptName, name, type);
+					continue;
+				}
+				if (name.empty() || name.size() > 32)
+				{
+					GE_CORE_WARN("Script [{0}]: replicated field name is empty or over 32 bytes", scriptName);
+					continue;
+				}
+				fields.push_back({ name, code });
+			}
+
+			std::sort(fields.begin(), fields.end(),
+				[](const ReplicatedDecl& a, const ReplicatedDecl& b) { return a.Name < b.Name; });
+			if (fields.size() > 16)
+			{
+				GE_CORE_WARN("Script [{0}]: more than 16 replicated fields; the rest are ignored", scriptName);
+				fields.resize(16);
+			}
+			return fields;
+		}
+
+		ScriptInstance* g_Calling = nullptr;
+
+		struct CallScope
+		{
+			ScriptInstance* Previous;
+			explicit CallScope(ScriptInstance& instance)
+				: Previous(g_Calling)
+			{
+				g_Calling = &instance;
+			}
+			~CallScope() { g_Calling = Previous; }
+		};
+
 		std::filesystem::file_time_type StampOf(const std::filesystem::path& path)
 		{
 			std::error_code ec;
@@ -290,6 +361,7 @@ namespace GanymedE {
 				return;   // lifecycle methods are all optional
 
 			sol::protected_function function = member.as<sol::protected_function>();
+			CallScope scope(instance);
 			sol::protected_function_result result = function(instance.Self, std::forward<Args>(args)...);
 
 			if (result.valid())
@@ -596,6 +668,8 @@ namespace GanymedE {
 		instance.Self = self;
 		instance.Script = script;
 		instance.Path = instancePath;
+		instance.Id = uuid;
+		instance.Schema = ReadSchema(scriptClass->Table, instancePath);
 
 		auto& stored = sceneInstances.ByUUID.emplace(uuid, std::move(instance)).first->second;
 		sceneInstances.EntityToUUID[static_cast<entt::entity>(entity)] = uuid;
@@ -733,6 +807,7 @@ namespace GanymedE {
 
 					instance.Self[sol::metatable_key] =
 						s_Data->Lua.create_table_with(sol::meta_function::index, methods);
+					instance.Schema = ReadSchema(scriptClass.Table, scriptClass.Path.filename().string());
 
 					// A reload is the author's fix for whatever killed it, so give a
 					// disabled instance another chance.
@@ -885,5 +960,133 @@ namespace GanymedE {
 
 		if (ScriptInstance* instance = FindInstance(static_cast<entt::entity>(entity)))
 			CallMethod(*instance, "OnCollisionExit", other);
+	}
+
+	UUID ScriptEngine::CallingEntity()
+	{
+		return g_Calling ? g_Calling->Id : UUID{ 0 };
+	}
+
+	namespace {
+
+		ScriptInstance* FindByUUID(UUID id)
+		{
+			ScriptEngineData::SceneInstances* scene = CurrentScene();
+			if (!scene || id == UUID{ 0 })
+				return nullptr;
+			auto instance = scene->ByUUID.find(id);
+			if (instance == scene->ByUUID.end() || instance->second.Dead)
+				return nullptr;
+			return &instance->second;
+		}
+
+		uint32_t ReadWhole(sol::object obj, double cap)
+		{
+			if (obj.get_type() != sol::type::number)
+				return 0;
+			double number = obj.as<double>();
+			if (number < 0.0)
+				number = 0.0;
+			if (number > cap)
+				number = cap;
+			return static_cast<uint32_t>(std::llround(number));
+		}
+
+		Net::FieldValue ReadField(const ScriptInstance& instance, uint8_t index)
+		{
+			const ReplicatedDecl& decl = instance.Schema[index];
+			Net::FieldValue field;
+			field.Index = index;
+			field.Type = decl.Type;
+			sol::object obj = instance.Self[decl.Name];
+			if (decl.Type == Net::kFieldBool)
+				field.Number = (obj.get_type() == sol::type::boolean && obj.as<bool>()) ? 1u : 0u;
+			else if (decl.Type == Net::kFieldStr16)
+			{
+				if (obj.get_type() == sol::type::string)
+				{
+					field.Text = obj.as<std::string>();
+					if (field.Text.size() > 16)
+						field.Text.resize(16);
+				}
+			}
+			else if (decl.Type == Net::kFieldU8)
+				field.Number = ReadWhole(obj, 255.0);
+			else
+				field.Number = ReadWhole(obj, 4294967295.0);
+			return field;
+		}
+
+	}
+
+	bool ScriptEngine::CopyReplicated(UUID id, std::vector<Net::FieldValue>& out)
+	{
+		out.clear();
+		ScriptInstance* instance = FindByUUID(id);
+		if (!instance || instance->Schema.empty())
+			return false;
+		out.reserve(instance->Schema.size());
+		for (uint8_t i = 0; i < static_cast<uint8_t>(instance->Schema.size()); i++)
+			out.push_back(ReadField(*instance, i));
+		return true;
+	}
+
+	void ScriptEngine::ApplyReplicated(UUID id, const std::vector<Net::FieldValue>& fields)
+	{
+		ScriptInstance* instance = FindByUUID(id);
+		if (!instance)
+			return;
+		for (const Net::FieldValue& field : fields)
+		{
+			if (field.Index >= instance->Schema.size())
+				continue;
+			const ReplicatedDecl& decl = instance->Schema[field.Index];
+			if (decl.Type != field.Type)
+			{
+				GE_CORE_WARN("Script [{0}]: replicated field '{1}' arrived with a different type",
+					instance->Path, decl.Name);
+				continue;
+			}
+			if (decl.Type == Net::kFieldBool)
+				instance->Self[decl.Name] = field.Number != 0;
+			else if (decl.Type == Net::kFieldStr16)
+				instance->Self[decl.Name] = field.Text;
+			else
+				instance->Self[decl.Name] = field.Number;
+		}
+	}
+
+	void ScriptEngine::DeliverNetEvent(UUID id, const std::string& name, const std::vector<Net::EventArg>& args)
+	{
+		if (!s_Data)
+			return;
+		ScriptInstance* instance = FindByUUID(id);
+		if (!instance)
+			return;
+		sol::table table = s_Data->Lua.create_table();
+		for (const Net::EventArg& arg : args)
+		{
+			if (arg.Key.empty())
+				continue;
+			if (arg.Type == Net::kArgBool)
+				table[arg.Key] = arg.Number != 0.0f;
+			else if (arg.Type == Net::kArgNumber)
+				table[arg.Key] = arg.Number;
+			else if (arg.Type == Net::kArgString)
+				table[arg.Key] = arg.Text;
+			else if (arg.Type == Net::kArgVec3)
+				table[arg.Key] = glm::vec3(arg.X, arg.Y, arg.Z);
+		}
+		CallMethod(*instance, "OnNetEvent", name, table);
+	}
+
+	void ScriptEngine::DeliverShot(UUID id, float muzzleX, float muzzleY, float muzzleZ,
+		float dirX, float dirY, float dirZ, float speed, uint32_t tick)
+	{
+		ScriptInstance* instance = FindByUUID(id);
+		if (!instance)
+			return;
+		CallMethod(*instance, "OnShot", glm::vec3(muzzleX, muzzleY, muzzleZ),
+			glm::vec3(dirX, dirY, dirZ), speed, tick);
 	}
 }

@@ -3,6 +3,7 @@
 #include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Net/Net.h"
+#include "GanymedE/Net/NetTest.h"
 #include "GanymedE/Net/World.h"
 #include "GanymedE/Scene/SceneRole.h"
 #include "GanymedE/Scene/SceneSerializer.h"
@@ -113,7 +114,7 @@ namespace GanymedE {
 			m_Scene->OnRuntimeStart();
 			m_RuntimeStarted = true;
 			GE_INFO("Runtime started (physics scene up, scripts instantiated)");
-			Net::StartWorldTest(*m_Scene, m_Config.NetTest);
+			Net::Test::Start(*m_Scene, m_Config.NetTest);
 		}
 		else
 		{

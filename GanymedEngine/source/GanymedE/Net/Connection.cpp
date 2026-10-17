@@ -288,6 +288,12 @@ namespace GanymedE::Net {
 			}
 			else if (SeqDiff(id, m_ExpectReliable) > 0)
 			{
+				if (SeqDiff(id, m_ExpectReliable) > kReliableWindow
+					|| static_cast<int>(m_Held.size()) >= kReliableWindow)
+				{
+					m_ReliableRefused++;
+					continue;
+				}
 				bool known = false;
 				for (const auto& held : m_Held)
 				{

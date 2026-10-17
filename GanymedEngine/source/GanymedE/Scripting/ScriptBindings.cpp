@@ -12,6 +12,7 @@
 #include "GanymedE/ECS/System.h"
 #include "GanymedE/Net/Command.h"
 #include "GanymedE/Net/Net.h"
+#include "GanymedE/Net/World.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
@@ -1320,6 +1321,72 @@ namespace GanymedE {
 		// The online client (docs/engine/online.md). Every request binding is typed per endpoint,
 		// takes its owner first (self.entity) and its callback last, and maps the API's field names
 		// to script-style ones (display_name -> name). There is no generic request.
+		bool ServerRole()
+		{
+			Scene* scene = ScriptEngine::GetSceneContext();
+			return scene && scene->GetRole() == SceneRole::Server;
+		}
+
+		bool PackArgs(sol::object argsObj, std::vector<Net::EventArg>& out)
+		{
+			out.clear();
+			if (!argsObj.valid() || argsObj.get_type() == sol::type::nil || argsObj.get_type() == sol::type::none)
+				return true;
+			if (!argsObj.is<sol::table>())
+			{
+				GE_CORE_WARN("Net.Broadcast args must be a flat table or nil");
+				return false;
+			}
+			for (const auto& [key, value] : argsObj.as<sol::table>())
+			{
+				if (key.get_type() != sol::type::string)
+					continue;
+				if (out.size() >= 4)
+				{
+					GE_CORE_WARN("Net.Broadcast keeps 4 arguments");
+					break;
+				}
+				Net::EventArg arg;
+				arg.Key = key.as<std::string>();
+				const sol::type type = value.get_type();
+				if (type == sol::type::boolean)
+				{
+					arg.Type = Net::kArgBool;
+					arg.Number = value.as<bool>() ? 1.0f : 0.0f;
+				}
+				else if (type == sol::type::number)
+				{
+					arg.Type = Net::kArgNumber;
+					arg.Number = static_cast<float>(value.as<double>());
+				}
+				else if (type == sol::type::string)
+				{
+					arg.Type = Net::kArgString;
+					arg.Text = value.as<std::string>();
+				}
+				else if (value.is<glm::vec3>())
+				{
+					const glm::vec3 v = value.as<glm::vec3>();
+					arg.Type = Net::kArgVec3;
+					arg.X = v.x;
+					arg.Y = v.y;
+					arg.Z = v.z;
+				}
+				else if (type == sol::type::table)
+				{
+					GE_CORE_WARN("Net.Broadcast ignored nested table '{0}'", arg.Key);
+					continue;
+				}
+				else
+				{
+					GE_CORE_WARN("Net.Broadcast ignored '{0}': not a bool, number, string or Vec3", arg.Key);
+					continue;
+				}
+				out.push_back(std::move(arg));
+			}
+			return true;
+		}
+
 		void RegisterNet(sol::state& lua)
 		{
 			// Valid only for the duration of OnTick. Scripts must not keep the reference.
@@ -1366,6 +1433,67 @@ namespace GanymedE {
 				out["droppedSession"] = static_cast<int64_t>(stats.DroppedSession);
 				out["droppedAddress"] = static_cast<int64_t>(stats.DroppedAddress);
 				return out;
+			};
+			// One assignment at a time. A fat new_usertype here is the call that overflowed
+			// the stack on Entity under this sol2 on MSVC.
+			auto broadcast = [](sol::object nameObj, sol::object argsObj, bool reliable)
+			{
+				if (!ServerRole())
+				{
+					static bool warned = false;
+					if (!warned)
+					{
+						GE_CORE_WARN("Net.Broadcast is server-only");
+						warned = true;
+					}
+					return;
+				}
+				if (nameObj.get_type() != sol::type::string)
+					return;
+				Scene* scene = ScriptEngine::GetSceneContext();
+				const UUID id = ScriptEngine::CallingEntity();
+				if (!scene || id == UUID{ 0 })
+				{
+					GE_CORE_WARN("Net.Broadcast outside a script");
+					return;
+				}
+				const uint16_t netId = Net::EnsureNetId(*scene, id);
+				if (netId == 0)
+				{
+					GE_CORE_WARN("Net.Broadcast from an entity that is not replicated");
+					return;
+				}
+				std::vector<Net::EventArg> args;
+				if (!PackArgs(argsObj, args))
+					return;
+				Net::BroadcastEvent(netId, nameObj.as<std::string>(), std::move(args), reliable);
+			};
+			net["Broadcast"] = sol::overload(
+				[=](sol::object nameObj, sol::object argsObj) { broadcast(nameObj, argsObj, false); },
+				broadcast);
+			net["Shot"] = [](Entity entity, glm::vec3 muzzle, glm::vec3 direction, float speed)
+			{
+				if (!ServerRole())
+				{
+					static bool warned = false;
+					if (!warned)
+					{
+						GE_CORE_WARN("Net.Shot is server-only");
+						warned = true;
+					}
+					return;
+				}
+				Scene* scene = ScriptEngine::GetSceneContext();
+				if (!scene || !entity || !entity.HasComponent<ReplicatedComponent>())
+				{
+					GE_CORE_WARN("Net.Shot needs a replicated entity");
+					return;
+				}
+				const uint16_t netId = Net::EnsureNetId(*scene, entity.GetUUID());
+				if (netId == 0)
+					return;
+				Net::BroadcastShot(netId, muzzle.x, muzzle.y, muzzle.z,
+					direction.x, direction.y, direction.z, speed, Net::CurrentScriptTick());
 			};
 		}
 
