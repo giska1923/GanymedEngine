@@ -1529,6 +1529,10 @@ namespace GanymedE::Net {
 			if (world.LookNoted || Test::Active())
 				return;
 			world.LookNoted = true;
+			// Look only while the cursor is captured. A game that releases the cursor (Escape, a
+			// menu) must be able to move the mouse without turning the player.
+			if (Input::GetCursorMode() != CursorMode::Locked)
+				return;
 			const glm::vec2 mouse = Input::GetGameMouseDelta();
 			world.ViewYaw -= mouse.x * 0.002f;
 			world.ViewPitch -= mouse.y * 0.002f;
