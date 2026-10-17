@@ -56,10 +56,13 @@ namespace GanymedE {
 
 	}
 
-	BgfxContext::BgfxContext(GLFWwindow* windowHandle)
+	BgfxContext::BgfxContext(GLFWwindow* windowHandle, bool headless)
 		: m_WindowHandle(windowHandle)
+		, m_Headless(headless)
+		, m_VSync(windowHandle != nullptr)
 	{
-		GE_CORE_ASSERT(windowHandle, "Window handle is null!");
+		if (!headless)
+			GE_CORE_ASSERT(windowHandle, "Window handle is null!");
 	}
 
 	BgfxContext::~BgfxContext()
@@ -356,29 +359,57 @@ namespace GanymedE {
 		m_Width = width;
 		m_Height = height;
 
+		// Release compiles the constructor assert out. Do not treat that as headless: Noop
+		// with a null window is a quiet black frame, and the windowed app has no way to say so.
+		if (!m_Headless && !m_WindowHandle)
+		{
+			GE_CORE_ERROR("BgfxContext has no window and was not opened headless");
+			GE_CORE_ASSERT(false, "Window handle is null!");
+			return;
+		}
+
 		// Calling renderFrame() before init() puts bgfx in single-threaded mode:
 		// the calling thread becomes the render thread. Dropping this (and going
 		// multithreaded) is an optional Phase 7 optimisation.
 		bgfx::renderFrame();
 
-		const bgfx::RendererType::Enum requested = RequestedBackend();
+		// Headless is the flag, not "the handle happened to be null". Noop is the only backend
+		// that accepts a null window: any other type with a null nwh is bgfx's headless path,
+		// which refuses a non-zero resolution. Do not fall back to a real renderer here.
+		const bool headless = m_Headless;
+		const bgfx::RendererType::Enum requested = headless
+			? bgfx::RendererType::Noop
+			: RequestedBackend();
 
 		bgfx::Init init;
 		init.type = requested;   // Count == let bgfx choose; see RequestedBackend above
 		init.callback = &s_Callback;   // or bgfx talks to the debugger and nowhere else
 		init.vendorId = BGFX_PCI_ID_NONE;
-		init.platformData.nwh = NativeWindowHandle(m_WindowHandle);
-		init.platformData.ndt = NativeDisplayHandle();
 		init.resolution.width = m_Width;
 		init.resolution.height = m_Height;
-		init.resolution.reset = ResetFlags();
+		if (headless)
+		{
+			init.platformData.nwh = nullptr;
+			init.platformData.ndt = nullptr;
+			init.platformData.context = nullptr;
+			init.platformData.backBuffer = nullptr;
+			init.platformData.backBufferDS = nullptr;
+			init.resolution.reset = BGFX_RESET_NONE;
+		}
+		else
+		{
+			init.platformData.nwh = NativeWindowHandle(m_WindowHandle);
+			init.platformData.ndt = NativeDisplayHandle();
+			init.resolution.reset = ResetFlags();
+		}
 
 		if (!bgfx::init(init))
 		{
 			// A backend can be supported by the build and still fail to start here - no driver,
 			// no device, a headless session. Retry on auto rather than dying, because "Vulkan is
-			// not installed" should not look like "the engine is broken".
-			if (requested != bgfx::RendererType::Count)
+			// not installed" should not look like "the engine is broken". Noop has nothing to
+			// fall back to, and a real backend cannot start without the window we do not have.
+			if (!headless && requested != bgfx::RendererType::Count)
 			{
 				GE_CORE_ERROR("bgfx failed to initialise on {0}. Retrying with the backend bgfx "
 					"chooses itself.", bgfx::getRendererName(requested));

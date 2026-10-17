@@ -2,6 +2,8 @@
 
 #include "GanymedE/Assets/AssetTypes.h"
 #include "GanymedE/Core/Timestep.h"
+#include "GanymedE/Net/Command.h"
+#include "GanymedE/Net/ScriptWire.h"
 #include "GanymedE/Scene/Components.h"
 
 #include <entt/entt.hpp>
@@ -13,6 +15,7 @@ namespace GanymedE {
 
 	class Entity;
 	class Scene;
+	struct OnlinePush;
 
 	// Owner of the one Lua VM the whole runtime shares.
 	//
@@ -60,10 +63,35 @@ namespace GanymedE {
 
 		static void Update(entt::entity entity, Timestep ts);
 
+		// Once per physics step, before the step. No-op when the script has no OnTick.
+		// `command` is only valid for the duration of the call.
+		static void Tick(entt::entity entity, uint32_t tick, const Net::PlayerCommand& command);
+
+		// The entity whose script is inside a call. Zero outside one, which is how Broadcast
+		// knows who is speaking. Nested calls restore the previous entity.
+		static UUID CallingEntity();
+
+		// Server snapshot gather. False when this entity's script declares no Replicated
+		// table. The vector is the full set, sorted by name, including zeros.
+		static bool CopyReplicated(UUID id, std::vector<Net::FieldValue>& out);
+
+		// Client, after Instantiate and before OnUpdate. Writes the fields the snapshot
+		// named. The locally controlled pawn is not special: health is not predicted.
+		static void ApplyReplicated(UUID id, const std::vector<Net::FieldValue>& fields);
+
+		static void DeliverNetEvent(UUID id, const std::string& name, const std::vector<Net::EventArg>& args);
+		static void DeliverShot(UUID id, float muzzleX, float muzzleY, float muzzleZ,
+			float dirX, float dirY, float dirZ, float speed, uint32_t tick);
+
 		// Runs the callbacks of backend requests whose responses have arrived, for the current
 		// scene's instances, with the scene context set. LuaScriptSystem calls it once per update,
 		// before any OnUpdate - see docs/engine/online.md for the three hops a response takes.
 		static void DeliverResponses();
+
+		// Online's push handler (Application wires it): queues `push` for every scene with a script
+		// subscribed to its type, and returns how many scenes that was. Main thread, outside any scene
+		// update; the subscribers' callbacks run in their scene's next DeliverResponses.
+		static size_t QueuePush(const OnlinePush& push);
 
 		// One tunable declared by a script, with the default it declared.
 		//

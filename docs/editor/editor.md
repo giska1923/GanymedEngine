@@ -792,7 +792,7 @@ Tag edit (full-width `InputText`, one undo command per typing session). One sect
 component type every selected entity has. **Add Component** is a full-width accent-outlined
 button at the **bottom** of the stack (every type not already present — camera, sprite, lights,
 sky light, animator, aim offset, bone attachment, script, audio source, audio listener, particle emitter, marker, rigid body,
-colliders; one `DrawAddComponentEntry<T>` line each). Adding a `BoxColliderComponent` seeds
+colliders, replicated; one `DrawAddComponentEntry<T>` line each). Adding a `BoxColliderComponent` seeds
 `HalfExtents` / `Offset` from a resident `StaticMeshComponent` AABB (mesh local space, no
 division by entity scale — the world matrix already scales at draw and at body creation). No
 mesh, or a handle that is not loaded yet, leaves the unit default. Sphere and capsule are not

@@ -248,6 +248,16 @@ precedent.
   `Entity:GetMarkerKind()`. Wait times and teams stay on `ScriptComponent`. In Add Component.
   See [editor.md](../editor/editor.md#map-panel) and [scripting.md](scripting.md).
 
+### Replication
+
+- **`ReplicatedComponent`** — the mark that this entity is in the snapshot. `NetId` is a 16-bit
+  index the server assigns while the session runs. It is `Trait::Runtime`, so the file stores
+  the component and nothing else: `ReplicatedComponent: {}`, written and read by hand next to
+  the tag. On a client a replicated dynamic body is made kinematic and the interpolated
+  transform drives it. The codecs, the tick, and the interpolation buffer are
+  [netcode.md](netcode.md). In Add Component. The inspector section is the header only, because
+  `NetId` is hidden.
+
 ### Physics (pure data — Jolt never appears here)
 
 - **`CharacterControllerComponent`** — a walking character (Jolt `CharacterVirtual`): max slope,
@@ -267,14 +277,22 @@ precedent.
 
 ## Built-in systems
 
-Registered in this order (order = execution order; validated against declared access):
+Registered in this order (order = execution order; validated against declared access). A scene
+constructed with `SceneRole::Server` — `GanymedDedicated` does this — stops after
+`BoneAttachmentSystem`. The four systems below that are presentation, and `SystemManager` does not
+construct them ([ecs.md](ecs.md#systemmanager)). `Scene::Copy` keeps the role, so a
+server scene copied for play would still be a server scene. The default role is `Standalone`.
+A runtime launched with `--connect` constructs `SceneRole::Client` instead. Client registers the
+same systems as Standalone; replication reads `GetRole()` and does not get its own system list.
+See [netcode.md](netcode.md).
 
 ### PhysicsSystem — [`Systems/PhysicsSystem.h`](../../GanymedEngine/source/GanymedE/Scene/Systems/PhysicsSystem.h)
 Owns the `PhysicsScene` (created on play, destroyed on stop) and the fixed-timestep accumulator.
 Per update: step the world at `PhysicsSettings.FixedTimestep` (capped at `MaxStepsPerFrame` —
 spiral-of-death guard, dropping surplus time), dispatch collision events to script instances via an
-`AccessView`, then `SyncTransforms(alpha)` writes interpolated poses back into
-`TransformComponent`s. Declares `AccessView<RW<TransformComponent>>` purely so ordering validation
+`AccessView`. On a server, each step then writes the discrete pose and `Net::CaptureWorld` sends
+a snapshot when the tick is even. `SyncTransforms(alpha)` still runs once after the loop and is
+the local render blend, not the snapshot. Declares `AccessView<RW<TransformComponent>>` purely so ordering validation
 knows this system writes transforms (the actual writeback is inside `PhysicsScene`).
 Details: [physics.md](physics.md).
 
@@ -772,11 +790,11 @@ anyway.
 
 ### What is registered
 
-41 types, 169 members (the boot log prints both — a count far below that is the cheapest signal that a
-registration block was dropped by the linker). Measured at editor boot after `CharacterControllerComponent`
-joined `ComponentList`:
+42 types, 170 members (the boot log prints both — a count far below that is the cheapest signal that a
+registration block was dropped by the linker). Measured at editor boot after `ReplicatedComponent`
+joined `ComponentList` (`Reflection initialised: 42 types, 170 members`):
 
-- The **30 components** — all 28 `ComponentList` entries, plus `IDComponent` and `TagComponent`
+- The **31 components** — all 29 `ComponentList` entries, plus `IDComponent` and `TagComponent`
   (entity identity, excluded from the list, registered so prefab diffing can skip them).
 - **5 supporting types** — `RangeF`; `PhysicsMaterial`; `SceneCamera`, whose seven private fields are
   registered through entt's setter/getter `.data` overload; and `FloatCurve` / `ColorGradient` with
@@ -819,7 +837,7 @@ What no test can check is whether a type's member list is **complete** — the t
 exactly the thing that is not reflected. The `static_assert(sizeof(T) == N)` sentinels at the bottom of
 `ComponentReflection.cpp` are the only forcing function, and they have two honest limits. Padding: a
 `bool` dropped into existing padding does not move `sizeof` (`AudioSourceComponent` has three spare
-bytes right now). And they cover 18 of the 27 `ComponentList` entries — every one with no
+bytes right now). And they cover 20 of the 29 `ComponentList` entries — every one with no
 standard-library container member. `sizeof(std::string)` is 40 with MSVC's STL and 32 with libstdc++,
 and vector and unordered_map differ likewise, so a sentinel on `TagComponent`,
 `RelationshipComponent`, `StaticMeshComponent`, `AnimatorComponent`, `AimOffsetComponent`,
@@ -906,7 +924,7 @@ so the exception went with the reason for it.
 
 ### The reflected path
 
-**Every component** is written and read by `WriteReflected` / `ReadReflected` in
+**Every component other than `ReplicatedComponent`** is written and read by `WriteReflected` / `ReadReflected` in
 [`SceneYaml.h`](../../GanymedEngine/source/GanymedE/Scene/SceneYaml.h) rather than by a hand-written
 block. Three *fields* remain hand-written, and each is marked `Trait::Custom` so the generic path
 skips exactly them while the rest of their component still goes through it:
@@ -918,8 +936,10 @@ skips exactly them while the rest of their component still goes through it:
 | `ScriptComponent::Fields` | A sequence of `{Name, Type, Value}` maps over a closed variant, because the declaring script may not be loadable when the scene is read. |
 
 `TagComponent` is written generically but read by hand, because the tag is needed to *create* the
-entity and so cannot go through a reader that needs an entity to read into. That is now the **only**
-hand-written component read left — `PrefabSerializer::ReadRootTransform`, which peeked at the root
+entity and so cannot go through a reader that needs an entity to read into. `ReplicatedComponent`
+is the other hand-written component: the writer emits an empty map and the reader adds the
+component when the key is present, so a scene keeps the mark and not the server's `NetId`.
+Everything else goes through the reflected reader. `PrefabSerializer::ReadRootTransform`, which peeked at the root
 entity's three transform keys directly, goes through `ReadReflectedComponent` and gained its
 tolerance for a missing key along the way.
 
@@ -1111,12 +1131,18 @@ putting it back would be faster; a throw or an early return in between would lea
 carrying canonical UUIDs, which is unrecoverable corruption traded for one click's worth of
 allocation.
 
-**Instantiation reuses the scene loader wholesale.** Each block goes through `DeserializeEntity`
-with a freshly minted UUID, then `ResolveHierarchy` translates the file's `Parent`/`Children` to
-the created ones — the exact pass a scene load runs. Nothing prefab-specific was needed, which is
-the payoff for making that pass uniform rather than a rare repair path. The canonical 1..N would
-collide with the second instance in the same scene, so a fresh UUID per entity is mandatory, not an
-optimization.
+**Instantiation reuses the scene loader wholesale.** Each block goes through `DeserializeEntity`,
+then `ResolveHierarchy` translates the file's `Parent`/`Children` to the created ones — the exact
+pass a scene load runs. Nothing prefab-specific was needed in that pass, which is the payoff for
+making it uniform rather than a rare repair path. The canonical 1..N would collide with the second
+instance in the same scene, so they are not the instance's UUIDs.
+
+The root's UUID is minted, unless `InstantiateOptions::RootUUID` pins it. Child `i` — its place
+in that instantiate, `1 .. n-1`, which is the file's DFS order — is
+`DerivePrefabChildUUID(root, i)`. Two spawns differ because their roots differ. A server and a
+client that pin the same root build the same children, which is what a replicated prefab needs.
+The derivation runs for every instantiate, not only a pinned root. `Scene.Spawn` pins the root
+it returns; the children follow from it. See [scripting.md](scripting.md).
 
 **Root transform ownership is symmetric.** The file stores the root transform captured at creation
 (the spawn default) and *instantiate* applies it; thereafter the root's placement belongs to the

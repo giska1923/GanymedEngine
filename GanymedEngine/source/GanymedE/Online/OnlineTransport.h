@@ -4,8 +4,10 @@
 // with no idea of sessions, tokens or retries. OnlineSession.cpp builds those on top of it.
 // Online.cpp is its only implementation, and the only engine TU that includes IXWebSocket.
 
+#include "GanymedE/Net/Socket.h"
 #include "GanymedE/Online/Online.h"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -36,4 +38,61 @@ namespace GanymedE::OnlineTransport {
 	// Responses that came back for aborted attempts, and attempts not yet completed.
 	uint64_t DroppedLate();
 	uint32_t InFlight();
+
+	// ---- The push socket (one at a time) ---------------------------------------------------
+
+	// Every event runs on the main thread, from JobSystem::OnUpdate, and only for the socket that
+	// is current: events still queued from a socket that has since been closed or replaced are
+	// dropped. After a close or a failure the socket is finished; opening again is the caller's
+	// decision (the session reconnects by close code).
+	struct SocketEvents
+	{
+		std::function<void()> OnOpen;
+		std::function<void(const std::string& text)> OnText;
+		std::function<void(int code, const std::string& reason, bool remote)> OnClose;
+		// The connect or the upgrade failed. httpStatus is the upgrade's status (401 for a refused
+		// token), or 0 when no HTTP response arrived. The response body is not available.
+		std::function<void(int httpStatus, const std::string& reason)> OnFailed;
+	};
+
+	// Opens a WebSocket to the base URL (http -> ws) + `path`, sending `bearer` at the upgrade.
+	// Closes any socket already open first.
+	void OpenSocket(const std::string& path, const std::string& bearer, SocketEvents events);
+
+	// Closes the socket, if any; none of its events run after this returns.
+	void CloseSocket();
+
+	// ---- One UDP request and its reply (joining a game server) -----------------------------
+
+	using ExchangeId = uint64_t;
+
+	// Sends `payload` as one datagram on `socket` to `address` ("host:port") and waits up to
+	// `timeout` for one datagram back. The socket is not owned here: JoinMatch keeps one for
+	// every attempt and, on WELCOME, hands that same socket to the game session.
+	// `completion(ok, text)` gets the reply, or why there is none ("no answer", "nothing is
+	// listening"). It runs on the main thread, from PollExchanges, never inline.
+	ExchangeId Exchange(Net::Socket& socket, const std::string& address, const std::string& payload,
+		std::chrono::milliseconds timeout, std::function<void(bool ok, const std::string& text)> completion);
+
+	// The completion will never run.
+	void AbortExchange(ExchangeId id);
+
+	// Main thread, once per frame (Online::OnUpdate): one non-blocking receive per pending exchange.
+	// No thread waits on a datagram; a reply is noticed within a frame of arriving.
+	void PollExchanges();
+
+	// One HTTP POST that blocks the calling thread. The async pool delivers onto the main thread,
+	// which is exactly what a health timer cannot depend on: a scene load holds that thread, and
+	// the agent kills a server that misses three health posts. Safe from any thread once Init has
+	// run. Each call uses its own client, so a long-poll and a health post do not share one.
+	struct BlockingResponse
+	{
+		int Status = 0;
+		std::string Body;
+		std::string TransportError;
+
+		bool Arrived() const { return TransportError.empty(); }
+	};
+
+	BlockingResponse PostBlocking(const std::string& url, const std::string& body, int transferTimeoutSeconds);
 }

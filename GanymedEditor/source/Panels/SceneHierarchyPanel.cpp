@@ -160,6 +160,10 @@ namespace GanymedE {
 			{
 				icon = ICON_LC_MAP_PIN;
 			}
+			else if constexpr (std::is_same_v<T, ReplicatedComponent>)
+			{
+				icon = ICON_LC_RADIO;
+			}
 			else if constexpr (std::is_same_v<T, CameraComponent>)
 			{
 				icon = ICON_LC_CAMERA;
@@ -1623,6 +1627,7 @@ namespace GanymedE {
 			DrawAddComponentEntry<AudioListenerComponent>("Audio Listener");
 			DrawAddComponentEntry<ParticleEmitterComponent>("Particle Emitter");
 			DrawAddComponentEntry<MarkerComponent>("Marker");
+			DrawAddComponentEntry<ReplicatedComponent>("Replicated");
 			DrawAddComponentEntry<RigidBodyComponent>("Rigid Body");
 			DrawAddComponentEntry<BoxColliderComponent>("Box Collider");
 			DrawAddComponentEntry<SphereColliderComponent>("Sphere Collider");
@@ -2079,6 +2084,11 @@ namespace GanymedE {
 		});
 
 		DrawComponent<MarkerComponent>("Marker", entity, [&](auto& component)
+		{
+			return DrawReflected(entity, m_Context.get(), m_Selection, component);
+		});
+
+		DrawComponent<ReplicatedComponent>("Replicated", entity, [&](auto& component)
 		{
 			return DrawReflected(entity, m_Context.get(), m_Selection, component);
 		});

@@ -6,8 +6,11 @@
 // The only engine TU that includes IXWebSocket, and it must stay that way: IXNetSystem.h pulls
 // in winsock2.h and redefines EWOULDBLOCK, EAGAIN, EINVAL and friends to their WSA values for
 // the rest of whatever TU includes it. See docs/engine/build-and-tooling.md, IXWebSocket.
+#include "GanymedE/Net/Socket.h"
+
 #include <ixwebsocket/IXHttpClient.h>
 #include <ixwebsocket/IXNetSystem.h>
+#include <ixwebsocket/IXWebSocket.h>
 
 namespace GanymedE::OnlineTransport {
 
@@ -38,6 +41,23 @@ namespace GanymedE::OnlineTransport {
 			std::unordered_map<AttemptId, PendingAttempt> Pending;
 			AttemptId NextId = 1;
 			uint64_t DroppedLate = 0;
+
+			// The push socket. Its events carry the generation they were raised under, and the
+			// main thread drops any whose generation is not the current one.
+			std::unique_ptr<ix::WebSocket> Socket;
+			uint64_t SocketGeneration = 0;
+			SocketEvents Events;
+
+			// UDP exchanges in flight, polled by PollExchanges.
+			struct PendingExchange
+			{
+				Net::Socket* Socket = nullptr;   // owned by the join, not by this map
+				std::string Address;
+				std::chrono::steady_clock::time_point Deadline;
+				std::function<void(bool, const std::string&)> Completion;
+			};
+			std::unordered_map<ExchangeId, PendingExchange> Exchanges;
+			ExchangeId NextExchangeId = 1;
 		};
 
 		TransportData* s_Data = nullptr;
@@ -105,6 +125,17 @@ namespace GanymedE::OnlineTransport {
 			pending.Completion(response);
 		}
 
+		// Network thread -> main thread, for the socket raised under `generation` only.
+		template<typename Fn>
+		void PostSocketEvent(uint64_t generation, Fn&& fn)
+		{
+			JobSystem::SubmitToMainThread([generation, fn = std::forward<Fn>(fn)]()
+			{
+				if (s_Data && s_Data->SocketGeneration == generation)
+					fn(s_Data->Events);
+			});
+		}
+
 		void FailWithoutSending(std::function<void(const OnlineResponse&)> completion, std::string reason)
 		{
 			OnlineResponse response;
@@ -134,6 +165,9 @@ namespace GanymedE::OnlineTransport {
 	{
 		if (!s_Data)
 			return 0;
+
+		CloseSocket();
+		s_Data->Exchanges.clear();   // abandoned: their completions never run
 
 		// Joins the network threads, and does not wait out a transfer to do it: ix::HttpClient's
 		// destructor sets _stop, which the request's cancellation check reads during the connect
@@ -242,5 +276,207 @@ namespace GanymedE::OnlineTransport {
 	uint32_t InFlight()
 	{
 		return s_Data ? static_cast<uint32_t>(s_Data->Pending.size()) : 0;
+	}
+
+	void OpenSocket(const std::string& path, const std::string& bearer, SocketEvents events)
+	{
+		GE_CORE_ASSERT(JobSystem::IsMainThread(), "OnlineTransport::OpenSocket is main-thread only");
+		if (!s_Data)
+			return;
+
+		CloseSocket();
+		const uint64_t generation = ++s_Data->SocketGeneration;
+		s_Data->Events = std::move(events);
+
+		std::string url = s_Data->BaseUrl;
+		if (url.rfind("https://", 0) == 0)
+			url.replace(0, 5, "wss");
+		else if (url.rfind("http://", 0) == 0)
+			url.replace(0, 4, "ws");
+
+		auto socket = std::make_unique<ix::WebSocket>();
+		socket->setUrl(url + path);
+		ix::WebSocketHttpHeaders headers;
+		headers["Authorization"] = "Bearer " + bearer;
+		socket->setExtraHeaders(headers);
+		// The session reconnects by close code (4001 must not reconnect at all), so IXWebSocket's
+		// own loop is off. That also avoids a stop() hang that upstream fixed after v12.0.1 (#609),
+		// which needs automatic reconnection to race.
+		socket->disableAutomaticReconnection();
+		// Built without zlib, so compression must never be negotiated: frames the server
+		// compressed could not be read.
+		socket->disablePerMessageDeflate();
+		socket->setHandshakeTimeout(5);   // IXWebSocket's default is 60 s
+
+		// Network thread. Copies what it needs and posts it; nothing here touches s_Data.
+		socket->setOnMessageCallback([generation](const ix::WebSocketMessagePtr& message)
+		{
+			switch (message->type)
+			{
+				case ix::WebSocketMessageType::Open:
+					PostSocketEvent(generation, [](SocketEvents& e) { if (e.OnOpen) e.OnOpen(); });
+					break;
+				case ix::WebSocketMessageType::Message:
+					if (!message->binary)
+					{
+						PostSocketEvent(generation, [text = message->str](SocketEvents& e)
+						{
+							if (e.OnText) e.OnText(text);
+						});
+					}
+					break;
+				case ix::WebSocketMessageType::Close:
+					PostSocketEvent(generation, [code = int(message->closeInfo.code), reason = message->closeInfo.reason,
+						remote = message->closeInfo.remote](SocketEvents& e)
+					{
+						if (e.OnClose) e.OnClose(code, reason, remote);
+					});
+					break;
+				case ix::WebSocketMessageType::Error:
+					PostSocketEvent(generation, [status = message->errorInfo.http_status, reason = message->errorInfo.reason](SocketEvents& e)
+					{
+						if (e.OnFailed) e.OnFailed(status, reason);
+					});
+					break;
+				default:
+					break;   // ping/pong are answered by IXWebSocket itself; fragments are reassembled
+			}
+		});
+
+		socket->start();
+		s_Data->Socket = std::move(socket);
+	}
+
+	ExchangeId Exchange(Net::Socket& socket, const std::string& address, const std::string& payload,
+		std::chrono::milliseconds timeout, std::function<void(bool ok, const std::string& text)> completion)
+	{
+		GE_CORE_ASSERT(JobSystem::IsMainThread(), "OnlineTransport::Exchange is main-thread only");
+
+		auto fail = [&completion](std::string why)
+		{
+			JobSystem::SubmitToMainThread([completion = std::move(completion), why]() { completion(false, why); });
+			return ExchangeId{ 0 };
+		};
+		if (!s_Data)
+			return fail("online is not initialised");
+
+		Net::Address to;
+		std::string error;
+		if (!Net::ParseAddress(address, to, error))
+			return fail(error);
+
+		// The token handshake is not conditioned. Its retry is one second, and a simulated
+		// delay belongs to the session that continues after WELCOME, not to this wait.
+		const std::vector<uint8_t> bytes(payload.begin(), payload.end());
+		if (!socket.Send(to, bytes.data(), static_cast<int>(bytes.size())))
+			return fail("cannot send to " + address);
+
+		const ExchangeId id = s_Data->NextExchangeId++;
+		auto& pending = s_Data->Exchanges[id];
+		pending.Socket = &socket;
+		pending.Address = address;
+		pending.Deadline = std::chrono::steady_clock::now() + timeout;
+		pending.Completion = std::move(completion);
+		return id;
+	}
+
+	void AbortExchange(ExchangeId id)
+	{
+		if (s_Data)
+			s_Data->Exchanges.erase(id);
+	}
+
+	void PollExchanges()
+	{
+		if (!s_Data || s_Data->Exchanges.empty())
+			return;
+
+		const auto now = std::chrono::steady_clock::now();
+		std::vector<std::pair<std::function<void(bool, const std::string&)>, std::pair<bool, std::string>>> done;
+		for (auto it = s_Data->Exchanges.begin(); it != s_Data->Exchanges.end();)
+		{
+			auto& pending = it->second;
+			uint8_t buffer[2048];
+			int received = 0;
+			Net::Address from;
+			std::string error;
+			const Net::Socket::Recv result = pending.Socket
+				? pending.Socket->Receive(buffer, sizeof(buffer), received, from, error)
+				: Net::Socket::Recv::Closed;
+			bool finished = true;
+			std::pair<bool, std::string> outcome;
+			if (result == Net::Socket::Recv::Packet)
+				outcome = { true, std::string(reinterpret_cast<char*>(buffer), static_cast<size_t>(received)) };
+			else if (result == Net::Socket::Recv::Refused)
+				// Windows reports an ICMP port-unreachable for an earlier send as a failed receive
+				// (WSAECONNRESET): nothing is listening on that port. A client socket leaves that
+				// error enabled. Linux does not report it, so the same dead port is silence.
+				outcome = { false, "nothing is listening at " + pending.Address };
+			else if (result == Net::Socket::Recv::Error || result == Net::Socket::Recv::Closed)
+				outcome = { false, error.empty() ? "nothing is listening at " + pending.Address : error };
+			else if (now >= pending.Deadline)
+				outcome = { false, "no answer from " + pending.Address };
+			else
+				finished = false;
+
+			if (!finished)
+			{
+				++it;
+				continue;
+			}
+			done.emplace_back(std::move(pending.Completion), std::move(outcome));
+			it = s_Data->Exchanges.erase(it);
+		}
+
+		// Called after the loop, so a completion that starts another exchange sees a stable map.
+		for (auto& [completion, outcome] : done)
+			completion(outcome.first, outcome.second);
+	}
+
+	void CloseSocket()
+	{
+		if (!s_Data || !s_Data->Socket)
+			return;
+
+		// Bumped first, so nothing this socket raises - including the close below - reaches the
+		// caller's events.
+		s_Data->SocketGeneration++;
+		s_Data->Socket->stop();   // sends a close frame and joins the socket's thread
+		s_Data->Socket.reset();
+		s_Data->Events = {};
+	}
+
+	BlockingResponse PostBlocking(const std::string& url, const std::string& body, int transferTimeoutSeconds)
+	{
+		BlockingResponse out;
+		if (!s_Data)
+		{
+			out.TransportError = "online is not initialised";
+			return out;
+		}
+
+		// Sync client: perform returns on this thread. A fresh one per call, because ix::HttpClient
+		// is not safe for two threads and health runs beside the main thread's long-poll.
+		ix::HttpClient client(false);
+		ix::HttpRequestArgsPtr args = client.createRequest(url, ix::HttpClient::kPost);
+		args->connectTimeout = 5;
+		args->transferTimeout = transferTimeoutSeconds;
+		args->followRedirects = false;
+		args->compress = false;
+		args->extraHeaders["Accept"] = "application/json";
+		args->extraHeaders["Content-Type"] = "application/json";
+
+		const ix::HttpResponsePtr response = client.post(url, body, args);
+		if (!response)
+		{
+			out.TransportError = "no response from " + url;
+			return out;
+		}
+
+		const OnlineResponse translated = Translate(response, url);
+		out.Status = translated.Status;
+		out.Body = translated.Body;
+		out.TransportError = translated.TransportError;
+		return out;
 	}
 }

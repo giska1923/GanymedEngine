@@ -1,8 +1,8 @@
 # Milestone — Online client (the engine side of the backend)
 
-**Status: O0–O3 done (2026-10-09); O4 next.** The backend is complete (B1–B5, `api-v0.5`), so
-O1–O4 and O5a have everything they need from it. O5b waits on a dedicated-server milestone that has not
-been planned. See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
+**Status: O0–O4 and O5a done (2026-10-09). O5b landed as N1 of [NETCODE.md](NETCODE.md) (2026-10-11);
+the fleet acceptance test is still open there.** The backend is complete (B1–B5, `api-v0.5`, and
+`api-v0.6` for the agent-side result). See [Shape of the milestone](#shape-of-the-milestone-and-its-honest-size).
 
 The engine half of a game backend: an HTTP and WebSocket client that never blocks the frame, a
 device identity and session, typed Lua bindings for leaderboards and push notifications, and,
@@ -16,8 +16,9 @@ there, complete) and its own phases (B1–B5 below). This file covers only what 
 in `GanymedEngine/`, `GanymedRuntime/` and, for O3's game use, `first-game`.
 
 **Naming, because the two are easy to confuse:** *GanymedServer* is the backend (accounts,
-leaderboards, matchmaking, allocation). *`GanymedDedicated`* is the planned engine app that runs
-one match headless: the game server the backend allocates and the one O5b is about.
+leaderboards, matchmaking, allocation). *`GanymedDedicated`* is the engine app that runs one match
+headless: the game server the backend allocates. What it does is
+[dedicated.md](../dedicated/dedicated.md).
 
 ---
 
@@ -99,6 +100,7 @@ Versions published so far, as git tags on the backend repo:
 | [`api-v0.3`](https://github.com/giska1923/GanymedServer/blob/api-v0.3/docs/api/realtime.md) | the push socket ([`realtime.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.3/docs/api/realtime.md)): messages, presence, close codes; party routes in [`openapi.yaml`](https://github.com/giska1923/GanymedServer/blob/api-v0.3/docs/api/openapi.yaml) | O4 |
 | [`api-v0.4`](https://github.com/giska1923/GanymedServer/blob/api-v0.4/docs/api/openapi.yaml) | matchmaking tickets, the profile's `rating`, the `ticket.updated`, `match.found` and `ticket.failed` pushes | superseded by `api-v0.5` before any engine phase used it |
 | [`api-v0.5`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/openapi.yaml) | the states after `matched`, the ticket's `server` and `result`, `match.ready` and `match.finished` ([`realtime.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/realtime.md)), [`connect-token.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/connect-token.md), [`server-lifecycle.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/docs/api/server-lifecycle.md). **Changes a meaning:** `matched` was final in `api-v0.4` and is not any more | O5a, O5b |
+| [`api-v0.6`](https://github.com/giska1923/GanymedServer/blob/api-v0.6/docs/api/server-lifecycle.md) | **Breaking for game servers only:** the result goes to the agent (`POST …/result`), the allocation carries no `result_url` or `result_token`, and a server answers `HELLO` before its allocation (`DENIED not allocated`). [`connect-token.md`](https://github.com/giska1923/GanymedServer/blob/api-v0.6/docs/api/connect-token.md) writes down the join-retry rule O5a already follows. Nothing a client calls changed, so O1–O5a stand as built | NETCODE.md's N1 (was O5b) |
 
 **The session token is opaque to the engine.** The backend issues a JWT; the client stores it and
 sends it as `Authorization: Bearer …` and never decodes it. That keeps a JWT library out of the
@@ -129,9 +131,9 @@ prerequisite for anything here.
 | **O1** | `Online/` request layer: threading, ownership, cancellation, timeouts. **Done** | master | nothing (a Python stub) | about a day |
 | **O2** | Identity: user-data dir, device ID, `--profile=`, session, `401` re-auth. **Done** | master | **B1** (device auth) | under a day |
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores. **Done** | master + `first-game` | **B2** (leaderboards) | about a day |
-| **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
-| **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
-| **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result | master | **B5** + the dedicated-server milestone | blocked, unsized |
+| **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings. **Done** | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
+| **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP. **Done** | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
+| **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result. **Built as N1** — fleet acceptance still open in NETCODE.md | master | **B5** + the dedicated-server milestone | landed 2026-10-11 |
 
 These are estimates, not measurements. O1 is the phase that matters. Everything after it is a
 consumer of O1's threading and ownership rules, and getting those wrong shows up as a crash on
@@ -693,7 +695,7 @@ exists only on that branch. In short:
 
 ---
 
-## Phase O4 — the push channel
+## Phase O4 — the push channel — **DONE**
 
 ### Goal
 
@@ -790,6 +792,57 @@ down.
 | Unknown message type (`docker compose exec redis redis-cli PUBLISH user:<account> '{"type":"x.new","id":"1"}'`) | ignored, logged at debug, no error |
 | Stop play | subscriptions for that scene are gone; the socket stays up (it belongs to the application, not the scene) |
 
+### Execution notes
+
+2026-10-09, on `online-o4` (branched from master: `hello-online` was squash-merged, so building on
+it would have carried its history twice). Live behaviour is in
+[online.md](../engine/online.md#the-push-channel). Verified on the Windows x64 Debug runtime against
+both Compose replicas, with the engine on replica b and `gscli` players on replica a, so every push
+crossed replicas through Redis; a throwaway test scene and script (not committed) subscribed to
+`connected` and the party pushes. Linux: see the last row.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Push arrives | **pass** | a leader's `party.invite` reached the subscribed script inside its scene update; it accepted, and `party.updated` followed |
+| Backend restart | **pass**, including re-authentication | host backend with a 2 s token, killed and restarted: dropped → backoff → upgrade refused 401 → `GET /v1/me` refreshed the session → connected, in the same second |
+| Replica shutdown | **pass** | `docker compose stop backend-b`: `1001` → reconnect in 0.12 s → backoff with jitter while it was down → connected 0.4 s after it came back; the leader saw the player `online` throughout |
+| Same profile twice | **pass**, after a design change (below) | a `gscli` session with the engine's device ID: first `4001` → one retry ~5 s later; second → `"replaced"`, stayed off, no ping-pong |
+| Re-fetch on reconnect | **pass** | an invite sent while the socket was down appeared in the `connected` re-fetch, no push involved |
+| No subscriber | **pass** | counted, trace log only |
+| Unknown message type | **pass** | `PUBLISH user:<account> {"type":"x.new"}`: dropped, counted, no error |
+| Stop play | **not run** | needs the editor. Subscriptions live in the scene's record, which stopping play erases along with its instances and requests (O1's editor check exercised that erase) |
+| Linux (WSL2, gcc 11.4) | **pass** | builds with no warnings outside `extern/`; the runtime in WSL on replica b connected, got a `gscli` leader's `party.invite` from replica a, accepted, and saw `party.updated` |
+
+**Where the plan was wrong or incomplete, kept visible:**
+
+- **"`4001`: do not reconnect" left a live player without pushes.** In the first replica-restart run
+  the backend logged an extra upgrade for the player's account 1.7 s after the replica came back, at
+  a moment the engine sent nothing; it upgraded in 4 ms on a connection already dead and closed the
+  player's live socket `4001`. The likeliest source is Docker Desktop's port forwarder delivering an
+  upgrade the engine had already abandoned while the replica was down; it did not reproduce on demand.
+  Under the plan's rule that player would have stayed off, and lost their party seat 35 s later. Now:
+  one retry ~5 s later, inside the presence grace, and a second `4001` within a minute is final. Two
+  real sessions swap once and settle; a ghost costs 5 s. The backend could stop ghosts at the source
+  by replacing an account's socket only once the new one proves alive; that is a backend item.
+- **The upgrade's 401 body is not visible.** The plan said "`token-expired` means refresh,
+  `unauthorized` means sign in". IXWebSocket reports only the status of a failed upgrade, so the
+  engine makes one authenticated `GET /v1/me`, whose 401 handling (O2) tells the two apart.
+- **The engine does not re-fetch the party itself.** The plan had it fetch `/v1/party` and
+  `/v1/party/invites` on every reconnect. It raises a `connected` event instead, and the script
+  re-fetches what it shows: the engine does not know what a game shows, and O5a adds the ticket.
+- **A per-frame tick was needed.** The reconnect timer runs from `Online::OnUpdate`, which
+  `Application::Run` now calls after `JobSystem::OnUpdate`. Because a timer that finds no session starts
+  a sign-in, the push channel is also what brings a game that was offline at boot back online.
+- **Push payloads keep their wire names.** `msg` is the envelope `{ type, id, payload }` as the
+  contract writes it; the typed GET bindings are where names are mapped.
+- **The test needed the other players to hold sockets.** A `gscli` leader that never `listen`ed was
+  offline to the backend, and its party was swept within seconds, before the invite. Not an engine
+  issue, but the first run's 404 was this.
+- **Found in passing, fixed:** the backend's `realtime.md` had a malformed `ticket.failed` row
+  (duplicated text and an unescaped `|` that broke the table), most likely from B5's edit.
+- **Not exercised:** a `1008` (the engine never sends a data message, and the backend's slow-client
+  close was not provoked).
+
 ---
 
 ## Phase O5 — matches: the client joins, `GanymedDedicated` hosts
@@ -882,65 +935,73 @@ Against the backend's own fleet: `fleetagent -pool 2 -- bin/stubserver.exe -matc
 | Queue while in a match | `…:already-queued` until `finished` |
 | The token stays out of Lua | no binding returns it; the engine log never prints it |
 
-### O5b — `GanymedDedicated` hooks (blocked)
+#### Execution notes
 
-**Blocked on** a dedicated-server milestone that does not exist yet (`GanymedDedicated`, a
-headless `ApplicationSpecification`, a Scene role, netcode). The backend side is done, and the
-contract is fixed by `server-lifecycle.md` and `connect-token.md`. **This replaces the earlier
-sketch here**, which had the server push its states to the agent with a per-process secret and
-left the signature algorithm open. Neither survived contact with the backend's design.
+2026-10-09, on `online-o4`, continuing from O4. Live behaviour is in
+[online.md](../engine/online.md#matches).
 
-The backend's [`cmd/stubserver`](https://github.com/giska1923/GanymedServer/blob/api-v0.5/cmd/stubserver/main.go)
-does all of the following in about 270 lines of Go. It is the reference: read it first.
+The checks ran on the Windows x64 Debug runtime against both Compose replicas, with the backend's own
+fleet (`fleetagent -pool 2 -- stubserver`) and a `gscli` profile as the other player. A throwaway test
+script and four scenes (not committed) chose a role from the entity's name: solo, slow, gone, and
+party member.
 
-What `GanymedDedicated` needs from `Online/`:
+| Check | Result | Evidence |
+|---|---|---|
+| Two players queue | **pass** | `queued` → `match.found` 10 s later → `match.ready`, each reaching the subscribed script inside its scene update |
+| Join | **pass** | `WELCOME` on attempt 1, 0.03 s after asking; `stubserver` logged the join |
+| Party queue | **pass** | the member's own `Queue` → `…:not-party-leader`; the leader queued both, and the member joined |
+| Slow client | **pass** | joined 40 s after `ready`, with a fresh token read inside the call |
+| Server gone | **pass**, better than planned (below) | stub killed before the join: attempts 1 and 2 got no answer; attempt 3's ticket read found `failed` and stopped there. `server_lost` came 4 s after the kill |
+| No fleet | **pass** | `no_server` 31 s after `match.found` |
+| Finished | **pass** | `match.finished`, `victory`, `ratingChange` 16; `GetTicket` showed `result` |
+| Reconnect during allocation | **pass** | the engine's replica stopped right after queueing, for 19 s; `match.found` and `match.ready` were never delivered, and the `connected` re-fetch alone showed `ready` |
+| Queue while in a match | **pass** | `…:already-queued`, when sent on `match.found` |
+| The token stays out of Lua | **pass**, after a fix (below) | no binding returns it; no `match.ready` payload carries it; the engine log never contains it |
+| Linux (WSL2, gcc 11.4) | **pass** | builds and links; with the fleet also in WSL, the runtime joined on attempt 1 |
 
-- **Spawn flags.** `--server-id`, `--agent`, `--game-port`, `--advertise`, `--public-key`, read the
-  way `--backend=` is (O1). Refuse to start without them.
-- **The lifecycle, as an HTTP client only.** The server opens no HTTP listener. It calls its
-  agent on localhost, which is the Agones SDK model, and it means O1's client is all it needs.
-  - Bind the UDP game port **before** the first `ready`. A server that cannot accept players
-    must never be offered.
-  - `POST …/ready` is a long-poll held up to 20 s (`204`: ask again; `200`: the allocation).
-    **O1's `transferTimeout` must be overridable per request**, or this call times out by
-    design.
-  - `POST …/allocated` **as soon as the allocation arrives, before loading the map**. The backend
-    withdraws an allocation that is not acknowledged within 5 s. A `4xx` means: do not run the
-    match, shut down.
-  - `POST …/health` every 2 s; 6 s of silence gets the process killed. **Health must not depend
-    on the frame loop.** A 6 s map load on the main thread would otherwise get a healthy server
-    killed. Drive it from a timer on the network thread.
-  - `POST …/shutdown`, then exit. Any non-2xx from the agent means exit as well.
-- **Connect-token verification**, rules 1–8 in order. The contract fixes **Ed25519 (RFC 8032)**,
-  so the HMAC option is gone: a server holds only the public key and cannot mint a token. What
-  is left to choose is the library:
-  - **Monocypher**, with a caution I am fairly sure of but have not checked against a pinned
-    version: its default `crypto_eddsa_*` functions use BLAKE2b, which is *not* RFC 8032
-    Ed25519. The standard variant (SHA-512) is in its optional `monocypher-ed25519` files.
-    Linking the default one would reject every backend signature.
-  - **libsodium** is the larger, unambiguous alternative.
+**Where the plan was wrong or incomplete, kept visible:**
 
-  Either way the acceptance test is cross-language: tokens minted by the backend's Go
-  `connecttoken.Mint` must verify in C++, and a token with one changed byte must not. The rest
-  is small:
-  - base64url without padding, hand-written, about 30 lines;
-  - the claims parsed with O1's JSON reader, **after** the signature checks out;
-  - 5 s of leeway on `iat` and `exp`;
-  - a nonce map with expiry, for replays.
-- **The result**: `POST {result_url}` with `Authorization: Bearer <result_token>` and
-  `{"outcome": "victory" | "defeat"}`.
-  - Retry network errors and `5xx` with backoff. The endpoint is idempotent, so a retry after an
-    unseen success is harmless.
-  - Stop on `4xx`. A `409` means a different outcome was already recorded.
-  - The result token is a credential: never logged, never in Lua.
-  - **Check the contract before implementing this.** The backend has an open item to route results
-    through the agent, because today they reach only one backend replica. That would change this
-    call, and arrive as a new `api-v0.x` tag.
+- **The token leaked through the push.** The plan closed the ticket path and missed the other one:
+  `match.ready` carries the token, and O4 hands push payloads to Lua as received. The first
+  verification run's script printed it. The engine now removes `connect_token` where the push is
+  parsed, before any handler. The ticket path had a test and the push path did not, which is how it
+  was missed.
+- **The wait is polled on the main thread, not run off it.** The plan said the exchange "runs off the
+  main thread like all network I/O". The send and a non-blocking `recvfrom` are each one system call
+  that never waits, so `Online::OnUpdate` polls once a frame. That is cheaper than a thread or a
+  sleeping job, and precise to a frame against a 1 s timeout. IXWebSocket's `ix::UdpSocket` was enough,
+  so raw sockets were not needed.
+- **The socket is not handed over.** The plan wanted it reusable by the netcode milestone. It is
+  closed after `WELCOME`, because what a handover looks like depends on a protocol that does not
+  exist yet.
+- **"Server gone" was not three timeouts.** Each retry re-reads the ticket first, so once the backend
+  marked it `failed`, the join stopped with "no ready match (the ticket is failed)" instead of
+  sending a third `HELLO`. When the whole fleet was killed instead, Windows reported each `HELLO`'s
+  ICMP port-unreachable as a receive error ("nothing is listening"), and three attempts took 0.07 s.
+- **Linux sees silence where Windows sees an error.** An unconnected UDP socket on Linux gets no ICMP
+  errors. The first Linux run showed it by accident: WSL in NAT mode cannot reach a stub on the Windows
+  loopback (only Docker's published TCP ports are forwarded into WSL), so the `HELLO` went to WSL's
+  own `127.0.0.1:7001`, where nothing listened, and all three attempts timed out. The real Linux run
+  put the fleet in WSL too, with `fleetagent` and `stubserver` cross-compiled with `GOOS=linux`.
+- **Joins were first counted as requests.** That made the shutdown line read "6 sent, 7 succeeded".
+  Joins now have their own counters (joins, `HELLO`s, joined). Their ticket reads are counted as the
+  requests they are.
+- **A script must act on the re-fetch, not only on the push.** The test script joined only on
+  `match.ready`, so in the reconnect check it saw `ready` and never joined. That is a script choice
+  and is correct engine behaviour, but it is the mistake a game would make, so online.md says so.
+- **Found in passing:** a server that `fleetagent` respawns on the same port does not read its socket
+  until it is allocated, so a `HELLO` to it is silence, not a `DENIED`. That is fine for the contract
+  and is noted here only because it shaped the "server gone" result.
+- **Not exercised:** a `DENIED` (a fresh token leaves `stubserver` nothing to refuse), and a join
+  cancelled mid-flight by its script going away.
 
-**The acceptance test exists already.** Run the backend's agent with `GanymedDedicated` in place
-of the stub, `fleetagent -- GanymedDedicated.exe`, and the backend's load test,
-`gscli load coop 4`. It must pass the same four stages it passes against `stubserver`: queue
-drained, servers ready, `WELCOME:4`, finished with results.
+### O5b — `GanymedDedicated` hooks
+
+Landed as N1 of [NETCODE.md](NETCODE.md) on 2026-10-11. The process, the flags and the admission
+rules are [dedicated.md](../dedicated/dedicated.md). The agent client and the token check are
+[online.md](../engine/online.md#the-dedicated-servers-half). What has not been run — the fleet
+acceptance test in particular — stays in NETCODE.md's N1 table. This section used to be the plan;
+it is not a second spec.
 
 ---
 
@@ -979,12 +1040,10 @@ drained, servers ready, `WELCOME:4`, finished with results.
 | O3 | [scripting.md](../engine/scripting.md): `Backend.*` bindings. Game-branch HUD changes are recorded in `first-game`'s Proving Ground doc |
 | O4 | `online.md` (reconnect rules by close code); [scripting.md](../engine/scripting.md): `Backend.Subscribe` and the party bindings |
 | O5a | `online.md` (matchmaking, `JoinMatch`, the retry-with-a-fresh-token rule, the UDP socket); [scripting.md](../engine/scripting.md): the matchmaking bindings |
-| O5b | `online.md` (the lifecycle, token verification, the result call), plus the dedicated-server milestone's own docs |
+| O5b | [dedicated.md](../dedicated/dedicated.md), [online.md](../engine/online.md#the-dedicated-servers-half). **Done** with N1; the fleet row is still open in NETCODE.md |
 
 ## Found while planning, out of scope
 
-- **No dedicated-server milestone exists.** O5b depends on one. Its shape was discussed
-  (server-authoritative, a headless `ApplicationSpecification`, a Scene role gating the
-  presentation systems, snapshot interpolation plus local prediction on `CharacterVirtual`), but
-  no plan is written. The backend went ahead without it, with a Go stub server standing in. It is
-  now the only thing between the backend and a playable online match.
+- **No dedicated-server milestone existed.** It is [NETCODE.md](NETCODE.md). N1 (the headless
+  process, the scene role, admission, the result) is built. Snapshot interpolation and prediction
+  are N3 and N4, not started.

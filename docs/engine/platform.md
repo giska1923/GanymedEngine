@@ -75,13 +75,22 @@ so the exclusions are geometric rather than `IsAnyItemHovered()`.
 the backbuffer swapchain:
 
 - `Init` calls `bgfx::renderFrame()` **before** `bgfx::init` — the documented trick that puts bgfx
-  in single-threaded mode (the calling thread becomes the render thread). Backend is auto-picked
-  (`RendererType::Count`); the native window/display handles come from `glfwGetWin32Window` /
-  `glfwGetX11Window`+`Display` / `glfwGetCocoaWindow`.
-- After init it logs the renderer name and the two caps that bite across backends
-  (`homogeneousDepth`, `originBottomLeft`), and **logs an error if the backend wants [-1,1] clip
-  depth** — the workspace compiles glm with `GLM_FORCE_DEPTH_ZERO_TO_ONE`, which cannot adapt at
-  runtime (see the premake comment and BGFX_MIGRATION §9.3).
+  in single-threaded mode (the calling thread becomes the render thread). With a window, the
+  backend is auto-picked (`RendererType::Count`) unless `--renderer=` names one, and the native
+  window/display handles come from `glfwGetWin32Window` / `glfwGetX11Window`+`Display` /
+  `glfwGetCocoaWindow`. A null `GLFWwindow` is legal only when the constructor is told
+  `headless = true`. That is the dedicated path: the type is forced to `RendererType::Noop`,
+  every platform pointer is null, vsync is off, and a failed init is not retried on a real
+  backend. Noop is the backend that accepts this. Any other type treats a null window as bgfx's
+  own headless mode and then refuses a non-zero resolution. N0 measured 1280×720 and 0×0; the
+  engine passes 1280×720 so a later divide by the width is safe. A windowed context keeps the
+  null assert. Without it, a `glfwCreateWindow` failure initialised Noop and the app ran with
+  nothing on screen. The assert is compiled out of Release, so `Init` repeats the check and
+  returns without calling `bgfx::init`.
+- After init it logs the renderer name and the caps (`homogeneousDepth`, `originBottomLeft`).
+  Projections go through `Projection::` in `Renderer.h`, which reads the depth cap, so a [-1,1]
+  backend is logged rather than rejected. The workspace still compiles glm with
+  `GLM_FORCE_DEPTH_ZERO_TO_ONE`. No [-1,1] backend has been run; see [rendering.md](rendering.md).
 - `Frame()` touches the backbuffer view (a view with no draws is skipped *including its clear*),
   calls `bgfx::frame()`, and reports the returned frame number to `Renderer::OnFrameSubmitted`
   (async readback polls against it). It is the only caller of `bgfx::frame()` in the engine.

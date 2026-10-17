@@ -189,12 +189,24 @@ frame as a spiral-of-death guard — hitting the cap drops the surplus time):
 
 ```
 accumulator += dt
+AdoptReplicatedMotion, SyncBodies
+on a client: predict the owned character (reconcile, then OnTick and one character step per tick it is behind)
 while accumulator >= fixedTimestep (max 5×):
+    on a server or standalone: OnTick, then
     PhysicsScene::Step(fixedTimestep)
     dispatch collision events
+    on a server: number the step, write the discrete pose, snapshot when the tick is even
 alpha = accumulator / fixedTimestep
 PhysicsScene::SyncTransforms(scene, alpha)
+on a client: add the visual error to the owned character and decay it
 ```
+
+The snapshot is the discrete tick. The final `SyncTransforms` is still the local render blend.
+[netcode.md](netcode.md) is the packet. On a client, `SyncTransforms` and the character step skip
+a replicated entity the client does not control. The owned character is written at alpha 1.
+Before the step, a dynamic replicated body is switched to kinematic, so the step copies the
+interpolated transform in instead of simulating it. The character's ground state can be read.
+Gameplay does not write it. Reconciliation does.
 
 Inside `Step`:
 1. **Kinematic bodies** are pushed *into* Jolt from their current world transform (gameplay code
@@ -204,6 +216,29 @@ Inside `Step`:
 3. Current poses are captured, and contact add/remove events queued by the contact listener
    (thread-safe; Jolt callbacks fire from job threads) are drained and translated to
    `PhysicsCollisionEvent{ EntityA, EntityB, Entered }` via the body↔UUID maps.
+
+## Replaying a character
+
+N0 showed that restoring position, linear velocity and the ground enum, then one `ExtendedUpdate`
+per later command, matches the normal character step to the bit on a static world. A wrong ground
+enum does not: the spike's airborne checkpoint replayed as `OnGround` diverged by 0.551 m and
+4.09 m/s. `mGroundState` on `CharacterBase` is protected, defaults to `InAir`, and has no setter.
+`PhysicsScene` allocates the characters as `CharacterAccess`, a derived `CharacterVirtual` whose
+only added method writes that field. Jolt under `extern/` is not edited, and `SaveState` is not
+used. The blob stores `BodyID`s that belong to one `PhysicsSystem`.
+
+`ReplayCharacter` is that one step, the same `StepOneCharacter` the normal step uses: gravity by
+hand while the state is not `OnGround`, then `ExtendedUpdate` with the character's step height,
+capsule and layer filters. It is not `PhysicsSystem::Update`. `StepCharacters` skips every client
+replicated character, including the owned one, so prediction is the only thing that steps it.
+`RestoreCharacter` teleports, sets the linear velocity, and sets the ground enum. That write is
+the reconciliation path. There is no gameplay setter.
+
+The visual error is the translation before the restore minus the position after the replay. It is
+added to the transform after `SyncTransforms` and multiplied by `exp(-frameDt / 0.1)`. The next
+prediction reads the character, not the offset, so the decay is not part of the step. A moving
+platform is a different miss: the replay does not rewind the world, and remote characters stay
+kinematic, drawn where they were.
 
 ## Transform writeback & interpolation
 

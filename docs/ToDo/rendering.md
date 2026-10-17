@@ -4,7 +4,11 @@ The unfinished tail of `BGFX_MIGRATION.md` Phase 7, the last milestone in
 [`docs/history/`](../history/BGFX_MIGRATION.md) still flagged in progress (`🚧 STEP 1 DONE`).
 
 **§9.3 (caps-driven projection), §9.2 (backend selection) and the multi-backend bugs they exposed
-are all done, and all four backends now render.** Measured on the same scene, same frame:
+are all done, and all four backends now render.** [architecture.md](../engine/architecture.md)
+still says an OpenGL backend with `homogeneousDepth` logs an error and that the caps-driven
+projection helper is open. [rendering.md](../engine/rendering.md) is the current description:
+every projection goes through `Projection::` and that log is gone. The architecture bullet was
+not rewritten. Measured on the same scene, same frame:
 
 | Backend | State | vs D3D11 |
 |---|---|---|

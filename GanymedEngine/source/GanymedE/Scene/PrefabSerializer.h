@@ -77,7 +77,9 @@ namespace GanymedE {
 			std::optional<glm::vec3> RootRotation;
 		};
 
-		// Creates the subtree in `scene` with fresh UUIDs and tags the root with
+		// Creates the subtree in `scene`. The root UUID is minted, unless `RootUUID` pins
+		// it. Child i (1..n-1 in file order) is `DerivePrefabChildUUID(root, i)`, so a
+		// server and a client that pass the same root get the same children. Tags the root with
 		// PrefabInstanceComponent{source}. Returns an invalid Entity on failure; never throws.
 		//
 		// **The document overload is the primary one**; the path overload reads the file and

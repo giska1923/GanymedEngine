@@ -44,6 +44,19 @@ namespace GanymedE {
 	void SendScriptRequest(const char* binding, const sol::object& owner, OnlineRequest request,
 		const sol::object& callback, ScriptResponseReader read);
 
+	// The same, for an operation that is not one request: `start` begins it (Online::JoinMatch, say)
+	// with the completion it must call, and returns the id Online::Cancel stops it by.
+	using OnlineOperation = std::function<RequestId(OnlineCompletion)>;
+	void StartScriptOperation(const char* binding, const sol::object& owner, OnlineOperation start,
+		const sol::object& callback, ScriptResponseReader read);
+
+	// Pushes (docs/engine/online.md): `callback(message)` for every push of `type` while the owner
+	// lives, inside its scene's script update. One subscription per (owner, type); subscribing again
+	// replaces the callback. Same owner and callback checks, and errors, as SendScriptRequest.
+	void SubscribeScript(const char* binding, const sol::object& owner, const std::string& type,
+		const sol::object& callback);
+	void UnsubscribeScript(const char* binding, const sol::object& owner, const std::string& type);
+
 	// JSON <-> Lua. JSON null becomes nil (so it is absent from a table), integers stay Lua
 	// integers, arrays become 1-based sequences. LuaToJson throws sol::error on a value JSON
 	// cannot carry (a function, a userdata, a table with mixed keys).

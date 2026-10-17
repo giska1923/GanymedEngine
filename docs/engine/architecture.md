@@ -19,6 +19,7 @@ GanymedE/
 ├── Audio/       AudioEngine (miniaudio, behind the .cpp — see audio.md)
 ├── Scripting/   ScriptEngine (the shared Lua VM) + the sol2 bindings (see scripting.md)
 ├── Online/      HTTP to the backend (IXWebSocket behind Online.cpp) + JSON (see online.md)
+├── Net/         The session after WELCOME: socket, acks, conditioner, snapshots, commands, prediction, replicated script fields and server events (see netcode.md)
 ├── UI/          UIEngine (RmlUi game UI; the editor's own UI is ImGui — see ui.md)
 ├── Math/        Transform decomposition, ScreenPointToRay, AABB + Frustum, FloatCurve + ColorGradient
 ├── ImGui/       ImGuiLayer (docking UI host)
@@ -39,11 +40,16 @@ implement `GanymedE::CreateApplication()`, and include
 [`EntryPoint.h`](../../GanymedEngine/source/GanymedE/main/EntryPoint.h) exactly once — the engine
 owns `main()`.
 
-There are two real front-ends, and the engine has **zero editor `#ifdef`s** — the difference is
-configuration, not compilation. `CreateApplication` returns an `Application` built from an
-`ApplicationSpecification`, and `EnableImGui = false` is the whole opt-out that separates
+There are three applications, and the engine has **zero editor or server `#ifdef`s** — the
+difference is configuration, not compilation. `CreateApplication` returns an `Application` built
+from an `ApplicationSpecification`. `EnableImGui = false` separates
 [`GanymedEditor`](../editor/editor.md) (ImGui chrome, scene rendered into a viewport panel) from
 [`GanymedRuntime`](../runtime/runtime.md) (no ImGui, scene rendered straight to the backbuffer).
+`Headless` and `PlayerBackend = false` are the rest of the opt-out, and they are what
+[`GanymedDedicated`](../dedicated/dedicated.md) sets: no window, bgfx's Noop backend, no audio, no
+UI, no sign-in. A scene's `SceneRole` then decides which systems get registered. `Server` keeps
+physics, scripts, animation, transforms and bone attachments, and does not construct the camera,
+audio, particle or render systems.
 Anything that reads as editor-only behaviour inside the engine is a bug; the visualizer gates on
 `PhysicsSettings` (`ShowColliderGizmos`, `ShowMarkers`, `ShowSkeletons`) are there because
 collider gizmos *were* one. The same rule owns the look:
@@ -60,8 +66,10 @@ Application::Run loop
 ├─ compute Timestep from glfwGetTime()
 │
 ├─ JobSystem::OnUpdate                     drain main-thread jobs (runs even while minimized);
-│                                          backend responses land here and are queued into
-│                                          their scene's script mailbox (online.md)
+│                                          backend responses and pushes land here and are queued
+│                                          into their scene's script mailbox (online.md)
+├─ Online::OnUpdate                        the push socket's reconnect timer, and the
+│                                          non-blocking receive of a match join's UDP reply
 ├─ AssetManager::Update                    poll assets/ for edits, then apply parses that
 │                                          finished on workers, within a 4 ms budget (the only
 │                                          place the async asset path creates GPU resources)
@@ -97,6 +105,11 @@ Application::Run loop
     └─ BgfxContext::Frame                  bgfx::frame() — submits + presents
 ```
 
+A headless frame is the same body without the window. Nothing polls GLFW. `Application` calls
+`BgfxContext::Frame()` itself and then sleeps until the next 1/60 s. A `SceneRole::Server` scene's
+system list ends at `BoneAttachmentSystem`; the four presentation systems in the diagram above are
+not registered, so they are not a branch inside `OnUpdate`.
+
 Two ordering facts worth internalizing:
 
 - **bgfx executes the frame in view-ID order, not call order.** "Where a draw goes" is the current
@@ -111,13 +124,17 @@ Two ordering facts worth internalizing:
 
 ## Ownership
 
-- `Application` (singleton) owns the `Window` and the `LayerStack`. The window owns the
-  `BgfxContext`, which owns bgfx itself — its destructor lowers `Renderer::IsGpuAlive()` *before*
-  `bgfx::shutdown()`, and every GPU-resource destructor checks that flag (statics can outlive
-  `main()`; C++ guarantees nothing about their order relative to bgfx teardown).
+- `Application` (singleton) owns the `Window`, when there is one, and the `LayerStack`. The window
+  owns the `BgfxContext` in a windowed app. A headless app has no window, and `Application` owns
+  the `BgfxContext` directly. Either way that object owns bgfx — its destructor lowers
+  `Renderer::IsGpuAlive()` *before* `bgfx::shutdown()`, and every GPU-resource destructor checks
+  that flag (statics can outlive `main()`; C++ guarantees nothing about their order relative to
+  bgfx teardown). The headless context is declared before the layer stack, so a layer's `OnDetach`
+  still runs while bgfx is alive.
 - The front-end layer — `EditorLayer` or `RuntimeLayer` — owns the `SceneRenderer` (render targets +
   post stack) and the active `Scene`. Neither the engine nor `Application` holds a scene.
-- `Scene` owns the entt registry, the `SystemManager` (ten built-in systems), the `CommandQueue`,
+- `Scene` owns the entt registry, the `SystemManager` (ten built-in systems, six when the role is
+  `Server`), the `CommandQueue`,
   per-component-type change buffers / graveyards / init-fini buffers, and the UUID→entity map.
   Scene-wide state lives in singletons in `registry.ctx()` (`RenderContext`, `PhysicsSettings`,
   `EditorViewFilter`).
@@ -126,8 +143,10 @@ Two ordering facts worth internalizing:
   `Init()`/`Shutdown()` by `Application`; because that shutdown runs in the destructor *body*, before
   the LayerStack unwinds, every one of its calls no-ops once shut down — the `IsGpuAlive` pattern
   again (see [audio.md](audio.md)).
-- `Online` owns the network threads (four `ix::HttpClient`s) and the requests in flight. It is
-  static-lifetime, `Init()` after `ScriptEngine` and `Shutdown()` before it. It knows nothing of
+- `Online` owns the network threads (four `ix::HttpClient`s and the push `ix::WebSocket`), the
+  session and the requests in flight. It is static-lifetime, `Init()` after `ScriptEngine` and
+  `Shutdown()` before it. The push socket belongs to it, not to a scene: stopping play does not
+  close it. It knows nothing of
   owners: `ScriptEngine` records which script instance owns each request and cancels them when the
   instance or its scene goes ([online.md](online.md)).
 - Renderer subsystems (`Renderer2D`, `Renderer3D`, `ParticleRenderer`, `PostProcess`, `MeshShader`) are static-lifetime

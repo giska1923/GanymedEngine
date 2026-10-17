@@ -10,10 +10,14 @@
 #include "GanymedE/Core/KeyCodes.h"
 #include "GanymedE/Core/MouseButtonCodes.h"
 #include "GanymedE/ECS/System.h"
+#include "GanymedE/Net/Command.h"
+#include "GanymedE/Net/Net.h"
+#include "GanymedE/Net/World.h"
 #include "GanymedE/Physics/PhysicsScene.h"
 #include "GanymedE/Scene/Components.h"
 #include "GanymedE/Scene/Entity.h"
 #include "GanymedE/Scene/Scene.h"
+#include "GanymedE/Scene/SceneRole.h"
 #include "GanymedE/Scene/Systems/AudioSystem.h"
 #include "GanymedE/Scene/Systems/PhysicsSystem.h"
 #include "GanymedE/UI/UIEngine.h"
@@ -657,6 +661,8 @@ namespace GanymedE {
 				sol::meta_function::equal_to, [](const Entity& a, const Entity& b) { return a == b; },
 				sol::meta_function::to_string, [](Entity& e) { return "Entity(" + e.GetName() + ")"; }
 			);
+			// Outside the big usertype call. One more argument there overflowed the stack.
+			lua["Entity"]["IsLocallyControlled"] = [](Entity& e) { return e.IsLocallyControlled(); };
 		}
 
 		void RegisterInput(sol::state& lua)
@@ -1173,9 +1179,324 @@ namespace GanymedE {
 			return result;
 		}
 
+		// A party ID becomes part of a URL path and an account ID part of a body, so both are held to
+		// the shape the backend issues: a UUID, 8-4-4-4-12 hex.
+		const std::string& RequireUuid(const char* binding, const char* what, const std::string& text)
+		{
+			bool ok = text.size() == 36;
+			for (size_t i = 0; ok && i < text.size(); i++)
+			{
+				const char c = text[i];
+				ok = (i == 8 || i == 13 || i == 18 || i == 23) ? c == '-' : std::isxdigit(static_cast<unsigned char>(c)) != 0;
+			}
+			if (!ok)
+				throw sol::error(std::string(binding) + ": '" + text + "' is not " + what + " (a UUID)");
+			return text;
+		}
+
+		const JsonValue& Field(const JsonValue& object, const char* key, JsonValue::Type kind)
+		{
+			const JsonValue* value = object.Find(key);
+			if (!value || value->Kind != kind)
+				throw std::runtime_error(std::string("expected ") + key);
+			return *value;
+		}
+
+		// { party_id, leader_id, members: [{ account_id, display_name, status, leader }] }
+		//   -> { id, leaderId, members = { { accountId, name, status, leader }, ... } }
+		sol::object PartyToLua(sol::state_view lua, const JsonValue& party)
+		{
+			sol::table result = lua.create_table();
+			result["id"] = Field(party, "party_id", JsonValue::Type::String).String;
+			result["leaderId"] = Field(party, "leader_id", JsonValue::Type::String).String;
+			const JsonValue& members = Field(party, "members", JsonValue::Type::Array);
+			sol::table list = lua.create_table(static_cast<int>(members.Items.size()), 0);
+			for (size_t i = 0; i < members.Items.size(); i++)
+			{
+				const JsonValue& m = members.Items[i];
+				sol::table member = lua.create_table();
+				member["accountId"] = Field(m, "account_id", JsonValue::Type::String).String;
+				member["name"] = Field(m, "display_name", JsonValue::Type::String).String;
+				member["status"] = Field(m, "status", JsonValue::Type::String).String;
+				member["leader"] = Field(m, "leader", JsonValue::Type::Bool).Bool;
+				list[i + 1] = member;
+			}
+			result["members"] = list;
+			return result;
+		}
+
+		// { "party": {...} | null } -> the party, or nil when the player is in none (ok is still true).
+		sol::object ReadParty(sol::state_view lua, const OnlineResponse& response)
+		{
+			std::string error;
+			std::optional<JsonValue> body = ParseJson(response.Body, &error);
+			if (!body)
+				throw std::runtime_error(error);
+			const JsonValue* party = body->Find("party");
+			if (!party)
+				throw std::runtime_error("expected party");
+			return party->Kind == JsonValue::Type::Null ? sol::object(sol::lua_nil) : PartyToLua(lua, *party);
+		}
+
+		// A 204: nothing to read. The callback gets (true, nil).
+		sol::object ReadNothing(sol::state_view, const OnlineResponse&)
+		{
+			return sol::lua_nil;
+		}
+
+		sol::table StringArray(sol::state_view lua, const JsonValue& array)
+		{
+			sol::table out = lua.create_table(static_cast<int>(array.Items.size()), 0);
+			for (size_t i = 0; i < array.Items.size(); i++)
+			{
+				if (array.Items[i].Kind != JsonValue::Type::String)
+					throw std::runtime_error("expected an array of strings");
+				out[i + 1] = array.Items[i].String;
+			}
+			return out;
+		}
+
+		// The API's Ticket -> { id, mode, state, players, failureReason, match = { id, players },
+		// server = { address }, result = { outcome, ratingChange } }; match, server, result and
+		// failureReason are nil until they apply. The state is passed through as the backend writes
+		// it: a script treats one it does not know as "still waiting", because states get added.
+		//
+		// **server.connect_token is deliberately not copied.** It is a credential, with the session
+		// token's rule: the engine holds it for the one call that needs it (Backend.JoinMatch).
+		sol::object TicketToLua(sol::state_view lua, const JsonValue& ticket)
+		{
+			sol::table result = lua.create_table();
+			result["id"] = Field(ticket, "ticket_id", JsonValue::Type::String).String;
+			result["mode"] = Field(ticket, "mode", JsonValue::Type::String).String;
+			result["state"] = Field(ticket, "state", JsonValue::Type::String).String;
+			result["players"] = StringArray(lua, Field(ticket, "players", JsonValue::Type::Array));
+			if (const JsonValue* reason = ticket.Find("failure_reason"); reason && reason->Kind == JsonValue::Type::String)
+				result["failureReason"] = reason->String;
+			if (const JsonValue* match = ticket.Find("match"); match && match->Kind == JsonValue::Type::Object)
+			{
+				sol::table m = lua.create_table();
+				m["id"] = Field(*match, "match_id", JsonValue::Type::String).String;
+				m["players"] = StringArray(lua, Field(*match, "players", JsonValue::Type::Array));
+				result["match"] = m;
+			}
+			if (const JsonValue* server = ticket.Find("server"); server && server->Kind == JsonValue::Type::Object)
+			{
+				sol::table sv = lua.create_table();
+				sv["address"] = Field(*server, "address", JsonValue::Type::String).String;
+				result["server"] = sv;
+			}
+			if (const JsonValue* outcome = ticket.Find("result"); outcome && outcome->Kind == JsonValue::Type::Object)
+			{
+				sol::table r = lua.create_table();
+				r["outcome"] = Field(*outcome, "outcome", JsonValue::Type::String).String;
+				r["ratingChange"] = Field(*outcome, "rating_change", JsonValue::Type::Integer).Integer;
+				result["result"] = r;
+			}
+			return result;
+		}
+
+		sol::object ReadTicket(sol::state_view lua, const OnlineResponse& response)
+		{
+			std::string error;
+			std::optional<JsonValue> ticket = ParseJson(response.Body, &error);
+			if (!ticket)
+				throw std::runtime_error(error);
+			return TicketToLua(lua, *ticket);
+		}
+
+		OnlineRequest PartyPost(std::string path, const std::string* targetAccount = nullptr)
+		{
+			OnlineRequest request;
+			request.Method = "POST";
+			request.Path = std::move(path);
+			if (targetAccount)
+			{
+				JsonValue body = JsonValue::MakeObject();
+				body.Members.emplace_back("account_id", JsonValue::MakeString(*targetAccount));
+				WriteJson(body, request.Body);
+			}
+			return request;
+		}
+
 		// The online client (docs/engine/online.md). Every request binding is typed per endpoint,
 		// takes its owner first (self.entity) and its callback last, and maps the API's field names
 		// to script-style ones (display_name -> name). There is no generic request.
+		bool ServerRole()
+		{
+			Scene* scene = ScriptEngine::GetSceneContext();
+			return scene && scene->GetRole() == SceneRole::Server;
+		}
+
+		bool PackArgs(sol::object argsObj, std::vector<Net::EventArg>& out)
+		{
+			out.clear();
+			if (!argsObj.valid() || argsObj.get_type() == sol::type::nil || argsObj.get_type() == sol::type::none)
+				return true;
+			if (!argsObj.is<sol::table>())
+			{
+				GE_CORE_WARN("Net.Broadcast args must be a flat table or nil");
+				return false;
+			}
+			for (const auto& [key, value] : argsObj.as<sol::table>())
+			{
+				if (key.get_type() != sol::type::string)
+					continue;
+				if (out.size() >= 4)
+				{
+					GE_CORE_WARN("Net.Broadcast keeps 4 arguments");
+					break;
+				}
+				Net::EventArg arg;
+				arg.Key = key.as<std::string>();
+				const sol::type type = value.get_type();
+				if (type == sol::type::boolean)
+				{
+					arg.Type = Net::kArgBool;
+					arg.Number = value.as<bool>() ? 1.0f : 0.0f;
+				}
+				else if (type == sol::type::number)
+				{
+					arg.Type = Net::kArgNumber;
+					arg.Number = static_cast<float>(value.as<double>());
+				}
+				else if (type == sol::type::string)
+				{
+					arg.Type = Net::kArgString;
+					arg.Text = value.as<std::string>();
+				}
+				else if (value.is<glm::vec3>())
+				{
+					const glm::vec3 v = value.as<glm::vec3>();
+					arg.Type = Net::kArgVec3;
+					arg.X = v.x;
+					arg.Y = v.y;
+					arg.Z = v.z;
+				}
+				else if (type == sol::type::table)
+				{
+					GE_CORE_WARN("Net.Broadcast ignored nested table '{0}'", arg.Key);
+					continue;
+				}
+				else
+				{
+					GE_CORE_WARN("Net.Broadcast ignored '{0}': not a bool, number, string or Vec3", arg.Key);
+					continue;
+				}
+				out.push_back(std::move(arg));
+			}
+			return true;
+		}
+
+		void RegisterNet(sol::state& lua)
+		{
+			// Valid only for the duration of OnTick. Scripts must not keep the reference.
+			// One field at a time. A single new_usertype with every member is the same
+			// variadic call that overflowed the stack on Entity under this sol2 on MSVC.
+			sol::usertype<Net::PlayerCommand> command = lua.new_usertype<Net::PlayerCommand>("PlayerCommand", sol::no_constructor);
+			command["Tick"] = &Net::PlayerCommand::Tick;
+			command["MoveX"] = &Net::PlayerCommand::MoveX;
+			command["MoveZ"] = &Net::PlayerCommand::MoveZ;
+			command["Yaw"] = &Net::PlayerCommand::Yaw;
+			command["Pitch"] = &Net::PlayerCommand::Pitch;
+			command["Jump"] = &Net::PlayerCommand::Jump;
+			command["Fire"] = &Net::PlayerCommand::Fire;
+			command["Melee"] = &Net::PlayerCommand::Melee;
+			command["Interact"] = &Net::PlayerCommand::Interact;
+			command["Equip"] = &Net::PlayerCommand::Equip;
+
+			// The HUD line. Zeros until a session exists. On a server the figures are the
+			// mean of the live sessions, and the byte rates are sums. See netcode.md.
+			sol::table net = lua.create_named_table("Net");
+			net["IsServer"] = []()
+			{
+				Scene* scene = ScriptEngine::GetSceneContext();
+				return scene && scene->GetRole() == SceneRole::Server;
+			};
+			net["IsClient"] = []()
+			{
+				Scene* scene = ScriptEngine::GetSceneContext();
+				return scene && scene->GetRole() == SceneRole::Client;
+			};
+			net["GetStats"] = [](sol::this_state ts)
+			{
+				sol::state_view lua(ts);
+				const Net::Stats stats = Net::GetStats();
+				sol::table out = lua.create_table();
+				out["connected"] = stats.Connected;
+				out["peers"] = stats.Peers;
+				out["rtt"] = stats.RttMs;
+				out["lossIn"] = stats.LossIn;
+				out["lossOut"] = stats.LossOut;
+				out["bytesInPerSec"] = stats.BytesInPerSec;
+				out["bytesOutPerSec"] = stats.BytesOutPerSec;
+				out["resent"] = static_cast<int64_t>(stats.Resent);
+				out["droppedSession"] = static_cast<int64_t>(stats.DroppedSession);
+				out["droppedAddress"] = static_cast<int64_t>(stats.DroppedAddress);
+				return out;
+			};
+			// One assignment at a time. A fat new_usertype here is the call that overflowed
+			// the stack on Entity under this sol2 on MSVC.
+			auto broadcast = [](sol::object nameObj, sol::object argsObj, bool reliable)
+			{
+				if (!ServerRole())
+				{
+					static bool warned = false;
+					if (!warned)
+					{
+						GE_CORE_WARN("Net.Broadcast is server-only");
+						warned = true;
+					}
+					return;
+				}
+				if (nameObj.get_type() != sol::type::string)
+					return;
+				Scene* scene = ScriptEngine::GetSceneContext();
+				const UUID id = ScriptEngine::CallingEntity();
+				if (!scene || id == UUID{ 0 })
+				{
+					GE_CORE_WARN("Net.Broadcast outside a script");
+					return;
+				}
+				const uint16_t netId = Net::EnsureNetId(*scene, id);
+				if (netId == 0)
+				{
+					GE_CORE_WARN("Net.Broadcast from an entity that is not replicated");
+					return;
+				}
+				std::vector<Net::EventArg> args;
+				if (!PackArgs(argsObj, args))
+					return;
+				Net::BroadcastEvent(netId, nameObj.as<std::string>(), std::move(args), reliable);
+			};
+			net["Broadcast"] = sol::overload(
+				[=](sol::object nameObj, sol::object argsObj) { broadcast(nameObj, argsObj, false); },
+				broadcast);
+			net["Shot"] = [](Entity entity, glm::vec3 muzzle, glm::vec3 direction, float speed)
+			{
+				if (!ServerRole())
+				{
+					static bool warned = false;
+					if (!warned)
+					{
+						GE_CORE_WARN("Net.Shot is server-only");
+						warned = true;
+					}
+					return;
+				}
+				Scene* scene = ScriptEngine::GetSceneContext();
+				if (!scene || !entity || !entity.HasComponent<ReplicatedComponent>())
+				{
+					GE_CORE_WARN("Net.Shot needs a replicated entity");
+					return;
+				}
+				const uint16_t netId = Net::EnsureNetId(*scene, entity.GetUUID());
+				if (netId == 0)
+					return;
+				Net::BroadcastShot(netId, muzzle.x, muzzle.y, muzzle.z,
+					direction.x, direction.y, direction.z, speed, Net::CurrentScriptTick());
+			};
+		}
+
 		void RegisterBackend(sol::state& lua)
 		{
 			sol::table backend = lua.create_named_table("Backend");
@@ -1304,6 +1625,188 @@ namespace GanymedE {
 						return result;
 					});
 			};
+
+			// ---- The push channel (realtime.md) --------------------------------------------------
+
+			// callback(message) for each push of `type`, with message = { type, id, payload }: the
+			// contract's envelope, payload keys as the wire writes them. Plus "connected", which the
+			// engine raises on every (re)connect: pushes sent while it was down are lost, so that is
+			// the moment to re-fetch what the script shows.
+			backend["Subscribe"] = [](sol::object owner, const std::string& type, sol::object callback)
+			{
+				SubscribeScript("Backend.Subscribe", owner, type, callback);
+			};
+			backend["Unsubscribe"] = [](sol::object owner, const std::string& type)
+			{
+				UnsubscribeScript("Backend.Unsubscribe", owner, type);
+			};
+
+			// "disconnected", "connecting", "connected", or "replaced": closed 4001 by a newer session
+			// of this account, and not reconnecting.
+			backend["GetPushStatus"] = []() -> std::string
+			{
+				switch (Online::GetPushStatus())
+				{
+					case Online::PushStatus::Connecting: return "connecting";
+					case Online::PushStatus::Connected:  return "connected";
+					case Online::PushStatus::Replaced:   return "replaced";
+					default:                             return "disconnected";
+				}
+			};
+
+			// ---- Parties: thin wrappers over the routes, each the state of record for a push -----
+
+			// GET /v1/party -> the party, or nil when in none.
+			backend["GetParty"] = [](sol::object owner, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Path = "/v1/party";
+				SendScriptRequest("Backend.GetParty", owner, std::move(request), callback, ReadParty);
+			};
+
+			// POST /v1/party -> the new party, led by the caller.
+			backend["CreateParty"] = [](sol::object owner, sol::object callback)
+			{
+				SendScriptRequest("Backend.CreateParty", owner, PartyPost("/v1/party"), callback, ReadParty);
+			};
+
+			// POST /v1/party/invites (leader only). The invitee gets party.invite.
+			backend["InviteToParty"] = [](sol::object owner, const std::string& accountId, sol::object callback)
+			{
+				const std::string& target = RequireUuid("Backend.InviteToParty", "an account ID", accountId);
+				SendScriptRequest("Backend.InviteToParty", owner, PartyPost("/v1/party/invites", &target), callback, ReadNothing);
+			};
+
+			// GET /v1/party/invites -> { { partyId, from = { accountId, name }, expiresAt }, ... },
+			// soonest-expiring first; empty when there are none.
+			backend["GetPartyInvites"] = [](sol::object owner, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Path = "/v1/party/invites";
+				SendScriptRequest("Backend.GetPartyInvites", owner, std::move(request), callback,
+					[](sol::state_view lua, const OnlineResponse& response) -> sol::object
+					{
+						std::string error;
+						std::optional<JsonValue> body = ParseJson(response.Body, &error);
+						if (!body)
+							throw std::runtime_error(error);
+						const JsonValue& invites = Field(*body, "invites", JsonValue::Type::Array);
+						sol::table result = lua.create_table(static_cast<int>(invites.Items.size()), 0);
+						for (size_t i = 0; i < invites.Items.size(); i++)
+						{
+							const JsonValue& invite = invites.Items[i];
+							const JsonValue& from = Field(invite, "from", JsonValue::Type::Object);
+							sol::table sender = lua.create_table();
+							sender["accountId"] = Field(from, "account_id", JsonValue::Type::String).String;
+							sender["name"] = Field(from, "display_name", JsonValue::Type::String).String;
+
+							sol::table row = lua.create_table();
+							row["partyId"] = Field(invite, "party_id", JsonValue::Type::String).String;
+							row["from"] = sender;
+							row["expiresAt"] = Field(invite, "expires_at", JsonValue::Type::String).String;
+							result[i + 1] = row;
+						}
+						return result;
+					});
+			};
+
+			// POST /v1/party/invites/<partyId>/accept -> the party joined.
+			backend["AcceptPartyInvite"] = [](sol::object owner, const std::string& partyId, sol::object callback)
+			{
+				const std::string& id = RequireUuid("Backend.AcceptPartyInvite", "a party ID", partyId);
+				SendScriptRequest("Backend.AcceptPartyInvite", owner, PartyPost("/v1/party/invites/" + id + "/accept"),
+					callback, ReadParty);
+			};
+
+			// POST /v1/party/invites/<partyId>/decline. Succeeds for an invite that no longer exists.
+			backend["DeclinePartyInvite"] = [](sol::object owner, const std::string& partyId, sol::object callback)
+			{
+				const std::string& id = RequireUuid("Backend.DeclinePartyInvite", "a party ID", partyId);
+				SendScriptRequest("Backend.DeclinePartyInvite", owner, PartyPost("/v1/party/invites/" + id + "/decline"),
+					callback, ReadNothing);
+			};
+
+			// POST /v1/party/leave.
+			backend["LeaveParty"] = [](sol::object owner, sol::object callback)
+			{
+				SendScriptRequest("Backend.LeaveParty", owner, PartyPost("/v1/party/leave"), callback, ReadNothing);
+			};
+
+			// ---- Matchmaking (O5a) ----------------------------------------------------------------
+
+			// POST /v1/matchmaking/tickets -> the ticket. Alone, or the whole party if the caller leads
+			// one (a member gets urn:ganymed:problem:not-party-leader). A player already on an active
+			// ticket - queued, or in a match not yet finished - gets ...:already-queued.
+			backend["Queue"] = [](sol::object owner, const std::string& mode, sol::object callback)
+			{
+				const bool ok = !mode.empty() && mode.size() <= 32 && std::all_of(mode.begin(), mode.end(),
+					[](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
+				if (!ok)
+					throw sol::error("Backend.Queue: '" + mode + "' is not a mode name (a-z, 0-9 and -)");
+
+				JsonValue body = JsonValue::MakeObject();
+				body.Members.emplace_back("mode", JsonValue::MakeString(mode));
+				OnlineRequest request;
+				request.Method = "POST";
+				request.Path = "/v1/matchmaking/tickets";
+				WriteJson(body, request.Body);
+				SendScriptRequest("Backend.Queue", owner, std::move(request), callback, ReadTicket);
+			};
+
+			// GET /v1/matchmaking/ticket -> the latest ticket in any state, or nil. The state of record:
+			// what a script reads on "connected", since a match.* push sent while it was down is lost.
+			backend["GetTicket"] = [](sol::object owner, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Path = "/v1/matchmaking/ticket";
+				SendScriptRequest("Backend.GetTicket", owner, std::move(request), callback,
+					[](sol::state_view lua, const OnlineResponse& response) -> sol::object
+					{
+						std::string error;
+						std::optional<JsonValue> body = ParseJson(response.Body, &error);
+						if (!body)
+							throw std::runtime_error(error);
+						const JsonValue* ticket = body->Find("ticket");
+						if (!ticket)
+							throw std::runtime_error("expected ticket");
+						return ticket->Kind == JsonValue::Type::Null ? sol::object(sol::lua_nil) : TicketToLua(lua, *ticket);
+					});
+			};
+
+			// DELETE /v1/matchmaking/tickets/<id> -> the cancelled ticket. Only while queued; after that
+			// it is urn:ganymed:problem:ticket-not-queued.
+			backend["CancelTicket"] = [](sol::object owner, const std::string& ticketId, sol::object callback)
+			{
+				OnlineRequest request;
+				request.Method = "DELETE";
+				request.Path = "/v1/matchmaking/tickets/" + RequireUuid("Backend.CancelTicket", "a ticket ID", ticketId);
+				SendScriptRequest("Backend.CancelTicket", owner, std::move(request), callback, ReadTicket);
+			};
+
+			// Joins the ready match's game server over UDP: callback(true, accountId) on WELCOME, or
+			// (false, reason) - "denied: ...", "no ready match to join ...", "no answer from ... after 3
+			// attempts". The connect token never reaches Lua. See Online::JoinMatch.
+			backend["JoinMatch"] = [](sol::object owner, sol::object callback)
+			{
+				StartScriptOperation("Backend.JoinMatch", owner,
+					[](OnlineCompletion completion) { return Online::JoinMatch(std::move(completion)); },
+					callback,
+					[](sol::state_view lua, const OnlineResponse& response) -> sol::object
+					{
+						std::string error;
+						std::optional<JsonValue> body = ParseJson(response.Body, &error);
+						if (!body)
+							throw std::runtime_error(error);
+						return sol::make_object(lua, Field(*body, "account_id", JsonValue::Type::String).String);
+					});
+			};
+
+			// POST /v1/party/kick (leader only). The kicked player gets party.removed.
+			backend["KickFromParty"] = [](sol::object owner, const std::string& accountId, sol::object callback)
+			{
+				const std::string& target = RequireUuid("Backend.KickFromParty", "an account ID", accountId);
+				SendScriptRequest("Backend.KickFromParty", owner, PartyPost("/v1/party/kick", &target), callback, ReadNothing);
+			};
 		}
 	}
 
@@ -1323,6 +1826,7 @@ namespace GanymedE {
 		RegisterAudio(lua);
 		RegisterUI(lua);
 		RegisterBackend(lua);
+		RegisterNet(lua);
 	}
 
 	void RegisterScriptBindings(sol::state& lua)

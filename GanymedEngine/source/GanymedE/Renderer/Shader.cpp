@@ -23,6 +23,17 @@ namespace GanymedE {
 				case bgfx::RendererType::OpenGL:
 				case bgfx::RendererType::OpenGLES:   return "glsl";
 				case bgfx::RendererType::Metal:      return "metal";
+				// Noop never executes a shader. It still has to accept the createShader calls
+				// Renderer::Init makes, and N0 showed it accepts this platform's bytecode.
+				// Without a profile the dedicated server logs a failure for every program at boot.
+				case bgfx::RendererType::Noop:
+#if defined(GE_PLATFORM_WINDOWS)
+					return "dx11";
+#elif defined(GE_PLATFORM_MACOS)
+					return "metal";
+#else
+					return "glsl";
+#endif
 				default:                             return nullptr;
 			}
 		}

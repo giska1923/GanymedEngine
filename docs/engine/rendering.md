@@ -86,6 +86,9 @@ Four things differ fundamentally from OpenGL and shape the whole renderer:
 `assets/shaders/compiled/<profile>/` (`dx11`, `spirv` and `glsl` on Windows; the per-OS set is in
 [build-and-tooling.md](build-and-tooling.md#shader-toolchain)). At runtime the constructor
 picks the profile matching `bgfx::getRendererType()` (mapping in `Shader.cpp::ProfileDirectory`).
+Noop has no profile of its own and never executes a shader; it loads the platform's bytecode
+(`dx11` on Windows, `metal` on macOS, `glsl` elsewhere) so `Renderer::Init` can still create the
+programs. N0 checked that Noop accepts that bytecode.
 Call sites still say `Shader::Create("assets/shaders/Foo.glsl")` — the path is reduced to its stem.
 
 The `vs_<name>`/`fs_<name>` pairing is a convention of the loader, not a requirement of the format,

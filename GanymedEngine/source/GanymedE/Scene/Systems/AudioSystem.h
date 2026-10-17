@@ -29,6 +29,7 @@ namespace GanymedE {
 	class AudioSystem : public ECS::System<AudioSystem>
 	{
 	public:
+		static constexpr bool kRunsOnServer = false;
 		// Both read the cached world transform, which TransformSystem refreshed earlier in
 		// the same update. No reactive views, so no editor drain obligation.
 		using EmitterView = ECS::IterView<ECS::EntityId,

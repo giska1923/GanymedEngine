@@ -1,12 +1,13 @@
 # GanymedEngine Documentation
 
-The repository contains four projects:
+The repository contains the engine and three applications:
 
-| Project          | What it is                                                                                     |
-| ---------------- | ---------------------------------------------------------------------------------------------- |
-| `GanymedEngine`  | The engine static library. All code under `GanymedEngine/source/`.                             |
-| `GanymedEditor`  | The editor application (scene editing, play mode, content browser).                            |
-| `GanymedRuntime` | The standalone game player: boots a scene into play mode, renders to the backbuffer, no ImGui. |
+| Project            | What it is                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| `GanymedEngine`    | The engine static library. All code under `GanymedEngine/source/`.                             |
+| `GanymedEditor`    | The editor application (scene editing, play mode, content browser).                            |
+| `GanymedRuntime`   | The standalone game player: boots a scene into play mode, renders to the backbuffer, no ImGui. |
+| `GanymedDedicated` | The headless match process the fleet agent spawns. No window. Players are admitted onto a session; the server replicates the world and applies their commands. |
 
 ## Documentation map
 
@@ -24,6 +25,7 @@ The repository contains four projects:
 | [Audio](engine/audio.md)                        | miniaudio integration: AudioEngine, voices, mixer groups, spatialization, streaming, the Audio asset type                                                                |
 | [Scripting](engine/scripting.md)                | Lua 5.4 + sol2: ScriptEngine, LuaScriptSystem, the binding rules, error handling, sandboxing                                                                             |
 | [Online](engine/online.md)                      | The backend client: `Online` (IXWebSocket, a pool of four), the three hops from network thread to Lua, request ownership and cancellation, JSON via yaml-cpp and its writer rules, measured costs |
+| [Netcode](engine/netcode.md)                    | The session after `WELCOME`: sockets, the packet header and acks, the reliable channel, snapshots and interpolation, commands and prediction, replicated script fields and server events, the conditioner, `--dev` |
 | [Game UI](engine/ui.md)                         | RmlUi: UIEngine, the bgfx render backend, RenderPass::UI, RCSS gotchas, the Debugger                                                                                     |
 | [Platform](engine/platform.md)                  | GLFW windows per OS, input, BgfxContext (bgfx lifetime), ImGui layer and its bgfx renderer                                                                               |
 | [Build & tooling](engine/build-and-tooling.md)  | premake workspace, dependencies, the shader toolchain (shaderc), profiling, compile-time tests                                                                           |
@@ -39,6 +41,12 @@ The repository contains four projects:
 | Document                      | Covers                                                                                          |
 | ----------------------------- | ----------------------------------------------------------------------------------------------- |
 | [Runtime](runtime/runtime.md) | GanymedRuntime: boot sequence, runtime.yaml config, backbuffer render mode, the assets snapshot |
+
+### Dedicated
+
+| Document                            | Covers                                                                                                      |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| [Dedicated](dedicated/dedicated.md) | GanymedDedicated: headless boot, the agent lifecycle, connect-token admission, the timed result, `--dev` |
 
 ### ToDo
 

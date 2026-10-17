@@ -118,13 +118,89 @@ end
 return Player
 ```
 
-All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnDestroy`, `OnCollisionEnter(other, contact)`,
-`OnCollisionExit(other)`. `contact` is `{ point, normal }`, where this entity touched `other`, on
-other's surface, with that surface's outward normal; see [physics.md](physics.md#collision-events--scripts).
+All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnTick(tick, cmd)`, `OnNetEvent(name, args)`,
+`OnShot(muzzle, direction, speed, tick)`, `OnDestroy`,
+`OnCollisionEnter(other, contact)`, `OnCollisionExit(other)`. `contact` is `{ point, normal }`,
+where this entity touched `other`, on other's surface, with that surface's outward normal; see
+[physics.md](physics.md#collision-events--scripts). Collision hooks are dispatched by
+`PhysicsSystem::DispatchCollisionEvents`, per fixed step inside the accumulator loop, so native
+and Lua scripts see identical timing. An entity may carry a native script, a Lua script, both, or
+neither; both hear about the same collision.
 
-Collision hooks are dispatched by `PhysicsSystem::DispatchCollisionEvents`, per fixed step inside
-the accumulator loop, so native and Lua scripts see identical timing. An entity may carry a native
-script, a Lua script, both, or neither; both hear about the same collision.
+### The tick
+
+`OnTick(tick, cmd)` runs once per physics step, before that step. `tick` is the step's number.
+`cmd` is a `PlayerCommand`: `Tick`, `MoveX`, `MoveZ`, `Yaw`, `Pitch`, `Jump`, `Fire`, `Melee`,
+`Interact`, `Equip`. `Vec3` is constructed as `Vec3(x, y, z)`. The command is only valid for the
+call; a script must not keep it.
+
+On a server, the entity a player owns receives that player's command. A tick with no packet
+repeats the last command. Every other script receives a zero command. Offline, the same hook
+runs from `Input` sampled once per step, so a script written this way still plays with no server.
+On a client only the owned character is ticked, and it is ticked from prediction rather than from
+the accumulator: the client may have to simulate several ticks in one frame to stay ahead, and
+the frame's physics catch-up is a different budget.
+
+A correction replays `OnTick` for ticks the client already ran, with the stored command, not a
+fresh sample of the keyboard. The hook has to be safe to repeat. Movement belongs here.
+`OnUpdate` stays once per frame and is not replayed, which is where presentation goes.
+`assets/scripts/Player.lua` has no `OnTick` and keeps moving from `OnUpdate`.
+
+`entity:IsLocallyControlled()` is true for every entity when the scene is standalone, false for
+every entity on a server, and true on a client only for the entity the snapshot named as owned.
+`Net.IsServer()` and `Net.IsClient()` read the same role. Both are false offline. Neither means
+"a window exists".
+
+`IsLocallyControlled` is registered after the `Entity` usertype, not as one more argument of that
+call. The call is already at the stack limit of this sol2 on MSVC. One more argument overflowed
+it inside `ScriptEngine::Init`, and the process died with a stack overflow after the last shader
+had loaded. `PlayerCommand` is bound one field at a time for the same reason. `Net.Broadcast` and
+`Net.Shot` are assignments on the `Net` table, one each, for the same reason.
+
+### Replicated fields
+
+A script declares them on the table it returns, beside the methods:
+
+```lua
+Player.Replicated = { health = "u8", weapon = "str16", attackTick = "tick", down = "bool" }
+```
+
+The types are `bool`, `u8`, `tick` (a u32) and `str16`. That is the set. A float is not in it: a
+value that does not round-trip is a desync with no error. Tables and functions are not values. An
+unknown type is logged and skipped. At most 16 fields. Names are sorted alphabetically and the
+wire index is that position, so the order of a Lua pair walk does not matter. The type travels
+with the value.
+
+The schema is taken from the class table at `Instantiate`, and again when the file is hot-reloaded.
+The server reads the instance at each snapshot. Nil is the zero of the type, so a cleared field
+replicates. `u8` is rounded and clamped to 0–255. `str16` keeps 16 bytes. `tick` is exact for any
+match this clock will reach.
+
+The client writes the values after `Instantiate` and before `OnUpdate`, including on the locally
+controlled pawn. Health is not predicted. Offline there is no server, so the declaration has
+nothing to copy. The packet layout is [netcode.md](netcode.md#script-fields-and-events).
+
+### Events and shots
+
+`Net.Broadcast(name, args)` on the server sends an unreliable event. `Net.Broadcast(name, args, true)`
+sends it reliably. The default is unreliable, so an impact is the ordinary call and a death opts
+in. On a client the call logs once and returns. There is no client-to-server RPC. The speaker is
+the script inside the current hook, and the event is delivered to that same entity on each client
+as `OnNetEvent(name, args)`, not to every instance of the class.
+
+`args` is nil or a flat table. Keys are strings. Values are bool, number, string or `Vec3`. At
+most 4 keys. A nested table is logged and skipped. Event numbers are f32. A name is at most 16
+bytes, a key 12, a string 16.
+
+`Net.Shot(entity, muzzle, direction, speed)` is server-only and unreliable. Clients call
+`OnShot(muzzle, direction, speed, tick)` on that entity. The locally controlled copy does not:
+that client spawns its own cosmetic from `OnTick` when `cmd.Fire` is set, and the server's echo
+would draw a second one. The cosmetic cannot damage anything. The server resolves the hit. A
+round is not a replicated entity. Offline, `Net.Shot` returns without calling `OnShot`; the local
+`OnTick` is the only cosmetic, and there is no other client.
+
+`--net-test=fields` is the check, with `assets/scripts/NetEcho.lua`. The numbers are in
+[NETCODE.md](../ToDo/NETCODE.md#n5--the-game).
 
 **TypeScriptToLua interop** is handled at load: an `exports.default` table is unwrapped, and method
 lookup falls back to `prototype` so TSTL `class` output resolves. Object literals remain the
@@ -150,8 +226,14 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 (routed to the **client** logger — script output is game output),
 `Scene.FindEntityByName` / `Scene.FindEntityByUUID` / `Scene.FindMarkers` / `Scene.Spawn`, `Entity:Destroy`,
 `Audio` (see below), `UI` (the HUD data model — see [ui.md](ui.md)), `Backend` (the online backend:
-`IsSignedIn`, `GetPlayerName`, `GetProfile`, `SubmitScore`, `GetMyStanding`, `GetLeaderboard` — see
-[online.md](online.md#what-a-script-sees)).
+`IsSignedIn`, `GetPlayerName`, `GetProfile`, `SubmitScore`, `GetMyStanding`, `GetLeaderboard`,
+`Subscribe`/`Unsubscribe`, `GetPushStatus`, the party calls, and `Queue`, `GetTicket`, `CancelTicket`
+and `JoinMatch` for matches — see [online.md](online.md#what-a-script-sees)),
+`Net.GetStats()` (the session after `WELCOME`: round trip, loss, byte rates, resent and drop
+counts, zeros until a session exists), `Net.IsServer()` / `Net.IsClient()`,
+`Net.Broadcast` / `Net.Shot`, and
+`Entity:IsLocallyControlled()` — see [netcode.md](netcode.md#prediction) and
+[netcode.md](netcode.md#script-fields-and-events).
 
 > **A UUID crosses into Lua as `int64`, and the cast is load-bearing.** Lua 5.4's integer is
 > `int64_t`, and sol2 with `SOL_ALL_SAFETIES_ON` **throws** rather than truncating when asked to
@@ -182,7 +264,9 @@ Current surface: `Vec3` (arithmetic metamethods, `Length`, `Normalized`, `Dot`, 
 > exist, and `PendingEntity` is meaningful only within the frame it was made in — a handle whose
 > validity expires at a frame boundary is a lifetime problem the engine would then have to police.
 > An id that does not resolve *yet* is indistinguishable from one whose entity has since been
-> destroyed, and a script has to handle the second case anyway.
+> destroyed, and a script has to handle the second case anyway. The children of that root are not
+> minted: child `i` is `DerivePrefabChildUUID(root, i)`, so a server and a client that pin the
+> same root build the same subtree. See [scene.md](scene.md).
 >
 > A path that is not an indexed asset, or is indexed as something other than a prefab, is refused
 > with a named warning and `nil` — a script spawning a texture is a typo, and letting it fail a

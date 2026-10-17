@@ -41,6 +41,11 @@ declare interface Entity {
 	IsValid(): boolean;
 
 	/**
+	 * Standalone: every entity. Server: none. Client: the entity this connection owns.
+	 */
+	IsLocallyControlled(): boolean;
+
+	/**
 	 * Direct children only, first tag match. `Scene.FindEntityByName` is a global first-match,
 	 * so two boxes both parenting a child named `"Sparks"` cannot use it.
 	 */
@@ -340,8 +345,21 @@ declare interface Script {
 	/** Editor-exposed tunables; see ScriptProperties. */
 	Properties?: ScriptProperties;
 
+	/**
+	 * Server-owned state copied into the client instance before OnUpdate.
+	 * Types are the strings `"bool"`, `"u8"`, `"tick"` and `"str16"`. At most 16.
+	 * Names are sorted; that order is the wire index.
+	 */
+	Replicated?: { [name: string]: "bool" | "u8" | "tick" | "str16" };
+
 	OnCreate?(): void;
 	OnUpdate?(ts: number): void;
+	/** Once per physics step, before the step. `cmd` is valid only for the call. */
+	OnTick?(tick: number, cmd: PlayerCommand): void;
+	/** Server event for this entity. `args` is a flat table. */
+	OnNetEvent?(name: string, args: { [key: string]: boolean | number | string | Vec3 }): void;
+	/** Cosmetic shot. Not called on the locally controlled entity. */
+	OnShot?(muzzle: Vec3, direction: Vec3, speed: number, tick: number): void;
 	/**
 	 * `contact` is where this entity touched `other`: a point on other's surface and that
 	 * surface's outward normal, facing this entity. World space.
@@ -571,6 +589,56 @@ declare interface BackendSubmission extends BackendStanding {
 	replayed: boolean;
 }
 
+/**
+ * A push, as the backend's realtime.md writes it: payload keys are wire names (party_id, display_name).
+ * match.ready's connect_token is removed before a script sees it; Backend.JoinMatch reads its own.
+ */
+declare interface BackendPush {
+	type: string;
+	/** Empty for the engine's own "connected" event. */
+	id: string;
+	payload?: { [key: string]: any };
+}
+
+declare interface BackendPartyMember {
+	accountId: string;
+	name: string;
+	/** "online", "away" (the 30 s reconnection grace) or "offline". */
+	status: string;
+	leader: boolean;
+}
+
+declare interface BackendParty {
+	id: string;
+	leaderId: string;
+	members: BackendPartyMember[];
+}
+
+declare interface BackendPartyInvite {
+	partyId: string;
+	from: { accountId: string; name: string };
+	expiresAt: string;
+}
+
+/**
+ * A matchmaking ticket. `state` is "queued", "matched", "allocating", "ready", "finished",
+ * "cancelled" or "failed" today; treat any other as still waiting, because states get added.
+ * `match`, `server`, `result` and `failureReason` are undefined until they apply.
+ */
+declare interface BackendTicket {
+	id: string;
+	mode: string;
+	state: string;
+	/** Account IDs on this ticket: the player, or their whole party. */
+	players: string[];
+	/** "timeout", "no_server", "allocation_failed" or "server_lost", when failed. */
+	failureReason?: string;
+	match?: { id: string; players: string[] };
+	/** Where the game server is. No connect token: Backend.JoinMatch uses one without showing it. */
+	server?: { address: string };
+	result?: { outcome: string; ratingChange: number };
+}
+
 /** One row of Backend.GetLeaderboard, best first. Tied scores share a rank (1, 2, 2, 4). */
 declare interface BackendLeaderboardEntry {
 	rank: number;
@@ -610,6 +678,93 @@ declare namespace Backend {
 	/** The first `limit` rows (1-100; undefined for the backend's default, 10). */
 	function GetLeaderboard(owner: Entity, board: string, limit: number | undefined,
 		callback: (ok: boolean, result: BackendLeaderboardEntry[] | string) => void): void;
+
+	/**
+	 * Pushes of `type` while the owner lives, inside its scene's update; one per (owner, type).
+	 * "connected" is the engine's own, on every (re)connect: re-fetch what you show then.
+	 */
+	function Subscribe(owner: Entity, type: string, callback: (message: BackendPush) => void): void;
+	function Unsubscribe(owner: Entity, type: string): void;
+	/** "disconnected", "connecting", "connected", or "replaced" (another session of this account took over). */
+	function GetPushStatus(): string;
+
+	/** The party, or undefined (with ok true) when in none. */
+	function GetParty(owner: Entity, callback: (ok: boolean, result: BackendParty | undefined | string) => void): void;
+	function CreateParty(owner: Entity, callback: (ok: boolean, result: BackendParty | string) => void): void;
+	/** Leader only. */
+	function InviteToParty(owner: Entity, accountId: string, callback: (ok: boolean, result: undefined | string) => void): void;
+	function GetPartyInvites(owner: Entity, callback: (ok: boolean, result: BackendPartyInvite[] | string) => void): void;
+	function AcceptPartyInvite(owner: Entity, partyId: string, callback: (ok: boolean, result: BackendParty | string) => void): void;
+	function DeclinePartyInvite(owner: Entity, partyId: string, callback: (ok: boolean, result: undefined | string) => void): void;
+	function LeaveParty(owner: Entity, callback: (ok: boolean, result: undefined | string) => void): void;
+	/** Leader only. */
+	function KickFromParty(owner: Entity, accountId: string, callback: (ok: boolean, result: undefined | string) => void): void;
+
+	/**
+	 * Queues the player for `mode` (a-z, 0-9 and -), or their whole party if they lead one. Fails with
+	 * ...:not-party-leader for a member, and ...:already-queued while a ticket is queued or its match
+	 * has not finished.
+	 */
+	function Queue(owner: Entity, mode: string, callback: (ok: boolean, result: BackendTicket | string) => void): void;
+	/** The latest ticket in any state, or undefined (with ok true) if there has never been one. */
+	function GetTicket(owner: Entity, callback: (ok: boolean, result: BackendTicket | undefined | string) => void): void;
+	/** Only while queued; after that ...:ticket-not-queued. */
+	function CancelTicket(owner: Entity, ticketId: string, callback: (ok: boolean, result: BackendTicket | string) => void): void;
+	/**
+	 * Joins the ready match's game server: callback(true, accountId) once it admits the player, or
+	 * callback(false, reason): "no ticket: queue first", "no ready match to join (the ticket is ...)",
+	 * "denied: ...", "no answer from <address> after 3 attempts", "nothing is listening at <address>
+	 * after 3 attempts". Fine to call long after match.ready: it fetches a fresh token each attempt.
+	 */
+	function JoinMatch(owner: Entity, callback: (ok: boolean, result: string) => void): void;
+}
+
+/** The game session after WELCOME, or the dev session from `--connect`. Zeros when there is none. */
+declare interface NetStats {
+	connected: boolean;
+	peers: number;
+	/** Smoothed round trip, milliseconds. */
+	rtt: number;
+	/** Percent of the peer's packets missing, over the whole session. */
+	lossIn: number;
+	/** Percent of our packets the peer did not acknowledge, once they have left the ack window. */
+	lossOut: number;
+	bytesInPerSec: number;
+	bytesOutPerSec: number;
+	resent: number;
+	droppedSession: number;
+	droppedAddress: number;
+}
+
+/** One physics tick of input. Valid only for the duration of `OnTick`. */
+declare interface PlayerCommand {
+	Tick: number;
+	/** Stick, -1..1. */
+	MoveX: number;
+	MoveZ: number;
+	/** Radians. */
+	Yaw: number;
+	Pitch: number;
+	Jump: boolean;
+	Fire: boolean;
+	Melee: boolean;
+	Interact: boolean;
+	/** 0–15. */
+	Equip: number;
+}
+
+declare namespace Net {
+	function GetStats(): NetStats;
+	/** Both false when the scene is standalone. */
+	function IsServer(): boolean;
+	function IsClient(): boolean;
+	/**
+	 * Server only. Unreliable unless `reliable` is true. Delivered to this entity on each
+	 * client as OnNetEvent. A call on a client is ignored.
+	 */
+	function Broadcast(name: string, args?: { [key: string]: boolean | number | string | Vec3 }, reliable?: boolean): void;
+	/** Server only. The owner's client does not receive OnShot for this. */
+	function Shot(entity: Entity, muzzle: Vec3, direction: Vec3, speed: number): void;
 }
 
 // ---------------------------------------------------------------------------

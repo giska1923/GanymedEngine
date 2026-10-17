@@ -27,6 +27,7 @@ namespace GanymedE {
 	class ParticleSystem : public ECS::System<ParticleSystem>
 	{
 	public:
+		static constexpr bool kRunsOnServer = false;
 		using EmitterView = ECS::IterView<ECS::EntityId,
 			ECS::RW<ParticleEmitterComponent>, ECS::RO<WorldTransformComponent>>;
 

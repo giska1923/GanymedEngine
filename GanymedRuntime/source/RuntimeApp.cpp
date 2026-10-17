@@ -26,12 +26,21 @@ namespace GanymedE {
 		const auto& args = Application::GetCommandLineArgs();
 		config.ApplyCommandLine(args.Count, args.Args);
 
+		bool headless = false;
+		for (int i = 1; i < args.Count; i++)
+		{
+			const char* arg = args.Args[i];
+			if (arg && (std::string(arg) == "--headless" || std::string(arg) == "-headless"))
+				headless = true;
+		}
+
 		ApplicationSpecification spec;
 		spec.Name = config.Title;
 		spec.Width = config.Width;
 		spec.Height = config.Height;
 		spec.Fullscreen = config.Fullscreen;
 		spec.EnableImGui = false;
+		spec.Headless = headless;
 
 		return new GanymedRuntime(spec, std::move(config));
 	}

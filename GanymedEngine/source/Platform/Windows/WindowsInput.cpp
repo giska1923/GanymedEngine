@@ -9,6 +9,8 @@ namespace GanymedE {
 #ifdef GE_PLATFORM_WINDOWS
 	bool Input::IsKeyPressed(const KeyCode key)
 	{
+		if (!Application::Get().HasWindow())
+			return false;
 		auto* window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
 		auto state = glfwGetKey(window, static_cast<int32_t>(key));
 		return state == GLFW_PRESS || state == GLFW_REPEAT;
@@ -16,6 +18,8 @@ namespace GanymedE {
 
 	bool Input::IsMouseButtonPressed(const MouseCode button)
 	{
+		if (!Application::Get().HasWindow())
+			return false;
 		auto* window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
 		auto state = glfwGetMouseButton(window, static_cast<int32_t>(button));
 		return state == GLFW_PRESS;
@@ -23,6 +27,8 @@ namespace GanymedE {
 
 	glm::vec2 Input::GetMousePosition()
 	{
+		if (!Application::Get().HasWindow())
+			return { 0.0f, 0.0f };
 		auto* window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
 		double xpos, ypos;
 		glfwGetCursorPos(window, &xpos, &ypos);

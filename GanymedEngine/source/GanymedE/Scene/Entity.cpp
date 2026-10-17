@@ -2,6 +2,9 @@
 #include "Entity.h"
 
 #include "Components.h"
+#include "SceneRole.h"
+
+#include "GanymedE/Net/World.h"
 
 namespace GanymedE {
 
@@ -18,6 +21,17 @@ namespace GanymedE {
 	const std::string& Entity::GetName() const
 	{
 		return GetComponent<TagComponent>().Tag;
+	}
+
+	bool Entity::IsLocallyControlled() const
+	{
+		if (!m_Scene || m_EntityHandle == entt::null)
+			return false;
+		if (m_Scene->GetRole() == SceneRole::Standalone)
+			return true;
+		if (m_Scene->GetRole() != SceneRole::Client)
+			return false;
+		return Net::Controls(GetUUID());
 	}
 
 }

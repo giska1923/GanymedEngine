@@ -277,11 +277,15 @@ namespace GanymedE {
 				{
 					const UUID fileUUID{ entityNode["Entity"].as<uint64_t>() };
 
-					// Always fresh, except a caller-pinned root: the file's canonical 1..N would
-					// collide with the second instance in the same scene, and with anything else
-					// that happens to use a small UUID.
+					// The root is minted, or pinned by the caller. Every later entity is derived
+					// from that root and its index in this list, so two machines that instantiate
+					// with the same root name the same children. A second instance has a different
+					// root, so its children differ too. The file's canonical 1..N is never used:
+					// it would collide with the next instance, and with anything else small.
 					const bool isRoot = created.empty();
-					UUID uuid = (isRoot && options.RootUUID != UUID{ 0 }) ? options.RootUUID : UUID();
+					UUID uuid = isRoot
+						? ((options.RootUUID != UUID{ 0 }) ? options.RootUUID : UUID())
+						: DerivePrefabChildUUID(created.front().GetUUID(), static_cast<uint32_t>(created.size()));
 
 					Entity entity = SceneSerializer::DeserializeEntity(entityNode, scene, uuid);
 					if (!entity)
@@ -305,7 +309,8 @@ namespace GanymedE {
 
 			// The same pass a scene load runs, doing the same job: translate the file's UUIDs
 			// into the ones the entities were actually created with. Instantiation never trips
-			// the collision path, because every UUID here is minted fresh.
+			// the collision path: the root is minted or pinned, and every child is derived
+			// from it rather than taken from the file.
 			SceneSerializer::ResolveHierarchy(scene, created, fileUUIDs);
 
 			Entity instanceRoot = created.front();

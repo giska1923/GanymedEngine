@@ -61,6 +61,10 @@ namespace GanymedE {
 		UUID GetUUID() const;
 		const std::string& GetName() const;
 
+		// Standalone: every entity. The server: none (the command already names the player).
+		// A client: only the entity the server told this connection it owns.
+		bool IsLocallyControlled() const;
+
 		operator bool() const { return m_EntityHandle != entt::null; }
 		operator entt::entity() const { return m_EntityHandle; }
 		operator uint32_t() const { return (uint32_t)m_EntityHandle; }

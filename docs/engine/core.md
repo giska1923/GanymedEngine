@@ -34,6 +34,8 @@ it wants anything other than the defaults:
 | `Fullscreen` | `false` | Borderless fullscreen — see [platform.md](platform.md#windows) |
 | `CustomTitleBar` | `false` | Undecorated host + ImGui-drawn title bar. The editor opts in; the runtime stays decorated. Wayland refuses it at `Window::Init` — see [platform.md](platform.md#custom-title-bar) |
 | `EnableImGui` | `true` | `false` builds no `ImGuiLayer` at all |
+| `Headless` | `false` | No window, no audio, no UI. bgfx is Noop with a null native window, and the loop sleeps toward 60 Hz. [GanymedDedicated](../dedicated/dedicated.md) sets it |
+| `PlayerBackend` | `true` | `false` skips `Online::Init` (no sign-in, no push socket). The dedicated process talks only to its fleet agent |
 
 `EnableImGui = false` is how a non-editor front-end (the standalone runtime) is hosted. It is a spec
 field rather than a virtual hook because the `Application` constructor decides whether to push the
@@ -46,31 +48,47 @@ override could never fire. Two consequences worth knowing:
 - Nothing installs ImGui's GLFW callbacks and nothing blocks events, so every event reaches the game
   layers raw. That is exactly what a shipped game wants and what `Input::` already assumes.
 
-[`EntryPoint.h`](../../GanymedEngine/source/GanymedE/main/EntryPoint.h) initializes logging, stores
-command-line args (`Application::GetCommandLineArgs()` — the editor uses them to open a scene passed
-as `argv[1]`), then wraps startup/run/shutdown in three profiling sessions
-(`GanymedEProfile-*.json`).
+[`EntryPoint.h`](../../GanymedEngine/source/GanymedE/main/EntryPoint.h) calls `Log::Prepare`
+before anything else. `--root <dir>` changes the process's working directory there, so the log
+file, `assets/dedicated.yaml` and the shader blobs all resolve against it. A directory that
+cannot be entered exits 2, on stderr, with no log file opened. It then stores command-line args
+(`Application::GetCommandLineArgs()` — the editor uses the first positional to open a scene, and
+that scan skips the value of `--root`), then wraps startup/run/shutdown in three profiling
+sessions (`GanymedEProfile-*.json`).
 
 [`Application`](../../GanymedEngine/source/GanymedE/main/Application.h) is a singleton
 (`Application::Get()`) that owns:
 
-- the platform `Window` (created via `Window::Create` from a `WindowProps` built out of the spec,
-  event callback bound to `Application::OnEvent`),
-- the `LayerStack` and — when `ApplicationSpecification::EnableImGui` — the `ImGuiLayer` overlay,
-- the run loop (`Run()`): timestep from `glfwGetTime()`, [`JobSystem::OnUpdate`](#job-system) (the
-  main-thread job drain), `OnUpdate` for every layer (skipped while minimized),
-  `AudioEngine::OnUpdate` (*not* skipped — a minimized window has not stopped making noise), then
-  the ImGui begin/render/end bracket **if an `ImGuiLayer` exists**, then `Window::OnUpdate` (poll
-  events + present).
+- the platform `Window` when the spec is not headless (created via `Window::Create` from a
+  `WindowProps` built out of the spec, event callback bound to `Application::OnEvent`). A headless
+  app has no window. `HasWindow()` is the check; `GetWindow()` asserts. It owns a `BgfxContext`
+  constructed with a null GLFW handle and `headless = true`. A windowed context does not pass
+  that flag, and a null window there asserts instead of initialising Noop,
+- the `LayerStack` and — when `EnableImGui` and the app is not headless — the `ImGuiLayer` overlay,
+- the run loop. Windowed: timestep from `glfwGetTime()`, then one frame (below), and the present
+  sits in `Window::OnUpdate`. Headless: timestep from `std::chrono::steady_clock`, the same frame
+  body, then `BgfxContext::Frame()`, then a sleep for whatever is left of 1/60 s. That sleep is the
+  dedicated server's stand-in for vsync.
+
+One frame, shared by both loops, is [`JobSystem::OnUpdate`](#job-system) (the main-thread job
+drain), `Online::OnUpdate` (a no-op when the player backend was not started), `AssetManager::Update`,
+`OnUpdate` for every layer (skipped while minimized), `AudioEngine::OnUpdate` (a no-op when audio
+was not started; a minimized window has not stopped making noise), then the ImGui begin/render/end
+bracket **if an `ImGuiLayer` exists**.
 
 The constructor brings up the engine's global subsystems in a fixed order — [`JobSystem::Init`](#job-system)
-→ [`Reflection::Init`](scene.md#member-reflection) → `Renderer::Init` → [`AudioEngine::Init`](audio.md)
-→ `ScriptEngine::Init` → `UIEngine::Init` — and
-the destructor body tears them down in the reverse-ish order the dependencies actually require:
-`UIEngine::Shutdown` (its Lua plugin holds references into the VM, and it releases GPU textures) →
+→ [`Reflection::Init`](scene.md#member-reflection) → the window, or the headless `BgfxContext` →
+`Renderer::Init` → [`AudioEngine::Init`](audio.md) unless headless → `ScriptEngine::Init` →
+[`Online::Init`](online.md) unless `PlayerBackend` is false → `UIEngine::Init` unless headless →
+the ImGui overlay when it is enabled and there is a window. The destructor body tears them down in
+the order the dependencies actually require: `UIEngine::Shutdown` (its Lua plugin holds references
+into the VM, and it releases GPU textures) → `Online::Shutdown` (no-op if it was never started) →
 `ScriptEngine::Shutdown` → `AudioEngine::Shutdown` → `JobSystem::Shutdown` → `Renderer::Shutdown`.
 Audio has no dependency in either direction; it is placed where it is so the boot log reads in a
-stable order.
+stable order. A dedicated process posts its result before `Close()`, from the layer's update,
+because this destructor runs `Online::Shutdown` only for the player client — the agent's HTTP
+client is shut down by `ServerLifecycle`, and that has to happen while the match-over posts are
+still being made.
 
 `Reflection::Init` sits second because it depends on nothing — it only fills entt's meta context — so
 everything constructed after it may assume every component is reflected. It has no matching
@@ -135,7 +153,9 @@ The `ImGuiLayer` "blocks" events when the mouse/keyboard is captured by UI —
 `IsKeyPressed(Key::W)`, `IsMouseButtonPressed(Mouse::ButtonLeft)`, `GetMousePosition()`. Each
 platform implements it over GLFW (`Platform/<OS>/<OS>Input.cpp`). Key and mouse codes
 (`Core/KeyCodes.h`, `Core/MouseButtonCodes.h`) mirror GLFW's values in the `Key::` / `Mouse::`
-namespaces, so no translation is needed.
+namespaces, so no translation is needed. With no window every poll returns false or a zero
+position: a script in a headless scene can call `Input` and not crash. `Input::NewFrame` returns
+immediately in that case.
 
 Use events for edges (a key going down), polling for state (a key being held) — the editor camera
 and gizmo shortcuts show both in use.
@@ -297,8 +317,16 @@ wall of numeric ids.
 
 ## Logging
 
-[`Log`](../../GanymedEngine/source/GanymedE/Core/Log.h) wraps two spdlog loggers, both writing
-color-coded to stdout and to `GanymedE.log`:
+[`Log`](../../GanymedEngine/source/GanymedE/Core/Log.h) wraps two spdlog loggers. On Windows the
+editor and the runtime write to the debugger (`msvc_sink`) and to `GanymedE.log`, which is
+truncated on open. On Linux and macOS the debugger sink is a color stdout sink, and the file is
+the same. A process started with `--server-id`, or with `--dev`, does not open `GanymedE.log` at all: a pool of
+dedicated servers, and a replacement that reuses a directory, were truncating each other's match
+out of that one file. It writes stderr (plain, so an agent capture stays readable — the stub
+does the same) and appends `dedicated-<server-id>.log` in the working directory. `--dev` with no
+id uses `dedicated-dev.log`. Characters in
+the id that are not a letter, a digit, `-` or `_` are folded to `_`, and the name is capped at
+80 of those. The debugger sink is kept on Windows as well.
 
 - `GE_CORE_*` — engine internals ("GANYMED" logger).
 - `GE_*` — client/application code ("APP" logger).
@@ -318,7 +346,7 @@ lines carry build-machine paths, and the boot banner, the asset scan, every warn
 are all `info` or above - which is what a user's bug report actually needs.
 
 Dropping the per-line flush means a buffered tail could be lost if the process ends abruptly, so
-`Init` registers `spdlog::shutdown` with `atexit`.
+`Prepare` registers `spdlog::shutdown` with `atexit`.
 
 ## Asserts
 

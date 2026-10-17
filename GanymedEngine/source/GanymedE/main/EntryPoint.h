@@ -1,10 +1,20 @@
 #pragma once
 
+#include <cstdio>
+#include <string>
+
 extern GanymedE::Application* GanymedE::CreateApplication();
 
 #if defined(GE_PLATFORM_WINDOWS) || defined(GE_PLATFORM_LINUX) || defined(GE_PLATFORM_MACOS)
 int main(int argc, char** argv) {
-	GanymedE::Log::Init();
+	// Before Init: a dedicated server's --root has to apply before GanymedE.log would be
+	// truncated, and before CreateApplication reads assets/dedicated.yaml.
+	std::string error;
+	if (!GanymedE::Log::Prepare(argc, argv, error))
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 2;
+	}
 	
 #ifdef GE_PLATFORM_WINDOWS
 	GE_INFO("GanymedEngine initialized on Windows!");

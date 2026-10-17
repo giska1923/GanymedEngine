@@ -1,0 +1,14 @@
+# What GanymedDedicated loads once the fleet agent has allocated a match.
+# The agent flags (--server-id, --agent, --game-port, --advertise, --public-key) are not
+# in here: the process refuses to start without them.
+#
+# Scene is relative to AssetRoot. MatchSeconds and Outcome are what the stub's timer
+# reports; --match-seconds, --outcome, --scene and --load-delay override them.
+# --load-delay holds the main thread after the allocation is acknowledged, so the
+# slow-load check can prove health does not depend on the frame.
+
+AssetRoot: assets
+Scene: scenes/BoxesPhysicsExample.ganymede
+MatchSeconds: 10
+Outcome: victory
+LoadDelaySeconds: 0

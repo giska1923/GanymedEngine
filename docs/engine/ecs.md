@@ -230,7 +230,13 @@ public:
 Owned by `Scene`; registration order **is** execution order. The built-in registration (in
 `Scene`'s constructor) is: `PhysicsSystem` → `NativeScriptSystem` → `LuaScriptSystem` →
 `AnimationSystem` → `TransformSystem` → `BoneAttachmentSystem` → `CameraSystem` → `AudioSystem` →
-`ParticleSystem` → `RenderSystem`.
+`ParticleSystem` → `RenderSystem`. A `SceneRole::Server` scene does not construct the last four.
+`CameraSystem`, `AudioSystem`, `ParticleSystem` and `RenderSystem` set `kRunsOnServer = false`, and
+`SystemManager::Add` skips a system with that flag when the role is `Server`. The default, for a
+system that says nothing, is that it runs. `Client` registers the same set as `Standalone` until
+prediction exists. The flag is a static on the system, read at registration, so the editor, the
+runtime and the dedicated server are one binary. `ValidateOrdering` only sees the systems that were
+actually registered, and dropping the four readers does not create a reader-before-writer pair.
 
 - **Profiling scopes live here, not in the systems.** `OnUpdate`/`OnUpdateEditor` wrap each
   system's call in a `GE_PROFILE_SCOPE_DYNAMIC(system->Name())`, so one span per system per frame
