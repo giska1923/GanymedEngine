@@ -1,6 +1,7 @@
 #include "gepch.h"
 #include "World.h"
 
+#include "GanymedE/Assets/AssetManager.h"
 #include "GanymedE/Assets/AssetPaths.h"
 #include "GanymedE/Core/Input.h"
 #include "GanymedE/Core/KeyCodes.h"
@@ -725,6 +726,15 @@ namespace GanymedE::Net {
 				auto prefab = world.PrefabOf.find(state.Uuid);
 				if (prefab != world.PrefabOf.end())
 					state.Prefab = prefab->second;
+				else if (entity.HasComponent<PrefabInstanceComponent>())
+				{
+					// A prefab root spawned by Scene.Spawn, or placed in the scene, names its
+					// source. The client instantiates the same file with the same root UUID, so
+					// its children come out with the same derived UUIDs.
+					const AssetMetadata* meta = AssetManager::GetMetadata(entity.GetComponent<PrefabInstanceComponent>().Source);
+					if (meta)
+						state.Prefab = meta->FilePath;
+				}
 
 				const auto& transform = entity.GetComponent<TransformComponent>();
 				state.HasPos = true;
@@ -2294,6 +2304,33 @@ namespace GanymedE::Net {
 	uint32_t ServerTick()
 	{
 		return State().Tick;
+	}
+
+	namespace {
+		std::string& PendingMatchEnd()
+		{
+			static std::string outcome;
+			return outcome;
+		}
+	}
+
+	bool RequestMatchEnd(const std::string& outcome)
+	{
+		if (outcome != "victory" && outcome != "defeat")
+			return false;
+		std::string& pending = PendingMatchEnd();
+		if (pending.empty())
+			pending = outcome;
+		return true;
+	}
+
+	bool TakeMatchEnd(std::string& outcome)
+	{
+		std::string& pending = PendingMatchEnd();
+		if (pending.empty())
+			return false;
+		outcome = pending;
+		return true;
 	}
 
 	InputStats GetInputStats()

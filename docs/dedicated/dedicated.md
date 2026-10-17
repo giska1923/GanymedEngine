@@ -191,7 +191,14 @@ the new address and keeps the id.
 
 ## The result
 
-`POST …/result` with `{"outcome":"victory"}` or `"defeat"`, from `--outcome`. Five attempts, 500 ms
+**Who decides it.** The game, when it can: a server script calls `Net.EndMatch("victory")` or
+`"defeat"` ([scripting.md](../engine/scripting.md#players-pawns-and-the-end-of-a-match)), and the
+next frame reports that outcome and exits. `--match-seconds` is the stand-in for a scene with no game
+mode, ending the match on a timer with `--outcome`. `--match-seconds 0` turns the timer off, so only
+the game ends the match. Whichever comes first wins. Under `--dev` a decided match is logged as
+"Match ended by the game" and the process keeps running.
+
+`POST …/result` with `{"outcome":"victory"}` or `"defeat"`. Five attempts, 500 ms
 backoff doubling, on a transport error or a 5xx. A 4xx stops. Then `POST …/shutdown` and the
 process exits. The server never sees a backend URL or a result credential: the agent forwards the
 outcome. That is `api-v0.6`. Under `api-v0.5` the server posted to one replica itself, and a

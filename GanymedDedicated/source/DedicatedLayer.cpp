@@ -100,7 +100,11 @@ namespace GanymedE {
 			m_MatchEnd = std::chrono::steady_clock::now()
 				+ std::chrono::duration_cast<std::chrono::steady_clock::duration>(
 					std::chrono::duration<double>(m_Config.MatchSeconds));
-			GE_CORE_INFO("Match running for {0} s, outcome {1}", m_Config.MatchSeconds, m_Config.Outcome);
+			if (m_Config.MatchSeconds > 0.0f)
+				GE_CORE_INFO("Match running for {0} s, outcome {1} unless the game ends it first",
+					m_Config.MatchSeconds, m_Config.Outcome);
+			else
+				GE_CORE_INFO("Match running until the game ends it (Net.EndMatch)");
 		}
 	}
 
@@ -132,14 +136,31 @@ namespace GanymedE {
 			Net::Test::Advance(*m_Scene);
 		m_Scene->OnUpdateRuntime(ts);
 
-		// Dev has no agent and no match clock. Killing the process is the stop.
+		// The game ended the match (Net.EndMatch). Its outcome replaces the configured one.
+		std::string decided;
+		const bool ended = Net::TakeMatchEnd(decided);
+
+		// Dev has no agent. Killing the process is the stop; a decided match is only logged.
 		if (m_Config.Dev)
+		{
+			if (ended && !m_DevEndLogged)
+			{
+				m_DevEndLogged = true;
+				GE_CORE_INFO("Match ended by the game: {0} (dev: nothing is reported)", decided);
+			}
 			return;
+		}
 
 		const bool refused = m_Server.IsStopped();
-		const bool elapsed = std::chrono::steady_clock::now() >= m_MatchEnd;
-		if (!refused && !elapsed)
+		// MatchSeconds 0 is "no clock": the game ends the match.
+		const bool elapsed = m_Config.MatchSeconds > 0.0f && std::chrono::steady_clock::now() >= m_MatchEnd;
+		if (!refused && !elapsed && !ended)
 			return;
+		if (ended)
+		{
+			GE_CORE_INFO("Match ended by the game: {0}", decided);
+			m_Server.SetOutcome(decided);
+		}
 
 		m_Simulating = false;
 		if (refused)

@@ -765,6 +765,18 @@ declare namespace Net {
 	function Broadcast(name: string, args?: { [key: string]: boolean | number | string | Vec3 }, reliable?: boolean): void;
 	/** Server only. The owner's client does not receive OnShot for this. */
 	function Shot(entity: Entity, muzzle: Vec3, direction: Vec3, speed: number): void;
+	/** Server only: the accounts with a live session. Empty on a client and offline. */
+	function Players(): string[];
+	/**
+	 * Server only. This account's commands drive the entity with this id from now on: the id
+	 * Scene.Spawn returned, valid before the entity exists. Its client predicts that entity.
+	 */
+	function AssignPawn(account: string, id: number): void;
+	/**
+	 * Server only. Ends the match: "victory" or "defeat". The dedicated process reports it and
+	 * exits. The first call wins. False for any other outcome, and on a client or offline.
+	 */
+	function EndMatch(outcome: "victory" | "defeat"): boolean;
 }
 
 // ---------------------------------------------------------------------------

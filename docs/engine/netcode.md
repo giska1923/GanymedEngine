@@ -314,7 +314,10 @@ Scale is not replicated. The world transform is not: the client already
 has the parent. The server assigns a 16-bit net id, starting at 1 and skipping 0, stored on the
 component with `Trait::Runtime` so the file does not keep it. Scene entities match by UUID. An
 entity the client does not have yet is `CreateEntityWithUUID` with the server's UUID, or
-`Instantiate` with that UUID pinned as the root when the spawn names a prefab. The client refuses
+`Instantiate` with that UUID pinned as the root when the spawn names a prefab. The prefab a spawn
+names is the root's `PrefabInstanceComponent` source, as a path under `assets/`, so anything
+`Scene.Spawn` made from a prefab whose root carries `ReplicatedComponent` replicates as that prefab.
+The test module's spawns register their path explicitly, which comes to the same thing. The client refuses
 a path that is empty, longer than 80, contains `..`, or uses a character outside
 `A–Z`, `a–z`, `0–9`, `_`, `.`, `/` and `-`.
 
