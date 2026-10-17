@@ -404,6 +404,14 @@ The sticks are `clamp(v, -1, 1) * 32767`. Yaw is the full-turn uint16. Pitch is 
 uint16, the same pack as an Euler axis. Buttons are bit 0 jump, bit 1 fire, bit 2 melee, bit 3
 interact, and bits 4–7 the equip slot, 0–15.
 
+**What a command holds.** The stick is the keyboard: `W` is move Z −1 (forward), `S` +1, `A` move X
+−1, `D` +1, normalised so a diagonal is not faster. Yaw and pitch are the view: the mouse delta,
+0.002 radians a pixel, summed once a frame, pitch clamped to ±1.4. **Look accumulates only while
+the cursor is captured** (`Cursor.Locked`), so a released cursor can move over a menu without
+turning the player. Space is jump, the left button fire, the right button melee, `E` interact, and
+the number keys the equip slot. The script decides what the stick means: a pawn reads it in its own
+frame, by its yaw.
+
 The client builds one of these at the end of every predicted tick, from the last four ticks it has
 stored, and `SendCommands` submits it on the main thread. The door sends it. The server's door
 queues the body after `Receive`, and `BeginStep` drains the queue under the same lock before it
