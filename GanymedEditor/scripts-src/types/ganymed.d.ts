@@ -38,6 +38,7 @@ declare interface Entity {
 	 * `Scene.FindEntityByUUID` unchanged and it resolves.
 	 */
 	GetUUID(): number;
+	/** True while the entity is alive in the scene. False once it is destroyed, even if a script still holds it. */
 	IsValid(): boolean;
 
 	/**

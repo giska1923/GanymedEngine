@@ -216,7 +216,15 @@ namespace GanymedE {
 				{
 					return static_cast<int64_t>(static_cast<uint64_t>(e.GetUUID()));
 				},
-				"IsValid", [](Entity& e) { return static_cast<bool>(e); },
+				// Alive in the scene, not merely a non-null handle. A script that keeps an entity
+				// (an enemy's target, a pawn) still holds it after the entity is destroyed, and
+				// every getter on it would then assert. valid() checks the handle's version, so a
+				// recycled index is not mistaken for the entity that had it.
+				"IsValid", [](Entity& e)
+				{
+					Scene* scene = Context();
+					return static_cast<bool>(e) && scene && scene->Reg().valid(static_cast<entt::entity>(e));
+				},
 
 				// Direct children only. Scene.FindEntityByName is a global first-match; two
 				// boxes both parenting a child tagged "Sparks" cannot use it.
