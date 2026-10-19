@@ -3163,6 +3163,49 @@ damages it, but the round never hears the hit. It is an engine bug, recorded in 
 **Not seen:** the HUD in a window, the chime heard, and a knife kill being credited. Melee over the
 network is G5.
 
+### N9 — Co-op: G5, the knife over the network (2026-10-19)
+
+NETCODE.md's stage G5. No engine change was needed. The headless server already runs
+`AnimationSystem` and `BoneAttachmentSystem` (only camera, audio, particles and rendering are
+dropped), so the knife's trace points move on the server as they do in a window. The run below is
+the evidence that they do.
+
+**The swing is the command's.** `Player:Melee` moved from `LocalFrame` into `TriggerTick`, once a
+tick, wherever `OnTick` runs. Either button swings a blade in hand: the left (`cmd.Fire`), as offline
+always did, and the right (`cmd.Melee`). Melee refuses with a gun out, as before. On the client
+playing the pawn this is the swing predicted: the clip plays at once, and the pawn is rooted for
+it, as it is on the server (`Drive`), so the swing costs no correction. The old script-side arming
+of the left button (`lmbArmed`) is gone. The engine now keeps the capturing click out of the
+command (G2).
+
+**Only the server traces.** `MeleeAttacker:OnUpdate` returns on a client. On the server it traces the
+knife through its damage window, and the hit goes through `PG.meleeDamage`, credited to the player
+by `PG.meleeBy` (G4).
+
+**Other clients draw the swing.** The server replicates `swing8`, the swing count mod 256. A remote
+pawn starts the same attack clip when it moves, through `StartSwing` and `AdvanceSwing`, which
+`Melee` uses too. It is not started on the first value a client sees, which counts the swings from
+before it arrived. It starts when the change arrives, so it runs about 100 ms ahead of the body it
+is drawn on.
+
+**Verified**, Windows x64 Debug, dev server on `scenes/ProvingGround.ganymede`, two headless
+runtimes in `predict-fire` at `lat:75`, with the knife in hand (the default loadout). Each held the
+trigger 2 s in every 3 while enemies closed in.
+
+| Check | Result |
+|---|---|
+| The server traces its own animation | knife hits at 0.60–0.77 s into `Thrust_Slash`, 40 a hit. Enemies went down at 120: three hits |
+| Credited to the player | in the second run, the pawn that killed with the knife reported `kills=1 score=1` |
+| Both clients see both swings | each client logged every swing twice, once for its own pawn and once for the other's (`MELEE 1` to `MELEE 6`, in pairs, on each) |
+| No trace on a client | 0 `Melee:` hit lines on either client |
+| Prediction | 0 and 0 corrections in both runs, with each pawn rooted for 3 s per swing, and one going down |
+| Offline, P5 gate (180 s) | the whole route, 0 errors |
+
+**Not seen:** the swing on screen; a knife swung offline by hand, which now goes through
+`TriggerTick` like everything else; and an enemy's axe hurting a player. It still does not: the axe's
+hits land in `PG.meleeDamage` under the player's id, and `Player.lua` has never read them. Contact
+damage is what hurts players.
+
 ## Decisions, with the ones most likely wrong marked
 
 Recorded now so that when this moves to `docs/history/` we can see which held.

@@ -224,7 +224,6 @@ local Player = {
     yaw = 0.0,
     pitch = 0.0,
     looking = false,
-    lmbArmed = false,  -- LMB released since the click that captured the cursor
     yawEntity = nil,
     cameraEntity = nil,
     -- Gate diagnostics: the P1 gate is "walk for two minutes without tipping, sinking or
@@ -888,8 +887,8 @@ end
 --                replays OnTick, and a replayed tick must not fire again
 --
 -- The cooldown, the heat and the spread's random numbers all follow the ticks, so the client and
--- the server fire the same rounds from the same commands. The melee half of the button waits for
--- G5; offline it is still LocalFrame's.
+-- the server fire the same rounds from the same commands. The blade's swing is here for the same
+-- reason (G5).
 function Player:TriggerTick(tick, cmd)
     if self.autofire then
         return
@@ -905,6 +904,11 @@ function Player:TriggerTick(tick, cmd)
         if cmd.Equip == 1 then self:Equip("Gun")
         elseif cmd.Equip == 2 then self:Equip("Knife") end
     end
+
+    -- The blade: either button, with a blade in hand (Melee refuses with a gun). On a client this
+    -- is the swing predicted, which roots the pawn as the server's does; the damage is traced only
+    -- on the server (MeleeAttacker).
+    self:Melee(TICK, cmd.Fire or cmd.Melee)
 
     self.fireCooldown = self.fireCooldown - TICK
     self.sinceShot = self.sinceShot + TICK
@@ -971,6 +975,8 @@ function Player:ServerFrame(ts)
     -- And for its own player's HUD: health in a byte, and the score.
     self.hp8 = math.floor(math.max(0.0, math.min(255.0, self.health)) + 0.5)
     self.score32 = self.score
+    -- Moves by one at every swing, so the other clients can start the same one (RemoteFrame).
+    self.swing8 = self.attacks % 256
     self:ServerReport()
 end
 
@@ -1033,33 +1039,22 @@ function Player:LocalFrame(ts)
     local offline = not Net.IsClient()
 
     -- ---- capture ----
-    -- The capturing click is not an attack, for as long as it is held: a click lasts several
-    -- frames, so skipping only the frame that captured would still fire on the next one. LMB arms
-    -- once it has been seen up. The look itself is the command's: the engine sums the mouse while
-    -- the cursor is captured (docs/engine/netcode.md, Commands).
+    -- A click captures the cursor, Escape releases it. The click that captures is not an attack:
+    -- the engine counts the buttons only once they have been seen up after the capture, and sums
+    -- the look only while captured (docs/engine/netcode.md, Commands). Firing and the blade are
+    -- the command's (TriggerTick).
     local lmbDown = Input.IsMouseButtonPressed(Mouse.ButtonLeft)
     if not self.looking and lmbDown then
         Input.SetCursorMode(Cursor.Locked)
         self.looking = true
-        self.lmbArmed = false
     elseif self.looking and Input.IsKeyPressed(Key.Escape) then
         Input.SetCursorMode(Cursor.Normal)
         self.looking = false
     end
-    if not lmbDown then
-        self.lmbArmed = true
-    end
-    local attackHeld = self.looking and self.lmbArmed and lmbDown
 
     if offline then
         -- The gate modes' trigger. A person's is the command's (TriggerTick), as are the slots.
         self:FireFrame(ts)
-
-        -- ---- melee ----
-        -- The same button attacks with whatever is in hand. Not on the click that captures the
-        -- cursor (attackHeld), which for a melee weapon would commit the player to a three-second
-        -- swing.
-        self:Melee(ts, attackHeld)
 
         -- ---- the gate modes' steering ----
         -- They walk forward along their own yaw (OnTick reads gateX/gateZ).
@@ -1161,6 +1156,23 @@ function Player:RemoteFrame(ts)
     local slot = self.slot8 == 1 and "Gun" or "Knife"
     if self.slot8 and slot ~= self.equipped then
         self:Equip(slot)
+    end
+
+    -- A swing: the server's counter moved. Not on the first value seen, which is the swings before
+    -- this client arrived. It starts when the change arrives, so it runs about 100 ms ahead of the
+    -- body it is drawn on.
+    if self.swing8 ~= nil and self.swing8 ~= self.seenSwing then
+        local first = self.seenSwing == nil
+        self.seenSwing = self.swing8
+        if not first then
+            if self.attack then
+                self.attack = nil
+            end
+            self:StartSwing()
+        end
+    end
+    if self.attack then
+        self:AdvanceSwing(ts)
     end
 
     self.yaw, self.pitch = UnpackYaw(self.yaw8), UnpackPitch(self.pitch8)
@@ -1632,15 +1644,13 @@ end
 --
 -- Each attack lands off-centre (the chop 40 degrees left, the thrust 45 right), so the body turns
 -- by the lane's yaw to put the strike where the crosshair is, held for the whole attack.
+--
+-- N5 G5: called once a tick from TriggerTick, wherever OnTick runs. A remote pawn on a client does
+-- not decide its swings: it starts one when the server's swing8 counter moves (RemoteFrame), with
+-- the same StartSwing and AdvanceSwing.
 function Player:Melee(ts, want)
-    local a = self.attack
-    if a then
-        a.t = a.t + ts
-        if a.t >= a.length or self.downed then
-            self.attack = nil
-            self.meleeReady = self.meleeCooldown
-            if self.body then self.body:SetAnimationLooping(true) end
-        end
+    if self.attack then
+        self:AdvanceSwing(ts)
         return
     end
 
@@ -1648,7 +1658,23 @@ function Player:Melee(ts, want)
     if not want or self.equipped == "Gun" or self.downed or self.meleeReady > 0.0 or not self.body then
         return
     end
+    self:StartSwing()
+end
 
+function Player:AdvanceSwing(ts)
+    local a = self.attack
+    a.t = a.t + ts
+    if a.t >= a.length or self.downed then
+        self.attack = nil
+        self.meleeReady = self.meleeCooldown
+        if self.body then self.body:SetAnimationLooping(true) end
+    end
+end
+
+function Player:StartSwing()
+    if not self.body or self.equipped == "Gun" then
+        return
+    end
     local clip = MELEE_ATTACK[self.equipped]
     local w = PG.meleeWindows and PG.meleeWindows[self.equipped] and PG.meleeWindows[self.equipped][clip]
     if not w then
@@ -2200,11 +2226,12 @@ end
 
 -- Where this pawn faces, for the other clients (RemoteFrame), written in OnTick on the server; and
 -- what it holds, the gun on slot 1 and the slot in hand (1 gun, 2 knife), whether it is down, and
--- its health and score for its own player's HUD, written in ServerFrame.
+-- its health and score for its own player's HUD, and its swings, written in ServerFrame.
 Player.Replicated = {
     yaw8 = "u8", pitch8 = "u8", gun16 = "str16", slot8 = "u8", down = "bool",
     hp8 = "u8",
     score32 = "tick",   -- a u32: "tick" is the field type that holds one
+    swing8 = "u8",      -- the swing count, mod 256: a change is a swing to draw
 }
 
 local ____exports = {}

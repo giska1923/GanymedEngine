@@ -126,6 +126,8 @@ end
 function MeleeAttacker:OnUpdate(ts)
     -- A hitch frame would sweep a ray across half the swing; skip it rather than over-reach.
     if ts > 0.25 then return end
+    -- N5 G5: a hit is the server's. A client draws the swing (Player:StartSwing) and traces nothing.
+    if Net.IsClient() then return end
 
     local config = PG.meleeConfig and PG.meleeConfig[self.entity:GetUUID()]
     local weaponName = (config and config.weapon) or self.weapon
