@@ -331,6 +331,24 @@ Jolt reports persisting contacts through `ContactListener::OnContactPersisted`, 
 the way to scripts; the question worth thinking about first is whether gameplay wants a per-frame
 event at all, or a queryable "who am I touching" set, which is what most engines settle on.
 
+## A contact on an entity's first physics step never reaches its script
+
+`ScriptEngine::OnCollisionEnter` (and `OnCollisionExit`) drops the event when the entity has no
+script instance. A spawned entity gets its instance in `LuaScriptSystem::OnUpdate`, later in the
+frame than the physics step that can already make its first contact. So **whatever a new entity is
+touching when it appears, its script never hears about**. The other side's script does, if it
+already exists.
+
+N5 met it twice. A round that spawns inside an enemy damages the enemy, but the round neither counts
+the hit nor despawns (G3's gate runs: 2 kills, `hits=2`). A pawn spawned standing on the heal spot or
+on a gun pickup was neither healed nor armed, while the pickup logged the contact (G4's first run).
+In play this is rare, because players walk into things, but anything spawned at a contact point
+(a round at a muzzle pressed against a target, a respawn on a trigger) loses it.
+
+Two fixes: instantiate scripts for new entities before the step, as part of the spawn flush; or keep
+contacts for an entity whose `ScriptComponent` has no instance yet, and deliver them right after
+`Instantiate`. The second is narrower and keeps the system order as it is.
+
 ## A script cannot tell whether a contact was with a sensor
 
 `OnCollisionEnter(other)` hands over the other entity and nothing else. A sensor causes no collision
