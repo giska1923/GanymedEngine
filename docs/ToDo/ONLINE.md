@@ -133,7 +133,7 @@ prerequisite for anything here.
 | **O3** | `Backend.*` leaderboard bindings; the Proving Ground submits and shows scores. **Done** | master + `first-game` | **B2** (leaderboards) | about a day |
 | **O4** | The WebSocket push channel: reconnect by close code, re-fetch on connect, Lua subscriptions, party bindings. **Done** | master | **B3** (realtime gateway, `api-v0.3`) | 3–4 days |
 | **O5a** | Matches from the client: queue, follow the ticket, join the server over UDP. **Done** | master | **B4 + B5** (`api-v0.5`); O4 for the pushes | 2–3 days |
-| **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result. **Built as N1** — fleet acceptance still open in NETCODE.md | master | **B5** + the dedicated-server milestone | landed 2026-10-11 |
+| **O5b** | `GanymedDedicated` hooks: lifecycle, connect-token verification, result. **Built as N1.** Fleet acceptance passed 2026-10-19, with N5's G6 (NETCODE.md) | master | **B5** + the dedicated-server milestone | landed 2026-10-11 |
 
 These are estimates, not measurements. O1 is the phase that matters. Everything after it is a
 consumer of O1's threading and ownership rules, and getting those wrong shows up as a crash on

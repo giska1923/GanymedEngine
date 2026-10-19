@@ -5,9 +5,13 @@ acceptance test has not been run, so N1 is not closed. N2 is built (2026-10-11) 
 checks were run; the path through the backend was not. N3 is built (2026-10-11) and its local
 checks were run on Windows x64 Debug; it is not a fleet close. N4 is built (2026-10-11) and its
 local checks were run on Windows x64 Debug; it is not a fleet close. N5's engine hooks (replicated
-fields, server events, cosmetic shots) are built (2026-10-11) and the local two-client checks were
-run on Windows x64 Debug. The game steps are not: the Proving Ground scripts live on `first-game`
-and are not in this tree. N5 is not a fleet close. Review fixes (snapshot order, lost destroys, the command lead, the
+fields, server events, cosmetic shots) are built (2026-10-11). N5's game steps G1–G6 are done on
+`first-game` (2026-10-17 to 2026-10-19), and **the fleet path ran there on 2026-10-19**: the
+backend's `gscli load coop 4` against `fleetagent -- GanymedDedicated` passed all four stages, and
+four `GanymedRuntime --queue` clients played a match to a reported victory with ratings changed
+([below](#n5-measured-on-the-fleet-2026-10-19)). That closes the fleet acceptance N1–N4 were
+waiting on, on Windows. Linux and the editor's Play are still open, so the milestone is not
+closed. Review fixes (snapshot order, lost destroys, the command lead, the
 reliable window, the test module) landed 2026-10-17, and so did the fix for the corrections they exposed at every input change
 (the client now decodes onto the named baseline).** It follows
 [ONLINE.md](ONLINE.md), whose last phase, O5b, is this N1. It depends on `online-o4` (O4 and O5a)
@@ -273,7 +277,7 @@ properties) and none of its machinery:
 | **N2** | Transport: sockets, connections, the packet header and acks, the conditioner, `--dev`. Built 2026-10-11. The fleet path was not run | master | about a week |
 | **N3** | Replication: ticks, network IDs, spawn and destroy, snapshots with delta compression, interpolation | master | 1½–2 weeks |
 | **N4** | Input and prediction: commands, `OnTick`, the predicted character, reconciliation. Built 2026-10-11. Local checks run; not a fleet close | master | 1½–2 weeks |
-| **N5** | The game: script roles and fields, shot events, co-op rules, the match result through the backend. Engine hooks built 2026-10-11. The game steps are not in this tree. Not a fleet close | master (engine hooks) + `first-game` (the game) | 2–3 weeks |
+| **N5** | The game: script roles and fields, shot events, co-op rules, the match result through the backend. Engine hooks built 2026-10-11. Game steps G1–G6 done on `first-game`, and the fleet path run, 2026-10-19. Linux and the editor not run | master (engine hooks) + `first-game` (the game) | 2–3 weeks |
 
 **These are estimates, and probably low.** All of it adds up to two to three months of the pace
 ONLINE.md ran at. N5 is the one most likely to grow: `Player.lua` alone is about 1,800 lines of
@@ -695,7 +699,7 @@ and reach `first-game` by merge; game stages land on `first-game`.
 | **G3** | `first-game`, after a `master` change | Enemies simulate only on the server, target the nearest player, and animate on clients from replicated state. **Characters do not collide with enemies or with each other** (decided 2026-10-19): the character controller's own collision skips them, the same on the server and on a client, so an enemy pressing in cannot push the predicted pawn. Contact damage stays on the server | **Done 2026-10-19.** Recorded in `first-game`'s PROVING_GROUND.md (N9). The engine half: `RigidBodyComponent::BlocksCharacters` and the `CHARACTER` and `MOVING_PASSABLE` layers ([physics.md](../engine/physics.md#what-a-character-walks-through)). Rounds had to be passable too. With enemies active, 6 and 4 corrections in 20 s of reversing (G1: 239 and 16); with both players firing, 0 and 0. Down is replicated, because it roots the pawn the owner predicts |
 | **G4** | `first-game` | Health, down and respawn, pickups, heal, upgrade, score per player; the HUD for the local player | **Done 2026-10-19.** Recorded in `first-game`'s PROVING_GROUND.md (N9). No engine change. Health and score replicate for the owner's HUD; a life ends on the server and the client playing it submits it to the leaderboard through a reliable event; gun pickups replicate. Three clients each saw their own health and score, the same pickups taken and tossed, and one submitted a 2-kill life to the running backend |
 | **G5** | `first-game` | Melee: the server traces from its own animation, triggered by `cmd.Melee` | **Done 2026-10-19.** Recorded in `first-game`'s PROVING_GROUND.md (N9). No engine change: the headless server already animates and attaches bones. Either button swings a blade in hand; the owner predicts the swing (clip and rooting, 0 corrections); only the server traces, and the kill is credited to the player; a replicated swing counter starts the same attack on the other clients, and each client logged both players' swings |
-| **G6** | `first-game` | Waves, the win and loss rules above, `Net.EndMatch`; the backend's full path with four clients | the N5 verification table below |
+| **G6** | `first-game`, after a `master` change | Waves, the win and loss rules above, `Net.EndMatch`; the backend's full path with four clients | **Done 2026-10-19.** Recorded in `first-game`'s PROVING_GROUND.md (N9). The engine half: `GanymedRuntime --queue=<mode>` ([runtime.md](../runtime/runtime.md#--queue-a-match-through-the-backend)), `--net-test=bot` and `bot-idle`, and a stale command repeat that drops the buttons after 100 ms. The table below is measured, except Linux |
 
 **The cheaper path, taken where it saves weeks.** Not every single-player feature has to be networked
 before the game is playable co-op. The gate harness modes (`autopilot`, `losgate`, `p5gate`,
@@ -754,6 +758,25 @@ the 5 s silence still does not call a script; a match-end script has to `Net.Bro
 | Offline | the game still plays single-player in the editor and in the runtime |
 | Linux | the server runs in WSL with the fleet; a Windows client joins it |
 
+#### N5, measured on the fleet (2026-10-19)
+
+Windows x64 Debug. The backend ran in Compose (two replicas), and its own `fleetagent` ran
+`GanymedDedicated` on `first-game`'s Proving Ground. The clients were headless runtimes with
+`--queue=coop` and a `bot` test mode. Bots stand and turn, so most runs gave them temporary aids:
+guns from the server, contact damage 0 or 34, or a 60 s limit. Each run is in `first-game`'s
+PROVING_GROUND.md (N9, G6) with its numbers.
+
+| Check | Result |
+|---|---|
+| The backend's acceptance test | **Pass.** `gscli load coop 4`: drained in 0.86 s, ready in about 1.07 s, `WELCOME:4`, `finished:4` (`defeat -16`: gscli players open no session, and the game mode's no-show rule ended it) |
+| The whole path | **Pass.** Four runtimes queued, matched, joined, cleared three waves, victory at 107 s, and each logged `finished: victory, rating +16` from its ticket |
+| Defeat | **Pass,** both kinds: a wipe (`all 2 players down`) and the time limit (60 s for the test). Tickets `defeat, rating -16` |
+| Abandoned | **Pass.** Both clients killed: `everyone left`, defeat reported; the backend's `match_results` row is `defeat`, -16, 2 players |
+| A player leaves | **Pass.** The others played on to victory, with the later waves sized for two. The backend credits the result to the leaver too, which is its rule today, recorded in its ToDo |
+| Under a bad network | **Pass.** `lat:75,loss:5` on every send path: victory, 4–5% measured loss each way, 13–16 KB/s down and 0.6 KB/s up per client in the last wave. Walking clients there had 5 and 7 corrections |
+| Offline | **Pass in the runtime** (alone, and the P5 gate). The editor's Play was not driven |
+| Linux | **Not run.** The dedicated process has no Linux build in this tree. Building it in WSL, a Linux `fleetagent`, and UDP from Windows clients into WSL2 are the work; it is open |
+
 ---
 
 ## Risks
@@ -772,11 +795,11 @@ the 5 s silence still does not call a script; a match-end script has to `Net.Bro
   now skips other characters and passable bodies on both sides, and the same run gave 6 and 4. What
   remains is any ordinary moving body a character meets on a client, such as a replicated crate. The
   Proving Ground has none.
-- **A player who stops sending keeps firing.** The server repeats the last command for a tick that
-  has none (`TakeCommand`), buttons included, until the session times out about 5 s later. G2's
-  runs showed it: the server's pawns fired on after their clients had closed. A repeat is right for
-  the stick over a lost packet or two. For the buttons, a cap is likely wanted, such as dropping
-  them after a few repeated ticks. Not changed yet.
+- **A player who stopped sending kept firing: fixed in G6.** The server repeated the last command,
+  buttons included, until the session timed out 5 s later. A repeat now drops the buttons after 6
+  missing ticks and the stick after 30 ([netcode.md](../engine/netcode.md#commands)). G6's leaver
+  run is consistent with it (the leaver's pawn stopped firing at the kill), without a sharper
+  measurement.
 - **Two clocks to debug.** Bugs in tick estimation look like everything else (jitter, rubber-banding,
   dry buffers). The stats of N2 to N4 exist so that a symptom has a number before it gets a fix.
 - **The branch policy doubles the merges.** Engine fixes found while playing in N5 go to master
