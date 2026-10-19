@@ -33,6 +33,7 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+    ReplicatedComponent: {}
   - Entity: 2
     TagComponent:
       Tag: Body

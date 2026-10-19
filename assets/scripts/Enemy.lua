@@ -235,8 +235,12 @@ function Enemy:OnUpdate(ts)
     -- Melee lands through PG, the only channel between script instances (MeleeAttacker.lua).
     local melee = PG.meleeDamage and PG.meleeDamage[self.entity:GetUUID()]
     if melee then
+        local by = PG.meleeBy and PG.meleeBy[self.entity:GetUUID()]
         PG.meleeDamage[self.entity:GetUUID()] = nil
-        self:TakeDamage(melee)
+        if by then
+            PG.meleeBy[self.entity:GetUUID()] = nil
+        end
+        self:TakeDamage(melee, by)
         if self.dead then
             return
         end
@@ -529,8 +533,8 @@ function Enemy:OnCollisionEnter(other)
 end
 
 -- One path for every source of damage: projectiles above, melee through PG.meleeDamage in OnUpdate.
--- `by` is the shooter's pawn id, when a round says so: the hit and the kill are credited to it, in
--- PG.hitsBy and PG.killsBy.
+-- `by` is the attacker's pawn id, when a round or a blade says so: the hit and the kill are
+-- credited to it, in PG.hitsBy and PG.killsBy. A player's score is banked from those.
 function Enemy:TakeDamage(amount, by)
     if self.dead then
         return

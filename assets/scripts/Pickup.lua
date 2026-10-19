@@ -64,7 +64,9 @@ function Pickup:OnUpdate(ts)
 end
 
 function Pickup:OnCollisionEnter(other)
-    if not other or other:GetName() ~= "Player" then
+    -- On a client the server decides what a pickup did (the player's contact, there), and the
+    -- pickup it took or tossed arrives replicated.
+    if not other or other:GetName() ~= "Player" or Net.IsClient() then
         return
     end
 
@@ -78,7 +80,7 @@ function Pickup:OnCollisionEnter(other)
 end
 
 function Pickup:OnCollisionExit(other)
-    if not other or other:GetName() ~= "Player" then
+    if not other or other:GetName() ~= "Player" or Net.IsClient() then
         return
     end
     Log.Info(string.format("TRIGGER exit  %s (%s) t=%.1fs", self.label, self.kind, self.t))

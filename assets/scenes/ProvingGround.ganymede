@@ -1935,6 +1935,7 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+    ReplicatedComponent: {}
   - Entity: 3000000000000000819
     TagComponent:
       Tag: Body
@@ -1988,6 +1989,7 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+    ReplicatedComponent: {}
   - Entity: 3000000000000000821
     TagComponent:
       Tag: Body
@@ -2041,6 +2043,7 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+    ReplicatedComponent: {}
   - Entity: 3000000000000000823
     TagComponent:
       Tag: Body
@@ -2094,6 +2097,7 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+    ReplicatedComponent: {}
   - Entity: 3000000000000000825
     TagComponent:
       Tag: Body
@@ -2147,6 +2151,7 @@ Entities:
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
+    ReplicatedComponent: {}
   - Entity: 3000000000000000827
     TagComponent:
       Tag: Body

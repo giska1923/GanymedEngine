@@ -178,6 +178,12 @@ function MeleeAttacker:OnUpdate(ts)
                         self.hitThisSwing[id] = true
                         self.hits = self.hits + 1
                         PG.meleeDamage[id] = (PG.meleeDamage[id] or 0) + self.damage
+                        -- Whose blade: the player names its capsule in the config, and that is the
+                        -- pawn the kill is credited to (Enemy:TakeDamage).
+                        if config and config.ignore then
+                            PG.meleeBy = PG.meleeBy or {}
+                            PG.meleeBy[id] = config.ignore
+                        end
                         Log.Info(string.format("Melee: %s %s %s hit %s at %.2f s (trace %d, %.1f m/s)",
                             self.entity:GetName(), weaponName, clip, hit.entity:GetName(), phase, i, len / ts))
                     end

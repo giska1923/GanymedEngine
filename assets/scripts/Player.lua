@@ -174,7 +174,9 @@ local Player = {
     gun = nil,         -- the gun on slot 1, picked up off the rack; nil until one is
     gunsTaken = 0,
     upgrades = 0,
-    lastKills = 0,
+    score = 0,         -- this player's: banked from their own kills, spent at the upgrade station
+    lastKills = 0,     -- this player's credited kills (PG.killsBy) already banked as score
+    lifeStartKills = 0,
     downed = false,
     downFor = 0.0,
     uiHealth = -1.0,
@@ -407,16 +409,14 @@ function Player:OnCreate()
     self.spawn = p
     Log.Info(string.format("Player ready at (%.2f, %.2f, %.2f)", p.x, p.y, p.z))
 
-    -- P5. PG.score is banked here and spent at the upgrade station, seeded once by whoever gets
-    -- here first. It lives in PG because there is no way to call into another entity's script
-    -- instance. What a round deals is not in PG any more: each round carries its shooter's damage
-    -- (PG.rounds, Player:Fire), because with several players there is no one "the gun".
+    -- P5 kept the score in PG.score and the damage in PG.damage, one each for the one player. With
+    -- several, both are the player's own: self.score, banked from the kills credited to this pawn
+    -- (PG.killsBy, Enemy:TakeDamage), and the damage each round carries (PG.rounds, Player:Fire).
     PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
     -- Set by the P5 gate after its fight (Player:ProbeTurn). Cleared here because PG lives in the
     -- shared Lua VM, which the editor keeps across Play and Stop: a gate run left it set, and the
     -- next ordinary Play would have had its enemies vanish on the first frame.
     PG.gateClear = false
-    PG.score = PG.score or 0
     self.health = self.maxHealth
     self:StartLoadout()
 
@@ -453,7 +453,7 @@ function Player:OnCollisionEnter(other)
     end
 
     if name == "Heal Spot" or name == "Upgrade Station" then
-        Audio.PlayOneShot("audio/chime.wav", nil, 0.8)
+        self:Chime()
     end
 
     if name == "Enemy" then
@@ -506,16 +506,16 @@ function Player:Hurt()
 end
 
 function Player:Upgrade()
-    if PG.score < self.upgradeCost then
+    if self.score < self.upgradeCost then
         self.refusedUpgrades = (self.refusedUpgrades or 0) + 1
         Log.Info(string.format("UPGRADE refused: score %d < cost %d",
-            PG.score, math.floor(self.upgradeCost)))
+            self.score, math.floor(self.upgradeCost)))
         return
     end
-    PG.score = PG.score - self.upgradeCost
+    self.score = self.score - self.upgradeCost
     self.upgrades = self.upgrades + 1
     Log.Info(string.format("UPGRADE bought: projectile damage -> %d, score left %d",
-        self:RoundDamage(), PG.score))
+        self:RoundDamage(), self.score))
 end
 
 -- ---- The online leaderboard (ONLINE.md O3) ---------------------------------------------------
@@ -525,6 +525,11 @@ end
 -- life is submitted when it ends, because there is no "submit when play stops": a request sent from
 -- OnDestroy is cancelled along with the instance (docs/engine/online.md). Going down and dying both
 -- end a life; the kills of a life that ends with none are not sent.
+--
+-- N5 G4: a life is counted where the pawn is authoritative, from the kills credited to it, and
+-- submitted by whoever plays it. Offline that is one place. On a server, EndLife sends the life to
+-- the pawn's clients as a reliable "life" event, and the one that controls it submits (OnNetEvent):
+-- the submission stays on the client, which is NETCODE.md's step 7.
 --
 -- The HUD block is written through RmlUi's Lua API (inner_rml), not the data model, whose two
 -- variables are declared in C++ and cannot be added to from the game branch. Every backend call
@@ -537,7 +542,6 @@ local function EscapeRml(text)
 end
 
 function Player:StartLeaderboard()
-    self.lifeStartKills = PG.kills or 0
     self.board = { rows = nil, best = nil, rank = nil, standingKnown = false, error = nil, lastLife = nil }
     self:DrawLeaderboard()
     self:FetchLeaderboard()
@@ -561,9 +565,48 @@ function Player:FetchLeaderboard()
     end)
 end
 
+-- Kills credited to this pawn, by round or by blade (Enemy:TakeDamage).
+function Player:Kills()
+    return PG.killsBy and PG.killsBy[self.id] or 0
+end
+
 function Player:EndLife(how)
-    local kills = (PG.kills or 0) - (self.lifeStartKills or 0)
-    self.lifeStartKills = PG.kills or 0
+    local total = self:Kills()
+    local kills = total - (self.lifeStartKills or 0)
+    self.lifeStartKills = total
+    if kills <= 0 then
+        return
+    end
+    if Net.IsServer() then
+        Net.Broadcast("life", { how = how, kills = kills }, true)
+        return
+    end
+    self:SubmitLife(how, kills)
+end
+
+-- What the server tells this pawn's clients. Only the one playing it acts.
+function Player:OnNetEvent(name, args)
+    if not self.entity:IsLocallyControlled() then
+        return
+    end
+    if name == "life" and args then
+        self:SubmitLife(args.how or "?", math.floor((args.kills or 0) + 0.5))
+    elseif name == "chime" then
+        Audio.PlayOneShot("audio/chime.wav", nil, 0.8)
+    end
+end
+
+-- The pickup and station chime is for the person playing the pawn: offline that is here, from a
+-- server it is an event to that pawn's clients.
+function Player:Chime()
+    if Net.IsServer() then
+        Net.Broadcast("chime", nil)
+    else
+        Audio.PlayOneShot("audio/chime.wav", nil, 0.8)
+    end
+end
+
+function Player:SubmitLife(how, kills)
     if kills <= 0 or not self.board then
         return
     end
@@ -640,6 +683,10 @@ end
 -- change, and **read straight back**, because a setter that silently drops its value would look
 -- exactly like a setter that worked.
 function Player:PushUI()
+    -- The HUD is the presenting player's: a server has none, and a remote pawn is not on it.
+    if not self.presenting then
+        return
+    end
     if self.health ~= self.uiHealth then
         self.uiHealth = self.health
         UI.SetHealth(self.health)
@@ -647,10 +694,10 @@ function Player:PushUI()
             self.uiMismatch = self.uiMismatch + 1
         end
     end
-    if PG.score ~= self.uiScore then
-        self.uiScore = PG.score
-        UI.SetScore(PG.score)
-        if UI.GetScore() ~= PG.score then
+    if self.score ~= self.uiScore then
+        self.uiScore = self.score
+        UI.SetScore(self.score)
+        if UI.GetScore() ~= self.score then
             self.uiMismatch = self.uiMismatch + 1
         end
     end
@@ -700,7 +747,7 @@ function Player:ProbeTurn(ts)
             -- upgrade - not on a timer. "Hurt, then stand 14 s" banked 2 kills only while enough
             -- enemies happened to cross the line of fire in time; when they moved more freely it
             -- banked 1, and the upgrade leg was refused. 60 s is the ceiling.
-            if (self.hits < 3 or PG.score < self.upgradeCost) and self.t < 60.0 then
+            if (self.hits < 3 or self.score < self.upgradeCost) and self.t < 60.0 then
                 return 0.0
             end
             self.probeHold = 0.0
@@ -710,7 +757,7 @@ function Player:ProbeTurn(ts)
         self.probeSlow = 1.0
         if self.probeHold <= 0.0 then
             Log.Info(string.format("%s probe %d done, standing at (%.2f, %.2f) hp=%.0f score=%d",
-                tag, self.probeWp, p.x, p.z, self.health, PG.score))
+                tag, self.probeWp, p.x, p.z, self.health, self.score))
             if self.probeWp >= #route then
                 self.probeDone = true
                 Log.Info(tag .. " route complete")
@@ -921,6 +968,9 @@ function Player:ServerFrame(ts)
     self.gun16 = self.gun or ""
     self.slot8 = self.equipped == "Gun" and 1 or 2
     self.down = self.downed
+    -- And for its own player's HUD: health in a byte, and the score.
+    self.hp8 = math.floor(math.max(0.0, math.min(255.0, self.health)) + 0.5)
+    self.score32 = self.score
     self:ServerReport()
 end
 
@@ -933,19 +983,20 @@ function Player:ServerReport()
     self.nextReport = self.nextReport + 5.0
     local me = self.entity:GetUUID()
     local fired = self.firedRounds or 0
-    if fired == (self.reportedFired or 0) and self.hits == (self.reportedHits or 0) then
+    if fired == (self.reportedFired or 0) and self.hits == (self.reportedHits or 0)
+        and self.score == (self.reportedScore or 0) then
         return
     end
-    self.reportedFired, self.reportedHits = fired, self.hits
+    self.reportedFired, self.reportedHits, self.reportedScore = fired, self.hits, self.score
     -- Rounds in flight, every shooter's: each one's record goes when it does (Projectile:OnDestroy).
     local flying = 0
     for _ in pairs(PG.rounds or {}) do
         flying = flying + 1
     end
     local p = self.entity:GetTranslation()
-    Log.Info(string.format("NET pawn %d at (%.1f, %.1f) hp=%.0f taken=%d | fired=%d hits=%d kills=%d gun=%s dmg=%d in-flight=%d",
-        me % 1000000, p.x, p.z, self.health, self.hits, fired, PG.hitsBy and PG.hitsBy[me] or 0,
-        PG.killsBy and PG.killsBy[me] or 0, self.gun or "none", self:RoundDamage(), flying))
+    Log.Info(string.format("NET pawn %d at (%.1f, %.1f) hp=%.0f taken=%d score=%d | fired=%d hits=%d kills=%d gun=%s dmg=%d in-flight=%d",
+        me % 1000000, p.x, p.z, self.health, self.hits, self.score, fired, PG.hitsBy and PG.hitsBy[me] or 0,
+        self:Kills(), self.gun or "none", self:RoundDamage(), flying))
 end
 
 -- The gun the server says this pawn holds: picked up or lost there (pickups and respawns are the
@@ -1030,8 +1081,11 @@ function Player:LocalFrame(ts)
     else
         self:AdoptGun()
         -- Down is the server's (Player:Hurt). It lands a round trip late, so going down or getting
-        -- up costs a correction or two; predicting the health would be G4's.
+        -- up costs a correction or two. Health and score are the server's too, for the HUD: they
+        -- are not predicted, and show a round trip late.
         self.downed = self.down or false
+        if self.hp8 then self.health = self.hp8 end
+        if self.score32 then self.score = self.score32 end
     end
 
     self:FollowCamera()
@@ -1164,11 +1218,12 @@ function Player:Simulate(ts)
         self.healed = self.healed + self.healRate * ts
     end
 
-    -- Score is banked from kills. Enemy.lua owns PG.kills, because the victim counts its own
-    -- death; this only notices the counter moving.
-    if PG.kills > self.lastKills then
-        PG.score = PG.score + (PG.kills - self.lastKills)
-        self.lastKills = PG.kills
+    -- Score is banked from this player's kills. Enemy.lua credits them (PG.killsBy), because the
+    -- victim counts its own death; this only notices its own counter moving.
+    local kills = self:Kills()
+    if kills > self.lastKills then
+        self.score = self.score + (kills - self.lastKills)
+        self.lastKills = kills
     end
 end
 
@@ -1544,7 +1599,7 @@ function Player:PickUpGun(gun, pickup)
     self:TakeGun(gun)
     pickup:Destroy()
     self.gunsTaken = self.gunsTaken + 1
-    Audio.PlayOneShot("audio/chime.wav", nil, 0.8)
+    self:Chime()
 
     local tossed = ""
     if old then
@@ -2104,7 +2159,7 @@ function Player:Diagnose(ts)
             "P5   hp=%.0f/%.0f taken=%d healed=%.0f gun=%s guns-taken=%d dmg=%d score=%d upgrades=%d "
             .. "triggers=%d ui-mismatch=%d",
             self.health, self.maxHealth, self.hits, self.healed, self.gun or "none", self.gunsTaken, self:RoundDamage(),
-            PG.score, self.upgrades, PG.triggers or 0, self.uiMismatch))
+            self.score, self.upgrades, PG.triggers or 0, self.uiMismatch))
         Log.Info(string.format(
             "P6   steps=%d muzzle-bursts=%d impacts=%d impacts-despawned=%d live-impacts=%d "
             .. "ui-health=%.0f ui-score=%d",
@@ -2144,9 +2199,13 @@ function Player:Diagnose(ts)
 end
 
 -- Where this pawn faces, for the other clients (RemoteFrame), written in OnTick on the server; and
--- what it holds, the gun on slot 1 and the slot in hand (1 gun, 2 knife), and whether it is down,
--- written in ServerFrame.
-Player.Replicated = { yaw8 = "u8", pitch8 = "u8", gun16 = "str16", slot8 = "u8", down = "bool" }
+-- what it holds, the gun on slot 1 and the slot in hand (1 gun, 2 knife), whether it is down, and
+-- its health and score for its own player's HUD, written in ServerFrame.
+Player.Replicated = {
+    yaw8 = "u8", pitch8 = "u8", gun16 = "str16", slot8 = "u8", down = "bool",
+    hp8 = "u8",
+    score32 = "tick",   -- a u32: "tick" is the field type that holds one
+}
 
 local ____exports = {}
 ____exports.default = Player

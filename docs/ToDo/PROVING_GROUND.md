@@ -3110,6 +3110,59 @@ The likely cause, not confirmed: the gate fires from a metre ahead of the chest,
 enemy pressing in at its 0.8 m standoff, and a round's script instance does not exist yet on its
 first step. It predates G2 and G3, and was not changed.
 
+### N9 — Co-op: G4, each player's own health, score and HUD (2026-10-19)
+
+NETCODE.md's stage G4. No engine change was needed. The rules stay as they were: a player goes down
+at 0 health and gets up in place 3 s later, and dies only by falling off the world. G6 changes
+them.
+
+**Score is per player.** `PG.score` is gone. `Player.score` is banked from the kills credited to that
+pawn (`PG.killsBy`, `Player:Kills`), and the upgrade station spends it. A knife kill is credited too:
+`MeleeAttacker` records whose blade it was in `PG.meleeBy`, from the capsule the player already names
+in `PG.meleeConfig`. Offline that keeps the old behaviour. On a server, two players no longer share
+one score.
+
+**The HUD is its own player's.** The server replicates `hp8` (health in a byte) and `score32` (a u32,
+declared as `tick`, the field type that holds one). The client playing the pawn shows those values.
+They are not predicted, so they arrive a round trip late. `PushUI` runs only for the pawn being
+presented: a server has no HUD, and a remote pawn is not on it.
+
+**A life is counted where the pawn is authoritative and submitted where it is played.** `EndLife`
+(going down, dying) takes the kills credited since the last life. Offline it submits, as before. On a
+server it sends a reliable `life` event to that pawn's clients, and the one controlling it submits
+(`Player:OnNetEvent`). The submission stays on the client, which is NETCODE.md's step 7. The
+pickup and station chime is the same kind of event (`chime`, unreliable), played only by the pawn's
+own player.
+
+**Pickups replicate.** The five on the rack, and the roots of `prefabs/pickups/*.gprefab`, carry
+`ReplicatedComponent`. A pickup the server takes disappears on every client, and the gun it tosses
+appears there. `Pickup.lua` ignores contacts on a client, as `Player.lua` already did.
+
+**Verified**, Windows x64 Debug, dev server on `scenes/ProvingGround.ganymede`, `lat:75`, with the
+backend running. The test moved the spawn points, gave guns on the server only, and made one pawn
+die at 16 s, all temporarily. The scripts were restored from copies and checked. Run B had three
+clients, each in its own mode, which the harness now allows.
+
+| Check | Result |
+|---|---|
+| Each HUD is its own (run A, two clients firing) | c1's showed health 100, 88, 82, the server's numbers for its pawn. c2's showed its score going to 1 at its first kill |
+| Heal (run B, c1 walking on and off the heal spot) | c1's HUD climbed back to 100 between hits; the server healed only that pawn |
+| Score and the end of a life (run B, c2 firing) | 2 kills credited to c2's pawn and banked as its score. When the server killed it at 16 s, c2 logged `LIFE OVER (died): 2 kills` and `SCORE submitted: 2 -> best 2, rank 5`. c2's HUD showed the respawn's health |
+| Pickups (run B, c3 walking through the LMG on the rack) | c3's pawn took the LMG, tossed the Rifle, and swapped back and forth on every pass. All three clients saw the same 7 Rifle and 6 LMG pickups appear and the taken ones go, and c3's gun change on its pawn (19 `EQUIP` each) |
+| Chime to its own player only | 20 on c1 (heal spot), 13 on c3 (pickups), 0 on c2 |
+| Prediction | 5, 0 and 10 corrections, up to 800 mm, the most on the pawn swapping guns and going down |
+| Offline, P5 gate (180 s) | the whole route, 0 errors. Score 2 from its own kills, spent at the upgrade station (damage 18) |
+
+**Found: a contact on an entity's first physics step never reaches its script.** The first run
+spawned the pawns already standing on the heal spot and on a pickup. The pickup heard both contacts,
+and the players heard neither: no heal, and no pickup. `ScriptEngine::OnCollisionEnter` drops a
+contact when the entity has no script instance, and a spawned entity gets its instance later in the
+frame than its first step. This is also G3's unexplained rounds: a round spawned inside an enemy
+damages it, but the round never hears the hit. It is an engine bug, recorded in cross-cutting.md.
+
+**Not seen:** the HUD in a window, the chime heard, and a knife kill being credited. Melee over the
+network is G5.
+
 ## Decisions, with the ones most likely wrong marked
 
 Recorded now so that when this moves to `docs/history/` we can see which held.
