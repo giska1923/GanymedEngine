@@ -35,10 +35,32 @@ one logs, because the failure mode for getting this order wrong is a black windo
 | `SceneRenderer(windowW, windowH)` | Owns the HDR target and the post stack. Skipped when `--headless` is set: there is no window and no backbuffer |
 | `SetOutputToBackbuffer(true)` | Retargets the post stack's final pass (FXAA, or tonemap when FXAA is off) at the backbuffer ([rendering.md](../engine/rendering.md)) |
 | `UIEngine::SetTarget(nullptr)` + `SetViewport(w, h)` | Sends the UI view to the backbuffer too. `SetViewportOrigin` stays at its (0,0) default — the game owns the whole window, so window-relative mouse positions are already UI-relative. Skipped when headless; `UIEngine` is not initialised |
-| `SceneSerializer::Deserialize` into the scene | **No `Scene::Copy`.** The copy exists to preserve the editor's edit-time scene across play/stop; there is no edit-time scene here and no stop. The scene is constructed as `SceneRole::Client` when `--connect` is set, and `Standalone` otherwise, before this deserialize and before `OnRuntimeStart`. Client builds the same systems as Standalone |
+| `SceneSerializer::Deserialize` into the scene | **No `Scene::Copy`.** The copy exists to preserve the editor's edit-time scene across play/stop; there is no edit-time scene here and no stop. The scene is constructed as `SceneRole::Client` when `--connect` or `--queue` is set, and `Standalone` otherwise, before this deserialize and before `OnRuntimeStart`. Client builds the same systems as Standalone |
 | `Scene::OnViewportResize` → `OnRuntimeStart` | Creates the Jolt world and instantiates Lua scripts |
 | `UIEngine::LoadDocument(config.UIDocument)` | After the scene starts, so a script's `OnCreate` has already written the HUD data model before first layout. Skipped when headless |
 | `Net::ConnectDev`, when `--connect` is set | After boot. The simulator was installed at the start of `OnAttach`, before `OnRuntimeStart`, so a script `JoinMatch` from `OnCreate` and this flag see the same `Sim` |
+
+### `--queue`: a match through the backend
+
+`GanymedRuntime <scene> --queue=coop --profile=<name>` plays one match with no menu.
+`RuntimeMatch` posts a ticket (`POST /v1/matchmaking/tickets`), or follows the profile's active
+one if the backend answers `already-queued`. It reads the ticket once a second until it is `ready`,
+then calls `Online::JoinMatch`, whose socket becomes the session. The scene has been a client scene
+since boot, so the join only attaches the session: nothing is reloaded mid-match. Once the session
+ends (the server has reported and exited, and 5 s of silence later the client counts it gone), it
+reads the ticket until it is `finished` or `failed`, and logs the result:
+
+```
+Match: finished: victory, rating +16
+```
+
+A queue that fails is retried 10 times, 3 s apart. A join that fails (JoinMatch's own three
+attempts) goes back to the ticket, three times. A headless runtime closes when its match is done.
+A window stays open on the finished scene, with the result in the log, until the game has a screen
+for it. The ticket is polled rather than waited on through the pushes: the ticket is the state of
+record ([online.md](../engine/online.md#matches)), and a script may be the one listening to the
+pushes. The client the scene's server expects must run the same scene file: scene entities match by
+UUID.
 
 `OnDetach` unwinds it: close documents → `OnRuntimeStop` → drop the scene and renderer →
 `AssetManager::Shutdown()` → `Net::ShutdownClient()`. The asset shutdown releases GPU caches, and
@@ -124,10 +146,11 @@ The runtime also accepts the dev-session flags. They are not `runtime.yaml` keys
 | Flag | Meaning |
 |---|---|
 | `--connect=<host:port>` | After boot, `HELLO dev:<name>` to that IPv4 address, then the session. No DNS. A bad `--net-sim` skips this and the process still runs |
+| `--queue=<mode>` | A whole match through the backend, with no menu ([below](#--queue-a-match-through-the-backend)). Not with `--connect`: that combination logs an error and the queue is dropped |
 | `--name=<name>` | The dev account. Default `p` plus the process id, so two runtimes differ |
 | `--net-sim=` | The send-path conditioner. See [netcode.md](../engine/netcode.md#the-conditioner) |
 | `--headless` | No window. The frame still simulates. See [the frame](#the-frame) |
-| `--net-test=` | `reliable:<count>`, `reliable-flood`, `spoof`, `offline`, `fields`, or a predict mode (`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`). `offline` is a standalone runtime and does not connect. The predict modes and `fields` need `--connect`. A name this process does not know is a logged failure, not exit 2. `move`, `spawn`, `prefab`, and `rest` are the dedicated process's flag, not this one |
+| `--net-test=` | `reliable:<count>`, `reliable-flood`, `spoof`, `offline`, `fields`, `bot`, `bot-idle`, or a predict mode (`predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`, `predict-fire`). `offline` is a standalone runtime and does not connect. The predict modes and `fields` need `--connect`. `bot` and `bot-idle` play a whole match, with `--connect` or `--queue`. A name this process does not know is a logged failure, not exit 2. `move`, `spawn`, `prefab`, and `rest` are the dedicated process's flag, not this one |
 
 `--connect=127.0.0.1:7777` is the usual pair with `GanymedDedicated --dev`. The session itself is
 [netcode.md](../engine/netcode.md).

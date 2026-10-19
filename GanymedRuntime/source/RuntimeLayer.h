@@ -3,6 +3,7 @@
 #include <GanymedE.h>
 
 #include "RuntimeConfig.h"
+#include "RuntimeMatch.h"
 
 namespace GanymedE {
 
@@ -35,6 +36,10 @@ namespace GanymedE {
 		// False when the scene never loaded. The layer still renders (clear colour, HUD)
 		// so the window is not a lie about being alive, but nothing is stepped.
 		bool m_RuntimeStarted = false;
+
+		// `--queue`: the match this runtime is playing, from the queue to the result.
+		Scope<RuntimeMatch> m_Match;
+		bool m_MatchClosed = false;
 	};
 
 }

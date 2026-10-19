@@ -145,6 +145,7 @@ namespace GanymedE::Net {
 			PlayerCommand Last{};
 			bool HaveLast = false;
 			uint32_t Repeats = 0;
+			uint32_t Missing = 0;    // ticks in a row with no command: how stale the repeat is
 			uint32_t RepeatsAtWalk = 0;
 			bool WalkMarked = false;
 		};
@@ -1510,12 +1511,27 @@ namespace GanymedE::Net {
 				cmd = it->second;
 				input.Last = cmd;
 				input.HaveLast = true;
+				input.Missing = 0;
 			}
 			else
 			{
 				cmd = input.HaveLast ? input.Last : PlayerCommand{};
 				cmd.Tick = tick;
 				input.Repeats++;
+				input.Missing++;
+				// A repeat covers a lost packet or two. Past that the player has most likely
+				// stopped sending (gone, or stalled), and a held trigger must not go on firing
+				// until the session times out 5 s later. The buttons go after 100 ms, the stick
+				// after half a second. The view is kept: it is where they were looking.
+				constexpr uint32_t kKeepButtons = 6;
+				constexpr uint32_t kKeepStick = 30;
+				if (input.Missing > kKeepButtons)
+				{
+					cmd.Jump = cmd.Fire = cmd.Melee = cmd.Interact = false;
+					cmd.Equip = 0;
+				}
+				if (input.Missing > kKeepStick)
+					cmd.MoveX = cmd.MoveZ = 0.0f;
 			}
 			if (!input.WalkMarked && (cmd.MoveX != 0.0f || cmd.MoveZ != 0.0f))
 			{
