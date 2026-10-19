@@ -691,8 +691,8 @@ and reach `first-game` by merge; game stages land on `first-game`.
 |---|---|---|---|
 | **E** | `master` | `Net.Players()`, `Net.AssignPawn(account, id)`, `Net.EndMatch(outcome)`; a spawned prefab replicates as that prefab (its `PrefabInstanceComponent` source); `--match-seconds 0` means only the game ends the match | **Done 2026-10-17**, below |
 | **G1** | `first-game` | A game-mode script; `Player` becomes a prefab; one pawn per account on the server, one offline; the scene camera follows the local pawn; movement and look in `OnTick`, presentation in `OnUpdate` | **Done 2026-10-17.** Recorded in `first-game`'s PROVING_GROUND.md (N9). With enemies frozen, 1 and 4 corrections in 20 s of reversing at `lat:75`. With them active, 239 on the pawn they chase: enemy contact on the server against 100 ms-old kinematic copies on the client, which G3 has to solve |
-| **G2** | `first-game` | Firing: the server spawns the real round, `Net.Shot` for the cosmetic, damage per shooter instead of `PG.damage` | rounds from both players damage enemies; each client sees the other's shots |
-| **G3** | `first-game` | Enemies simulate only on the server, target the nearest player, and animate on clients from replicated state | enemies chase and hurt both players; clients agree on where they are |
+| **G2** | `first-game` | Firing: the server spawns the real round, `Net.Shot` for the cosmetic, damage per shooter instead of `PG.damage` | **Done 2026-10-19.** Recorded in `first-game`'s PROVING_GROUND.md (N9). The engine half: the mouse buttons count only while the cursor is captured, the capturing click excluded, and `--net-test=predict-fire`. Two clients firing rifles: each kill took 9 rounds of the shooter's 12, and each client drew its own rounds and the other's (124 and 121, 128 and 135, in 20 s) |
+| **G3** | `first-game`, after a `master` change | Enemies simulate only on the server, target the nearest player, and animate on clients from replicated state. **Characters do not collide with enemies or with each other** (decided 2026-10-19): the character controller's own collision skips them, the same on the server and on a client, so an enemy pressing in cannot push the predicted pawn. Contact damage stays on the server | enemies chase and hurt both players; clients agree on where they are; corrections with enemies active near the frozen-enemy numbers |
 | **G4** | `first-game` | Health, down and respawn, pickups, heal, upgrade, score per player; the HUD for the local player | each player's HUD is their own |
 | **G5** | `first-game` | Melee: the server traces from its own animation, triggered by `cmd.Melee` | a knife hit on the server damages the enemy, and both clients see the swing |
 | **G6** | `first-game` | Waves, the win and loss rules above, `Net.EndMatch`; the backend's full path with four clients | the N5 verification table below |
@@ -766,10 +766,16 @@ the 5 s silence still does not call a script; a match-end script has to `Net.Bro
   purpose: the Proving Ground was built to test the engine, not to be networked. The split may show
   engine gaps (a missing `GetParent`, no animation time, no animation events) that the game worked
   around with tables. Each gap becomes a master change, then a merge, under the branch policy.
-- **Kinematic remote characters may block the predicted one badly.** Colliding with where others
-  were 100 ms ago is the standard compromise, but tight doorways with an enemy in them could produce
-  constant corrections. If N4 shows it, the fix is to make remote characters non-blocking for the
-  local character's queries (an object-layer filter), as many shooters do.
+- **Kinematic remote characters block the predicted one badly, and it has been measured.** Colliding
+  with where others were 100 ms ago is the standard compromise, but an enemy pressing into a pawn is
+  pressing into a copy 100 ms old on the client: 239 corrections in 20 s on the pawn the enemies
+  chased (G1), 178 with both players firing (G2). The fix, decided for G3, is the one named here:
+  the character controller does not collide with enemies or other characters, on either side.
+- **A player who stops sending keeps firing.** The server repeats the last command for a tick that
+  has none (`TakeCommand`), buttons included, until the session times out about 5 s later. G2's
+  runs showed it: the server's pawns fired on after their clients had closed. A repeat is right for
+  the stick over a lost packet or two. For the buttons, a cap is likely wanted, such as dropping
+  them after a few repeated ticks. Not changed yet.
 - **Two clocks to debug.** Bugs in tick estimation look like everything else (jitter, rubber-banding,
   dry buffers). The stats of N2 to N4 exist so that a symptom has a number before it gets a fix.
 - **The branch policy doubles the merges.** Engine fixes found while playing in N5 go to master

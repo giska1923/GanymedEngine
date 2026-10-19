@@ -52,11 +52,23 @@ JPH_SUPPRESS_WARNINGS
 
 namespace GanymedE {
 
+	// NON_MOVING and MOVING are Jolt's usual pair. The other two exist for the character step:
+	//
+	//   CHARACTER         every character's inner body. Other characters walk through it.
+	//   MOVING_PASSABLE   a moving body with RigidBodyComponent::BlocksCharacters off. Characters
+	//                     walk through it too.
+	//
+	// Only the character's own sweep skips them (CharacterSweepFilter). Bodies still collide with
+	// both, so contacts, projectiles and raycasts are unchanged. The reason is prediction: a client
+	// steps its own character against copies of everyone else drawn about 100 ms in the past, and
+	// whatever that character can be pushed by, the server pushes differently.
 	namespace Layers
 	{
 		static constexpr JPH::ObjectLayer NON_MOVING = 0;
 		static constexpr JPH::ObjectLayer MOVING = 1;
-		static constexpr JPH::ObjectLayer NUM_LAYERS = 2;
+		static constexpr JPH::ObjectLayer CHARACTER = 2;
+		static constexpr JPH::ObjectLayer MOVING_PASSABLE = 3;
+		static constexpr JPH::ObjectLayer NUM_LAYERS = 4;
 	}
 
 	class ObjectLayerPairFilterImpl : public JPH::ObjectLayerPairFilter
@@ -66,10 +78,23 @@ namespace GanymedE {
 		{
 			switch (inObject1)
 			{
-				case Layers::NON_MOVING: return inObject2 == Layers::MOVING;
+				case Layers::NON_MOVING: return inObject2 != Layers::NON_MOVING;
 				case Layers::MOVING:     return true;
+				case Layers::CHARACTER:  return inObject2 != Layers::CHARACTER;
+				case Layers::MOVING_PASSABLE: return true;
 				default:                 return false;
 			}
+		}
+	};
+
+	// What a character's own step collides with: the world and ordinary moving bodies, and not
+	// other characters or passable bodies (Layers, above).
+	class CharacterSweepFilter final : public JPH::ObjectLayerFilter
+	{
+	public:
+		bool ShouldCollide(JPH::ObjectLayer inLayer) const override
+		{
+			return inLayer == Layers::NON_MOVING || inLayer == Layers::MOVING;
 		}
 	};
 
@@ -87,6 +112,8 @@ namespace GanymedE {
 		{
 			m_ObjectToBroadPhase[Layers::NON_MOVING] = BroadPhaseLayers::NON_MOVING;
 			m_ObjectToBroadPhase[Layers::MOVING] = BroadPhaseLayers::MOVING;
+			m_ObjectToBroadPhase[Layers::CHARACTER] = BroadPhaseLayers::MOVING;
+			m_ObjectToBroadPhase[Layers::MOVING_PASSABLE] = BroadPhaseLayers::MOVING;
 		}
 
 		uint32_t GetNumBroadPhaseLayers() const override { return BroadPhaseLayers::NUM_LAYERS; }
@@ -120,7 +147,9 @@ namespace GanymedE {
 			switch (inLayer1)
 			{
 				case Layers::NON_MOVING: return inLayer2 == BroadPhaseLayers::MOVING;
-				case Layers::MOVING:     return true;
+				case Layers::MOVING:
+				case Layers::CHARACTER:
+				case Layers::MOVING_PASSABLE: return true;
 				default:                 return false;
 			}
 		}
@@ -697,7 +726,9 @@ namespace GanymedE {
 			}
 
 			JPH::EMotionType motionType = ToJoltMotionType(rb.Type);
-			JPH::ObjectLayer layer = (motionType == JPH::EMotionType::Static) ? Layers::NON_MOVING : Layers::MOVING;
+			JPH::ObjectLayer layer = Layers::NON_MOVING;
+			if (motionType != JPH::EMotionType::Static)
+				layer = rb.BlocksCharacters ? Layers::MOVING : Layers::MOVING_PASSABLE;
 
 			JPH::BodyCreationSettings settings(
 				shape,
@@ -836,12 +867,13 @@ namespace GanymedE {
 			// presence in the world; a character that nothing can detect is the odd case, and
 			// when one is wanted the answer is an object layer, not a bool on the component.
 			//
-			// MOVING, because it is Kinematic. That choice is also what keeps the contact stream
+			// CHARACTER, a moving layer of its own, so other characters' steps can skip it
+			// (CharacterSweepFilter). It is Kinematic, which is what keeps the contact stream
 			// quiet: Jolt does not pair two non-dynamic bodies (Body::sFindCollidingPairsCanCollide),
 			// so the inner body never reports the ground or a wall - only dynamic bodies, and
 			// sensors, which is exactly the set gameplay wants to hear about.
 			settings.mInnerBodyShape = shapeResult.Get();
-			settings.mInnerBodyLayer = Layers::MOVING;
+			settings.mInnerBodyLayer = Layers::CHARACTER;
 
 			auto character = new CharacterAccess(&settings,
 				JPH::RVec3(worldPos.x, worldPos.y, worldPos.z),
@@ -885,10 +917,9 @@ namespace GanymedE {
 		if (!stick)
 			update.mStickToFloorStepDown = JPH::Vec3::sZero();
 
+		const CharacterSweepFilter sweep;
 		character->ExtendedUpdate(fixedDeltaTime, gravity, update,
-			system.GetDefaultBroadPhaseLayerFilter(Layers::MOVING),
-			system.GetDefaultLayerFilter(Layers::MOVING),
-			{}, {}, temp);
+			system.GetDefaultBroadPhaseLayerFilter(Layers::MOVING), sweep, {}, {}, temp);
 	}
 
 	// Characters are stepped by hand, after the solver has moved everything they might stand on.

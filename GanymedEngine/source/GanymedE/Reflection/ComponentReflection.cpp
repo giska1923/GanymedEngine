@@ -501,7 +501,9 @@ namespace GanymedE::Reflection {
 				.data<&RigidBodyComponent::IsSensor>("IsSensor")
 					.custom<Attr>(Attr{}.Label("Is Sensor"))
 				.data<&RigidBodyComponent::ContinuousCollision>("ContinuousCollision")
-					.custom<Attr>(Attr{}.Label("Continuous Collision"));
+					.custom<Attr>(Attr{}.Label("Continuous Collision"))
+				.data<&RigidBodyComponent::BlocksCharacters>("BlocksCharacters")
+					.custom<Attr>(Attr{}.Label("Blocks Characters"));
 
 			GE_REFLECT_COMPONENT(CharacterControllerComponent)
 				.custom<Attr>(Attr{}.Label("Character Controller"))
@@ -748,7 +750,7 @@ namespace GanymedE::Reflection {
 		static_assert(sizeof(NativeScriptComponent) == 24, "NativeScriptComponent changed - reflect the new field");
 		static_assert(sizeof(AudioSourceComponent) == 24, "AudioSourceComponent changed - reflect the new field");
 		static_assert(sizeof(AudioListenerComponent) == 1, "AudioListenerComponent changed - reflect the new field");
-		static_assert(sizeof(RigidBodyComponent) == 20, "RigidBodyComponent changed - reflect the new field");
+		static_assert(sizeof(RigidBodyComponent) == 24, "RigidBodyComponent changed - reflect the new field");
 		static_assert(sizeof(CharacterControllerComponent) == 16, "CharacterControllerComponent changed - reflect the new field");
 		static_assert(sizeof(BoxColliderComponent) == 32, "BoxColliderComponent changed - reflect the new field");
 		static_assert(sizeof(SphereColliderComponent) == 24, "SphereColliderComponent changed - reflect the new field");
