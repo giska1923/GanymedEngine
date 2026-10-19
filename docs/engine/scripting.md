@@ -120,7 +120,10 @@ return Player
 
 All hooks are optional: `OnCreate`, `OnUpdate(ts)`, `OnTick(tick, cmd)`, `OnNetEvent(name, args)`,
 `OnShot(muzzle, direction, speed, tick)`, `OnDestroy`,
-`OnCollisionEnter(other, contact)`, `OnCollisionExit(other)`. `contact` is `{ point, normal }`,
+`OnCollisionEnter(other, contact)`, `OnCollisionExit(other)`. When the entity itself was destroyed,
+`OnDestroy` runs at the next update, after the entity is gone: `self.entity` is a dead handle then,
+and asking it anything but `IsValid()` asserts in Debug. Keep what `OnDestroy` needs, such as the
+entity's UUID, from `OnCreate`. `contact` is `{ point, normal }`,
 where this entity touched `other`, on other's surface, with that surface's outward normal; see
 [physics.md](physics.md#collision-events--scripts). Collision hooks are dispatched by
 `PhysicsSystem::DispatchCollisionEvents`, per fixed step inside the accumulator loop, so native
