@@ -3051,6 +3051,65 @@ only once `gun16` had told it what its pawn holds; in the pistol run everywhere.
 - **Someone else's round is drawn the moment it arrives**, while the shooter is drawn 100 ms in the
   past, so at a run it leaves a little ahead of the gun.
 
+### N9 — Co-op: G3, enemies against two players (2026-10-19)
+
+NETCODE.md's stage G3. G1 measured the problem: an enemy pressing into the pawn it chased cost 239
+corrections in 20 s, because on the server it pushes the real pawn, and on the client the predicted
+pawn meets a copy of the enemy 100 ms old. The decision (2026-10-19) was the standard fix: the
+character does not collide with enemies. The engine half landed on master first (`bb909e9`) and
+came here by merge. The engine-source diff against master stayed empty.
+
+**Passable bodies.** A character's own step now skips every other character's inner body, and any
+moving body with `RigidBodyComponent::BlocksCharacters` off (docs/engine/physics.md, "What a
+character walks through"). Everything else still collides with them. An enemy still meets the
+player's inner body, so on the server it is still stopped by the player, and the contact that hurts
+the player still fires. Players walk through enemies and through each other, and nothing pushes a
+player but the world. The 7 enemies have `BlocksCharacters: false`, and so has the round
+(`prefabs/Projectile.gprefab`). The first G3 run left rounds blocking, and two players standing
+still while firing drifted up to 2.5 m on the server, shoved by each other's rounds, for 12 and 8
+corrections. With rounds passable it was 0 and 0.
+
+**Nearest player.** Every pawn puts itself in `PG.pawns` (`Player:OnCreate`, gone in `OnDestroy`).
+`Enemy:Player()` takes the nearest live one, re-chosen twice a second, instead of
+`FindEntityByName("Player")`, which found the same pawn for every enemy. A hit from an unseen
+shooter sends the enemy to search where the shooter is (the round's `shooter`, from G2), rather than
+toward the nearest player.
+
+**Clients draw enemies from two bytes.** The server writes `facing8` (the yaw in a byte) and
+`anim8` (0 idle, 1 walking, 2 hunting) at the end of `Enemy:OnUpdate`. On a client, `Enemy:Present`
+turns the Body to the facing, sets the state and `moving` from `anim8`, and calls the same `Animate`,
+so the clip choice is one function on both sides.
+
+**Down is replicated** (`Player.down`, a bool), because it roots the pawn: `Drive` uses speed 0 while
+down. The first loss run without it had 92 and 52 corrections, and nearly all came after each pawn
+went down, at about one a frame: the client walked a pawn the server held. The owner's prediction
+reads it now. It still arrives a round trip late, so going down and getting up cost a correction
+or two. Predicting the health would be G4's.
+
+**Verified**, Windows x64 Debug, dev server on `scenes/ProvingGround.ganymede`, two headless
+runtimes at `lat:75`:
+
+| Check | Result |
+|---|---|
+| Prediction, enemies active (`predict-loss`, as G1) | **6 and 4 corrections** in 20 s, with both pawns hurt, downed and up again during the run. G1: 239 and 16 here, 1 and 4 with enemies frozen |
+| Prediction, both firing (`predict-fire`, the Rifle given on the server only) | **0 and 0 corrections**. 5 enemies killed, 3 and 2 by each player; both pawns hurt (hp 28 and 40) |
+| Both players chased and hurt | in the loss run, 37 acquisitions were of the pawn at x 0 and 109 of the pawn at x 2.5 (G1: all 11 of one pawn), and both pawns took 17 touches and went down |
+| Clients agree on enemies | sampled once a second on the server and both clients (a temporary probe, removed). Where all three had the enemy standing, positions matched within 2 cm, the log's rounding. Moving samples differ by up to 3 m, the distance a charge covers within one second's sampling skew, so they say nothing |
+| Clients animate enemies | both clients logged the server's clips: `Slow_Orc_Walk`, `run_fast_4` for the charge, the Sentry's axe idle |
+| Offline, P5 gate (180 s headless) | the whole route, 0 errors. Through the 14 s fight it stood at its probe point, (1.74, −1.79) to the centimetre: before, the enemies shoved it off. It still took contact damage, went down once at 17 touches, killed 2, and finished `live=0`, `inWall=0` |
+
+**Not seen:**
+
+- Enemies on screen. The clients were headless, so the clips are what the animator reported.
+- Two players walking through each other in a window.
+
+**Found in passing:** in the P5 gate's fight, rounds that kill enemies are not counted by the round.
+`hits` stays near 2 while 2 kills take 18, and the pre-G2 baseline reads the same at 15 s
+(`fired=151 hits=1`). The enemy hears those contacts; the round does not, and it lives out its 3 s.
+The likely cause, not confirmed: the gate fires from a metre ahead of the chest, which is inside an
+enemy pressing in at its 0.8 m standoff, and a round's script instance does not exist yet on its
+first step. It predates G2 and G3, and was not changed.
+
 ## Decisions, with the ones most likely wrong marked
 
 Recorded now so that when this moves to `docs/history/` we can see which held.

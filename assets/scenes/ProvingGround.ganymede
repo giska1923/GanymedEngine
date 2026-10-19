@@ -466,6 +466,7 @@ Entities:
       UseGravity: true
       LockRotation: true
       IsSensor: false
+      BlocksCharacters: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -528,6 +529,7 @@ Entities:
       UseGravity: true
       LockRotation: true
       IsSensor: false
+      BlocksCharacters: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -590,6 +592,7 @@ Entities:
       UseGravity: true
       LockRotation: true
       IsSensor: false
+      BlocksCharacters: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -652,6 +655,7 @@ Entities:
       UseGravity: true
       LockRotation: true
       IsSensor: false
+      BlocksCharacters: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -714,6 +718,7 @@ Entities:
       UseGravity: true
       LockRotation: true
       IsSensor: false
+      BlocksCharacters: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -776,6 +781,7 @@ Entities:
       UseGravity: true
       LockRotation: true
       IsSensor: false
+      BlocksCharacters: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
@@ -841,6 +847,7 @@ Entities:
       UseGravity: true
       LockRotation: true
       IsSensor: false
+      BlocksCharacters: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]

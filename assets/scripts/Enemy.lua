@@ -36,6 +36,17 @@
 
 PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
 
+-- A yaw in a byte, for the clients: 1.4 degrees a step.
+local TWO_PI = 2.0 * math.pi
+
+local function PackYaw(yaw)
+    return math.floor((yaw % TWO_PI) / TWO_PI * 256.0 + 0.5) % 256
+end
+
+local function UnpackYaw(byte)
+    return (byte or 0) / 256.0 * TWO_PI
+end
+
 local Enemy = {
     entity = nil,
     Properties = {
@@ -133,14 +144,27 @@ function Enemy:OnCreate()
         self.label, p.x, p.y, p.z, self.health, self.state))
 end
 
+-- The nearest pawn, from PG.pawns (Player:OnCreate), re-chosen twice a second: often enough to
+-- turn on whoever comes closer, rarely enough that two players at the same distance do not flip
+-- it every frame. With one player this is the player, as it always was.
 function Enemy:Player()
-    -- Resolved lazily and re-resolved if it goes away. FindEntityByName is a linear scan over
-    -- TagComponent, so this caches rather than paying for it every frame on every enemy.
-    if self.playerEntity and self.playerEntity:IsValid() then
+    if self.playerEntity and self.playerEntity:IsValid() and self.t < (self.retargetAt or 0.0) then
         return self.playerEntity
     end
-    self.playerEntity = Scene.FindEntityByName("Player")
-    return self.playerEntity
+    self.retargetAt = self.t + 0.5
+    local p = self.entity:GetTranslation()
+    local best, bestD = nil, math.huge
+    for _, pawn in pairs(PG.pawns or {}) do
+        if pawn:IsValid() then
+            local q = pawn:GetTranslation()
+            local d = (q.x - p.x) * (q.x - p.x) + (q.z - p.z) * (q.z - p.z)
+            if d < bestD then
+                best, bestD = pawn, d
+            end
+        end
+    end
+    self.playerEntity = best
+    return best
 end
 
 -- Returns sees, distance, blockerName.
@@ -193,8 +217,9 @@ function Enemy:OnUpdate(ts)
 
     -- N5. On a client the server owns this enemy: its pose arrives in snapshots (it is replicated
     -- in the scene), and running the AI here too would fight that. What a client still owes it is
-    -- its animation, which G3 drives from replicated state.
+    -- its facing and its animation, from two replicated bytes (Present).
     if Net.IsClient() then
+        self:Present()
         return
     end
 
@@ -253,6 +278,26 @@ function Enemy:OnUpdate(ts)
     end
 
     self:Move(ts, dist)
+    self:Animate()
+
+    -- What a client needs to draw it (Present). The pose replicates on its own; the facing lives on
+    -- the Body child, and the clip follows the state.
+    self.facing8 = PackYaw(self.facing)
+    self.anim8 = (self.state == "hunt") and 2 or (self.moving and 1 or 0)
+end
+
+-- On a client: the facing and the clip the server chose. Animate reads only the state and whether
+-- it is moving, so those are set from anim8 and the same function picks the clip.
+function Enemy:Present()
+    if self.anim8 == nil then
+        return
+    end
+    self.facing = UnpackYaw(self.facing8)
+    if self.body then
+        self.body:SetRotation(Vec3(0, self.facing + math.pi, 0))
+    end
+    self.state = (self.anim8 == 2) and "hunt" or "patrol"
+    self.moving = self.anim8 >= 1
     self:Animate()
 end
 
@@ -456,12 +501,14 @@ function Enemy:OnCollisionEnter(other)
     -- went through rather than off - after which it fell forever while the route above cheerfully
     -- reported reaching every remaining waypoint, because those are measured in XZ only.
     --
-    -- The engine half of that is recorded in docs/ToDo/cross-cutting.md: Jolt can refuse the push
-    -- per contact (CharacterContactSettings::mCanPushCharacter) but only through a
-    -- CharacterContactListener, and the engine installs none.
+    -- N5 G3 ended the shove: an enemy has BlocksCharacters off in the scene, so a character's step
+    -- walks through it and nothing it does can move the player (docs/engine/physics.md). The
+    -- contact still fires, because the enemy still meets the player's inner body. It was needed
+    -- for the network as much as for this: on a client, the enemy pushing the predicted pawn is a
+    -- copy 100 ms old.
     --
-    -- The game half is this: land a touch, then back off. It is what melee AI does anyway, and it
-    -- bounds the shove to the moment of contact instead of letting it run for a minute.
+    -- Landing a touch and then backing off stays. It is what melee AI does anyway, and it was the
+    -- workaround for the shove until G3.
     if other:GetName() == "Player" then
         self.touches = self.touches + 1
         self.lungeCooldown = 1.5
@@ -493,12 +540,13 @@ function Enemy:TakeDamage(amount, by)
         PG.hitsBy[by] = (PG.hitsBy[by] or 0) + 1
     end
 
-    -- Hit from somewhere it cannot see: go and look. Standard, and it is also the only path in
+    -- Hit from somewhere it cannot see: go and look - where the shot came from, when the round
+    -- names its shooter, else at the nearest player. Standard, and it is also the only path in
     -- this script that reaches "search" without ever having had line of sight.
     if self.state ~= "hunt" then
-        local player = self:Player()
-        if player then
-            self.lastSeen = player:GetTranslation()
+        local from = by and Scene.FindEntityByUUID(by) or self:Player()
+        if from then
+            self.lastSeen = from:GetTranslation()
             self.state = "search"
             self.lostFor = 0.0
         end
@@ -521,6 +569,9 @@ function Enemy:TakeDamage(amount, by)
     -- instead of destroying them, which would leave the mesh child in the scene forever.
     self.entity:Destroy()
 end
+
+-- Where it faces and what it is doing, for the clients (Present). Written by the server's OnUpdate.
+Enemy.Replicated = { facing8 = "u8", anim8 = "u8" }
 
 local ____exports = {}
 ____exports.default = Enemy

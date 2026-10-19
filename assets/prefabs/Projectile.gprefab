@@ -38,6 +38,7 @@ Entities:
       UseGravity: false
       LockRotation: true
       ContinuousCollision: true
+      BlocksCharacters: false
     SphereColliderComponent:
       Radius: 0.5
       Offset: [0, 0, 0]

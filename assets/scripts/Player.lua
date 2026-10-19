@@ -362,6 +362,13 @@ local P5_ROUTE = {
 }
 
 function Player:OnCreate()
+    -- Every pawn, wherever it runs, for the enemies to choose from (Enemy:Player). By UUID, kept
+    -- here because OnDestroy cannot ask a destroyed entity for it.
+    self.id = self.entity:GetUUID()
+    PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
+    PG.pawns = PG.pawns or {}
+    PG.pawns[self.id] = self.entity
+
     self.yawEntity = self.entity:GetChildByName("Yaw")
     if not self.yawEntity then
         Log.Error("Player: no child named 'Yaw' - turning and the camera will not work")
@@ -463,6 +470,12 @@ function Player:OnCollisionEnter(other)
         self.inHeal = self.inHeal + 1
     elseif name == "Upgrade Station" then
         self:Upgrade()
+    end
+end
+
+function Player:OnDestroy()
+    if PG and PG.pawns and self.id then
+        PG.pawns[self.id] = nil
     end
 end
 
@@ -903,13 +916,16 @@ function Player:ServerFrame(ts)
     self:FallCheck(ts)
     self:Simulate(ts)
     self:Animate(ts)
-    -- What the clients draw in this pawn's hands (RemoteFrame, AdoptGun).
+    -- What the clients draw in this pawn's hands (RemoteFrame, AdoptGun), and whether it is down,
+    -- which roots it: its own client predicts with that (Drive), or it walks a pawn the server holds.
     self.gun16 = self.gun or ""
     self.slot8 = self.equipped == "Gun" and 1 or 2
+    self.down = self.downed
     self:ServerReport()
 end
 
--- Every 5 s while this pawn has fired anything new: its rounds, and what they did.
+-- Every 5 s while anything has happened to this pawn: its rounds and what they did, and the
+-- touches it has taken.
 function Player:ServerReport()
     if self.t < self.nextReport then
         return
@@ -917,18 +933,19 @@ function Player:ServerReport()
     self.nextReport = self.nextReport + 5.0
     local me = self.entity:GetUUID()
     local fired = self.firedRounds or 0
-    if fired == (self.reportedFired or 0) then
+    if fired == (self.reportedFired or 0) and self.hits == (self.reportedHits or 0) then
         return
     end
-    self.reportedFired = fired
+    self.reportedFired, self.reportedHits = fired, self.hits
     -- Rounds in flight, every shooter's: each one's record goes when it does (Projectile:OnDestroy).
     local flying = 0
     for _ in pairs(PG.rounds or {}) do
         flying = flying + 1
     end
-    Log.Info(string.format("NET pawn %d fired=%d hits=%d kills=%d gun=%s dmg=%d in-flight=%d",
-        me % 1000000, fired, PG.hitsBy and PG.hitsBy[me] or 0, PG.killsBy and PG.killsBy[me] or 0,
-        self.gun or "none", self:RoundDamage(), flying))
+    local p = self.entity:GetTranslation()
+    Log.Info(string.format("NET pawn %d at (%.1f, %.1f) hp=%.0f taken=%d | fired=%d hits=%d kills=%d gun=%s dmg=%d in-flight=%d",
+        me % 1000000, p.x, p.z, self.health, self.hits, fired, PG.hitsBy and PG.hitsBy[me] or 0,
+        PG.killsBy and PG.killsBy[me] or 0, self.gun or "none", self:RoundDamage(), flying))
 end
 
 -- The gun the server says this pawn holds: picked up or lost there (pickups and respawns are the
@@ -1012,6 +1029,9 @@ function Player:LocalFrame(ts)
         self:Simulate(ts)
     else
         self:AdoptGun()
+        -- Down is the server's (Player:Hurt). It lands a round trip late, so going down or getting
+        -- up costs a correction or two; predicting the health would be G4's.
+        self.downed = self.down or false
     end
 
     self:FollowCamera()
@@ -1083,6 +1103,7 @@ function Player:RemoteFrame(ts)
     self.lastDrawn = p
 
     self:AdoptGun()
+    self.downed = self.down or false
     local slot = self.slot8 == 1 and "Gun" or "Knife"
     if self.slot8 and slot ~= self.equipped then
         self:Equip(slot)
@@ -2123,8 +2144,9 @@ function Player:Diagnose(ts)
 end
 
 -- Where this pawn faces, for the other clients (RemoteFrame), written in OnTick on the server; and
--- what it holds, the gun on slot 1 and the slot in hand (1 gun, 2 knife), written in ServerFrame.
-Player.Replicated = { yaw8 = "u8", pitch8 = "u8", gun16 = "str16", slot8 = "u8" }
+-- what it holds, the gun on slot 1 and the slot in hand (1 gun, 2 knife), and whether it is down,
+-- written in ServerFrame.
+Player.Replicated = { yaw8 = "u8", pitch8 = "u8", gun16 = "str16", slot8 = "u8", down = "bool" }
 
 local ____exports = {}
 ____exports.default = Player
