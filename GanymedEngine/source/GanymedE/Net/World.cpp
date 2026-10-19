@@ -250,6 +250,9 @@ namespace GanymedE::Net {
 			float ViewYaw = 0.0f;
 			float ViewPitch = 0.0f;
 			bool LookNoted = false;
+			// The mouse buttons are game input only once they have been seen up with the cursor
+			// captured. The click that captured it is not a shot.
+			bool ButtonsArmed = false;
 			bool LoggedInput = false;
 			bool LoggedMoved = false;
 			uint32_t OfflineTicks = 0;
@@ -1532,7 +1535,13 @@ namespace GanymedE::Net {
 			// Look only while the cursor is captured. A game that releases the cursor (Escape, a
 			// menu) must be able to move the mouse without turning the player.
 			if (Input::GetCursorMode() != CursorMode::Locked)
+			{
+				world.ButtonsArmed = false;
 				return;
+			}
+			if (!world.ButtonsArmed && !Input::IsGameMouseButtonPressed(Mouse::Button0)
+				&& !Input::IsGameMouseButtonPressed(Mouse::Button1))
+				world.ButtonsArmed = true;
 			const glm::vec2 mouse = Input::GetGameMouseDelta();
 			world.ViewYaw -= mouse.x * 0.002f;
 			world.ViewPitch -= mouse.y * 0.002f;
@@ -1568,9 +1577,9 @@ namespace GanymedE::Net {
 			}
 			if (Input::IsGameKeyPressed(Key::Space))
 				cmd.Jump = true;
-			if (Input::IsGameMouseButtonPressed(Mouse::Button0))
+			if (world.ButtonsArmed && Input::IsGameMouseButtonPressed(Mouse::Button0))
 				cmd.Fire = true;
-			if (Input::IsGameMouseButtonPressed(Mouse::Button1))
+			if (world.ButtonsArmed && Input::IsGameMouseButtonPressed(Mouse::Button1))
 				cmd.Melee = true;
 			if (Input::IsGameKeyPressed(Key::E))
 				cmd.Interact = true;

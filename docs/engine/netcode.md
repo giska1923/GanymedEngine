@@ -323,8 +323,8 @@ a path that is empty, longer than 80, contains `..`, or uses a character outside
 
 `GanymedDedicated --net-test=` is `move`, `spawn`, `prefab`, `rest`, `churn`, `fields`, or a predict
 mode: `predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`. Anything else
-exits 2, including under `--dev`. The runtime accepts those predict names too, plus `fields`,
-`offline`, `reliable:<count>`, `reliable-flood` and `spoof`. A name it does not know is a logged
+exits 2, including under `--dev`. The runtime accepts those predict names too, plus `predict-fire`,
+`fields`, `offline`, `reliable:<count>`, `reliable-flood` and `spoof`. A name it does not know is a logged
 connect failure, not exit 2. The two parsers are not the same list. The modes are how N3, N4 and
 the N5 engine hooks were measured. They are not a game mode.
 
@@ -408,7 +408,9 @@ interact, and bits 4–7 the equip slot, 0–15.
 −1, `D` +1, normalised so a diagonal is not faster. Yaw and pitch are the view: the mouse delta,
 0.002 radians a pixel, summed once a frame, pitch clamped to ±1.4. **Look accumulates only while
 the cursor is captured** (`Cursor.Locked`), so a released cursor can move over a menu without
-turning the player. Space is jump, the left button fire, the right button melee, `E` interact, and
+turning the player. The mouse buttons are held to the same rule, and one more: after the cursor
+is captured they count only once they have been seen up, so the click that captured it is not a
+shot. Space is jump, the left button fire, the right button melee, `E` interact, and
 the number keys the equip slot. The script decides what the stick means: a pawn reads it in its own
 frame, by its yaw.
 
@@ -514,7 +516,8 @@ is unchanged.
 The checks live on `--net-test`. `predict` holds forward. `predict-loss` reverses every 30 ticks.
 `predict-desync` teleports the pawn +3 m on X at 180 ticks after spawn, on an even tick so the
 snapshot includes it. `predict-wall` walks diagonally into a wall. `predict-step` walks at a 0.2 m
-step. The floor, the wall and the step are static boxes created the same way on both sides. They
+step. `predict-fire` is the runtime's alone: it stands, turns a full circle every 12 s, and holds
+the trigger 2 s in every 3, against whatever scene the server runs. The floor, the wall and the step are static boxes created the same way on both sides. They
 are not replicated; collision does not care that the UUIDs differ. The floor covers the 240 m a
 4 m/s walk covers in 60 s. A 20 m pad ends that walk in the air. The pawn is
 `assets/prefabs/NetWalker.gprefab`, spawned by the server when the account appears. The client

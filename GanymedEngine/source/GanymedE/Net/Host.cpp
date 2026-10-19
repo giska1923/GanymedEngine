@@ -710,7 +710,7 @@ namespace GanymedE::Net {
 			}
 			if (test == "offline" || test == "predict" || test == "predict-loss"
 				|| test == "predict-desync" || test == "predict-wall" || test == "predict-step"
-				|| test == "fields")
+				|| test == "predict-fire" || test == "fields")
 				return true;
 			error = "--net-test is 'spoof', 'reliable:<count>', 'reliable-flood', a predict mode, or 'fields'";
 			return false;

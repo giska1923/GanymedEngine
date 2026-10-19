@@ -23,7 +23,7 @@ namespace GanymedE::Net::Test {
 		enum class Mode
 		{
 			None, Move, Spawn, Prefab, Rest, Churn,
-			Predict, PredictLoss, PredictDesync, PredictWall, PredictStep, Offline, Fields
+			Predict, PredictLoss, PredictDesync, PredictWall, PredictStep, PredictFire, Offline, Fields
 		};
 
 		// The 500 of `spawn` are destroyed at 18 s of server ticks.
@@ -63,14 +63,14 @@ namespace GanymedE::Net::Test {
 		bool IsPredict(Mode mode)
 		{
 			return mode == Mode::Predict || mode == Mode::PredictLoss || mode == Mode::PredictDesync
-				|| mode == Mode::PredictWall || mode == Mode::PredictStep;
+				|| mode == Mode::PredictWall || mode == Mode::PredictStep || mode == Mode::PredictFire;
 		}
 
 		uint32_t PredictSpan(Mode mode)
 		{
 			if (mode == Mode::Predict)
 				return 3600;
-			if (mode == Mode::PredictLoss)
+			if (mode == Mode::PredictLoss || mode == Mode::PredictFire)
 				return 1200;
 			return 600;
 		}
@@ -181,6 +181,8 @@ namespace GanymedE::Net::Test {
 			state.Current = Mode::PredictWall;
 		else if (mode == "predict-step")
 			state.Current = Mode::PredictStep;
+		else if (mode == "predict-fire")
+			state.Current = Mode::PredictFire;
 		else if (mode == "fields")
 			state.Current = Mode::Fields;
 		else if (mode == "offline")
@@ -396,6 +398,14 @@ namespace GanymedE::Net::Test {
 		{
 			cmd.MoveX = 1.0f;
 			cmd.MoveZ = 1.0f;
+		}
+		else if (mode == Mode::PredictFire)
+		{
+			// Stand, turn a full circle every 12 s, and hold the trigger 2 s in every 3: sustained
+			// fire for an automatic gun, and a fresh press each cycle for a semi-automatic one.
+			const uint32_t t = cmd.Tick - from;
+			cmd.Yaw = static_cast<float>(t % 720) * (6.2831853f / 720.0f);
+			cmd.Fire = (t % 180) < 120;
 		}
 		else
 			cmd.MoveZ = 1.0f;
