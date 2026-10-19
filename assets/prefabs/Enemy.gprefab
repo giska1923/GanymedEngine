@@ -1,6 +1,6 @@
 Prefab: Enemy
 Entities:
-  - Entity: 1
+  - Entity: 3000000000000000070
     TagComponent:
       Tag: Enemy
     TransformComponent:
@@ -10,16 +10,16 @@ Entities:
     RelationshipComponent:
       Parent: 0
       Children:
-        - 2
+        - 3000000000000000080
     ScriptComponent:
       Script: 3000000000000000093
-    RigidBodyComponent:
-      Type: 1
-      Mass: 70
-      LinearDamping: 0.0500000007
-      AngularDamping: 0.0500000007
-      UseGravity: true
-      LockRotation: true
+      Fields:
+        - Name: label
+          Type: String
+          Value: W
+        - Name: seek
+          Type: Bool
+          Value: true
     AudioSourceComponent:
       Clip: 17648988721109958119
       Group: SFX
@@ -29,12 +29,22 @@ Entities:
       PlayOnStart: true
       Spatialize: true
       Stream: false
+    RigidBodyComponent:
+      Type: 1
+      Mass: 70
+      LinearDamping: 0.0500000007
+      AngularDamping: 0.0500000007
+      UseGravity: true
+      LockRotation: true
+      IsSensor: false
+      BlocksCharacters: false
     BoxColliderComponent:
       HalfExtents: [0.349999994, 0.899999976, 0.349999994]
       Offset: [0, 0, 0]
       Friction: 0.5
       Restitution: 0
-  - Entity: 2
+    ReplicatedComponent: {}
+  - Entity: 3000000000000000080
     TagComponent:
       Tag: Body
     TransformComponent:
@@ -42,9 +52,9 @@ Entities:
       Rotation: [0, 3.14159274, 0]
       Scale: [1, 1, 1]
     RelationshipComponent:
-      Parent: 1
+      Parent: 3000000000000000070
       Children:
-        []
+        - 3000000000000000755
     StaticMeshComponent:
       Mesh: 6030618387453150548
       MaterialOverrides: [9019350524092801456]
@@ -53,3 +63,116 @@ Entities:
       Speed: 1
       Playing: true
       Loop: true
+  - Entity: 3000000000000000755
+    TagComponent:
+      Tag: Axe
+    TransformComponent:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000080
+      Children:
+        - 3000000000000000756
+        - 3000000000000000757
+        - 3000000000000000758
+        - 3000000000000000759
+        - 3000000000000000760
+        - 3000000000000000761
+        - 3000000000000000762
+        - 3000000000000000763
+    StaticMeshComponent:
+      Mesh: 5282366377563608684
+      MaterialOverrides: [9305541366150441952]
+    BoneAttachmentComponent:
+      Joint: RightHand
+      Offset: [-0.000283288307, 0.317630214, -0.105859888]
+      Rotation: [-0.583957264, 0.251956076, -0.397519803]
+  - Entity: 3000000000000000756
+    TagComponent:
+      Tag: Trace1
+    TransformComponent:
+      Translation: [-0.107604504, 0.315358892, -0.00089944982]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000755
+      Children:
+        []
+  - Entity: 3000000000000000757
+    TagComponent:
+      Tag: Trace2
+    TransformComponent:
+      Translation: [-0.115838216, 0.278735714, -0.000206522437]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000755
+      Children:
+        []
+  - Entity: 3000000000000000758
+    TagComponent:
+      Tag: Trace3
+    TransformComponent:
+      Translation: [-0.107614826, 0.235842136, 7.24687779e-05]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000755
+      Children:
+        []
+  - Entity: 3000000000000000759
+    TagComponent:
+      Tag: Grip
+    TransformComponent:
+      Translation: [0.0921565552, -0.213676023, -0.0415049999]
+      Rotation: [2.78406266, -1.15085151, 1.55173337]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000755
+      Children:
+        []
+  - Entity: 3000000000000000760
+    TagComponent:
+      Tag: Grip_Ork
+    TransformComponent:
+      Translation: [0.145387773, -0.289660828, -0.0839901728]
+      Rotation: [0.629815974, 0.0216706531, 0.466556992]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000755
+      Children:
+        []
+  - Entity: 3000000000000000761
+    TagComponent:
+      Tag: Grip_Necron
+    TransformComponent:
+      Translation: [0.0975126551, -0.221321578, -0.0457798379]
+      Rotation: [1.24472702, -0.891551777, 0.783729287]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000755
+      Children:
+        []
+  - Entity: 3000000000000000762
+    TagComponent:
+      Tag: Grip_Eldar
+    TransformComponent:
+      Translation: [0.104431128, -0.231197339, -0.0513016447]
+      Rotation: [1.57323382, -0.95364683, 1.11321446]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000755
+      Children:
+        []
+  - Entity: 3000000000000000763
+    TagComponent:
+      Tag: Grip_Soldier
+    TransformComponent:
+      Translation: [0.0992252104, -0.223766162, -0.0471466713]
+      Rotation: [0.827608394, -0.598915058, 0.660846298]
+      Scale: [1, 1, 1]
+    RelationshipComponent:
+      Parent: 3000000000000000755
+      Children:
+        []

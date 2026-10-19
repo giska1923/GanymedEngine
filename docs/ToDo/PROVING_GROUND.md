@@ -3206,6 +3206,75 @@ trigger 2 s in every 3 while enemies closed in.
 hits land in `PG.meleeDamage` under the player's id, and `Player.lua` has never read them. Contact
 damage is what hurts players.
 
+### N9 — Co-op: G6, waves, the match's end, and the backend's whole path (2026-10-19)
+
+NETCODE.md's stage G6. The engine half landed on master first (`d7978e7`) and came here by merge,
+and the engine-source diff against master stayed empty:
+
+- `GanymedRuntime --queue=coop` plays one match through the backend with no menu: queue, follow the
+  ticket, join, and read the result.
+- `--net-test=bot` and `bot-idle` are clients that play a whole match.
+- The server's repeat of a missing command now drops the buttons after 100 ms and the stick after
+  500 ms.
+
+**The rules** (NETCODE.md step 6), in `GameMode.lua`, on the server:
+
+- **Waves.** The 7 placed enemies are wave 1. Clearing a wave spawns the next from
+  `prefabs/Enemy.gprefab` at the placed enemies' spots. Wave 2 is 4 + 2 per player and wave 3 is
+  6 + 3 per player. Clearing wave 3 is **victory**. The last 2 of a wave come looking for the
+  players (`PG.huntRemaining`). Without that, the Sentry, posted inside the Blockhouse where nobody
+  standing at the spawns passes, held wave 1 open for good.
+- **Defeat:** everyone down at once; the 15-minute limit (`timeLimit`, from the first arrival);
+  everyone gone; or nobody arriving within 120 s (`noShow`), so a match always ends.
+- **Respawn.** In a match, a downed player is back at their own spawn point 10 s later, with full
+  health and the starting loadout. Enemies pass over a downed player for the nearest one still up.
+  A downed player can no longer fire, which was possible before G6. Offline is unchanged: down is
+  3 s, then up in place, and nothing ends.
+- The outcome goes to `Net.EndMatch`. `assets/dedicated.yaml` now loads this scene, with an
+  18-minute defeat timer only as a backstop.
+
+**The Enemy prefab was stale.** `prefabs/Enemy.gprefab` was a 2-entity enemy from before the axe. It
+is regenerated from the scene's E1 (11 entities), with `label: W` and the new `seek: true`. A wave
+enemy starts out searching, and re-aims at the nearest player every second, because a spawned enemy
+cannot be given a patrol leg. Its first generation had a bad regex that dropped the root's rigid
+body, collider and `ReplicatedComponent`. Wave 2 then stood still on its markers and never reached a
+client, and an assertion in the generator now catches that. The Sentry gets an authored way out of
+the Blockhouse (`exit1`, `exit2`: lined up on its doorway, then outside), walked once when it is sent
+looking. There is no pathfinding (Decision 5), so a post with one door has its door written down. No
+wave marker is inside the Blockhouse.
+
+**Verified**, Windows x64 Debug. The backend ran in Compose (two replicas), and the backend's own
+`fleetagent` ran `GanymedDedicated` with `--root` on the engine tree and this scene. Headless
+runtimes queued with `--queue=coop`. The clients are bots that stand and turn, so most runs needed
+temporary aids, applied to the scripts for one run and removed after by restoring checked copies:
+
+- `guns`: the server hands out Rifles;
+- `nohurt`: contact damage 0, so standing bots survive to the end;
+- `hurt34`: contact damage 34, so a wipe can happen inside the 10 s respawn window;
+- `limit60`: a 60 s time limit.
+
+| N5 check | Result |
+|---|---|
+| The backend's own acceptance test | `fleetagent -- GanymedDedicated` with `gscli load coop 4`: queue drained in 0.86 s into one 4-player match, servers ready in about 1.07 s, `WELCOME:4`, `finished:4` with results `defeat -16:4`. gscli players say HELLO and never open a session, so the game mode's 120 s no-show rule ended it, which is what that rule is for |
+| The whole path, victory (4 clients, `bot`, `guns,nohurt`) | queued, matched as 4 after the fill wait, joined. Waves 1, 2 (12 enemies) and 3 (18) cleared at 107 s. `MATCH VICTORY`, reported. Each client logged `Match: finished: victory, rating +16`, then exited. 0 errors |
+| Defeat, a wipe (2 clients, `bot-idle`, `hurt34`) | the first pawn went down; the enemies passed it over for the other, which went down 6 s later, inside the respawn window: `MATCH DEFEAT: all 2 players down`. Both tickets `defeat, rating -16`. With no aid, two standing players were not wiped in 300 s (the first time, enemies kept pressing the downed pawn, which is when they learned to pass over it). With no aid and the two walking (the loss run below), they were wiped in 20 s |
+| Defeat, the time limit (2 clients, `bot-idle`, `nohurt,limit60`) | `MATCH DEFEAT: the 60 s time limit`, exactly 60 s after the first arrival. Both tickets `defeat, rating -16` |
+| Abandoned (2 clients, both killed at 40 s) | 5 s later both sessions timed out, their pawns went, and `MATCH DEFEAT: everyone left`. The backend's `match_results` row: `defeat`, -16, 2 players. The killed clients could not read their tickets themselves |
+| A player leaves (3 clients, `bot`, `guns,nohurt`, c3 killed at 46 s) | c3's session timed out and its pawn was removed; the others played on, waves 2 and 3 now sized for 2 players, to victory at 75 s; c1 and c2 `victory, rating +16`. c3's pawn fired 20 rounds in the 5 s around the kill against 28 for the others, and no more: the stale-repeat rule, not measured more precisely than that. The backend credited the win to all 3, leaver included |
+| Under a bad network (4 clients, `lat:75,loss:5` on every send path, `guns,nohurt`) | victory at 114 s, all four `victory, rating +16`. Measured loss 4.4–5.2% each way. RTT 210–240 ms early, up to 460 ms during wave 3, which is more than the 150 ms simulated; most likely the Debug server slowing under 4 players and 30 enemies, not measured. Clients took 13–16 KB/s down and 0.6 KB/s up in wave 3; the server sent each about 3 KB/s on average. The bots stand still, so their 0 corrections say nothing; two walking clients at the same conditions on the dev server had 5 and 7 (G3, without loss: 6 and 4) |
+| Offline | the runtime alone: one pawn, down three times and up in place after 3 s, no match, 0 errors. The P5 gate: the whole route, 0 errors, and no wave spawned when the gate cleared the enemies (`PG.gateRun`) |
+
+**Not run:**
+
+- Linux: the dedicated process has no Linux build in this tree yet (NETCODE.md).
+- The editor's Play.
+- Any of this in a window.
+- A wave cleared offline.
+- A no-aid victory: standing bots cannot win against contact damage, which says nothing about the
+  tuning for people.
+
+The numbers (wave sizes, 10 s, 15 minutes, `HUNT_REMAINING`) are tuning, as NETCODE.md says.
+
 ## Decisions, with the ones most likely wrong marked
 
 Recorded now so that when this moves to `docs/history/` we can see which held.

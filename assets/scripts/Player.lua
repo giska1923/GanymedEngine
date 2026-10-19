@@ -35,6 +35,10 @@ local UPGRADE_DAMAGE = 2
 -- a gun's rate is counted in ticks wherever it fires.
 local TICK = 1.0 / 60.0
 
+-- N5 G6, the co-op rules (NETCODE.md): in a match, a downed player is back at their spawn point
+-- after this long, unless everyone is down at once, which is the game mode's defeat.
+local RESPAWN_DELAY = 10.0
+
 -- How each gun sits on this rig: scale, socket joint, offset, rotation (Euler X*Y*Z radians), and
 -- whether the left hand holds it too. The same numbers prefabs/weapons/<Gun>.gprefab carries, from
 -- the Meshy tooling's holds.json (weapon_holds.py). They live here as well because the guns on Body
@@ -419,6 +423,10 @@ function Player:OnCreate()
     self.health = self.maxHealth
     self:StartLoadout()
 
+    -- The gate modes measure the map as it was: no waves (GameMode). Set either way, because PG
+    -- outlives a Play in the editor.
+    PG.gateRun = (self.autopilot or self.losgate or self.p5gate or self.autofire) and true or false
+
     if self.p5gate then
         PG.freeze = false
         Log.Info("P5GATE armed")
@@ -475,6 +483,9 @@ end
 function Player:OnDestroy()
     if PG and PG.pawns and self.id then
         PG.pawns[self.id] = nil
+    end
+    if PG and PG.pawnDown and self.id then
+        PG.pawnDown[self.id] = nil
     end
 end
 
@@ -919,7 +930,8 @@ function Player:TriggerTick(tick, cmd)
     -- after switching to it is not mistaken for a button still held.
     local pressed = cmd.Fire and not self.triggerHeld
     self.triggerHeld = cmd.Fire
-    if self.equipped == "Gun" and self.gun then
+    -- Down is out: no shooting from the floor (Melee refuses the same way).
+    if self.equipped == "Gun" and self.gun and not self.downed then
         self:PullTrigger(cmd.Fire, pressed, tick)
     end
     -- Time spent not firing is not banked as a burst: the carry in PullTrigger is only the part
@@ -972,6 +984,8 @@ function Player:ServerFrame(ts)
     self.gun16 = self.gun or ""
     self.slot8 = self.equipped == "Gun" and 1 or 2
     self.down = self.downed
+    PG.pawnDown = PG.pawnDown or {}
+    PG.pawnDown[self.id] = self.downed
     -- And for its own player's HUD: health in a byte, and the score.
     self.hp8 = math.floor(math.max(0.0, math.min(255.0, self.health)) + 0.5)
     self.score32 = self.score
@@ -1220,7 +1234,14 @@ function Player:Simulate(ts)
 
     if self.downed then
         self.downFor = self.downFor + ts
-        if self.downFor > 3.0 then
+        -- N5 G6: in a match, down is out for RESPAWN_DELAY and then back at the spawn point, if the
+        -- match is still on: everyone down at once is the game mode's defeat. Offline there is no
+        -- match to lose, and down is the 3 s in place it always was.
+        if Net.IsServer() then
+            if self.downFor > RESPAWN_DELAY then
+                self:Respawn()
+            end
+        elseif self.downFor > 3.0 then
             self.downed = false
             self.health = self.maxHealth
             Log.Info("PLAYER up again (in place - see Player:Hurt)")
@@ -1583,6 +1604,23 @@ function Player:Die(reason)
     self.pendingHurt, self.hurtCooldown = 0, 0.0
     self:StartLoadout()
     self:PushUI()
+end
+
+-- Back at the spawn point after being down in a match (Simulate), with full health and the starting
+-- loadout, as a death gives. The life already ended when the player went down (Hurt).
+function Player:Respawn()
+    self.downed, self.downFor = false, 0.0
+    self.health = self.maxHealth
+    self.pendingHurt, self.hurtCooldown = 0, 0.0
+    if self.attack and self.body then
+        self.body:SetAnimationLooping(true)
+    end
+    self.attack = nil
+    self.entity:Teleport(self.spawn)
+    self.entity:SetLinearVelocity(Vec3(0, 0, 0))
+    self:StartLoadout()
+    Log.Info(string.format("PLAYER respawned at (%.1f, %.1f, %.1f) after %.0f s down",
+        self.spawn.x, self.spawn.y, self.spawn.z, RESPAWN_DELAY))
 end
 
 -- Put a gun on slot 1 and in hand.

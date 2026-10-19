@@ -71,6 +71,15 @@ local Enemy = {
         -- 0.8 is just under the two half-widths (0.35 + 0.35), so they press in.
         standoff = 0.8,
         label = "E",          -- what it calls itself in the log
+        -- A wave enemy (GameMode, prefabs/Enemy.gprefab): it starts out searching for the nearest
+        -- player and keeps searching, instead of idling where it was spawned. Spawned enemies
+        -- cannot be given a patrol leg, and a wave that never finds anyone never ends.
+        seek = false,
+        -- A way out, for an enemy posted somewhere a straight line cannot leave (the Sentry in the
+        -- Blockhouse): walked in order the first time it goes looking. Zero is none. There is no
+        -- pathfinding (Decision 5), so a post with one door gets its door written down.
+        exit1 = Vec3(0, 0, 0),
+        exit2 = Vec3(0, 0, 0),
         -- Yaw in engine convention (0 faces -Z). Idle sentries never walk, so they never
         -- recompute this; author it to face the opening they are meant to watch.
         facing = 0.0,
@@ -84,6 +93,11 @@ local Enemy = {
     eyeHeight = 0.60,
     standoff = 0.8,
     label = "E",
+    seek = false,
+    exit1 = Vec3(0, 0, 0),
+    exit2 = Vec3(0, 0, 0),
+    exits = nil,
+    exitStep = 1,
 
     dead = false,
     state = "idle",           -- idle | patrol | hunt | search
@@ -109,6 +123,12 @@ local Enemy = {
 }
 
 function Enemy:OnCreate()
+    -- Every live enemy, for the game mode's wave count. By the id kept here: OnDestroy cannot ask
+    -- a destroyed entity for it.
+    self.id = self.entity:GetUUID()
+    PG.enemies = PG.enemies or {}
+    PG.enemies[self.id] = true
+
     self.maxHealth = self.health
     local p = self.entity:GetTranslation()
     self.home = p
@@ -140,13 +160,34 @@ function Enemy:OnCreate()
         self.body:SetRotation(Vec3(0, self.facing + math.pi, 0))
     end
 
+    self.exits = {}
+    for _, e in ipairs({ self.exit1, self.exit2 }) do
+        if e.x ~= 0.0 or e.z ~= 0.0 then
+            self.exits[#self.exits + 1] = e
+        end
+    end
+
+    if self.seek then
+        self.state = "search"
+        self.lostFor = 0.0
+        self.lastSeen = p
+    end
+
     Log.Info(string.format("Enemy %s up at (%.1f, %.1f, %.1f) health=%d state=%s",
         self.label, p.x, p.y, p.z, self.health, self.state))
 end
 
--- The nearest pawn, from PG.pawns (Player:OnCreate), re-chosen twice a second: often enough to
--- turn on whoever comes closer, rarely enough that two players at the same distance do not flip
--- it every frame. With one player this is the player, as it always was.
+function Enemy:OnDestroy()
+    if PG and PG.enemies and self.id then
+        PG.enemies[self.id] = nil
+    end
+end
+
+-- The nearest pawn that is up, from PG.pawns (Player:OnCreate), re-chosen twice a second: often
+-- enough to turn on whoever comes closer, rarely enough that two players at the same distance do
+-- not flip it every frame. A downed player is passed over (PG.pawnDown, written by the server's
+-- Player): pressing on someone who cannot be hurt any more leaves their teammate alone. Offline
+-- nothing writes PG.pawnDown, and the one player is the target, down or not, as it always was.
 function Enemy:Player()
     if self.playerEntity and self.playerEntity:IsValid() and self.t < (self.retargetAt or 0.0) then
         return self.playerEntity
@@ -154,8 +195,8 @@ function Enemy:Player()
     self.retargetAt = self.t + 0.5
     local p = self.entity:GetTranslation()
     local best, bestD = nil, math.huge
-    for _, pawn in pairs(PG.pawns or {}) do
-        if pawn:IsValid() then
+    for id, pawn in pairs(PG.pawns or {}) do
+        if pawn:IsValid() and not (PG.pawnDown and PG.pawnDown[id]) then
             local q = pawn:GetTranslation()
             local d = (q.x - p.x) * (q.x - p.x) + (q.z - p.z) * (q.z - p.z)
             if d < bestD then
@@ -274,9 +315,22 @@ function Enemy:OnUpdate(ts)
     elseif self.state == "hunt" then
         self.state = "search"
         self.lostFor = 0.0
+    elseif (self.state == "idle" or self.state == "patrol") and PG.huntRemaining then
+        -- The last of a wave come looking (GameMode): a sentry nobody walks past would otherwise
+        -- hold the wave, and the match, open for good.
+        self.seek = true
+        self.state = "search"
+        self.lostFor = 0.0
+        self.lastSeen = player and player:GetTranslation() or self.entity:GetTranslation()
     elseif self.state == "search" then
         self.lostFor = self.lostFor + ts
-        if self.lostFor > 4.0 then
+        if self.seek then
+            -- Head for wherever the nearest player is now, every second.
+            if player and self.lostFor > 1.0 then
+                self.lastSeen = player:GetTranslation()
+                self.lostFor = 0.0
+            end
+        elseif self.lostFor > 4.0 then
             self.state = self.leg and "patrol" or "idle"
         end
     end
@@ -336,6 +390,13 @@ function Enemy:Move(ts, dist)
             end
         elseif dist < self.standoff then
             tx, tz = nil, nil
+        end
+    elseif self.state == "search" and self.seek and self.exitStep <= #self.exits then
+        -- Out of its post first, one written-down point at a time.
+        local e = self.exits[self.exitStep]
+        tx, tz, speed = e.x, e.z, self.chargeSpeed * 0.6
+        if (e.x - p.x) * (e.x - p.x) + (e.z - p.z) * (e.z - p.z) < 0.36 then
+            self.exitStep = self.exitStep + 1
         end
     elseif self.state == "search" and self.lastSeen then
         tx, tz, speed = self.lastSeen.x, self.lastSeen.z, self.chargeSpeed * 0.6

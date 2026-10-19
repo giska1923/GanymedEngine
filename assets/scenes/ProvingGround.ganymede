@@ -821,6 +821,12 @@ Entities:
     ScriptComponent:
       Script: 3000000000000000093
       Fields:
+        - Name: exit1
+          Type: Vec3
+          Value: [16.5, 0, -5]
+        - Name: exit2
+          Type: Vec3
+          Value: [16.5, 0, 1.5]
         - Name: facing
           Type: Float
           Value: 3.1415927400000001
