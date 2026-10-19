@@ -31,6 +31,10 @@ for i, name in ipairs(GUN_LADDER) do
 end
 local UPGRADE_DAMAGE = 2
 
+-- One physics step (PhysicsSettings::FixedTimestep). The trigger runs once a tick, in OnTick, so
+-- a gun's rate is counted in ticks wherever it fires.
+local TICK = 1.0 / 60.0
+
 -- How each gun sits on this rig: scale, socket joint, offset, rotation (Euler X*Y*Z radians), and
 -- whether the left hand holds it too. The same numbers prefabs/weapons/<Gun>.gprefab carries, from
 -- the Meshy tooling's holds.json (weapon_holds.py). They live here as well because the guns on Body
@@ -205,7 +209,7 @@ local Player = {
     heat = 0.0,           -- spread bloom, 0 (first-shot cone) to 1 (full cone)
     sinceShot = 0.0,
     spreadStats = nil,    -- [gun] = cones used and deviations measured, for the 5 s report
-    triggerHeld = false,  -- LMB held (and armed) last frame: the semi-automatic pistol fires on a press
+    triggerHeld = false,  -- cmd.Fire last tick: the semi-automatic pistol fires on a press
     shots = nil,          -- [gun] = rounds fired by the trigger, for the 5 s report
     refused = 0,
 
@@ -396,11 +400,11 @@ function Player:OnCreate()
     self.spawn = p
     Log.Info(string.format("Player ready at (%.2f, %.2f, %.2f)", p.x, p.y, p.z))
 
-    -- P5. PG.damage is what an enemy subtracts when a round lands, and it lives in PG because
-    -- there is no way to call into another entity's script instance; PG.score is banked here and
-    -- spent at the upgrade station. Both are seeded once, by whoever gets here first.
+    -- P5. PG.score is banked here and spent at the upgrade station, seeded once by whoever gets
+    -- here first. It lives in PG because there is no way to call into another entity's script
+    -- instance. What a round deals is not in PG any more: each round carries its shooter's damage
+    -- (PG.rounds, Player:Fire), because with several players there is no one "the gun".
     PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
-    PG.damage = 0
     -- Set by the P5 gate after its fight (Player:ProbeTurn). Cleared here because PG lives in the
     -- shared Lua VM, which the editor keeps across Play and Stop: a gate run left it set, and the
     -- next ordinary Play would have had its enemies vanish on the first frame.
@@ -497,9 +501,8 @@ function Player:Upgrade()
     end
     PG.score = PG.score - self.upgradeCost
     self.upgrades = self.upgrades + 1
-    PG.damage = (self.gun and GUN_DAMAGE[self.gun] or 0) + UPGRADE_DAMAGE * self.upgrades
     Log.Info(string.format("UPGRADE bought: projectile damage -> %d, score left %d",
-        PG.damage, PG.score))
+        self:RoundDamage(), PG.score))
 end
 
 -- ---- The online leaderboard (ONLINE.md O3) ---------------------------------------------------
@@ -749,17 +752,20 @@ end
 -- animate, draw the HUD. With a server, a pawn has three different lives, and each frame below is
 -- one of them:
 --
---   OnTick        on the server, offline, and on the client for its own pawn. Movement and look,
---                 from the command, once per physics step. A correction replays it, so it must
---                 be safe to run again: it reads the command and the body, and writes the body.
---   ServerFrame   the server's once-a-frame: health, down, heal, score, and the animation melee
---                 will trace from. No input, no camera, no HUD.
+--   OnTick        on the server, offline, and on the client for its own pawn. Movement, look,
+--                 the weapon slots and the trigger, from the command, once per physics step. A
+--                 correction replays it, so it must be safe to run again: movement reads the
+--                 command and the body and writes the body, and the trigger (TriggerTick) skips
+--                 a tick it has already fired on.
+--   ServerFrame   the server's once-a-frame: health, down, heal, score, the animation melee will
+--                 trace from, and the gun in hand for the clients. No input, no camera, no HUD.
 --   LocalFrame    the pawn someone is playing, offline or on their own client: the cursor, the
 --                 camera rig, the HUD and the leaderboard, footsteps, animation. Offline it is
---                 also the authority, so firing, melee, pickups and health run here too; on a
---                 client those wait for G2-G5 to put them on the command.
+--                 also the authority, so melee, pickups and health run here too; on a client
+--                 those wait for G4-G5.
 --   RemoteFrame   someone else's pawn, on a client: where it faces, from two replicated bytes,
---                 and how it moves, estimated from where it is drawn.
+--                 how it moves, estimated from where it is drawn, and what it holds. Its shots
+--                 arrive as OnShot.
 --
 -- The facing is replicated as bytes because a character's root never rotates (SyncTransforms
 -- writes it from the controller), so the snapshot's own yaw field is always zero for it.
@@ -810,6 +816,53 @@ function Player:OnTick(tick, cmd)
     self:Drive(rx * cmd.MoveX - fx * cmd.MoveZ, rz * cmd.MoveX - fz * cmd.MoveZ)
 
     self.yaw8, self.pitch8 = PackYaw(self.yaw), PackPitch(self.pitch)
+    self:TriggerTick(tick, cmd)
+end
+
+-- The weapon slots and the trigger, once a tick, from the command. Wherever OnTick runs:
+--
+--   the server   the real round, which is what damages (PG.rounds), and Net.Shot for everyone else
+--   offline      the real round, and its flash and bang
+--   the client   for its own pawn, a cosmetic round, flash and bang straight away, rather than a
+--                round trip later. Only on a tick it has not simulated before: a correction
+--                replays OnTick, and a replayed tick must not fire again
+--
+-- The cooldown, the heat and the spread's random numbers all follow the ticks, so the client and
+-- the server fire the same rounds from the same commands. The melee half of the button waits for
+-- G5; offline it is still LocalFrame's.
+function Player:TriggerTick(tick, cmd)
+    if self.autofire then
+        return
+    end
+    if Net.IsClient() then
+        if self.newestTick and tick <= self.newestTick then
+            return
+        end
+        self.newestTick = tick
+    end
+
+    if not self.attack then
+        if cmd.Equip == 1 then self:Equip("Gun")
+        elseif cmd.Equip == 2 then self:Equip("Knife") end
+    end
+
+    self.fireCooldown = self.fireCooldown - TICK
+    self.sinceShot = self.sinceShot + TICK
+    if self.sinceShot > SPREAD_RECOVER_DELAY then
+        self.heat = math.max(0.0, self.heat - TICK / SPREAD_RECOVER)
+    end
+    -- The press, for the semi-automatic pistol: tracked whatever is in hand, so a press straight
+    -- after switching to it is not mistaken for a button still held.
+    local pressed = cmd.Fire and not self.triggerHeld
+    self.triggerHeld = cmd.Fire
+    if self.equipped == "Gun" and self.gun then
+        self:PullTrigger(cmd.Fire, pressed, tick)
+    end
+    -- Time spent not firing is not banked as a burst: the carry in PullTrigger is only the part
+    -- of a tick that a shot overran.
+    if self.fireCooldown < 0.0 then
+        self.fireCooldown = 0.0
+    end
 end
 
 -- Keep the body's own vertical velocity. Overwriting it with 0 would cancel gravity and the
@@ -832,6 +885,9 @@ function Player:OnUpdate(ts)
         return
     end
     self.t = self.t + ts
+    -- Rounds spawned last frame exist now: give them their speed. The server's real ones, and
+    -- every client's cosmetic ones.
+    self:PushPending()
 
     if Net.IsServer() then
         self:ServerFrame(ts)
@@ -847,6 +903,46 @@ function Player:ServerFrame(ts)
     self:FallCheck(ts)
     self:Simulate(ts)
     self:Animate(ts)
+    -- What the clients draw in this pawn's hands (RemoteFrame, AdoptGun).
+    self.gun16 = self.gun or ""
+    self.slot8 = self.equipped == "Gun" and 1 or 2
+    self:ServerReport()
+end
+
+-- Every 5 s while this pawn has fired anything new: its rounds, and what they did.
+function Player:ServerReport()
+    if self.t < self.nextReport then
+        return
+    end
+    self.nextReport = self.nextReport + 5.0
+    local me = self.entity:GetUUID()
+    local fired = self.firedRounds or 0
+    if fired == (self.reportedFired or 0) then
+        return
+    end
+    self.reportedFired = fired
+    -- Rounds in flight, every shooter's: each one's record goes when it does (Projectile:OnDestroy).
+    local flying = 0
+    for _ in pairs(PG.rounds or {}) do
+        flying = flying + 1
+    end
+    Log.Info(string.format("NET pawn %d fired=%d hits=%d kills=%d gun=%s dmg=%d in-flight=%d",
+        me % 1000000, fired, PG.hitsBy and PG.hitsBy[me] or 0, PG.killsBy and PG.killsBy[me] or 0,
+        self.gun or "none", self:RoundDamage(), flying))
+end
+
+-- The gun the server says this pawn holds: picked up or lost there (pickups and respawns are the
+-- server's), so a client follows it, for its own pawn and everyone else's.
+function Player:AdoptGun()
+    local gun = self.gun16
+    if gun == nil or gun == (self.gun or "") then
+        return
+    end
+    if gun == "" then
+        self:StartLoadout()
+    elseif GUNS[gun] then
+        self:TakeGun(gun)
+    end
 end
 
 -- Once, the first frame this pawn is the one being played: the camera, the HUD, the leaderboard.
@@ -886,22 +982,15 @@ function Player:LocalFrame(ts)
         self.lmbArmed = true
     end
     local attackHeld = self.looking and self.lmbArmed and lmbDown
-    -- The press, for the semi-automatic pistol: tracked every frame, whatever is in hand, so a
-    -- click straight after switching to it is not mistaken for a button still held.
-    local attackPressed = attackHeld and not self.triggerHeld
-    self.triggerHeld = attackHeld
 
     if offline then
-        self:FireFrame(ts, attackHeld, attackPressed)
+        -- The gate modes' trigger. A person's is the command's (TriggerTick), as are the slots.
+        self:FireFrame(ts)
 
-        -- ---- weapon slots and melee ----
+        -- ---- melee ----
         -- The same button attacks with whatever is in hand. Not on the click that captures the
         -- cursor (attackHeld), which for a melee weapon would commit the player to a three-second
         -- swing.
-        if not self.attack then
-            if Input.IsKeyPressed(Key.D1) then self:Equip("Gun")
-            elseif Input.IsKeyPressed(Key.D2) then self:Equip("Knife") end
-        end
         self:Melee(ts, attackHeld)
 
         -- ---- the gate modes' steering ----
@@ -921,7 +1010,8 @@ function Player:LocalFrame(ts)
 
         self:FallCheck(ts)
         self:Simulate(ts)
-        self:PushPending()
+    else
+        self:AdoptGun()
     end
 
     self:FollowCamera()
@@ -932,12 +1022,12 @@ function Player:LocalFrame(ts)
     self:Diagnose(ts)
 end
 
--- The fire block that used to sit in OnUpdate. Offline only until G2 puts the trigger on the
--- command and the round on the server.
-function Player:FireFrame(ts, attackHeld, attackPressed)
-    -- The same left button captures the cursor and then fires, which is the convention every
-    -- shooter uses: the first click is "I am playing now", the rest are shots. attackHeld (above)
-    -- is what keeps the capturing click out.
+-- The gate modes' trigger, once a frame and offline only: they predate commands, and their numbers
+-- were measured this way. A person's trigger is TriggerTick.
+function Player:FireFrame(ts)
+    if not (self.autofire or self:GateDriving()) then
+        return
+    end
     self.fireCooldown = self.fireCooldown - ts
     self.sinceShot = self.sinceShot + ts
     if self.sinceShot > SPREAD_RECOVER_DELAY then
@@ -958,8 +1048,6 @@ function Player:FireFrame(ts, attackHeld, attackPressed)
         -- Only on the first leg, and at the gun's own rate rather than every frame: this is meant
         -- to look like someone shooting back.
         self:PullTrigger(true, false)
-    elseif self.equipped == "Gun" and self.gun then
-        self:PullTrigger(attackHeld, attackPressed)
     end
     -- Time spent not firing is not banked as a burst: the carry in PullTrigger is only the part
     -- of a frame that a shot overran.
@@ -993,6 +1081,12 @@ function Player:RemoteFrame(ts)
         self.estVel = Vec3(e.x + (v.x - e.x) * k, e.y + (v.y - e.y) * k, e.z + (v.z - e.z) * k)
     end
     self.lastDrawn = p
+
+    self:AdoptGun()
+    local slot = self.slot8 == 1 and "Gun" or "Knife"
+    if self.slot8 and slot ~= self.equipped then
+        self:Equip(slot)
+    end
 
     self.yaw, self.pitch = UnpackYaw(self.yaw8), UnpackPitch(self.pitch8)
     if self.yawEntity then
@@ -1355,7 +1449,6 @@ end
 -- respawn gives back. Whatever gun was carried is gone.
 function Player:StartLoadout()
     self.gun = nil
-    PG.damage = 0
     self:Equip("Knife", true)
     local start = (self.autofire or self.autopilot or self.losgate or self.p5gate) and "Rifle" or self.startGun
     if start ~= "" then
@@ -1404,12 +1497,16 @@ function Player:Die(reason)
     self:PushUI()
 end
 
--- Put a gun on slot 1 and in hand. Its damage is its rung of the ladder plus the upgrades bought.
+-- Put a gun on slot 1 and in hand.
 function Player:TakeGun(gun)
     self.gun = gun
     self.heat = 0.0
-    PG.damage = GUN_DAMAGE[gun] + UPGRADE_DAMAGE * self.upgrades
     self:Equip("Gun", true)
+end
+
+-- What one of this player's rounds deals: the gun's rung of the ladder plus the upgrades bought.
+function Player:RoundDamage()
+    return (self.gun and GUN_DAMAGE[self.gun] or 0) + UPGRADE_DAMAGE * self.upgrades
 end
 
 -- Walking into "<Gun> Pickup". The same gun as the one on slot 1 does nothing, and the pickup stays.
@@ -1441,7 +1538,7 @@ function Player:PickUpGun(gun, pickup)
             Log.Warn(string.format("Player: could not toss %s - the spawn was refused", old))
         end
     end
-    Log.Info(string.format("PICKUP %s, %d damage a round%s", gun, PG.damage, tossed))
+    Log.Info(string.format("PICKUP %s, %d damage a round%s", gun, self:RoundDamage(), tossed))
 end
 
 -- The melee attack: LMB with the knife or axe in hand.
@@ -1567,13 +1664,20 @@ end
 --
 -- Computed by hand because Lua can only read local transforms. The capsule never rotates, so
 -- Yaw's translation is already a world offset; the camera's is in Yaw's frame and needs the yaw.
+--
+-- The server aims too, from the yaw and pitch of the command, with the camera's offset read from
+-- the scene's rig (CameraLocal): a pawn on the server has no camera, but the round it fires has
+-- to go where that player's crosshair was.
 function Player:AimPoint()
-    if not self.looking or not self.yawEntity or not self.cameraEntity then
+    if not (self.looking or Net.IsServer()) or not self.yawEntity then
+        return nil
+    end
+    local c = self:CameraLocal()
+    if not c then
         return nil
     end
 
     local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
-    local c = self.cameraEntity:GetTranslation()
     local origin = self.entity:GetTranslation() + self.yawEntity:GetTranslation()
         + Vec3(c.x * cosY + c.z * sinY, c.y, -c.x * sinY + c.z * cosY)
 
@@ -1607,6 +1711,19 @@ function Player:AimPoint()
         left = left - hit.distance - 0.01
     end
     return origin + dir * 200.0
+end
+
+-- The camera's offset in the rig: the same for every pawn, so it is read from the scene once.
+function Player:CameraLocal()
+    if self.cameraLocal == nil then
+        local rig = Scene.FindEntityByName("Camera Rig")
+        local camera = rig and rig:GetChildByName("Main Camera") or nil
+        self.cameraLocal = camera and camera:GetTranslation() or false
+        if not camera then
+            Log.Warn("Player: no 'Camera Rig' with a 'Main Camera' child - rounds fire flat")
+        end
+    end
+    return self.cameraLocal or nil
 end
 
 -- Elevation from the chest to the aim point, or nil when there is nothing to aim at.
@@ -1668,7 +1785,7 @@ end
 -- would wait for the first whole frame past its interval, and the rate would round down to the
 -- frame rate: 15 rounds/s is 4 frames at 60 fps, and a reset turns that into one shot every 5,
 -- which is 12. Carried, the shots land on the frames nearest the true schedule.
-function Player:PullTrigger(held, pressed)
+function Player:PullTrigger(held, pressed, tick)
     local f = GUN_FIRE[self.gun or "Rifle"]
     if self.fireCooldown > 0.0 or not (f.auto and held or pressed) then
         return
@@ -1685,26 +1802,40 @@ function Player:PullTrigger(held, pressed)
     local cone = gate and 0.0 or (f.spread[1] + (f.spread[2] - f.spread[1]) * self.heat)
     self.heat = math.min(1.0, self.heat + 1.0 / (f.rate * SPREAD_BLOOM))
     self.sinceShot = 0.0
-    self:Fire(cone, gun)
+    self:Fire(cone, gun, tick)
 end
 
 -- A direction inside a cone of half-angle `deg` around `dir`, uniform over the cone's area. Picking
 -- the angle off the axis uniformly instead would crowd rounds toward the centre: there is far less
 -- solid angle near the axis than near the rim. Uniform area is cos(theta) uniform in [cos deg, 1].
-local function Scatter(dir, deg)
+--
+-- u1 and u2 are the two random numbers. From a tick they are TickRandom's, so the server and the
+-- shooter's own client scatter a round the same way; the frame-driven gate modes pass math.random.
+local function Scatter(dir, deg, u1, u2)
     if deg <= 0.0 then
         return dir
     end
-    local c = 1.0 - math.random() * (1.0 - math.cos(math.rad(deg)))
+    local c = 1.0 - u1 * (1.0 - math.cos(math.rad(deg)))
     local r = math.sqrt(math.max(0.0, 1.0 - c * c))
-    local phi = 2.0 * math.pi * math.random()
+    local phi = 2.0 * math.pi * u2
     local helper = math.abs(dir.y) < 0.99 and Vec3(0, 1, 0) or Vec3(1, 0, 0)
     local u = dir:Cross(helper):Normalized()
     local v = dir:Cross(u)
     return dir * c + u * (r * math.cos(phi)) + v * (r * math.sin(phi))
 end
 
-function Player:Fire(cone, gun)
+-- A number in [0, 1) from a tick and a salt: the usual sine hash. Not a good generator, and it does
+-- not need to be one: it only has to be the same number on two machines running the same build.
+local function TickRandom(tick, salt)
+    local x = math.sin(tick * 12.9898 + salt * 78.233) * 43758.5453
+    return x - math.floor(x)
+end
+
+-- One round. Where the pawn is authoritative (the server, offline) it is the real one: it carries
+-- this player's damage in PG.rounds, which Enemy.lua reads when it lands, and on the server
+-- Net.Shot tells every other client to draw it. On a client it is the shooter's own cosmetic: it
+-- has no entry in PG.rounds, and an enemy on a client takes no damage anyway.
+function Player:Fire(cone, gun, tick)
     local p = self.entity:GetTranslation()
     local sinY, cosY = math.sin(self.yaw), math.cos(self.yaw)
     local fx, fz = -sinY, -cosY
@@ -1730,7 +1861,11 @@ function Player:Fire(cone, gun)
 
     if cone and cone > 0.0 then
         local aimed = dir
-        dir = Scatter(dir, cone)
+        if tick then
+            dir = Scatter(dir, cone, TickRandom(tick, 1), TickRandom(tick, 2))
+        else
+            dir = Scatter(dir, cone, math.random(), math.random())
+        end
         local off = math.deg(math.acos(math.max(-1.0, math.min(1.0, aimed:Dot(dir)))))
         self.spreadStats = self.spreadStats or {}
         local st = self.spreadStats[gun]
@@ -1753,6 +1888,16 @@ function Player:Fire(cone, gun)
 
     PG = PG or { fired = 0, despawned = 0, hits = 0, kills = 0 }
     PG.fired = PG.fired + 1
+    self.firedRounds = (self.firedRounds or 0) + 1
+    if not Net.IsClient() then
+        PG.rounds = PG.rounds or {}
+        PG.rounds[id] = { damage = self:RoundDamage(), shooter = self.entity:GetUUID() }
+    end
+    if Net.IsServer() then
+        Net.Shot(self.entity, muzzle, dir, self.muzzleSpeed)
+        self:Launch(id, dir)
+        return
+    end
 
     -- P6. **After the spawn, not before.** The first version flashed and banged first, and the
     -- gate caught it in one line: muzzle-bursts=2602 against fired=1894 with refused=708, and
@@ -1769,15 +1914,34 @@ function Player:Fire(cone, gun)
         self.muzzle:EmitBurst(6)
     end
 
-    -- The entity does not exist until the command queue flushes at the next FrameBegin, so the
-    -- velocity cannot be set here. Stash the id and push it next frame.
+    self:Launch(id, dir)
+end
+
+-- The entity does not exist until the command queue flushes at the next FrameBegin, so the
+-- velocity cannot be set yet. Stash the id and push it next frame (PushPending).
+function Player:Launch(id, dir, speed)
+    speed = speed or self.muzzleSpeed
     self.pending = self.pending or {}
-    self.pending[#self.pending + 1] = {
-        id = id,
-        vx = dir.x * self.muzzleSpeed,
-        vy = dir.y * self.muzzleSpeed,
-        vz = dir.z * self.muzzleSpeed,
-    }
+    self.pending[#self.pending + 1] = { id = id, vx = dir.x * speed, vy = dir.y * speed, vz = dir.z * speed }
+end
+
+-- Someone else's round, on a client: the server fired it, and this draws it. Cosmetic like the
+-- shooter's own: it has no entry in PG.rounds, and the server has already decided what it hits.
+-- It is drawn the moment it arrives, while the shooter is drawn 100 ms in the past, so it leaves
+-- a little ahead of the gun at a run.
+function Player:OnShot(muzzle, direction, speed, tick)
+    local id = Scene.Spawn("prefabs/Projectile.gprefab", muzzle)
+    if not id then
+        return
+    end
+    self:Launch(id, direction, speed)
+    self.aimHold = AIM_HOLD
+    PG.remoteShots = (PG.remoteShots or 0) + 1
+    -- Positional, unlike your own shot: this one happens somewhere else.
+    Audio.PlayOneShot("audio/impact.wav", muzzle, 0.6)
+    if self.muzzle then
+        self.muzzle:EmitBurst(6)
+    end
 end
 
 function Player:PushPending()
@@ -1918,7 +2082,7 @@ function Player:Diagnose(ts)
         Log.Info(string.format(
             "P5   hp=%.0f/%.0f taken=%d healed=%.0f gun=%s guns-taken=%d dmg=%d score=%d upgrades=%d "
             .. "triggers=%d ui-mismatch=%d",
-            self.health, self.maxHealth, self.hits, self.healed, self.gun or "none", self.gunsTaken, PG.damage,
+            self.health, self.maxHealth, self.hits, self.healed, self.gun or "none", self.gunsTaken, self:RoundDamage(),
             PG.score, self.upgrades, PG.triggers or 0, self.uiMismatch))
         Log.Info(string.format(
             "P6   steps=%d muzzle-bursts=%d impacts=%d impacts-despawned=%d live-impacts=%d "
@@ -1935,7 +2099,7 @@ function Player:Diagnose(ts)
             for _, gun in ipairs(GUN_LADDER) do
                 if self.shots[gun] then line = line .. string.format(" %s=%d", gun, self.shots[gun]) end
             end
-            Log.Info("SHOTS" .. line)
+            Log.Info("SHOTS" .. line .. string.format(" others=%d", PG.remoteShots or 0))
         end
         -- Cone: the first-shot and widest cone used. Off: how far rounds actually strayed, mean and
         -- worst; `outside` counts rounds past their own cone, which must stay 0.
@@ -1958,8 +2122,9 @@ function Player:Diagnose(ts)
     end
 end
 
--- Where this pawn faces, for the other clients (RemoteFrame). Written in OnTick on the server.
-Player.Replicated = { yaw8 = "u8", pitch8 = "u8" }
+-- Where this pawn faces, for the other clients (RemoteFrame), written in OnTick on the server; and
+-- what it holds, the gun on slot 1 and the slot in hand (1 gun, 2 knife), written in ServerFrame.
+Player.Replicated = { yaw8 = "u8", pitch8 = "u8", gun16 = "str16", slot8 = "u8" }
 
 local ____exports = {}
 ____exports.default = Player

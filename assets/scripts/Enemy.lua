@@ -472,16 +472,25 @@ function Enemy:OnCollisionEnter(other)
         return
     end
 
-    -- The damage is the player's, not the projectile's - it is set by the gun the player carries
-    -- and raised by the upgrade station - and PG is the only channel between two script instances
-    -- there is. 8 is the pistol's, the bottom of the ladder, for a scene with no Player.lua.
-    self:TakeDamage(PG.damage or 8)
+    -- The damage is the shooter's, set by the gun they carry and raised by the upgrade station, and
+    -- the round carries it: Player:Fire files it in PG.rounds under the round's id, since PG is the
+    -- only channel between two script instances there is. With several players, one "the damage"
+    -- would be whoever picked up a gun last. 8 is the pistol's, the bottom of the ladder, for a
+    -- round nothing filed.
+    local round = PG.rounds and PG.rounds[other:GetUUID()]
+    self:TakeDamage(round and round.damage or 8, round and round.shooter)
 end
 
 -- One path for every source of damage: projectiles above, melee through PG.meleeDamage in OnUpdate.
-function Enemy:TakeDamage(amount)
+-- `by` is the shooter's pawn id, when a round says so: the hit and the kill are credited to it, in
+-- PG.hitsBy and PG.killsBy.
+function Enemy:TakeDamage(amount, by)
     if self.dead then
         return
+    end
+    if by then
+        PG.hitsBy = PG.hitsBy or {}
+        PG.hitsBy[by] = (PG.hitsBy[by] or 0) + 1
     end
 
     -- Hit from somewhere it cannot see: go and look. Standard, and it is also the only path in
@@ -502,6 +511,10 @@ function Enemy:TakeDamage(amount)
 
     self.dead = true
     PG.kills = PG.kills + 1
+    if by then
+        PG.killsBy = PG.killsBy or {}
+        PG.killsBy[by] = (PG.killsBy[by] or 0) + 1
+    end
     Log.Info(string.format("Enemy %s down (escapes=%d, took %.0f)", self.label, self.escapes,
         self.maxHealth - self.health))
     -- Destroys the whole subtree, not just this entity. Scene::DestroyEntity unparents children

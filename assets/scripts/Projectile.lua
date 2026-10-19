@@ -37,6 +37,20 @@ function Projectile:OnUpdate(ts)
     end
 end
 
+function Projectile:OnCreate()
+    self.id = self.entity:GetUUID()
+end
+
+-- The shooter's record of this round (Player:Fire) goes with it. Here and not in Despawn: the
+-- enemy reads the record in its own OnCollisionEnter, which may run after this round's, and the
+-- entity is only destroyed at the next frame. By the id kept from OnCreate: when the entity was
+-- destroyed, OnDestroy runs after it is gone, and self.entity can no longer be asked anything.
+function Projectile:OnDestroy()
+    if PG.rounds and self.id then
+        PG.rounds[self.id] = nil
+    end
+end
+
 function Projectile:OnCollisionEnter(other, contact)
     if other and other:GetName() == "Projectile" then
         -- Two rounds meeting in flight should not both vanish on each other; it reads as the gun

@@ -2976,6 +2976,81 @@ mode; the arena floor it adds on the client is coplanar with the ground):
 lines. Building the TypeScript scripts would overwrite the game's player with the demo. Not changed
 here.
 
+### N9 — Co-op: G2, firing over the network (2026-10-19)
+
+NETCODE.md's stage G2. The engine half landed on master first and came here by merge (`33bb5bd`).
+The mouse buttons count as game input only while the cursor is captured, and only once they have
+been seen up after the capture, so the click that captures the cursor is not a shot. The runtime
+also gained `--net-test=predict-fire`. The engine-source diff against master stayed empty.
+
+**The trigger is on the command.** `Player:TriggerTick` runs from `OnTick`, once a physics step,
+wherever `OnTick` runs. It reads the number keys (`cmd.Equip` 1 is the gun, 2 the knife) and the
+trigger (`cmd.Fire`). The gun's rate, the spread's heat and its recovery are counted in ticks, and
+the spread's two random numbers come from the tick (`TickRandom`), so the server and the shooter's
+own client scatter a round the same way. The pistol fires on a press: the edge is
+`cmd.Fire` against the last tick's.
+
+- **The server** spawns the real round. It files the round's damage and its shooter in
+  `PG.rounds`, keyed by the round's id, and calls `Net.Shot`.
+- **Offline** is the same real round, plus its flash and bang. A person offline now fires through
+  the same `TriggerTick`. The gate modes (`autofire`, `p5gate`) still fire once a frame from
+  `FireFrame`, as they were measured.
+- **The shooter's own client** spawns a cosmetic round, flash and bang at once, rather than a round
+  trip later. It does this only on a tick it has not simulated before, because a correction replays
+  `OnTick`.
+- **Every other client** draws the round in `Player:OnShot`, with a positional bang.
+
+**Damage per shooter.** `PG.damage` is gone. With several players there is no single "the gun".
+`Enemy:OnCollisionEnter` reads the round's own record, and `TakeDamage` credits the hit and the
+kill to the shooter (`PG.hitsBy`, `PG.killsBy`). `Projectile:OnDestroy` drops the record, using an
+id kept from `OnCreate`. The first version asked `self.entity:GetUUID()` there and hit an assertion
+at the first impact: for a destroyed entity, `OnDestroy` runs after the entity is gone.
+
+**The server aims.** `AimPoint` used to need the camera, and a pawn on the server has none. It now
+reads the camera's offset in the rig from the scene once (`CameraLocal`), so the server's round
+goes where that player's crosshair was, from the command's yaw and pitch.
+
+**What a pawn holds is replicated:** `gun16` (`str16`, the gun on slot 1) and `slot8` (`u8`, 1 gun
+or 2 knife), written in `ServerFrame`. Every client follows `gun16`, because pickups and respawns
+are the server's. A client follows `slot8` for other players' pawns; for its own, it switches
+slots from its commands.
+
+**Verified**, Windows x64 Debug, dev server on `scenes/ProvingGround.ganymede`, two headless
+runtimes in `predict-fire` at `lat:75`. In that mode each client stands, turns a full circle every
+12 s, and holds the trigger 2 s in every 3. A pawn starts with only the knife and gets guns from
+pickups, which on a client are G4's. So each run gave the pawns a start gun by a one-line change in
+Player.lua, restored after and checked: in the rifle run only on the server, so a client could fire
+only once `gun16` had told it what its pawn holds; in the pistol run everywhere.
+
+| Check | Result |
+|---|---|
+| The gun in hand | both clients started their pawns with the knife, then took the server's Rifle from `gun16`, for their own pawn and the other player's (`EQUIP Rifle` twice each) |
+| Rifle, both players | Server, per pawn: 173 and 174 rounds, 25 and 26 hits, 3 and 2 kills. Every kill "took 108": 9 rounds of 12. Clients, in 20 s: c1 drew 124 of its own rounds and 121 of c2's; c2 drew 128 and 135. The server's counts end higher because a pawn keeps firing after its client stops (below) |
+| Pistol (semi-automatic) | 7 rounds per pawn in 20 s: one a press, one press every 3 s. Each client drew 7 of its own and 7 of the other's, matching the server's count for each |
+| No leak | rounds in flight on the server stayed at 1–3 with the pistol, and 8–55 with two rifles (3 s lifetime, up to 20 rounds a second between them) |
+| Prediction | rifle run: 178 corrections on c1, the pawn every enemy chases, and 1 on c2. Pistol run: 18 and 0. Enemy contact is G3's |
+| Offline, P5 gate (180 s headless, `p5gate` flipped for the run) | the whole route, 0 errors: 2 kills at 108 each, heal, 2 pickups, upgrade to 18 a round, `fired=91 despawned=91 live=0`, `inWall=0`. A baseline run on the commit before G2 was shoved off the route on leg 1 (`inBH=5354`). The gate's headless runs vary that much, and `ui-mismatch` is non-zero in both, because a headless UI reads nothing back |
+| Offline, no gate | the game starts, one pawn, no errors |
+
+**Not seen:**
+
+- The capturing click in a window. The engine rule is built, but no run drove a real mouse.
+- Whether the server's round and the shooter's cosmetic leave in the same direction. They share
+  the tick's spread, but each aims by its own raycast in its own world, and leaves from its own
+  barrel. Nothing measured the difference.
+- Other players' rounds and muzzle flashes on screen. The clients were headless.
+
+**Found:**
+
+- **A pawn keeps firing after its player stops sending.** A tick with no command repeats the last
+  one, the trigger included, until the session times out about 5 s later. This is in the engine
+  (`TakeCommand`), and is in NETCODE.md as an open item.
+- **Hits are not lag-compensated.** The server's round flies through the server's present, while
+  the player aimed at enemies drawn about 100 ms in the past. At a 28 m/s round this is a fraction
+  of the flight time, and it is noted rather than solved.
+- **Someone else's round is drawn the moment it arrives**, while the shooter is drawn 100 ms in the
+  past, so at a run it leaves a little ahead of the gun.
+
 ## Decisions, with the ones most likely wrong marked
 
 Recorded now so that when this moves to `docs/history/` we can see which held.
