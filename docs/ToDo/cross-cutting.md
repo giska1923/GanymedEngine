@@ -307,6 +307,13 @@ having no answer is not.
 Worked around in the game for now by having enemies back off after landing a touch, which bounded
 the drift during a 14 s hold from 21 m to 0.07 m - a fix in the AI for a gap in the engine.
 
+**Partly answered since (N5 G3, 2026-10-19):** a body with `RigidBodyComponent::BlocksCharacters`
+off can no longer move a character at all, because the character's step skips it
+([physics.md](../engine/physics.md#what-a-character-walks-through)). The Proving Ground's enemies
+and rounds are such bodies, so the shove above is gone. What stays open: every other dynamic body
+still pushes a character as it always did, and there is still no `CharacterContactListener`, so a
+per-contact answer, or one weighted by mass, is still out of reach.
+
 ## There is no `OnCollisionStay`
 
 `OnCollisionEnter` fires once when a contact is made and `OnCollisionExit` once when it breaks.
