@@ -324,7 +324,7 @@ a path that is empty, longer than 80, contains `..`, or uses a character outside
 `GanymedDedicated --net-test=` is `move`, `spawn`, `prefab`, `rest`, `churn`, `fields`, or a predict
 mode: `predict`, `predict-loss`, `predict-desync`, `predict-wall`, `predict-step`. Anything else
 exits 2, including under `--dev`. The runtime accepts those predict names too, plus `predict-fire`,
-`fields`, `offline`, `reliable:<count>`, `reliable-flood` and `spoof`. A name it does not know is a logged
+`bot`, `bot-idle`, `fields`, `offline`, `reliable:<count>`, `reliable-flood` and `spoof`. A name it does not know is a logged
 connect failure, not exit 2. The two parsers are not the same list. The modes are how N3, N4 and
 the N5 engine hooks were measured. They are not a game mode.
 
@@ -422,7 +422,11 @@ at most 128, and applied ticks older than 8 are dropped once the tick has been c
 
 The server looks up the command for the tick it is about to simulate. A miss repeats the last
 command it did apply, and counts the repeat. A constant walk survives that: the repeated command
-is the same walk. A direction change does not, which is what the loss check measured. Offline,
+is the same walk. A direction change does not, which is what the loss check measured. **A repeat
+goes stale.** After 6 missing ticks in a row (100 ms) the repeat carries no buttons, and after 30
+(half a second) no stick either; the view is kept. A repeat covers a lost packet or two. Past that
+the player has most likely stopped sending, and before this, a held trigger went on firing until the
+session timed out 5 s later (N5 G2 measured it). Offline,
 nothing is sent. `BeginStep` samples `Input` once per step and hands that command to every script.
 The runtime's predict modes ignore the keyboard and hold a synthetic stick, so a headless client
 can walk without one. The server does not invent a stick. It applies the command that arrived for
@@ -517,7 +521,9 @@ The checks live on `--net-test`. `predict` holds forward. `predict-loss` reverse
 `predict-desync` teleports the pawn +3 m on X at 180 ticks after spawn, on an even tick so the
 snapshot includes it. `predict-wall` walks diagonally into a wall. `predict-step` walks at a 0.2 m
 step. `predict-fire` is the runtime's alone: it stands, turns a full circle every 12 s, and holds
-the trigger 2 s in every 3, against whatever scene the server runs. The floor, the wall and the step are static boxes created the same way on both sides. They
+the trigger 2 s in every 3, against whatever scene the server runs. `bot` is the same input with no
+end: no arena, no span, no close, for a client that plays a whole match (N5 G6). `bot-idle` stands
+and presses nothing. The floor, the wall and the step are static boxes created the same way on both sides. They
 are not replicated; collision does not care that the UUIDs differ. The floor covers the 240 m a
 4 m/s walk covers in 60 s. A 20 m pad ends that walk in the air. The pawn is
 `assets/prefabs/NetWalker.gprefab`, spawned by the server when the account appears. The client

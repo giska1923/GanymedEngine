@@ -23,7 +23,7 @@ namespace GanymedE::Net::Test {
 		enum class Mode
 		{
 			None, Move, Spawn, Prefab, Rest, Churn,
-			Predict, PredictLoss, PredictDesync, PredictWall, PredictStep, PredictFire, Offline, Fields
+			Predict, PredictLoss, PredictDesync, PredictWall, PredictStep, PredictFire, Bot, BotIdle, Offline, Fields
 		};
 
 		// The 500 of `spawn` are destroyed at 18 s of server ticks.
@@ -183,6 +183,14 @@ namespace GanymedE::Net::Test {
 			state.Current = Mode::PredictStep;
 		else if (mode == "predict-fire")
 			state.Current = Mode::PredictFire;
+		else if (mode == "bot" || mode == "bot-idle")
+		{
+			// A player for a whole match, not a measurement: no arena, no span, no close. It
+			// plays whatever scene it is in, and the match ending is what stops it.
+			state.Current = mode == "bot" ? Mode::Bot : Mode::BotIdle;
+			GE_CORE_INFO("Test {0}: the input is synthetic until the process ends", mode);
+			return;
+		}
 		else if (mode == "fields")
 			state.Current = Mode::Fields;
 		else if (mode == "offline")
@@ -381,7 +389,7 @@ namespace GanymedE::Net::Test {
 	bool DrivesInput()
 	{
 		const Mode mode = State().Current;
-		return IsPredict(mode) || mode == Mode::Offline;
+		return IsPredict(mode) || mode == Mode::Offline || mode == Mode::Bot || mode == Mode::BotIdle;
 	}
 
 	void Stick(PlayerCommand& cmd, uint32_t settleFrom)
@@ -399,7 +407,9 @@ namespace GanymedE::Net::Test {
 			cmd.MoveX = 1.0f;
 			cmd.MoveZ = 1.0f;
 		}
-		else if (mode == Mode::PredictFire)
+		else if (mode == Mode::BotIdle)
+			return;
+		else if (mode == Mode::PredictFire || mode == Mode::Bot)
 		{
 			// Stand, turn a full circle every 12 s, and hold the trigger 2 s in every 3: sustained
 			// fire for an automatic gun, and a fresh press each cycle for a semi-automatic one.

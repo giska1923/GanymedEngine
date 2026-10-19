@@ -91,7 +91,15 @@ namespace GanymedE {
 		// no stop, so a copy would only cost a full registry duplication at boot.
 		// Role is fixed at construction. A connected runtime is a client before the first
 		// script runs, so replicated bodies are kinematic from the step that creates them.
-		const SceneRole role = m_Config.Connect.empty() ? SceneRole::Standalone : SceneRole::Client;
+		// --queue is the same: the session arrives later, when the match is joined, into a scene
+		// that has been a client since boot.
+		if (!m_Config.Connect.empty() && !m_Config.Queue.empty())
+		{
+			GE_ERROR("--connect and --queue do not combine; ignoring --queue");
+			m_Config.Queue.clear();
+		}
+		const bool client = !m_Config.Connect.empty() || !m_Config.Queue.empty();
+		const SceneRole role = client ? SceneRole::Client : SceneRole::Standalone;
 		m_Scene = CreateRef<Scene>(role);
 
 		SceneSerializer serializer(m_Scene);
@@ -146,6 +154,9 @@ namespace GanymedE {
 			if (!Net::ConnectDev(m_Config.Connect, name, m_Config.NetTest, error))
 				GE_ERROR("Dev connect failed: {0}", error);
 		}
+
+		if (simOk && !m_Config.Queue.empty())
+			m_Match = CreateScope<RuntimeMatch>(m_Config.Queue);
 	}
 
 	void RuntimeLayer::OnDetach()
@@ -158,6 +169,7 @@ namespace GanymedE {
 		if (m_RuntimeStarted)
 			m_Scene->OnRuntimeStop();
 
+		m_Match.reset();
 		m_Scene.reset();
 		m_SceneRenderer.reset();
 
@@ -174,6 +186,18 @@ namespace GanymedE {
 
 		Renderer2D::ResetStats();
 		Renderer3D::ResetStats();
+
+		if (m_Match)
+		{
+			m_Match->OnUpdate(ts);
+			// A headless player has nothing left to do once its match is over. A window stays
+			// open on the finished scene: the result is in the log until there is a screen for it.
+			if (m_Match->Done() && !m_MatchClosed && Application::Get().GetSpecification().Headless)
+			{
+				m_MatchClosed = true;
+				Application::Get().Close();
+			}
+		}
 
 		if (m_SceneRenderer)
 			m_SceneRenderer->BeginFrame();

@@ -44,6 +44,10 @@ namespace GanymedE {
 		// id so two clients on one machine are two sessions.
 		std::string Connect;
 		std::string Name;
+		// `--queue=<mode>`: queue this profile through the backend, join the match it is given,
+		// and read the result when it ends (RuntimeMatch). The scene is a client scene from boot,
+		// as with --connect. The two do not combine.
+		std::string Queue;
 		std::string NetSim;
 		std::string NetTest;
 

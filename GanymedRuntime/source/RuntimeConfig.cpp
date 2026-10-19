@@ -70,8 +70,9 @@ namespace GanymedE {
 		if (argc <= 1)
 			return;
 
-		// Skip options the engine reads itself (--renderer=, --root). `--connect` and
-		// the net flags are this app's, and their values are not a scene path.
+		// Skip options the engine reads itself (--renderer=, --root, --backend=, --profile=).
+		// `--connect`, `--queue` and the net flags are this app's, and their values are not a
+		// scene path.
 		const char* positional = nullptr;
 		for (int i = 1; i < argc; i++)
 		{
@@ -99,7 +100,8 @@ namespace GanymedE {
 				return false;
 			};
 
-			if (take("connect", Connect) || take("name", Name) || take("net-sim", NetSim) || take("net-test", NetTest))
+			if (take("connect", Connect) || take("name", Name) || take("net-sim", NetSim) || take("net-test", NetTest)
+				|| take("queue", Queue))
 				continue;
 			if (arg[0] == '-')
 				continue;
