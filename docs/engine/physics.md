@@ -19,8 +19,10 @@ Stop  → PhysicsSystem::OnRuntimeStop  → Stop() → destroyed
 body from its **world-space** transform (world scale is baked into the shape dimensions — Jolt
 shapes don't scale). Collider `Offset` becomes a rotated-translated compound shape. Body settings
 map 1:1 from the components: motion type, friction/restitution, damping, gravity factor
-(`UseGravity` → 0/1), mass override for dynamic bodies. Two object layers exist — `NON_MOVING`
-(static) and `MOVING` — with the usual "static doesn't collide with static" filter.
+(`UseGravity` → 0/1), mass override for dynamic bodies. Four object layers exist: `NON_MOVING`
+(static) and `MOVING`, with the usual "static doesn't collide with static" filter, and two that
+only a character's own step treats differently, `CHARACTER` and `MOVING_PASSABLE`
+([What a character walks through](#what-a-character-walks-through)).
 
 Identity: `body.mUserData = UUID`, plus `UUID → BodyID` and `BodyID → UUID` maps. Everything
 crossing the physics/ECS boundary is keyed by UUID, so it survives the play-mode scene copy.
@@ -98,7 +100,8 @@ and destroyed by `CharacterVirtual` itself and kept on the character's position 
 nothing can detect is the odd case, and when one is wanted the answer is an object layer, not a
 bool on the component.
 
-It goes in `MOVING`, because it is Kinematic, and that is also what keeps the contact stream quiet:
+It goes in `CHARACTER`, a moving layer of its own, so that other characters can walk through it
+(below). It is Kinematic, and that is what keeps the contact stream quiet:
 Jolt does not pair two non-dynamic bodies (`Body::sFindCollidingPairsCanCollide`), so the inner
 body never reports the ground or a wall. It reports dynamic bodies and sensors — exactly the set
 gameplay wants to hear about.
@@ -113,6 +116,31 @@ Two consequences worth knowing:
   drive its inner body — putting it there would alias with a real rigid body on the same entity and
   leak it. `CastRay`'s `ignore` reaches the inner body through `EntityToCharacter` instead, which
   is what lets a character cast from its own eye without hitting itself on the first millimetre.
+
+#### What a character walks through
+
+A character's step (`ExtendedUpdate`) collides with `NON_MOVING` and `MOVING` only
+(`CharacterSweepFilter`). It walks through two layers:
+
+| Layer | What is in it |
+|---|---|
+| `CHARACTER` | every character's inner body, so characters walk through each other |
+| `MOVING_PASSABLE` | a Dynamic or Kinematic body with `RigidBodyComponent::BlocksCharacters` off (on by default) |
+
+Nothing else changes. Bodies collide with both layers, so a passable body is still blocked by a
+character's inner body, still raises the contact, and is still hit by rays and rounds. The object
+layer pair table: `NON_MOVING` meets everything but itself, `CHARACTER` everything but itself, and
+`MOVING` and `MOVING_PASSABLE` everything.
+
+**Why: prediction.** A client steps its own character against everyone else's bodies as they were
+drawn, about 100 ms in the past. The server steps it against where they are. Whatever can push the
+character pushes it differently on the two sides, and the client is corrected. N5 measured it: an
+enemy pressing into the pawn it chased cost 239 corrections in 20 s. So the character takes part in
+neither push, on either side. Enemies get `BlocksCharacters: false`. The cost is that a character
+cannot be body-blocked by an enemy or by another player. A game that wants that back needs a
+different answer (predicting the other bodies, or server-side only blocking).
+
+`BlocksCharacters` is read at body creation, like `LockRotation`. A static body ignores it.
 
 ### Locked rotation
 

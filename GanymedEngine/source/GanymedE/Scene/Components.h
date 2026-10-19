@@ -663,6 +663,16 @@ namespace GanymedE {
 		// bodies need it. Dynamic only, like LockRotation. Read at body creation.
 		bool ContinuousCollision = false;
 
+		// Off, a character controller walks through this body instead of being stopped or pushed
+		// by it. Everything else is unchanged: the body still collides with the character's
+		// inner body, so it is still blocked by it, still raises the contact, and is still hit
+		// by rays and rounds. For something that chases networked characters, such as an enemy:
+		// a client steps its own character against a copy of the enemy about 100 ms old, so if
+		// the enemy could push it, the server would push it differently and the client would be
+		// corrected. Characters walk through each other for the same reason. Moving bodies only;
+		// read at body creation (docs/engine/physics.md).
+		bool BlocksCharacters = true;
+
 		RigidBodyComponent() = default;
 		RigidBodyComponent(const RigidBodyComponent&) = default;
 	};
