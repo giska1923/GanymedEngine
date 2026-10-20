@@ -196,6 +196,14 @@ exactly an integer" — with the throw escaping into the frame and taking the re
 > addresses declared up front, so an arbitrary property bag needs a different mechanism entirely
 > (`BindFunc`, or a bound map type). Worth doing when a second HUD needs it — not before.
 
+**Engine text into a HUD element.** `UIEngine::SetElementText(id, text)` writes plain text, escaped,
+into the first element with that id in any loaded document. It shows the element (`display:
+block`) and hides it (`display: none`) when the text is empty. It returns false when no document
+has the element. It exists for the engine's own lines, which a game's HUD may or may not make room
+for: the runtime's match status (`#match-status`,
+[runtime.md](../runtime/runtime.md#--queue-a-match-through-the-backend)). Gameplay values belong in
+the data model.
+
 ## Sharing one Lua VM has a cost
 
 `Rml::Lua::Initialise` installs globals of its own, and one of them is **`Log`** — a usertype whose

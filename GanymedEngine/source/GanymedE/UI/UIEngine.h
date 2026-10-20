@@ -68,6 +68,12 @@ namespace GanymedE {
 		static float GetHudHealth();
 		static int GetHudScore();
 
+		// Plain text into the first element with this id in any loaded document, escaped, and
+		// the element hidden while the text is empty. False when no document has the element:
+		// the engine writes a line a game's HUD may or may not have room for (the runtime's
+		// match status, RuntimeMatch). Not for gameplay values, which have the data model.
+		static bool SetElementText(const std::string& id, const std::string& text);
+
 		static Rml::Context* GetContext();
 
 		// Visual document inspector: element tree, computed RCSS, event log.

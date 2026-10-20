@@ -2,6 +2,7 @@
 
 #include "GanymedE/Net/Net.h"
 #include "GanymedE/Online/Json.h"
+#include "GanymedE/UI/UIEngine.h"
 
 namespace GanymedE {
 
@@ -38,6 +39,7 @@ namespace GanymedE {
 		: m_Mode(std::move(mode))
 	{
 		GE_INFO("Match: queueing for '{0}' as profile '{1}'", m_Mode, Online::GetProfile());
+		Show("Looking for a " + m_Mode + " match...");
 	}
 
 	RuntimeMatch::~RuntimeMatch()
@@ -72,10 +74,15 @@ namespace GanymedE {
 				// the result. 5 s of silence is what the client counts as gone (netcode.md).
 				const Net::Stats stats = Net::GetStats();
 				if (stats.Connected)
+				{
+					if (!m_SeenConnected)
+						Show("");
 					m_SeenConnected = true;
+				}
 				else if (m_SeenConnected)
 				{
 					GE_INFO("Match: the server has gone; reading the result");
+					Show("Match over - reading the result...");
 					m_State = State::Result;
 					m_Elapsed = 0.0f;
 					m_Wait = 0.0f;
@@ -86,7 +93,8 @@ namespace GanymedE {
 			case State::Result:
 				if (m_Elapsed > kResultWait)
 				{
-					Finish("no result on the ticket " + std::to_string(static_cast<int>(kResultWait)) + " s after the server went");
+					Finish("no result on the ticket " + std::to_string(static_cast<int>(kResultWait)) + " s after the server went",
+						"Match over - no result came back");
 					break;
 				}
 				if (!m_Request && m_Wait <= 0.0f)
@@ -130,10 +138,11 @@ namespace GanymedE {
 			}
 			if (m_QueueTries >= kQueueTries)
 			{
-				Finish("could not queue: " + problem);
+				Finish("could not queue: " + problem, "Could not queue for a match");
 				return;
 			}
 			GE_WARN("Match: queue failed ({0}); trying again in {1:.0f} s", problem, kQueueRetry);
+			Show("Cannot reach the matchmaker - trying again...");
 			m_Wait = kQueueRetry;
 		});
 	}
@@ -173,6 +182,15 @@ namespace GanymedE {
 		{
 			m_LastState = state;
 			GE_INFO("Match: ticket {0}", state);
+			if (m_State == State::Wait)
+			{
+				if (state == "queued")
+					Show("In the queue - waiting for players...");
+				else if (state == "matched" || state == "allocating")
+					Show("Match found - starting a server...");
+				else if (state == "ready")
+					Show("Joining the match...");
+			}
 		}
 
 		if (state == "finished")
@@ -180,13 +198,17 @@ namespace GanymedE {
 			const JsonValue* result = ticket->Find("result");
 			const JsonValue* change = result ? result->Find("rating_change") : nullptr;
 			const int64_t delta = change && change->Kind == JsonValue::Type::Integer ? change->Integer : 0;
-			Finish(std::string("finished: ") + (result ? Text(result->Find("outcome")) : "?")
-				+ ", rating " + (delta >= 0 ? "+" : "") + std::to_string(delta));
+			const std::string outcome = result ? Text(result->Find("outcome")) : "?";
+			const std::string rating = std::string("rating ") + (delta >= 0 ? "+" : "") + std::to_string(delta);
+			std::string shown = outcome == "victory" ? "VICTORY" : outcome == "defeat" ? "DEFEAT" : outcome;
+			Finish("finished: " + outcome + ", " + rating, shown + " - " + rating);
 			return;
 		}
 		if (state == "failed" || state == "cancelled")
 		{
-			Finish(state + (Text(ticket->Find("failure_reason")).empty() ? "" : ": " + Text(ticket->Find("failure_reason"))));
+			const std::string reason = Text(ticket->Find("failure_reason"));
+			Finish(state + (reason.empty() ? "" : ": " + reason),
+				state == "cancelled" ? "Matchmaking cancelled" : "No match" + (reason.empty() ? "" : " (" + reason + ")"));
 			return;
 		}
 		if (state != "ready" || m_State != State::Wait)
@@ -201,6 +223,7 @@ namespace GanymedE {
 			{
 				std::optional<JsonValue> who = ParseJson(joined.Body);
 				GE_INFO("Match: joined as {0}", who ? Text(who->Find("account_id")) : "?");
+				Show("Joined - waiting for the server...");
 				m_State = State::Play;
 				m_Elapsed = 0.0f;
 				return;
@@ -208,7 +231,7 @@ namespace GanymedE {
 			m_JoinFailures++;
 			if (m_JoinFailures >= kJoinFailures)
 			{
-				Finish("could not join: " + joined.TransportError);
+				Finish("could not join: " + joined.TransportError, "Could not join the match");
 				return;
 			}
 			GE_WARN("Match: join failed ({0}); reading the ticket again", joined.TransportError);
@@ -217,10 +240,24 @@ namespace GanymedE {
 		});
 	}
 
-	void RuntimeMatch::Finish(const std::string& why)
+	void RuntimeMatch::Finish(const std::string& why, const std::string& shown)
 	{
 		GE_INFO("Match: {0}", why);
+		Show(shown);
 		m_State = State::Done;
+	}
+
+	void RuntimeMatch::Show(const std::string& text)
+	{
+		if (text == m_Shown)
+			return;
+		m_Shown = text;
+		// Headless there is no UI at all, and nothing to warn about.
+		if (!UIEngine::SetElementText("match-status", text) && UIEngine::IsInitialized() && !m_WarnedNoStatus)
+		{
+			m_WarnedNoStatus = true;
+			GE_WARN("Match: the HUD has no #match-status element; the match status is in the log only");
+		}
 	}
 
 }

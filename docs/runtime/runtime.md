@@ -54,6 +54,13 @@ reads the ticket until it is `finished` or `failed`, and logs the result:
 Match: finished: victory, rating +16
 ```
 
+**On screen.** If the HUD has a `#match-status` element, the same progress is written there
+(`UIEngine::SetElementText`): "Looking for a coop match...", "In the queue - waiting for players...",
+"Match found - starting a server...", "Joining the match...", "Joined - waiting for the server...".
+It is cleared, and hidden, once the session is connected. At the end it shows the outcome, such as
+"VICTORY - rating +16", or why there was no match. A HUD without the element gets one warning in
+the log, and the status stays in the log. Headless, nothing is written.
+
 A queue that fails is retried 10 times, 3 s apart. A join that fails (JoinMatch's own three
 attempts) goes back to the ticket, three times. A headless runtime closes when its match is done.
 A window stays open on the finished scene, with the result in the log, until the game has a screen
