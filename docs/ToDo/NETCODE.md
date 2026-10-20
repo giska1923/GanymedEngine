@@ -1,22 +1,22 @@
 # Milestone — Netcode (a dedicated server, and clients that play on it)
 
-**Status: N0 done (2026-10-10). N1 is built (2026-10-11) and its local checks passed; the fleet
-acceptance test has not been run, so N1 is not closed. N2 is built (2026-10-11) and its local
-checks were run; the path through the backend was not. N3 is built (2026-10-11) and its local
-checks were run on Windows x64 Debug; it is not a fleet close. N4 is built (2026-10-11) and its
-local checks were run on Windows x64 Debug; it is not a fleet close. N5's engine hooks (replicated
-fields, server events, cosmetic shots) are built (2026-10-11). N5's game steps G1–G6 are done on
-`first-game` (2026-10-17 to 2026-10-19), and **the fleet path ran there on 2026-10-19**: the
-backend's `gscli load coop 4` against `fleetagent -- GanymedDedicated` passed all four stages, and
-four `GanymedRuntime --queue` clients played a match to a reported victory with ratings changed
-([below](#n5-measured-on-the-fleet-2026-10-19)). That closes the fleet acceptance N1–N4 were
-waiting on, on Windows. Linux and the editor's Play are still open, so the milestone is not
-closed. Review fixes (snapshot order, lost destroys, the command lead, the
-reliable window, the test module) landed 2026-10-17, and so did the fix for the corrections they exposed at every input change
-(the client now decodes onto the named baseline).** It follows
-[ONLINE.md](ONLINE.md), whose last phase, O5b, is this N1. It depends on `online-o4` (O4 and O5a)
-reaching `master`. N1 is written against the backend's `api-v0.6` (results through the agent,
-`DENIED` before allocation), which is built. What the process does now is
+**Status: N0–N5 are built, and on Windows the milestone's goal has been played.** N0 was done
+2026-10-10, and N1–N4 and N5's engine hooks were built 2026-10-11. Review fixes landed 2026-10-17:
+snapshot order, lost destroys, the command lead, the reliable window, the test module, and the
+decode onto the named baseline. N5's game steps G1–G6 were done on `first-game` from 2026-10-17 to
+2026-10-19. **On 2026-10-19 the fleet path ran end to end**
+([below](#n5-measured-on-the-fleet-2026-10-19)):
+
+- the backend's `gscli load coop 4` against `fleetagent -- GanymedDedicated` passed all four stages;
+- four `GanymedRuntime --queue` clients played a match to a reported victory, with ratings changed.
+
+That is the fleet acceptance N1–N4 were waiting on. On 2026-10-20 the controls were fixed in the
+editor and in a windowed runtime (a usertype registered twice, docs/engine/scripting.md). The
+Proving Ground was then played by hand: offline in the editor, and co-op through `--queue` in two
+windows. **Open:** Linux (no Linux build of `GanymedDedicated` yet), and the items each phase lists
+as not run. N1 is ONLINE.md's last phase, O5b. `online-o4` (O4 and O5a), which it depended on, is
+in `master`. N1 is written against the backend's `api-v0.6` (results through the agent, `DENIED`
+before allocation). What the process does now is
 [dedicated.md](../dedicated/dedicated.md). The session after `WELCOME` is
 [netcode.md](../engine/netcode.md).
 
@@ -273,11 +273,11 @@ properties) and none of its machinery:
 | Phase | What | Branch | Rough size |
 |---|---|---|---|
 | **N0** | Spikes: headless boot, `CharacterVirtual` replay, the Ed25519 library | throwaway, done 2026-10-10 | — |
-| **N1** | `GanymedDedicated`: a headless app, a Scene role, the agent lifecycle, token verification, the result (**was O5b**). Built 2026-10-11. Fleet acceptance not run | master | about a week |
-| **N2** | Transport: sockets, connections, the packet header and acks, the conditioner, `--dev`. Built 2026-10-11. The fleet path was not run | master | about a week |
-| **N3** | Replication: ticks, network IDs, spawn and destroy, snapshots with delta compression, interpolation | master | 1½–2 weeks |
-| **N4** | Input and prediction: commands, `OnTick`, the predicted character, reconciliation. Built 2026-10-11. Local checks run; not a fleet close | master | 1½–2 weeks |
-| **N5** | The game: script roles and fields, shot events, co-op rules, the match result through the backend. Engine hooks built 2026-10-11. Game steps G1–G6 done on `first-game`, and the fleet path run, 2026-10-19. Linux and the editor not run | master (engine hooks) + `first-game` (the game) | 2–3 weeks |
+| **N1** | `GanymedDedicated`: a headless app, a Scene role, the agent lifecycle, token verification, the result (**was O5b**). Built 2026-10-11. Fleet acceptance passed 2026-10-19 (with N5) | master | about a week |
+| **N2** | Transport: sockets, connections, the packet header and acks, the conditioner, `--dev`. Built 2026-10-11. The fleet path ran 2026-10-19 (with N5) | master | about a week |
+| **N3** | Replication: ticks, network IDs, spawn and destroy, snapshots with delta compression, interpolation. Built 2026-10-11. The Proving Ground's bandwidth measured 2026-10-19 | master | 1½–2 weeks |
+| **N4** | Input and prediction: commands, `OnTick`, the predicted character, reconciliation. Built 2026-10-11. The fleet path ran 2026-10-19; the editor's controls fixed 2026-10-20 | master | 1½–2 weeks |
+| **N5** | The game: script roles and fields, shot events, co-op rules, the match result through the backend. Engine hooks built 2026-10-11. Game steps G1–G6 done on `first-game`, and the fleet path run, 2026-10-19. Played by hand 2026-10-20. Linux not run | master (engine hooks) + `first-game` (the game) | 2–3 weeks |
 
 **These are estimates, and probably low.** All of it adds up to two to three months of the pace
 ONLINE.md ran at. N5 is the one most likely to grow: `Player.lua` alone is about 1,800 lines of
@@ -419,7 +419,7 @@ not GanymedServer). The stand-in was deleted with the rest of the spike.
 | Idle CPU | 0.016 s of CPU over 2 s of that load sleep (the main thread blocked in `sleep`, the door on a 200 ms receive). Not a spun core. The match loop uses the same 1/60 sleep; that loop was not sampled on its own |
 | Tokens | Minted with `crypto_ed25519_sign` from the same Monocypher the server links, not by Go's `connecttoken.Mint`. N0 already checked a Go-minted token against `crypto_ed25519_check`. This run checked the server's rule order: valid → `WELCOME`, replay → `DENIED token already used`, a second nonce for the same account → `WELCOME` again, expired, not-yet-valid, wrong `server_addr`, wrong `match_id`, account absent from the allocation, one flipped signature byte, and a token that is not base64. Each reason string matched the contract |
 | Scene | `BoxesPhysicsExample.ganymede`, 6 entities, `SceneRole::Server`. Result `{"outcome":"victory"}` on the first attempt, then `shutdown`. Admitted count 1 (the re-admit is the same account) |
-| Not run | `fleetagent` / `gscli load coop 4`. Two `GanymedRuntime` players through `JoinMatch`. Linux without a display (N0's Noop spike ran there; this `Application` path has not). Killing the server mid-match. A backend replica down at result time. CPU across a full idle match, as opposed to the load sleep |
+| Not run | `fleetagent` / `gscli load coop 4`. Two `GanymedRuntime` players through `JoinMatch`. Linux without a display (N0's Noop spike ran there; this `Application` path has not). Killing the server mid-match. A backend replica down at result time. CPU across a full idle match, as opposed to the load sleep. **Run since, 2026-10-19 (N5, [below](#n5-measured-on-the-fleet-2026-10-19)):** `gscli load coop 4`, all four stages, and four runtimes through `JoinMatch` (`--queue`). The rest of this row is still not run |
 
 **Docs, written with the code:** [dedicated.md](../dedicated/dedicated.md), indexed from
 [docs/README.md](../README.md); [online.md](../engine/online.md) for the lifecycle client and token
@@ -498,7 +498,7 @@ under simulated bad networks, with no game state in them yet.
 | Reliable channel | `--net-sim=loss:20,reorder:50` both sides, `--net-test=reliable:1000`. The client logged `Reliable test ok: 1000 messages, in order, exactly once`. The server logged no gap |
 | Timeout | Killing the client: `Player to left (timeout)` 5.1 s later (the waiter's poll is 100 ms). Killing the server: `server at 127.0.0.1:17777 went silent; session ended` 5.1 s later |
 | Spoofing | The client's line was `Spoof probes sent: one wrong session, one from another port`. The server's next stats lines read `dropped session 1, address 1` |
-| Not run | Matchmaking → `JoinMatch` → the same socket into a session on an allocated `GanymedDedicated`. The handover is wired; nothing here spoke to GanymedServer or fleetagent |
+| Not run | Matchmaking → `JoinMatch` → the same socket into a session on an allocated `GanymedDedicated`. The handover is wired; nothing here spoke to GanymedServer or fleetagent. **Run since, 2026-10-19 (N5):** four `--queue` runtimes were matched, joined, and played whole matches on sessions over the joined socket |
 
 ### N3 — replication
 
@@ -534,7 +534,7 @@ along a scripted path for the test.
 |---|---|---|
 | Two clients see the same thing | positions of a scripted mover, logged on both clients at the same server tick, agree within quantization | `--net-test=move`, `--net-sim=lat:50,loss:5` on the server and both clients. Every pose line a client logged matches the server to the millimetre. 5% loss omits ticks (alpha had no 240 or 540; beta had no 480). The ticks both clients had — 300, 360, 420, 600, 660, 720, 780, 840, 900, 960, 1020, 1080 — agree with the server and with each other. Quantization is 1 mm |
 | Smoothness | at 100 ms and 5% loss, the buffer runs dry under 1% of frames, and no entity is drawn jumping more than a frame's travel | Same run. Dry 0.00% on both clients (50 warmed frames each). Depth 32, the buffer cap. Step high-water 1.35 (alpha) and 1.29 (beta). That is above 1. The debug clients rendered Demo at about 4 frames a second, so one frame covers many ticks of a sine whose speed is not the 2-tick segment the ratio uses. The poses above still match, so this is not a lost snapshot drawn as a teleport. A teleport would be several times one frame. Lead was 263–264 ms: `lat:50` each way is 100 ms of round trip, and the rest is the ack waiting for the next ~250 ms client frame. The render clock is the estimate minus 100 ms (the log's `tick` and `est` differ by 6). The lead is not added again |
-| Delta compression | a scene at rest sends snapshots of a few bytes; bytes per second are recorded for the Proving Ground with 4 players and its enemies | `--net-test=rest`, no `--net-sim`, one client. Snapshot body 8 bytes, 240–248 bytes/s, which is 30–31 payloads a second. `min` stayed 8. Registry 11 on both sides, one replicated entity. Client dry 0.00, depth 1 (an empty delta does not push another sample), lead 128–131 ms with no simulated latency, again because the client acks on its next frame. Proving Ground bytes/s: **not run**. This branch has no enemy content under `assets/` |
+| Delta compression | a scene at rest sends snapshots of a few bytes; bytes per second are recorded for the Proving Ground with 4 players and its enemies | `--net-test=rest`, no `--net-sim`, one client. Snapshot body 8 bytes, 240–248 bytes/s, which is 30–31 payloads a second. `min` stayed 8. Registry 11 on both sides, one replicated entity. Client dry 0.00, depth 1 (an empty delta does not push another sample), lead 128–131 ms with no simulated latency, again because the client acks on its next frame. Proving Ground bytes/s, measured 2026-10-19 on `first-game` (N5 G6), 4 players and up to 30 enemies, Windows Debug on loopback: **2.3–5.4 KB/s down and 2.1–3.8 KB/s up per client** with no simulated network. At `lat:75,loss:5` on every send path it was 13–16 KB/s down in the last wave. A likely cause, not measured, is snapshots diffed against older acknowledged baselines |
 | Spawn/destroy | 500 spawns and despawns at 10% loss: every client ends with the server's entity set, with no leaks | `--net-test=spawn`, `--net-sim=loss:10` on the server and both clients. Entities reached 500 on the server and on both clients, then 0 after the destroy at 18 s of server ticks. Final line on all three: entities 0, ghosts 0, registry 10 (Demo without the 500). One datagram cannot hold 500 spawns; they drain across packets until acknowledged |
 | Prefab children | a spawned prefab's child UUIDs match between server and client | `--net-test=prefab`, no `--net-sim`, two clients. Server, alpha, and beta all logged root `48c7de0c63ab369a` and child `a14fc312d59b8b32`. `assets/prefabs/SparkBurst.gprefab` has no children; the check uses `assets/prefabs/NetPair.gprefab` |
 
@@ -579,7 +579,7 @@ same `SceneRole` and the same `OnTick` path the editor's play mode uses.
 | Loss | at 5% loss: corrections are rare and small (numbers recorded), and no rubber-banding is visible | `--net-test=predict-loss`, 20 s, the stick reverses every 30 ticks. 50 corrections, replay up to 11. Sizes, settle excluded: 67 mm ×1, 133–134 mm ×41, 266–267 mm ×8. 133 mm is two ticks at 4 m/s, or one tick of an 8 m/s reversal. 267 mm is two ticks of that reversal. They sit on the reversals, about two and a half a second. A constant walk does not correct when a command is a tick late. A reversal does. This is not rare, and 27 cm is a visible hitch. The tolerance was not opened, and the lead was not given an extra tick |
 | Forced desync | a server teleport is corrected on the client within RTT + one interval | Server `Predict teleport tick=248` (spawn 67 plus 180, bumped to the next even tick so the snapshot carries it). Client `Predict correct tick=248 sizeMm=3000 replay=9`. The correction is the teleport's own tick. 3000 mm is the +3 m move. Replay 9 is how far ahead the client was, not the round trip. `Predict done corrections=1 maxMm=3000 replay=9`. An earlier run of the same mode corrected at tick 250, replay 10, the same 3000 mm, after four walk-start corrections of 67–133 mm |
 | Walls and steps | N0 replayed a wall slide and a 0.2 m step to the bit once the ground enum was restored (decision 9). This phase still has to show that, at 150 ms, corrections stay inside the tolerance | Wall: `corrections=0 maxMm=0`. The server slid along the wall. z held at 3.380 while x reached 40.4. One settle correction of 5 mm before the walk. Step: the capsule center went to y=1.150 on the 0.2 m step (0.95 + 0.2) and back to 0.950 on the floor. The three counted corrections, 67 then 133 then 133 mm, were the first walking ticks, before the step. None after it |
-| Offline unchanged | the same scripts play single-player in the editor with no server | `--net-test=offline --headless`, no `--connect`. `Predict offline tick=120 x=0.000 y=0.950 z=3.983`, exit 0. The walk starts at tick 60, so 60 ticks at 4 m/s is 4 m; 3.983 is a tick short of that. The editor was not driven |
+| Offline unchanged | the same scripts play single-player in the editor with no server | **Headless only, and that was not enough:** a process with a UI re-registered the `PlayerCommand` usertype, and in the editor the first `OnTick` failed. Nothing headless can see that. Fixed 2026-10-20 (`47122a4`), and the editor was then played by hand. The headless run: `--net-test=offline --headless`, no `--connect`. `Predict offline tick=120 x=0.000 y=0.950 z=3.983`, exit 0. The walk starts at tick 60, so 60 ticks at 4 m/s is 4 m; 3.983 is a tick short of that. The editor was not driven |
 
 ### Review fixes (2026-10-17): snapshot order, lost destroys, the lead, the reliable window, the test module
 
@@ -719,7 +719,7 @@ every account in `Net.Players()` a `NetWalker` spawned with `Scene.Spawn`, assig
 | A spawned prefab replicates as the prefab | both clients held both pawns as full `NetWalker`s: their own was predicted, which needs the character controller a bare replicated entity would not have. `nobase=0`, `stale=0` |
 | `Net.EndMatch` | `accepted=true`, then `Match ended by the game: victory (dev: nothing is reported)` |
 | Prediction | c1: 0 corrections. c2: 10, up to 800 mm, and its first move 22 ticks after its first input. The probe spawned both pawns on the same spot. The server pushed the two characters apart, while c2 collided with an interpolated, 100 ms-old kinematic copy of the other one. That is the "remote characters block the predicted one" risk under Risks. G1 spawns pawns apart; the risk stays open |
-| Not run | `Net.EndMatch` on the fleet path (G6 runs it end to end) |
+| Not run | `Net.EndMatch` on the fleet path (G6 runs it end to end). **Run in G6:** victory and every kind of defeat reported through the agent |
 
 #### Local checks (engine hooks only)
 
@@ -774,7 +774,7 @@ PROVING_GROUND.md (N9, G6) with its numbers.
 | Abandoned | **Pass.** Both clients killed: `everyone left`, defeat reported; the backend's `match_results` row is `defeat`, -16, 2 players |
 | A player leaves | **Pass.** The others played on to victory, with the later waves sized for two. The backend credits the result to the leaver too, which is its rule today, recorded in its ToDo |
 | Under a bad network | **Pass.** `lat:75,loss:5` on every send path: victory, 4–5% measured loss each way, 13–16 KB/s down and 0.6 KB/s up per client in the last wave. Walking clients there had 5 and 7 corrections |
-| Offline | **Pass in the runtime** (alone, and the P5 gate). The editor's Play was not driven |
+| Offline | **Pass in the runtime** (alone, and the P5 gate). Headless, which missed that the editor and a windowed runtime could not control the player (fixed 2026-10-20). **Since then played by hand in the editor**, and co-op through `--queue` in two windows |
 | Linux | **Not run.** The dedicated process has no Linux build in this tree. Building it in WSL, a Linux `fleetagent`, and UDP from Windows clients into WSL2 are the work; it is open |
 
 ---
