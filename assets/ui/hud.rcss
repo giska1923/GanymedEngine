@@ -80,6 +80,11 @@ body {
 	font-weight: bold;
 }
 
+#leaderboard .lb-life {
+	color: #f1c40f;
+	margin-bottom: 4dp;
+}
+
 #leaderboard .lb-note {
 	margin-top: 4dp;
 	color: #ffffffa0;
@@ -88,6 +93,22 @@ body {
 /* Centred by 50% + a negative margin of half the size. RCSS has no `transform:
    translate(-50%, -50%)` shorthand against percentages of the element's own box,
    so the margin is the portable way to do this. */
+/* The runtime's match status (--queue), across the top. Centred like the crosshair, by 50% and a
+   negative margin of half the width. Hidden until the engine writes into it. */
+#match-status {
+	display: none;
+	position: absolute;
+	top: 30dp;
+	left: 50%;
+	width: 560dp;
+	margin-left: -280dp;
+	padding: 10dp 14dp;
+	background-color: #000000b0;
+	font-size: 20dp;
+	font-weight: bold;
+	text-align: center;
+}
+
 #crosshair {
 	position: absolute;
 	left: 50%;

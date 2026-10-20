@@ -3275,6 +3275,32 @@ temporary aids, applied to the scripts for one run and removed after by restorin
 
 The numbers (wave sizes, 10 s, 15 minutes, `HUNT_REMAINING`) are tuning, as NETCODE.md says.
 
+### N9 — After G6: the controls in a window, and two HUD lines (2026-10-20)
+
+**The player could not be controlled in the editor or a windowed runtime**, from G1 on. The first
+`cmd.Yaw` in `Player:OnTick` failed ("attempt to index a PlayerCommand value") and the engine
+disabled the script. The cause was the engine's: `UIEngine` re-registers the script globals after
+RmlUi's plugin, and the `PlayerCommand` usertype was among them. It was fixed on master (`47122a4`,
+docs/engine/scripting.md). Every G1–G6 check ran headless, with no UI, and none could see it.
+Offline checks now include a windowed run.
+
+**Two HUD lines.**
+
+- **`#match-status`** in `hud.rml`, styled across the top in `hud.rcss`. The engine's runtime writes
+  `--queue` progress there ("In the queue - waiting for players...", "Joining the match...") and the
+  outcome ("DEFEAT - rating -16"), and hides it while the match is played (master `a5dcaa7`,
+  docs/runtime/runtime.md).
+- **"this life: N"** at the top of the leaderboard block: the kills since the player last went down
+  or died, which is what the life submits when it ends. Offline, `Player:PushLife` counts them. On a
+  client it is `life32`, replicated from the server, where kills are credited.
+
+**Verified:** a match through the fleet agent with two windowed `bot` clients and no aids. The line
+went 0, 1, 2 on one client as it killed. The life of 2 was submitted when it went down. On the other
+client the line went back to 0 when its life ended. The bots were wiped: `finished: defeat, rating
+-16`. The runtime found `#match-status` in both windows (it warns when the element is missing). A
+windowed offline run showed "this life: 0" with no script error. The screens themselves were not
+looked at.
+
 ## Decisions, with the ones most likely wrong marked
 
 Recorded now so that when this moves to `docs/history/` we can see which held.

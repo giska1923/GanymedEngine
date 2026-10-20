@@ -25,6 +25,11 @@
 	     third (see above). Starts empty; the script writes "loading" before anything. -->
 	<div id="leaderboard"></div>
 
+	<!-- The runtime's match status (GanymedRuntime --queue): written by the engine through
+	     UIEngine::SetElementText, shown while queueing and joining and at the end, hidden while
+	     the match is played. Empty, and hidden, everywhere else. -->
+	<div id="match-status"></div>
+
 	<!-- Two divs rather than a texture: the crosshair is the one piece of this HUD
 	     that has to sit exactly in the middle of the viewport at any window size,
 	     and a 2dp box centred with a negative margin does that without an asset. -->

@@ -653,7 +653,8 @@ function Player:DrawLeaderboard()
     end
 
     local b = self.board
-    local out = { '<div class="lb-title">KILLS IN ONE LIFE</div>' }
+    local out = { '<div class="lb-title">KILLS IN ONE LIFE</div>',
+        string.format('<div class="lb-life">this life: %d</div>', b.thisLife or 0) }
     if b.rows then
         if #b.rows == 0 then
             out[#out + 1] = '<div class="lb-note">no scores yet</div>'
@@ -989,6 +990,8 @@ function Player:ServerFrame(ts)
     -- And for its own player's HUD: health in a byte, and the score.
     self.hp8 = math.floor(math.max(0.0, math.min(255.0, self.health)) + 0.5)
     self.score32 = self.score
+    -- The kills of the life in progress, for the "this life" line on its player's leaderboard.
+    self.life32 = math.max(0, self:Kills() - (self.lifeStartKills or 0))
     -- Moves by one at every swing, so the other clients can start the same one (RemoteFrame).
     self.swing8 = self.attacks % 256
     self:ServerReport()
@@ -1102,7 +1105,22 @@ function Player:LocalFrame(ts)
     self:Step(ts)
     self:Animate(ts)
     self:PushUI()
+    self:PushLife(offline)
     self:Diagnose(ts)
+end
+
+-- The board's "this life" line, live: the kills since this player last went down or died, which is
+-- what the life will submit when it ends. Counted here offline; on a client it is the server's
+-- count (life32), because the kills are credited there.
+function Player:PushLife(offline)
+    if not self.board then
+        return
+    end
+    local kills = offline and math.max(0, self:Kills() - (self.lifeStartKills or 0)) or (self.life32 or 0)
+    if kills ~= self.board.thisLife then
+        self.board.thisLife = kills
+        self:DrawLeaderboard()
+    end
 end
 
 -- The gate modes' trigger, once a frame and offline only: they predate commands, and their numbers
@@ -2270,6 +2288,7 @@ Player.Replicated = {
     hp8 = "u8",
     score32 = "tick",   -- a u32: "tick" is the field type that holds one
     swing8 = "u8",      -- the swing count, mod 256: a change is a swing to draw
+    life32 = "tick",    -- kills in the life in progress, for its player's leaderboard
 }
 
 local ____exports = {}
