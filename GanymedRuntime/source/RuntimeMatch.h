@@ -14,6 +14,10 @@ namespace GanymedE {
 	// --connect), so joining only attaches the session; nothing is reloaded mid-match. The ticket is
 	// the state of record and is polled once a second. The pushes are nudges (docs/engine/online.md)
 	// and a script may be listening to them; this does not take the push handler.
+	//
+	// What it is doing is also on screen, in the HUD's `#match-status` element if it has one
+	// (UIEngine::SetElementText): the queue, the join, and at the end the outcome. It is cleared
+	// while the match is being played.
 	class RuntimeMatch
 	{
 	public:
@@ -32,7 +36,8 @@ namespace GanymedE {
 		void SendQueue();
 		void ReadTicket();
 		void OnTicket(const OnlineResponse& response);
-		void Finish(const std::string& why);
+		void Finish(const std::string& why, const std::string& shown);
+		void Show(const std::string& text);
 
 		std::string m_Mode;
 		State m_State = State::Queue;
@@ -43,6 +48,8 @@ namespace GanymedE {
 		int m_JoinFailures = 0;
 		bool m_SeenConnected = false;
 		std::string m_LastState;
+		std::string m_Shown;
+		bool m_WarnedNoStatus = false;
 	};
 
 }

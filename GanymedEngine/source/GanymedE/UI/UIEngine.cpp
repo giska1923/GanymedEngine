@@ -389,6 +389,33 @@ namespace GanymedE {
 			s_Data->HudModel.DirtyVariable("score");
 	}
 
+	bool UIEngine::SetElementText(const std::string& id, const std::string& text)
+	{
+		if (!s_Data || !s_Data->Context)
+			return false;
+
+		std::string rml;
+		rml.reserve(text.size());
+		for (char c : text)
+		{
+			if (c == '&') rml += "&amp;";
+			else if (c == '<') rml += "&lt;";
+			else if (c == '>') rml += "&gt;";
+			else rml += c;
+		}
+
+		for (int i = 0; i < s_Data->Context->GetNumDocuments(); i++)
+		{
+			Rml::Element* element = s_Data->Context->GetDocument(i)->GetElementById(id);
+			if (!element)
+				continue;
+			element->SetInnerRML(rml);
+			element->SetProperty("display", text.empty() ? "none" : "block");
+			return true;
+		}
+		return false;
+	}
+
 	float UIEngine::GetHudHealth() { return s_Data ? s_Data->Hud.Health : 0.0f; }
 	int UIEngine::GetHudScore()    { return s_Data ? s_Data->Hud.Score : 0; }
 
