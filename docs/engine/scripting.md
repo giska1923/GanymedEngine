@@ -160,6 +160,14 @@ it inside `ScriptEngine::Init`, and the process died with a stack overflow after
 had loaded. `PlayerCommand` is bound one field at a time for the same reason. `Net.Broadcast` and
 `Net.Shot` are assignments on the `Net` table, one each, for the same reason.
 
+**Usertypes are registered once; tables may be registered again.** `UIEngine` re-runs
+`RegisterScriptGlobals` after RmlUi's Lua plugin, which installs a `Log` of its own. That is safe
+for the global tables and not for a usertype: one registered there a second time can no longer be
+indexed. `PlayerCommand` was, until 2026-10-20, and in the editor and in a windowed runtime the
+first `cmd.Yaw` failed and the engine disabled the script ("attempt to index a PlayerCommand
+value"). Headless processes have no UI, so every headless check missed it. `Vec3`, `Entity` and
+`PlayerCommand` are registered in `RegisterScriptBindings`, before the globals.
+
 ### Replicated fields
 
 A script declares them on the table it returns, beside the methods:
