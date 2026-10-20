@@ -1395,7 +1395,13 @@ namespace GanymedE {
 			return true;
 		}
 
-		void RegisterNet(sol::state& lua)
+		// OnTick's command. A usertype, so it is registered once, with Vec3 and Entity, and never
+		// from RegisterScriptGlobals: UIEngine re-runs that after RmlUi's plugin, and re-registering
+		// a usertype leaves the type unusable. It was in RegisterNet until 2026-10-20, and in every
+		// process with a UI (the editor, a windowed runtime) the first `cmd.Yaw` then failed with
+		// "attempt to index a PlayerCommand value" and the engine disabled the script. Headless
+		// processes have no UI, which is why no headless check ever saw it.
+		void RegisterPlayerCommand(sol::state& lua)
 		{
 			// Valid only for the duration of OnTick. Scripts must not keep the reference.
 			// One field at a time. A single new_usertype with every member is the same
@@ -1411,7 +1417,10 @@ namespace GanymedE {
 			command["Melee"] = &Net::PlayerCommand::Melee;
 			command["Interact"] = &Net::PlayerCommand::Interact;
 			command["Equip"] = &Net::PlayerCommand::Equip;
+		}
 
+		void RegisterNet(sol::state& lua)
+		{
 			// The HUD line. Zeros until a session exists. On a server the figures are the
 			// mean of the live sessions, and the byte rates are sums. See netcode.md.
 			sol::table net = lua.create_named_table("Net");
@@ -1894,6 +1903,7 @@ namespace GanymedE {
 		// re-registering a usertype would rebuild metatables live objects point at.
 		RegisterVec3(lua);
 		RegisterEntity(lua);
+		RegisterPlayerCommand(lua);
 		RegisterScriptGlobals(lua);
 	}
 
